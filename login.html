@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KD1 Assembly — Sign In</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Inter:wght@300;400;500;600&display=swap"
+        rel="stylesheet" />
+    <link rel="icon" type="image/png" href="favicon.png">
+    <style>
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --clr-bg: #0f1117;
+            --clr-surface: #161b27;
+            --clr-surface-2: #1e2537;
+            --clr-border: #2a3350;
+            --clr-text: #e2e8f4;
+            --clr-muted: #7a8baa;
+            --clr-dim: #4a5575;
+            --clr-accent: #4f8ef7;
+            --clr-accent-dim: rgba(79, 142, 247, .15);
+            --clr-error: #ef4444;
+            --ff-display: 'Rajdhani', sans-serif;
+            --ff-mono: 'DM Mono', monospace;
+            --ff-body: 'Inter', sans-serif;
+            --radius: 10px;
+            --radius-sm: 6px;
+        }
+
+        html {
+            font-size: 15px;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body {
+            background: var(--clr-bg);
+            color: var(--clr-text);
+            font-family: var(--ff-body);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ─── Background grid pattern ──────────────────────────────── */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(79, 142, 247, .03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(79, 142, 247, .03) 1px, transparent 1px);
+            background-size: 40px 40px;
+            pointer-events: none;
+        }
+
+        /* ─── Header ────────────────────────────────────────────────── */
+        .login-header {
+            border-bottom: 1px solid var(--clr-border);
+            background: var(--clr-surface);
+            padding: 0 24px;
+        }
+
+        .login-header-inner {
+            max-width: 480px;
+            margin: 0 auto;
+            height: 58px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .brand-badge {
+            background: var(--clr-accent);
+            color: #fff;
+            font-family: var(--ff-display);
+            font-size: 1.1rem;
+            font-weight: 700;
+            letter-spacing: .12em;
+            padding: 4px 11px;
+            border-radius: var(--radius-sm);
+            line-height: 1;
+        }
+
+        .brand-text {
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+        }
+
+        .brand-title {
+            font-family: var(--ff-display);
+            font-size: 1.1rem;
+            font-weight: 700;
+            letter-spacing: .06em;
+        }
+
+        .brand-sub {
+            font-size: .68rem;
+            color: var(--clr-muted);
+            letter-spacing: .08em;
+            text-transform: uppercase;
+        }
+
+        /* ─── Main ──────────────────────────────────────────────────── */
+        .login-main {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 32px 16px;
+        }
+
+        .login-card {
+            background: var(--clr-surface);
+            border: 1px solid var(--clr-border);
+            border-radius: 14px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, .5), 0 2px 16px rgba(0, 0, 0, .3);
+            padding: 36px 36px 28px;
+            width: 100%;
+            max-width: 400px;
+        }
+
+        .login-card-header {
+            margin-bottom: 28px;
+        }
+
+        .login-card-title {
+            font-family: var(--ff-display);
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: .04em;
+            color: var(--clr-text);
+            margin-bottom: 4px;
+        }
+
+        .login-card-sub {
+            font-size: .8rem;
+            color: var(--clr-muted);
+        }
+
+        /* ─── Form ──────────────────────────────────────────────────── */
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 16px;
+        }
+
+        .form-label {
+            font-size: .72rem;
+            font-weight: 600;
+            letter-spacing: .1em;
+            text-transform: uppercase;
+            color: var(--clr-muted);
+        }
+
+        .form-input {
+            background: var(--clr-surface-2);
+            border: 1px solid var(--clr-border);
+            border-radius: var(--radius-sm);
+            color: var(--clr-text);
+            font-family: var(--ff-body);
+            font-size: .9rem;
+            padding: 10px 14px;
+            outline: none;
+            transition: border-color .2s, box-shadow .2s;
+            width: 100%;
+        }
+
+        .form-input:focus {
+            border-color: var(--clr-accent);
+            box-shadow: 0 0 0 3px rgba(79, 142, 247, .15);
+        }
+
+        .form-input.error {
+            border-color: var(--clr-error);
+            box-shadow: 0 0 0 3px rgba(239, 68, 68, .15);
+        }
+
+        /* Password wrapper */
+        .pw-wrap {
+            position: relative;
+        }
+
+        .pw-wrap .form-input {
+            padding-right: 42px;
+        }
+
+        .pw-toggle {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: var(--clr-dim);
+            cursor: pointer;
+            padding: 4px;
+            line-height: 1;
+            transition: color .15s;
+        }
+
+        .pw-toggle:hover {
+            color: var(--clr-muted);
+        }
+
+        .pw-toggle svg {
+            width: 16px;
+            height: 16px;
+            display: block;
+        }
+
+        /* Error message */
+        .login-error {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            background: rgba(239, 68, 68, .1);
+            border: 1px solid rgba(239, 68, 68, .3);
+            border-radius: var(--radius-sm);
+            color: var(--clr-error);
+            font-size: .82rem;
+            padding: 10px 14px;
+            margin-bottom: 16px;
+        }
+
+        .login-error.visible {
+            display: flex;
+        }
+
+        .login-error svg {
+            width: 15px;
+            height: 15px;
+            flex-shrink: 0;
+        }
+
+        /* Submit button */
+        .btn-login {
+            width: 100%;
+            background: var(--clr-accent);
+            border: none;
+            border-radius: var(--radius-sm);
+            color: #fff;
+            cursor: pointer;
+            font-family: var(--ff-body);
+            font-size: .9rem;
+            font-weight: 600;
+            letter-spacing: .03em;
+            padding: 11px;
+            margin-top: 4px;
+            transition: background .18s, transform .18s, box-shadow .18s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            position: relative;
+        }
+
+        .btn-login:hover {
+            background: #3a7ef0;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(79, 142, 247, .35);
+        }
+
+        .btn-login:active {
+            transform: translateY(0);
+        }
+
+        .btn-login:disabled {
+            opacity: .6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-login svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        /* Spinner inside button */
+        .btn-spinner {
+            display: none;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 255, 255, .3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin .5s linear infinite;
+        }
+
+        .loading .btn-spinner {
+            display: block;
+        }
+
+        .loading .btn-icon {
+            display: none;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* ─── Footer ────────────────────────────────────────────────── */
+        .login-footer {
+            text-align: center;
+            padding: 16px;
+            font-size: .72rem;
+            color: var(--clr-dim);
+            border-top: 1px solid var(--clr-border);
+        }
+
+        /* ─── Security badge ────────────────────────────────────────── */
+        .security-note {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            margin-top: 20px;
+            font-size: .72rem;
+            color: var(--clr-dim);
+        }
+
+        .security-note svg {
+            width: 13px;
+            height: 13px;
+        }
+
+        /* scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--clr-bg);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--clr-border);
+            border-radius: 3px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <header class="login-header">
+        <div class="login-header-inner">
+            <div class="brand-badge">KD1</div>
+            <div class="brand-text">
+                <span class="brand-title">Assembly Control</span>
+                <span class="brand-sub">Plan vs Actual Tracking System</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="login-main">
+        <div class="login-card">
+            <div class="login-card-header">
+                <div class="login-card-title">Sign In</div>
+                <div class="login-card-sub">Enter your credentials to access the system</div>
+            </div>
+
+            <div class="login-error" id="loginError" role="alert">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="10" cy="10" r="8" />
+                    <path d="M10 6v4M10 14h.01" />
+                </svg>
+                <span id="loginErrorMsg">Invalid email or password.</span>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="loginEmail">Email Address</label>
+                <input type="email" id="loginEmail" class="form-input" placeholder="you@example.com"
+                    autocomplete="email" />
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="loginPassword">Password</label>
+                <div class="pw-wrap">
+                    <input type="password" id="loginPassword" class="form-input" placeholder="••••••••"
+                        autocomplete="current-password" />
+                    <button class="pw-toggle" id="pwToggle" type="button" aria-label="Toggle password visibility">
+                        <svg id="eyeIcon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M1 10s3.5-7 9-7 9 7 9 7-3.5 7-9 7-9-7-9-7z" />
+                            <circle cx="10" cy="10" r="3" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <button class="btn-login" id="btnLogin" type="button">
+                <svg class="btn-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 10h14M10 4l7 6-7 6" />
+                </svg>
+                <span class="btn-spinner"></span>
+                Sign In
+            </button>
+
+            <div class="security-note">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M10 2l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V5l7-3z" />
+                </svg>
+                Secured with SHA-256 encryption
+            </div>
+        </div>
+    </main>
+
+    <footer class="login-footer">
+        KD1 Assembly Control System &copy; 2026 &nbsp;|&nbsp; Adham Morsy
+    </footer>
+
+    <!-- Supabase CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+    <script>
+        'use strict';
+
+        const SUPABASE_URL = 'https://biqwfqkuhebxcfucangt.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJpcXdmcWt1aGVieGNmdWNhbmd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYzNzM5NzQsImV4cCI6MjA4MTk0OTk3NH0.QkASAl8yzXfxVq0b0FdkXHTOpblldr2prCnImpV8ml8';
+        const SESSION_KEY = 'kd1_session';
+
+        const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        /* ── SHA-256 via Web Crypto ──────────────────────────────────── */
+        async function sha256(str) {
+            const buf = new TextEncoder().encode(str);
+            const hash = await crypto.subtle.digest('SHA-256', buf);
+            return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        /* ── IP detection ────────────────────────────────────────────── */
+        async function getIP() {
+            try {
+                const r = await fetch('https://api.ipify.org?format=json');
+                const j = await r.json();
+                return j.ip || 'unknown';
+            } catch { return 'unknown'; }
+        }
+
+        /* ── Show error ──────────────────────────────────────────────── */
+        function showError(msg) {
+            const el = document.getElementById('loginError');
+            document.getElementById('loginErrorMsg').textContent = msg;
+            el.classList.add('visible');
+            document.getElementById('loginEmail').classList.add('error');
+            document.getElementById('loginPassword').classList.add('error');
+        }
+
+        function hideError() {
+            document.getElementById('loginError').classList.remove('visible');
+            document.getElementById('loginEmail').classList.remove('error');
+            document.getElementById('loginPassword').classList.remove('error');
+        }
+
+        /* ── Login flow ──────────────────────────────────────────────── */
+        async function doLogin() {
+            hideError();
+            const email = document.getElementById('loginEmail').value.trim().toLowerCase();
+            const password = document.getElementById('loginPassword').value;
+
+            if (!email || !password) {
+                showError('Please enter your email and password.');
+                return;
+            }
+
+            const btn = document.getElementById('btnLogin');
+            btn.disabled = true;
+            btn.classList.add('loading');
+
+            try {
+                const hash = await sha256(password);
+
+                const { data: user, error } = await db
+                    .from('planning_app_users')
+                    .select('id, email, full_name, role, is_active')
+                    .eq('email', email)
+                    .eq('password_hash', hash)
+                    .maybeSingle();
+
+                if (error) throw error;
+
+                if (!user) {
+                    showError('Invalid email or password. Please try again.');
+                    return;
+                }
+
+                if (!user.is_active) {
+                    showError('Your account has been deactivated. Contact the administrator.');
+                    return;
+                }
+
+                /* ── Fetch IP and store session ──────────────────────────── */
+                const ip = await getIP();
+
+                const session = {
+                    id: user.id,
+                    email: user.email,
+                    name: user.full_name,
+                    role: user.role,
+                    ip,
+                    loginAt: new Date().toISOString(),
+                };
+
+                sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+
+                /* ── Log login event ─────────────────────────────────────── */
+                await db.from('planning_audit_log').insert({
+                    user_id: user.id,
+                    user_email: user.email,
+                    user_role: user.role,
+                    action: 'LOGIN',
+                    table_name: null,
+                    record_id: null,
+                    data_before: null,
+                    data_after: null,
+                    ip_address: ip,
+                });
+
+                window.location.href = 'index.html';
+
+            } catch (err) {
+                console.error(err);
+                showError('Connection error. Please try again.');
+            } finally {
+                btn.disabled = false;
+                btn.classList.remove('loading');
+            }
+        }
+
+        /* ── Events ──────────────────────────────────────────────────── */
+        document.getElementById('btnLogin').addEventListener('click', doLogin);
+
+        document.getElementById('loginPassword').addEventListener('keydown', e => {
+            if (e.key === 'Enter') doLogin();
+        });
+
+        document.getElementById('loginEmail').addEventListener('keydown', e => {
+            if (e.key === 'Enter') document.getElementById('loginPassword').focus();
+        });
+
+        /* ── Password visibility toggle ─────────────────────────────── */
+        document.getElementById('pwToggle').addEventListener('click', () => {
+            const inp = document.getElementById('loginPassword');
+            inp.type = inp.type === 'password' ? 'text' : 'password';
+        });
+
+        /* ── If already logged in, redirect ─────────────────────────── */
+        if (sessionStorage.getItem(SESSION_KEY)) {
+            window.location.href = 'index.html';
+        }
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KD1 Assembly — Plan vs Actual</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Inter:wght@300;400;500;600&display=swap"
+        rel="stylesheet" />
+        
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="stylesheet" href="styles.css" />
+    <!-- ── Auth guard: redirect to login before anything else loads ── -->
+    <script>
+        (function () {
+            try {
+                if (!sessionStorage.getItem('kd1_session')) {
+                    window.location.replace('login.html');
+                }
+            } catch (e) { window.location.replace('login.html'); }
+        })();
+    </script>
+</head>
+
+<body>
+    <!-- ═══════════════════════════════════════════════════ HEADER -->
+    <header class="site-header">
+        <div class="header-inner">
+            <div class="header-brand">
+                <div class="brand-badge">KD1</div>
+                <div class="brand-text">
+                    <span class="brand-title">Assembly Control</span>
+                    <span class="brand-sub">Plan vs Actual Tracking System</span>
+                </div>
+            </div>
+            <div class="header-meta">
+                <div class="header-clock" id="headerClock">--:--:--</div>
+                <div class="header-date" id="headerDate">--</div>
+                <div class="conn-indicator" id="connIndicator">
+                    <span class="conn-dot"></span>
+                    <span class="conn-label">Connecting…</span>
+                </div>
+                <!-- ── Audit Log button (master_admin only) ── -->
+                <button class="btn-nav-icon" id="btnAuditLog" title="Audit Log" style="display:none">
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <path d="M4 4h12v2H4zM4 8h12v2H4zM4 12h8v2H4z" />
+                        <circle cx="15" cy="13" r="3.5" />
+                        <path d="M17 15l1.5 1.5" />
+                    </svg>
+                </button>
+                <!-- ── User Management button (master_admin only) ── -->
+                <button class="btn-nav-icon" id="btnUserMgmt" title="User Management" style="display:none">
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <circle cx="8" cy="7" r="3" />
+                        <path d="M2 18c0-3.3 2.7-6 6-6s6 2.7 6 6" />
+                        <path d="M15 9l2 2 3-3" />
+                    </svg>
+                </button>
+                <!-- ── Session info ── -->
+                <div class="nav-user-chip" id="navUserChip" style="display:none">
+                    <div class="nav-user-avatar" id="navUserAvatar">?</div>
+                    <div class="nav-user-info">
+                        <span class="nav-user-name" id="navUserName">—</span>
+                        <span class="nav-role-badge" id="navRoleBadge">—</span>
+                    </div>
+                </div>
+                <!-- ── Logout ── -->
+                <button class="btn-nav-icon btn-logout" id="btnLogout" title="Sign Out" style="display:none">
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <path d="M7 3H4a1 1 0 00-1 1v12a1 1 0 001 1h3M13 14l3-4-3-4M16 10H7" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="page-main">
+
+        <!-- ═══════════════════════════════════════════════ FILTER BAR -->
+        <section class="filter-section" aria-label="Filters">
+            <div class="filter-grid">
+                <div class="filter-item">
+                    <label class="filter-label" for="filterVehicle">Vehicle</label>
+                    <select id="filterVehicle" class="filter-control">
+                        <option value="">All Vehicles</option>
+                    </select>
+                </div>
+                <div class="filter-item">
+                    <label class="filter-label" for="filterCategory">Category</label>
+                    <select id="filterCategory" class="filter-control">
+                        <option value="">All Categories</option>
+                        <option value="Assembly">Assembly</option>
+                        <option value="Final Test">Final Test</option>
+                        <option value="Processing">Processing</option>
+                    </select>
+                </div>
+                <div class="filter-item">
+                    <label class="filter-label" for="filterWeek">Week</label>
+                    <select id="filterWeek" class="filter-control">
+                        <option value="">All Weeks</option>
+                    </select>
+                </div>
+                <div class="filter-item">
+                    <label class="filter-label" for="filterTimeFrame">Time Frame</label>
+                    <select id="filterTimeFrame" class="filter-control">
+                        <option value="all">All Time</option>
+                        <option value="day">Today</option>
+                        <option value="week">This Week</option>
+                        <option value="month">This Month</option>
+                        <option value="custom">Custom Range</option>
+                    </select>
+                </div>
+                <div class="filter-item" id="customDateStart" style="display:none;">
+                    <label class="filter-label" for="filterStartDate">Start Date</label>
+                    <input type="date" id="filterStartDate" class="filter-control" />
+                </div>
+                <div class="filter-item" id="customDateEnd" style="display:none;">
+                    <label class="filter-label" for="filterEndDate">End Date</label>
+                    <input type="date" id="filterEndDate" class="filter-control" />
+                </div>
+                <div class="filter-item filter-actions">
+                    <button class="btn btn-primary" id="btnApply">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 5h14M6 10h8M9 15h2" />
+                        </svg>
+                        Apply Filters
+                    </button>
+                    <button class="btn btn-ghost" id="btnReset">Reset</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════ SUMMARY CARDS -->
+        <section class="summary-section" aria-label="Summary">
+            <div class="summary-grid">
+                <div class="summary-card card-planned">
+                    <div class="card-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <rect x="3" y="4" width="18" height="18" rx="2" />
+                            <path d="M16 2v4M8 2v4M3 10h18" />
+                        </svg>
+                    </div>
+                    <div class="card-body">
+                        <span class="card-value" id="sumPlanned">0</span>
+                        <span class="card-label">Total Planned</span>
+                    </div>
+                </div>
+                <div class="summary-card card-completed">
+                    <div class="card-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M20 6L9 17l-5-5" />
+                        </svg>
+                    </div>
+                    <div class="card-body">
+                        <span class="card-value" id="sumCompleted">0</span>
+                        <span class="card-label">Completed</span>
+                    </div>
+                </div>
+                <div class="summary-card card-late">
+                    <div class="card-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <circle cx="12" cy="12" r="9" />
+                            <path d="M12 7v5l3 3" />
+                        </svg>
+                    </div>
+                    <div class="card-body">
+                        <span class="card-value" id="sumLate">0</span>
+                        <span class="card-label">Late</span>
+                    </div>
+                </div>
+                <div class="summary-card card-overdue">
+                    <div class="card-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path
+                                d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                        </svg>
+                    </div>
+                    <div class="card-body">
+                        <span class="card-value" id="sumOverdue">0</span>
+                        <span class="card-label">Overdue</span>
+                    </div>
+                </div>
+                <div class="summary-card card-progress">
+                    <div class="card-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                        </svg>
+                    </div>
+                    <div class="card-body">
+                        <span class="card-value" id="sumProgress">0%</span>
+                        <span class="card-label">Progress</span>
+                    </div>
+                    <div class="progress-bar-wrap">
+                        <div class="progress-bar-fill" id="progressBarFill" style="width:0%"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════ PRODUCTION GANTT -->
+        <section class="gantt-section" aria-label="Production Master Schedule">
+            <div class="gantt-card">
+                <div class="gantt-card-header">
+                    <div class="gantt-title-wrap">
+                        <h3 class="gantt-title">Production Master Schedule</h3>
+                        <span class="gantt-subtitle">Assembly Plan · Daily Gantt View</span>
+                    </div>
+                    <div class="gantt-controls">
+                        <div class="filter-item" style="min-width:148px">
+                            <label class="filter-label" for="ganttStart">From</label>
+                            <input type="date" id="ganttStart" class="filter-control" />
+                        </div>
+                        <div class="filter-item" style="min-width:148px">
+                            <label class="filter-label" for="ganttEnd">To</label>
+                            <input type="date" id="ganttEnd" class="filter-control" />
+                        </div>
+                        <div class="filter-item" style="padding-top:18px">
+                            <button class="btn btn-primary" id="btnGanttRefresh">
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M4 4v5h5M16 16v-5h-5" />
+                                    <path d="M4.05 9A8 8 0 1 1 4 11" />
+                                </svg>
+                                Refresh
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="gantt-legend" id="ganttLegend"></div>
+                <div class="gantt-zone-key" id="ganttZoneKey" style="display:none">
+                    <span class="gantt-zone-key-item gantt-zone-key-holiday">
+                        <span class="gantt-zone-key-swatch"></span>Holiday
+                    </span>
+                    <span class="gantt-zone-key-item gantt-zone-key-fat">
+                        <span class="gantt-zone-key-swatch"></span>FAT Period
+                    </span>
+                </div>
+                <div class="gantt-scroll-root" id="ganttScrollRoot">
+                    <div id="ganttInner">
+                        <div class="gantt-empty-state" id="ganttInitEmpty">
+                            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <rect x="6" y="6" width="36" height="36" rx="4" />
+                                <path d="M14 18h20M14 26h12M14 34h8" />
+                            </svg>
+                            <p>Apply filters to load data, then click <strong>Refresh</strong> to render the schedule.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════ CHARTS -->
+        <section class="charts-section" aria-label="Charts">
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <div class="chart-card-header">
+                        <h3 class="chart-title">Status Breakdown</h3>
+                        <span class="chart-subtitle">Planned · Completed · Late · Overdue</span>
+                    </div>
+                    <div class="chart-canvas-wrap">
+                        <canvas id="barChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <div class="chart-card-header">
+                        <h3 class="chart-title">Cumulative Progress</h3>
+                        <span class="chart-subtitle">Planned Completion vs Actual</span>
+                    </div>
+                    <div class="chart-canvas-wrap">
+                        <canvas id="lineChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════ TABLE -->
+        <section class="table-section" aria-label="Assembly Plan Table">
+            <div class="table-card">
+                <div class="table-card-header">
+                    <h3 class="table-title">Assembly Plan Details</h3>
+                    <div class="table-actions-header">
+                        <span class="row-count" id="rowCount">0 records</span>
+                        <button class="btn btn-outline btn-sm" id="btnReports">
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M4 4h12v2H4zM4 9h8v2H4zM4 14h6v2H4z" />
+                                <path d="M14 12l1.5 1.5L18 11" />
+                            </svg>
+                            Export Report
+                        </button>
+                        <button class="btn btn-outline btn-sm" id="btnImport">
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10 3v10m-4-4 4 4 4-4" />
+                                <path d="M3 17h14" />
+                            </svg>
+                            Import Plan
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Import Panel (hidden by default) -->
+                <div class="import-panel" id="importPanel" style="display:none;">
+                    <div class="import-inner">
+                        <h4 class="import-title">Paste CSV / Tab-Separated Plan Data</h4>
+                        <p class="import-hint">Format: vehicle, vehicle_no, process_station, week, start_date
+                            (DD-Mon-YY), end_date (DD-Mon-YY), remark</p>
+                        <textarea id="importText" class="import-textarea"
+                            placeholder="K9,M5,Powerpack Check,FW9,23-Feb-26,23-Feb-26,"></textarea>
+                        <div class="import-footer">
+                            <button class="btn btn-primary" id="btnImportSubmit">Import Rows</button>
+                            <button class="btn btn-ghost" id="btnImportCancel">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="data-table" id="mainTable">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Vehicle</th>
+                                <th>Unit</th>
+                                <th>Station / Process</th>
+                                <th>Week</th>
+                                <th>Planned Start</th>
+                                <th>Planned End</th>
+                                <th>Actual Start</th>
+                                <th>Completed On</th>
+                                <th>Status</th>
+                                <th>Delay (days)</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableBody">
+                            <tr>
+                                <td colspan="11" class="table-empty">
+                                    <div class="empty-state">
+                                        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+                                            <rect x="6" y="6" width="36" height="36" rx="4" />
+                                            <path d="M16 24h16M24 16v16" />
+                                        </svg>
+                                        <p>No data loaded. Apply filters or import a plan.</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════ REPORTS MODAL -->
+        <div class="modal-overlay" id="reportModalOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="reportModalTitle">
+            <div class="modal report-modal">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="reportModalTitle">Export Report</h4>
+                    <button class="modal-close" id="reportModalClose" aria-label="Close">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+
+                    <!-- Report type selector -->
+                    <div class="form-group">
+                        <label class="form-label">Report Type</label>
+                        <div class="report-type-grid">
+                            <label class="report-type-card">
+                                <input type="radio" name="reportType" value="full" checked />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <rect x="3" y="3" width="18" height="18" rx="2" />
+                                        <path d="M7 8h10M7 12h10M7 16h6" />
+                                    </svg>
+                                    <span class="rtc-label">Full Report</span>
+                                    <span class="rtc-desc">All tasks regardless of status</span>
+                                </div>
+                            </label>
+                            <label class="report-type-card">
+                                <input type="radio" name="reportType" value="today" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <rect x="3" y="4" width="18" height="18" rx="2" />
+                                        <path d="M16 2v4M8 2v4M3 10h18" />
+                                        <circle cx="12" cy="16" r="2" />
+                                    </svg>
+                                    <span class="rtc-label">Today's Plan</span>
+                                    <span class="rtc-desc">Tasks active today</span>
+                                </div>
+                            </label>
+                            <label class="report-type-card">
+                                <input type="radio" name="reportType" value="overdue" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <path
+                                            d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                                    </svg>
+                                    <span class="rtc-label">Overdue</span>
+                                    <span class="rtc-desc">Past end date, not complete</span>
+                                </div>
+                            </label>
+                            <label class="report-type-card">
+                                <input type="radio" name="reportType" value="inprogress" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <circle cx="12" cy="12" r="9" />
+                                        <path d="M12 7v5l3 3" />
+                                    </svg>
+                                    <span class="rtc-label">In Progress</span>
+                                    <span class="rtc-desc">Started but not yet complete</span>
+                                </div>
+                            </label>
+                            <label class="report-type-card">
+                                <input type="radio" name="reportType" value="completed" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <path d="M20 6L9 17l-5-5" />
+                                    </svg>
+                                    <span class="rtc-label">Completed</span>
+                                    <span class="rtc-desc">All finished tasks</span>
+                                </div>
+                            </label>
+                            <label class="report-type-card">
+                                <input type="radio" name="reportType" value="late" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <circle cx="12" cy="12" r="9" />
+                                        <path d="M12 7v5l3 3" />
+                                        <path d="M18 18l3 3" />
+                                    </svg>
+                                    <span class="rtc-label">Late Completions</span>
+                                    <span class="rtc-desc">Finished after planned end date</span>
+                                </div>
+                            </label>
+                            <label class="report-type-card">
+                                <input type="radio" name="reportType" value="planned" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <rect x="3" y="4" width="18" height="18" rx="2" />
+                                        <path d="M16 2v4M8 2v4M3 10h18M8 15h8" />
+                                    </svg>
+                                    <span class="rtc-label">Not Started</span>
+                                    <span class="rtc-desc">Planned but not yet started</span>
+                                </div>
+                            </label>
+                            <label class="report-type-card">
+                                <input type="radio" name="reportType" value="vehicle" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <rect x="2" y="7" width="20" height="14" rx="2" />
+                                        <path d="M16 7V5a2 2 0 00-4 0v2M8 12h8M8 16h5" />
+                                    </svg>
+                                    <span class="rtc-label">By Vehicle</span>
+                                    <span class="rtc-desc">Current vehicle filter only</span>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Date range (optional) -->
+                    <div class="form-group">
+                        <label class="form-label">Date Range <span class="form-label-optional">(optional — filters by
+                                planned start)</span></label>
+                        <div class="report-date-row">
+                            <input type="date" id="reportDateFrom" class="filter-control" placeholder="From" />
+                            <span class="report-date-sep">→</span>
+                            <input type="date" id="reportDateTo" class="filter-control" placeholder="To" />
+                        </div>
+                    </div>
+
+                    <!-- Preview badge -->
+                    <div class="report-preview-bar" id="reportPreviewBar">
+                        <span class="report-preview-count" id="reportPreviewCount">— tasks match</span>
+                        <span class="report-preview-hint">Select a type to preview count</span>
+                    </div>
+
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-report-pdf" id="btnExportPDF">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 4h8l4 4v10H4V4z" />
+                            <path d="M12 4v4h4" />
+                            <path d="M7 13h6M7 10h3" />
+                        </svg>
+                        Export PDF
+                    </button>
+                    <button class="btn btn-report-excel" id="btnExportExcel">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="3" width="16" height="14" rx="2" />
+                            <path d="M6 7l3 3-3 3M11 13h4" />
+                        </svg>
+                        Export Excel
+                    </button>
+                    <button class="btn btn-ghost" id="reportModalCancel">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════ USER MANAGEMENT MODAL -->
+        <div class="modal-overlay modal-overlay-wide" id="userMgmtOverlay" style="display:none;" role="dialog"
+            aria-modal="true" aria-labelledby="userMgmtTitle">
+            <div class="modal modal-wide">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="userMgmtTitle">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"
+                            style="width:18px;height:18px;vertical-align:-3px;margin-right:8px">
+                            <circle cx="8" cy="7" r="3" />
+                            <path d="M2 18c0-3.3 2.7-6 6-6s6 2.7 6 6" />
+                            <path d="M15 9l2 2 3-3" />
+                        </svg>
+                        User Management
+                    </h4>
+                    <button class="modal-close" id="userMgmtClose">&#x2715;</button>
+                </div>
+                <div class="modal-body" style="padding:0">
+
+                    <!-- Toolbar -->
+                    <div class="um-toolbar">
+                        <span class="um-count" id="umUserCount">0 users</span>
+                        <button class="btn btn-primary btn-sm" id="btnAddUser">
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
+                                style="width:13px;height:13px">
+                                <path d="M10 4v12M4 10h12" />
+                            </svg>
+                            Add User
+                        </button>
+                    </div>
+
+                    <!-- User table -->
+                    <div class="um-table-wrap">
+                        <table class="data-table um-table">
+                            <thead>
+                                <tr>
+                                    <th>Full Name</th>
+                                    <th>Email</th>
+                                    <th>Role</th>
+                                    <th>Status</th>
+                                    <th>Created</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="umTableBody">
+                                <tr>
+                                    <td colspan="6" class="table-empty">
+                                        <div class="empty-state"><span class="spinner"></span>
+                                            <p>Loading…</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Add / Edit form (hidden by default) -->
+                    <div class="um-form" id="umForm" style="display:none">
+                        <div class="um-form-header">
+                            <span id="umFormTitle">Add New User</span>
+                            <button class="modal-close" id="umFormClose">&#x2715;</button>
+                        </div>
+                        <div class="um-form-body">
+                            <input type="hidden" id="umEditId" />
+                            <div class="um-form-grid">
+                                <div class="form-group">
+                                    <label class="form-label" for="umFullName">Full Name</label>
+                                    <input type="text" id="umFullName" class="filter-control" placeholder="John Doe" />
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="umEmail">Email</label>
+                                    <input type="email" id="umEmail" class="filter-control"
+                                        placeholder="user@example.com" />
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="umRole">Role</label>
+                                    <select id="umRole" class="filter-control">
+                                        <option value="viewer">Viewer</option>
+                                        <option value="admin">Admin</option>
+                                        <option value="master_admin">Master Admin</option>
+                                    </select>
+                                </div>
+                                <div class="form-group" id="umPasswordGroup">
+                                    <label class="form-label" for="umPassword">Password <span id="umPasswordHint"
+                                            class="form-label-optional">(leave blank to keep current)</span></label>
+                                    <input type="password" id="umPassword" class="filter-control"
+                                        placeholder="••••••••" />
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="umActive">Account Status</label>
+                                    <select id="umActive" class="filter-control">
+                                        <option value="true">Active</option>
+                                        <option value="false">Inactive</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="um-form-footer">
+                            <button class="btn btn-primary" id="btnUmSave">Save User</button>
+                            <button class="btn btn-ghost" id="btnUmCancel">Cancel</button>
+                            <span class="um-form-error" id="umFormError"></span>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════ AUDIT LOG MODAL -->
+        <div class="modal-overlay modal-overlay-wide" id="auditLogOverlay" style="display:none;" role="dialog"
+            aria-modal="true" aria-labelledby="auditLogTitle">
+            <div class="modal modal-wide modal-audit">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="auditLogTitle">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"
+                            style="width:18px;height:18px;vertical-align:-3px;margin-right:8px">
+                            <path d="M4 4h12v2H4zM4 8h12v2H4zM4 12h8v2H4z" />
+                            <circle cx="15" cy="13" r="3.5" />
+                            <path d="M17 15l1.5 1.5" />
+                        </svg>
+                        Audit Log
+                    </h4>
+                    <button class="modal-close" id="auditLogClose">&#x2715;</button>
+                </div>
+                <div class="modal-body" style="padding:0">
+
+                    <!-- Filters -->
+                    <div class="al-toolbar">
+                        <div class="al-filters">
+                            <select id="alFilterAction" class="filter-control al-filter-sm">
+                                <option value="">All Actions</option>
+                                <option value="LOGIN">Login</option>
+                                <option value="LOGOUT">Logout</option>
+                                <option value="INSERT">Insert</option>
+                                <option value="UPDATE">Update</option>
+                                <option value="DELETE">Delete</option>
+                            </select>
+                            <select id="alFilterTable" class="filter-control al-filter-sm">
+                                <option value="">All Tables</option>
+                                <option value="assembly_plan">assembly_plan</option>
+                                <option value="assembly_progress">assembly_progress</option>
+                                <option value="planning_app_users">planning_app_users</option>
+                            </select>
+                            <input type="date" id="alFilterDate" class="filter-control al-filter-sm" />
+                            <button class="btn btn-primary btn-sm" id="btnAlApply">Apply</button>
+                            <button class="btn btn-ghost btn-sm" id="btnAlReset">Reset</button>
+                        </div>
+                        <span class="um-count" id="alEntryCount">—</span>
+                    </div>
+
+                    <!-- Audit table -->
+                    <div class="al-table-wrap">
+                        <table class="data-table al-table">
+                            <thead>
+                                <tr>
+                                    <th>Date / Time</th>
+                                    <th>User</th>
+                                    <th>Role</th>
+                                    <th>Action</th>
+                                    <th>Table</th>
+                                    <th>Record</th>
+                                    <th>IP Address</th>
+                                    <th>Changes</th>
+                                </tr>
+                            </thead>
+                            <tbody id="alTableBody">
+                                <tr>
+                                    <td colspan="8" class="table-empty">
+                                        <div class="empty-state">
+                                            <p>Click to load audit log</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="al-footer">
+                        <button class="btn btn-ghost btn-sm" id="btnAlMore" style="display:none">Load more…</button>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════ MARK COMPLETE MODAL -->
+        <div class="modal-overlay" id="modalOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="modalTitle">
+            <div class="modal">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="modalTitle">Mark as Complete</h4>
+                    <button class="modal-close" id="modalClose" aria-label="Close">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="modal-info" id="modalInfo"></div>
+                    <div class="form-group">
+                        <label class="form-label" for="modalDate">Completion Date</label>
+                        <input type="date" id="modalDate" class="filter-control" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="modalNotes">Notes (optional)</label>
+                        <textarea id="modalNotes" class="import-textarea" style="height:80px;"
+                            placeholder="Enter any notes…"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" id="modalConfirm">Confirm Complete</button>
+                    <button class="btn btn-ghost" id="modalCancel">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast notifications -->
+        <div class="toast-container" id="toastContainer"></div>
+
+    </main>
+
+    <footer class="site-footer">
+        <span>KD1 Assembly Control System</span>
+        <span class="footer-sep">|</span>
+        <span>&copy; 2026 Adham Morsy</span>
+    </footer>
+
+    <!-- Supabase CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+    <!-- jsPDF + AutoTable (PDF export) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.7.1/jspdf.plugin.autotable.min.js"></script>
+    <!-- SheetJS (Excel export) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- App -->
+    <script src="app.js"></script>
+</body>
+
+</html>

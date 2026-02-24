@@ -1,0 +1,2197 @@
+/* ================================================================
+   KD1 Assembly Control System — app.js
+   Production-ready vanilla JS + Supabase + Chart.js
+   ================================================================ */
+
+'use strict';
+
+/* ──────────────────────────────────────────────────────────────────
+   1. CONFIGURATION — Replace with your Supabase project credentials
+   ────────────────────────────────────────────────────────────────── */
+const SUPABASE_URL = "https://biqwfqkuhebxcfucangt.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJpcXdmcWt1aGVieGNmdWNhbmd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYzNzM5NzQsImV4cCI6MjA4MTk0OTk3NH0.QkASAl8yzXfxVq0b0FdkXHTOpblldr2prCnImpV8ml8";
+
+/* ──────────────────────────────────────────────────────────────────
+   2. AUTH — session helpers (must be at top so every function below
+      can call them; SESSION_KEY is a const that must be initialised
+      before getCurrentUser() runs for the first time)
+   ────────────────────────────────────────────────────────────────── */
+const SESSION_KEY = 'kd1_session';
+
+function getCurrentUser() {
+    try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)); } catch { return null; }
+}
+function isMasterAdmin() { return getCurrentUser()?.role === 'master_admin'; }
+function isAdmin() { return ['master_admin', 'admin'].includes(getCurrentUser()?.role); }
+function canWrite() { return isAdmin(); }  // master_admin is included via isAdmin()
+function getCachedIP() { return getCurrentUser()?.ip || 'unknown'; }
+
+async function sha256(str) {
+    const buf = new TextEncoder().encode(str);
+    const hash = await crypto.subtle.digest('SHA-256', buf);
+    return Array.from(new Uint8Array(hash))
+        .map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Write one entry to planning_audit_log.
+ * Silently swallows errors so audit failures never break the UI.
+ */
+async function auditLog(action, table, recId, before, after) {
+    const user = getCurrentUser();
+    if (!user || !db) return;
+    try {
+        await db.from('planning_audit_log').insert({
+            user_id: user.id,
+            user_email: user.email,
+            user_role: user.role,
+            action,
+            table_name: table,
+            record_id: String(recId ?? ''),
+            data_before: before ? JSON.parse(JSON.stringify(before)) : null,
+            data_after: after ? JSON.parse(JSON.stringify(after)) : null,
+            ip_address: getCachedIP(),
+        });
+    } catch (e) {
+        console.warn('Audit log write failed (non-fatal):', e.message);
+    }
+}
+
+function populateNavbar() {
+    const user = getCurrentUser();
+    if (!user) return;
+
+    const chip = document.getElementById('navUserChip');
+    if (chip) chip.style.display = 'flex';
+
+    const avatar = document.getElementById('navUserAvatar');
+    if (avatar) avatar.textContent = (user.name || user.email).charAt(0).toUpperCase();
+
+    const nameEl = document.getElementById('navUserName');
+    if (nameEl) nameEl.textContent = user.name || user.email;
+
+    const roleBadge = document.getElementById('navRoleBadge');
+    if (roleBadge) {
+        const labels = { master_admin: 'Master Admin', admin: 'Admin', viewer: 'Viewer' };
+        roleBadge.textContent = labels[user.role] || user.role;
+        roleBadge.className = `nav-role-badge role-${user.role.replace('_', '-')}`;
+    }
+
+    const logoutBtn = document.getElementById('btnLogout');
+    if (logoutBtn) logoutBtn.style.display = 'flex';
+
+    if (isMasterAdmin()) {
+        const auditBtn = document.getElementById('btnAuditLog');
+        if (auditBtn) auditBtn.style.display = 'flex';
+        const umBtn = document.getElementById('btnUserMgmt');
+        if (umBtn) umBtn.style.display = 'flex';
+    }
+
+    // Viewer: CSS disables all edit controls
+    if (!canWrite()) document.body.classList.add('viewer-mode');
+}
+
+async function doLogout() {
+    const user = getCurrentUser();
+    if (user && db) {
+        try {
+            await db.from('planning_audit_log').insert({
+                user_id: user.id,
+                user_email: user.email,
+                user_role: user.role,
+                action: 'LOGOUT',
+                ip_address: getCachedIP(),
+            });
+        } catch (e) { /* non-fatal */ }
+    }
+    sessionStorage.removeItem(SESSION_KEY);
+    window.location.href = 'login.html';
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   CATEGORY MAP — process_station → category
+   ────────────────────────────────────────────────────────────────── */
+const CATEGORY_MAP = {
+    // Assembly
+    'Suspension': 'Assembly',
+    'Turret': 'Assembly',
+    'T/Electric (TURRET)': 'Assembly',
+    'Hyd / Sub (TURRET)': 'Assembly',
+    'H/Electric': 'Assembly',
+    'Interior': 'Assembly',
+    'Engine': 'Assembly',
+    'Turret/Gun': 'Assembly',
+    'Hydraulic': 'Assembly',
+    'Bore Sight': 'Assembly',
+    'Track': 'Assembly',
+    'Electric/Interior': 'Assembly',
+    'Automation': 'Assembly',
+    'Final Assembly': 'Assembly',
+    // Final Test
+    '#1Insp': 'Final Test',
+    'TEST RUN': 'Final Test',
+    'Performance test': 'Final Test',
+    'REPAIR': 'Final Test',
+    'CHECK': 'Final Test',
+    'Powerpack check': 'Final Test',
+    'Final Check': 'Final Test',
+    // Processing
+    'Clean/dry': 'Processing',
+    'Masking': 'Processing',
+    'Sanding': 'Processing',
+    'Painting': 'Processing',
+    'Touch-up': 'Processing',
+    'Attaching': 'Processing',
+};
+
+function getCategory(processStation) {
+    return CATEGORY_MAP[processStation] || 'Other';
+}
+let db = null;
+let barChartInst = null;
+let lineChartInst = null;
+let currentData = [];      // flat merged rows
+let activePlanId = null;    // plan row being marked complete
+
+/* ──────────────────────────────────────────────────────────────────
+   3. ENTRY POINT
+   ────────────────────────────────────────────────────────────────── */
+async function initializeApp() {
+    // ── Auth guard — redirect to login if no valid session ───────────
+    if (!getCurrentUser()) { window.location.replace('login.html'); return; }
+    populateNavbar();
+
+    startClock();
+
+    // Init Supabase client
+    try {
+        db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        setConnStatus('connected', 'Connected');
+    } catch (err) {
+        setConnStatus('error', 'Connection Error');
+        showToast('Failed to initialise Supabase. Check your credentials.', 'error');
+        console.error(err);
+        return;
+    }
+
+    wireEvents();
+
+    await loadFilters();
+    await loadData();
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   4. FILTERS
+   ────────────────────────────────────────────────────────────────── */
+async function loadFilters() {
+    try {
+        const { data: plans, error } = await db
+            .from('assembly_plan')
+            .select('vehicle, week');
+
+        if (error) throw error;
+
+        const vehicles = [...new Set(plans.map(r => r.vehicle))].sort(naturalSort);
+        const weeks = [...new Set(plans.map(r => r.week).filter(Boolean))].sort(naturalSort);
+
+        populateSelect('filterVehicle', vehicles, 'All Vehicles');
+        populateSelect('filterWeek', weeks, 'All Weeks');
+
+    } catch (err) {
+        showToast('Failed to load filter options.', 'error');
+        console.error(err);
+    }
+}
+
+function populateSelect(id, values, placeholder) {
+    const sel = document.getElementById(id);
+    const currentVal = sel.value;
+    sel.innerHTML = `<option value="">${placeholder}</option>`;
+    values.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = v;
+        sel.appendChild(opt);
+    });
+    if (currentVal) sel.value = currentVal;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   5. DATA LOADING
+   ────────────────────────────────────────────────────────────────── */
+async function loadData() {
+    try {
+        setTableLoading(true);
+
+        // Build query
+        let query = db
+            .from('assembly_plan')
+            .select(`
+        id, vehicle, vehicle_no, process_station, week,
+        start_date, end_date, remark,
+        assembly_progress (
+          id, completed, completion_date, actual_start_date, notes, updated_at
+        )
+      `);
+
+        // Vehicle filter
+        const vehicle = getVal('filterVehicle');
+        if (vehicle) query = query.eq('vehicle', vehicle);
+
+        // Week filter
+        const week = getVal('filterWeek');
+        if (week) query = query.eq('week', week);
+
+        // Time-frame filter
+        const tf = getVal('filterTimeFrame');
+        const today = todayStr();
+
+        if (tf === 'day') {
+            query = query.eq('start_date', today);
+
+        } else if (tf === 'week') {
+            const { weekStart, weekEnd } = currentWeekRange();
+            query = query.gte('start_date', weekStart).lte('start_date', weekEnd);
+
+        } else if (tf === 'month') {
+            const { monthStart, monthEnd } = currentMonthRange();
+            query = query.gte('start_date', monthStart).lte('start_date', monthEnd);
+
+        } else if (tf === 'custom') {
+            const sd = getVal('filterStartDate');
+            const ed = getVal('filterEndDate');
+            if (sd) query = query.gte('start_date', sd);
+            if (ed) query = query.lte('end_date', ed);
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+
+        // Flatten progress (take first/only row per plan)
+        currentData = data.map(plan => {
+            const prog = plan.assembly_progress && plan.assembly_progress.length > 0
+                ? plan.assembly_progress[0]
+                : null;
+            return { ...plan, progress: prog };
+        });
+
+        // Natural sort: vehicle (K9→K10→K11) → vehicle_no (M1→M2→M3) → start_date
+        currentData.sort((a, b) => {
+            const vCmp = naturalSort(a.vehicle, b.vehicle); if (vCmp !== 0) return vCmp;
+            const uCmp = naturalSort(a.vehicle_no, b.vehicle_no); if (uCmp !== 0) return uCmp;
+            return (a.start_date || '').localeCompare(b.start_date || '');
+        });
+
+        // Category filter (client-side — maps process_station → category)
+        const category = getVal('filterCategory');
+        const displayData = category
+            ? currentData.filter(r => getCategory(r.process_station) === category)
+            : currentData;
+
+        renderTable(displayData);
+        updateSummary(displayData);
+        renderCharts(displayData);
+
+        // Auto-refresh gantt with current date range
+        const gsEl = document.getElementById('ganttStart');
+        const geEl = document.getElementById('ganttEnd');
+        if (gsEl?.value && geEl?.value) {
+            renderGantt(displayData, gsEl.value, geEl.value);
+        }
+
+    } catch (err) {
+        showToast('Error loading data: ' + err.message, 'error');
+        console.error(err);
+    } finally {
+        setTableLoading(false);
+    }
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   6. STATUS CALCULATION
+   ────────────────────────────────────────────────────────────────── */
+function calculateStatus(row) {
+    const today = todayStr();
+    const completed = row.progress?.completed || false;
+    const compDate = row.progress?.completion_date || null;
+    const actualStart = row.progress?.actual_start_date || null;
+    const endDate = row.end_date;
+
+    // Completed on time: done and finished by the planned end date
+    if (completed && compDate && compDate <= endDate) return 'Completed';
+    // Late: done but finished after the planned end date
+    if (completed && compDate && compDate > endDate) return 'Late';
+    // Overdue: not done and today is past the planned end date
+    if (!completed && today > endDate) return 'Overdue';
+    // In Progress: actual start date has been entered but not yet complete
+    if (!completed && actualStart) return 'In Progress';
+    // Planned: nothing recorded yet
+    return 'Planned';
+}
+
+function delayDays(row) {
+    const completed = row.progress?.completed || false;
+    const compDate = row.progress?.completion_date || null;
+    const actualStart = row.progress?.actual_start_date || null;
+    const plannedStart = row.start_date;
+    const endDate = row.end_date;
+    const today = todayStr();
+
+    // Completed late: how many days after end date it was finished
+    if (completed && compDate && compDate > endDate) {
+        return daysBetween(endDate, compDate);
+    }
+    // Overdue: how many days past the end date without completion
+    if (!completed && today > endDate) {
+        return daysBetween(endDate, today);
+    }
+    // In Progress but started late: show start delay as a warning
+    if (!completed && actualStart && actualStart > plannedStart) {
+        return daysBetween(plannedStart, actualStart);
+    }
+    return 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   7. TABLE RENDERING
+   ────────────────────────────────────────────────────────────────── */
+function renderTable(data) {
+    const tbody = document.getElementById('tableBody');
+    document.getElementById('rowCount').textContent = `${data.length} record${data.length !== 1 ? 's' : ''}`;
+
+    if (!data.length) {
+        tbody.innerHTML = `
+      <tr>
+        <td colspan="11" class="table-empty">
+          <div class="empty-state">
+            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="6" width="36" height="36" rx="4"/><path d="M16 24h16M24 16v16"/></svg>
+            <p>No records match the current filters.</p>
+          </div>
+        </td>
+      </tr>`;
+        return;
+    }
+
+    tbody.innerHTML = data.map((row, idx) => {
+        const status = calculateStatus(row);
+        const delay = delayDays(row);
+        const badgeCls = `badge badge-${status.toLowerCase().replace(' ', '-')}`;
+        const compDate = row.progress?.completion_date || null;
+        const actualStart = row.progress?.actual_start_date || '';
+        const isDone = status === 'Completed' || status === 'Late';
+
+        // ── Delay label ───────────────────────────────────────────────
+        let delayHtml;
+        if (delay > 0 && (status === 'Late' || status === 'Overdue')) {
+            delayHtml = `<span class="delay-positive">+${delay}d</span>`;
+        } else if (delay > 0 && status === 'In Progress') {
+            delayHtml = `<span class="delay-positive" title="Started ${delay}d late">+${delay}d start</span>`;
+        } else if (status === 'Completed') {
+            delayHtml = `<span class="delay-zero">On Time</span>`;
+        } else {
+            delayHtml = `<span class="delay-none">—</span>`;
+        }
+
+        // ── Actual Start — always an editable inline date input ───────
+        const startInputHtml = `
+      <div class="inline-date-wrap">
+        <input type="date"
+          class="inline-date-input"
+          data-plan-id="${row.id}"
+          value="${actualStart}"
+          title="Actual start date" />
+        ${actualStart
+                ? `<button class="inline-icon-btn inline-start-clear" data-plan-id="${row.id}" title="Clear start date">✕</button>`
+                : ''}
+      </div>`;
+
+        // ── Completed On — text display + edit pencil + clear ✕ ──────
+        // When a date is set: show formatted date, edit button, clear button.
+        // The edit button swaps the cell contents to a live date-input on click.
+        const compCellHtml = compDate
+            ? `<div class="inline-date-wrap" id="comp-wrap-${row.id}">
+           <span class="inline-date-done" id="comp-display-${row.id}">${formatDate(compDate)}</span>
+           <button class="inline-icon-btn inline-comp-edit"
+             data-plan-id="${row.id}"
+             data-current="${compDate}"
+             title="Edit completion date">✎</button>
+           <button class="inline-icon-btn inline-comp-clear"
+             data-plan-id="${row.id}"
+             title="Clear completion date">✕</button>
+         </div>`
+            : `<div class="inline-date-wrap" id="comp-wrap-${row.id}">
+           <span class="inline-date-none">—</span>
+         </div>`;
+
+        // ── Action — Mark Complete button for non-done rows ───────────
+        const actionHtml = isDone
+            ? `<button class="btn btn-done" disabled>✓ Done</button>`
+            : `<button class="btn btn-action" data-plan-id="${row.id}" data-idx="${idx}">Mark Complete</button>`;
+
+        return `
+      <tr>
+        <td class="mono">${idx + 1}</td>
+        <td><strong>${esc(row.vehicle)}</strong></td>
+        <td class="mono">${esc(row.vehicle_no)}</td>
+        <td>${esc(row.process_station)}</td>
+        <td class="mono">${esc(row.week || '—')}</td>
+        <td class="mono">${formatDate(row.start_date)}</td>
+        <td class="mono">${formatDate(row.end_date)}</td>
+        <td>${startInputHtml}</td>
+        <td>${compCellHtml}</td>
+        <td><span class="${badgeCls}">${status}</span></td>
+        <td>${delayHtml}</td>
+        <td>${actionHtml}</td>
+      </tr>`;
+    }).join('');
+
+    // ── Actual Start: save on change ──────────────────────────────
+    tbody.querySelectorAll('.inline-date-input').forEach(input => {
+        input.addEventListener('change', () =>
+            saveActualStart(parseInt(input.dataset.planId), input.value)
+        );
+    });
+    tbody.querySelectorAll('.inline-start-clear').forEach(btn => {
+        btn.addEventListener('click', () =>
+            saveActualStart(parseInt(btn.dataset.planId), '')
+        );
+    });
+
+    // ── Completed On: edit pencil → swap display for live input ──
+    tbody.querySelectorAll('.inline-comp-edit').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const planId = parseInt(btn.dataset.planId);
+            const current = btn.dataset.current;
+            const wrap = document.getElementById(`comp-wrap-${planId}`);
+            if (!wrap) return;
+
+            // Replace wrap contents with an active date input
+            wrap.innerHTML = `
+        <input type="date"
+          class="inline-date-input inline-comp-active"
+          data-plan-id="${planId}"
+          value="${current}"
+          title="Edit completion date" />
+        <button class="inline-icon-btn inline-comp-cancel"
+          data-plan-id="${planId}"
+          data-original="${current}"
+          title="Cancel">✕</button>`;
+
+            const newInput = wrap.querySelector('.inline-comp-active');
+            newInput.focus();
+
+            newInput.addEventListener('change', () =>
+                saveCompletionDate(planId, newInput.value)
+            );
+
+            // Cancel restores original display without saving
+            wrap.querySelector('.inline-comp-cancel').addEventListener('click', () =>
+                saveCompletionDate(planId, current, /* silent */ true)
+            );
+        });
+    });
+
+    // ── Completed On: clear button ────────────────────────────────
+    tbody.querySelectorAll('.inline-comp-clear').forEach(btn => {
+        btn.addEventListener('click', () =>
+            saveCompletionDate(parseInt(btn.dataset.planId), '')
+        );
+    });
+
+    // ── Mark Complete button ──────────────────────────────────────
+    tbody.querySelectorAll('.btn-action').forEach(btn => {
+        btn.addEventListener('click', () => openCompleteModal(
+            parseInt(btn.dataset.planId),
+            parseInt(btn.dataset.idx)
+        ));
+    });
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   8. SUMMARY CARDS
+   ────────────────────────────────────────────────────────────────── */
+function updateSummary(data) {
+    const total = data.length;
+    const completed = data.filter(r => calculateStatus(r) === 'Completed').length;
+    const late = data.filter(r => calculateStatus(r) === 'Late').length;
+    const overdue = data.filter(r => calculateStatus(r) === 'Overdue').length;
+    const pct = total ? Math.round(((completed + late) / total) * 100) : 0;
+
+    animateCount('sumPlanned', total);
+    animateCount('sumCompleted', completed);
+    animateCount('sumLate', late);
+    animateCount('sumOverdue', overdue);
+    document.getElementById('sumProgress').textContent = `${pct}%`;
+    document.getElementById('progressBarFill').style.width = `${pct}%`;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   9. CHARTS
+   ────────────────────────────────────────────────────────────────── */
+function renderCharts(data) {
+    renderBarChart(data);
+    renderLineChart(data);
+}
+
+function renderBarChart(data) {
+    const vehicles = [...new Set(data.map(r => r.vehicle))].sort(naturalSort);
+
+    const counts = vehicles.map(v => {
+        const rows = data.filter(r => r.vehicle === v);
+        return {
+            planned: rows.filter(r => calculateStatus(r) === 'Planned').length,
+            completed: rows.filter(r => calculateStatus(r) === 'Completed').length,
+            late: rows.filter(r => calculateStatus(r) === 'Late').length,
+            overdue: rows.filter(r => calculateStatus(r) === 'Overdue').length,
+        };
+    });
+
+    const cfg = {
+        type: 'bar',
+        data: {
+            labels: vehicles.length ? vehicles : ['No Data'],
+            datasets: [
+                {
+                    label: 'Planned',
+                    data: counts.map(c => c.planned),
+                    backgroundColor: 'rgba(59,130,246,.75)',
+                    borderColor: '#3b82f6',
+                    borderWidth: 1,
+                    borderRadius: 4,
+                },
+                {
+                    label: 'Completed',
+                    data: counts.map(c => c.completed),
+                    backgroundColor: 'rgba(34,197,94,.75)',
+                    borderColor: '#22c55e',
+                    borderWidth: 1,
+                    borderRadius: 4,
+                },
+                {
+                    label: 'Late',
+                    data: counts.map(c => c.late),
+                    backgroundColor: 'rgba(249,115,22,.75)',
+                    borderColor: '#f97316',
+                    borderWidth: 1,
+                    borderRadius: 4,
+                },
+                {
+                    label: 'Overdue',
+                    data: counts.map(c => c.overdue),
+                    backgroundColor: 'rgba(239,68,68,.75)',
+                    borderColor: '#ef4444',
+                    borderWidth: 1,
+                    borderRadius: 4,
+                },
+            ],
+        },
+        options: chartOptions('Status Count'),
+    };
+
+    if (barChartInst) barChartInst.destroy();
+    barChartInst = new Chart(document.getElementById('barChart'), cfg);
+}
+
+function renderLineChart(data) {
+    // Build daily timeline between min start_date and today
+    if (!data.length) {
+        if (lineChartInst) lineChartInst.destroy();
+        lineChartInst = null;
+        return;
+    }
+
+    const dates = data.map(r => r.end_date).sort();
+    const minDate = dates[0];
+    const maxDate = dates[dates.length - 1];
+
+    const timeline = generateDateRange(minDate, maxDate);
+
+    // Cumulative planned (tasks whose end_date <= date)
+    const plannedCum = timeline.map(d =>
+        data.filter(r => r.end_date <= d).length
+    );
+
+    // Cumulative actual completed (tasks completed by that date)
+    const actualCum = timeline.map(d =>
+        data.filter(r => {
+            const s = calculateStatus(r);
+            const cd = r.progress?.completion_date;
+            return (s === 'Completed' || s === 'Late') && cd && cd <= d;
+        }).length
+    );
+
+    const labels = timeline.map(d => formatDate(d));
+
+    const cfg = {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                {
+                    label: 'Planned (cumulative)',
+                    data: plannedCum,
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59,130,246,.08)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: .35,
+                    pointRadius: timeline.length > 30 ? 0 : 3,
+                },
+                {
+                    label: 'Actual (cumulative)',
+                    data: actualCum,
+                    borderColor: '#22c55e',
+                    backgroundColor: 'rgba(34,197,94,.08)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: .35,
+                    pointRadius: timeline.length > 30 ? 0 : 3,
+                    borderDash: [],
+                },
+            ],
+        },
+        options: {
+            ...chartOptions('Cumulative Tasks'),
+            scales: {
+                x: {
+                    ticks: {
+                        color: '#7a8baa',
+                        font: { family: 'DM Mono', size: 10 },
+                        maxTicksLimit: 10,
+                        maxRotation: 45,
+                    },
+                    grid: { color: '#2a3350' },
+                },
+                y: {
+                    ticks: {
+                        color: '#7a8baa',
+                        font: { family: 'DM Mono', size: 11 },
+                        stepSize: 1,
+                    },
+                    grid: { color: '#2a3350' },
+                    beginAtZero: true,
+                },
+            },
+        },
+    };
+
+    if (lineChartInst) lineChartInst.destroy();
+    lineChartInst = new Chart(document.getElementById('lineChart'), cfg);
+}
+
+function chartOptions(yLabel) {
+    return {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                labels: {
+                    color: '#7a8baa',
+                    font: { family: 'Inter', size: 11 },
+                    boxWidth: 12,
+                    padding: 14,
+                },
+            },
+            tooltip: {
+                backgroundColor: '#161b27',
+                borderColor: '#2a3350',
+                borderWidth: 1,
+                titleColor: '#e2e8f4',
+                bodyColor: '#7a8baa',
+                padding: 10,
+            },
+        },
+        scales: {
+            x: {
+                ticks: { color: '#7a8baa', font: { family: 'DM Mono', size: 11 } },
+                grid: { color: '#2a3350' },
+            },
+            y: {
+                ticks: {
+                    color: '#7a8baa',
+                    font: { family: 'DM Mono', size: 11 },
+                    stepSize: 1,
+                },
+                grid: { color: '#2a3350' },
+                beginAtZero: true,
+                title: {
+                    display: true,
+                    text: yLabel,
+                    color: '#4a5575',
+                    font: { size: 10, family: 'Inter' },
+                },
+            },
+        },
+    };
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   10. MARK COMPLETE
+   ────────────────────────────────────────────────────────────────── */
+/* ──────────────────────────────────────────────────────────────────
+   10. MARK COMPLETE  /  SAVE ACTUAL START
+   ────────────────────────────────────────────────────────────────── */
+
+/**
+ * Called automatically when the inline date input changes.
+ * Pass empty string to clear the start date back to null.
+ */
+async function saveActualStart(planId, dateValue) {
+    if (!canWrite()) { showToast('Viewer accounts cannot edit data.', 'error'); return; }
+
+    const valueToSave = dateValue || null;
+
+    try {
+        // Snapshot before for audit
+        const { data: snapBefore } = await db
+            .from('assembly_progress').select('*').eq('plan_id', planId).maybeSingle();
+
+        if (snapBefore) {
+            const { error } = await db
+                .from('assembly_progress')
+                .update({ actual_start_date: valueToSave, updated_at: new Date().toISOString() })
+                .eq('id', snapBefore.id);
+            if (error) throw error;
+        } else if (valueToSave) {
+            const { error } = await db
+                .from('assembly_progress')
+                .insert({ plan_id: planId, actual_start_date: valueToSave, completed: false, updated_at: new Date().toISOString() });
+            if (error) throw error;
+        }
+
+        // Snapshot after for audit
+        const { data: snapAfter } = await db
+            .from('assembly_progress').select('*').eq('plan_id', planId).maybeSingle();
+
+        await auditLog(
+            snapBefore ? 'UPDATE' : 'INSERT',
+            'assembly_progress', planId, snapBefore || null, snapAfter || null
+        );
+
+        showToast(valueToSave ? 'Start date saved.' : 'Start date cleared.', 'success');
+        await loadData();
+
+    } catch (err) {
+        showToast('Error saving start date: ' + err.message, 'error');
+        console.error(err);
+    }
+}
+
+async function saveCompletionDate(planId, dateValue, silent = false) {
+    // silent = cancel — just reload display without writing
+    if (silent) { await loadData(); return; }
+    if (!canWrite()) { showToast('Viewer accounts cannot edit data.', 'error'); return; }
+
+    const valueToSave = dateValue || null;
+
+    try {
+        const { data: snapBefore } = await db
+            .from('assembly_progress').select('*').eq('plan_id', planId).maybeSingle();
+
+        if (snapBefore) {
+            const { error } = await db
+                .from('assembly_progress')
+                .update({ completed: !!valueToSave, completion_date: valueToSave, updated_at: new Date().toISOString() })
+                .eq('id', snapBefore.id);
+            if (error) throw error;
+        } else if (valueToSave) {
+            const { error } = await db
+                .from('assembly_progress')
+                .insert({ plan_id: planId, completed: true, completion_date: valueToSave, updated_at: new Date().toISOString() });
+            if (error) throw error;
+        }
+
+        const { data: snapAfter } = await db
+            .from('assembly_progress').select('*').eq('plan_id', planId).maybeSingle();
+
+        await auditLog(
+            snapBefore ? 'UPDATE' : 'INSERT',
+            'assembly_progress', planId, snapBefore || null, snapAfter || null
+        );
+
+        showToast(valueToSave ? 'Completion date saved.' : 'Completion date cleared.', 'success');
+        await loadData();
+
+    } catch (err) {
+        showToast('Error saving completion date: ' + err.message, 'error');
+        console.error(err);
+    }
+}
+
+function openCompleteModal(planId, idx) {
+    activePlanId = planId;
+    const row = currentData[idx];
+    const actualStart = row.progress?.actual_start_date;
+
+    document.getElementById('modalInfo').innerHTML = `
+    <strong>${esc(row.vehicle)} · ${esc(row.vehicle_no)}</strong><br>
+    ${esc(row.process_station)}<br>
+    <small>Planned: ${formatDate(row.start_date)} → ${formatDate(row.end_date)}</small>
+    ${actualStart ? `<br><small>Actual start: ${formatDate(actualStart)}</small>` : ''}
+  `;
+    document.getElementById('modalDate').value = todayStr();
+    document.getElementById('modalNotes').value = row.progress?.notes || '';
+
+    document.getElementById('modalOverlay').style.display = 'flex';
+}
+
+function closeModal() {
+    document.getElementById('modalOverlay').style.display = 'none';
+    activePlanId = null;
+}
+
+async function markComplete() {
+    if (!canWrite()) { showToast('Viewer accounts cannot edit data.', 'error'); return; }
+    if (!activePlanId) return;
+
+    const planId = activePlanId;
+    const compDate = document.getElementById('modalDate').value;
+    const notes = document.getElementById('modalNotes').value.trim();
+
+    if (!compDate) { showToast('Please select a completion date.', 'error'); return; }
+
+    closeModal();
+
+    try {
+        const { data: snapBefore } = await db
+            .from('assembly_progress').select('*').eq('plan_id', planId).maybeSingle();
+
+        const payload = {
+            plan_id: planId,
+            completed: true,
+            completion_date: compDate,
+            notes,
+            actual_start_date: snapBefore?.actual_start_date || null,
+            updated_at: new Date().toISOString(),
+        };
+
+        let opError;
+        if (snapBefore) {
+            const { error } = await db
+                .from('assembly_progress')
+                .update({ completed: true, completion_date: compDate, notes, updated_at: payload.updated_at })
+                .eq('id', snapBefore.id);
+            opError = error;
+        } else {
+            const { error } = await db.from('assembly_progress').insert(payload);
+            opError = error;
+        }
+        if (opError) throw opError;
+
+        const { data: snapAfter } = await db
+            .from('assembly_progress').select('*').eq('plan_id', planId).maybeSingle();
+
+        await auditLog(
+            snapBefore ? 'UPDATE' : 'INSERT',
+            'assembly_progress', planId, snapBefore || null, snapAfter || null
+        );
+
+        showToast('Progress saved successfully.', 'success');
+        await loadData();
+
+    } catch (err) {
+        showToast('Error saving progress: ' + err.message, 'error');
+        console.error(err);
+    }
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   11. IMPORT CSV
+   ────────────────────────────────────────────────────────────────── */
+async function importPlan() {
+    if (!canWrite()) { showToast('Viewer accounts cannot import data.', 'error'); return; }
+
+    const raw = document.getElementById('importText').value.trim();
+    if (!raw) { showToast('No data pasted.', 'error'); return; }
+
+    const lines = raw.split('\n').filter(l => l.trim());
+    const rows = [];
+
+    for (const line of lines) {
+        const parts = line.split(/,|\t/).map(p => p.trim());
+        if (parts.length < 6) continue;
+        const [vehicle, vehicle_no, process_station, week, rawStart, rawEnd, ...remarkParts] = parts;
+        const start_date = parseDateStr(rawStart);
+        const end_date = parseDateStr(rawEnd);
+        if (!start_date || !end_date) continue;
+        rows.push({ vehicle, vehicle_no, process_station, week, start_date, end_date, remark: remarkParts.join(',').trim() });
+    }
+
+    if (!rows.length) { showToast('No valid rows found. Check format.', 'error'); return; }
+
+    try {
+        const { error } = await db.from('assembly_plan').insert(rows);
+        if (error) throw error;
+
+        await auditLog('INSERT', 'assembly_plan', 'bulk-import', null,
+            { rows_added: rows.length });
+
+        showToast(`${rows.length} rows imported successfully.`, 'success');
+        document.getElementById('importText').value = '';
+        document.getElementById('importPanel').style.display = 'none';
+        await loadFilters();
+        await loadData();
+
+    } catch (err) {
+        showToast('Import error: ' + err.message, 'error');
+        console.error(err);
+    }
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   12. EVENT WIRING
+   ────────────────────────────────────────────────────────────────── */
+function wireEvents() {
+    // Filters
+    document.getElementById('btnApply').addEventListener('click', loadData);
+    document.getElementById('btnReset').addEventListener('click', resetFilters);
+
+    // Show/hide custom date fields
+    document.getElementById('filterTimeFrame').addEventListener('change', function () {
+        const isCustom = this.value === 'custom';
+        document.getElementById('customDateStart').style.display = isCustom ? '' : 'none';
+        document.getElementById('customDateEnd').style.display = isCustom ? '' : 'none';
+    });
+
+    // Import panel
+    document.getElementById('btnImport').addEventListener('click', () => {
+        const panel = document.getElementById('importPanel');
+        panel.style.display = panel.style.display === 'none' ? '' : 'none';
+    });
+    document.getElementById('btnImportSubmit').addEventListener('click', importPlan);
+    document.getElementById('btnImportCancel').addEventListener('click', () => {
+        document.getElementById('importPanel').style.display = 'none';
+    });
+
+    // Modal — Mark Complete
+    document.getElementById('modalConfirm').addEventListener('click', markComplete);
+    document.getElementById('modalCancel').addEventListener('click', closeModal);
+    document.getElementById('modalClose').addEventListener('click', closeModal);
+    document.getElementById('modalOverlay').addEventListener('click', function (e) {
+        if (e.target === this) closeModal();
+    });
+
+    // Gantt controls
+    wireGanttControls();
+
+    // Report modal
+    wireReportModal();
+
+    // ── Auth controls ────────────────────────────────────────────────
+    document.getElementById('btnLogout')?.addEventListener('click', doLogout);
+
+    // User Management (master_admin only — button hidden for others)
+    document.getElementById('btnUserMgmt')?.addEventListener('click', openUserMgmt);
+    document.getElementById('userMgmtClose')?.addEventListener('click', closeUserMgmt);
+    document.getElementById('userMgmtOverlay')?.addEventListener('click', function (e) {
+        if (e.target === this) closeUserMgmt();
+    });
+    document.getElementById('btnAddUser')?.addEventListener('click', () => openUserForm(null));
+    document.getElementById('btnUmSave')?.addEventListener('click', saveUser);
+    document.getElementById('btnUmCancel')?.addEventListener('click', closeUserForm);
+    document.getElementById('umFormClose')?.addEventListener('click', closeUserForm);
+
+    // Audit Log (master_admin only — button hidden for others)
+    document.getElementById('btnAuditLog')?.addEventListener('click', openAuditLog);
+    document.getElementById('auditLogClose')?.addEventListener('click', closeAuditLog);
+    document.getElementById('auditLogOverlay')?.addEventListener('click', function (e) {
+        if (e.target === this) closeAuditLog();
+    });
+    document.getElementById('btnAlApply')?.addEventListener('click', () => loadAuditLog(true));
+    document.getElementById('btnAlReset')?.addEventListener('click', resetAuditFilters);
+}
+
+function resetFilters() {
+    ['filterVehicle', 'filterWeek', 'filterTimeFrame', 'filterCategory'].forEach(id => {
+        document.getElementById(id).value = '';
+    });
+    document.getElementById('filterStartDate').value = '';
+    document.getElementById('filterEndDate').value = '';
+    document.getElementById('customDateStart').style.display = 'none';
+    document.getElementById('customDateEnd').style.display = 'none';
+    loadData();
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   13. UI UTILITIES
+   ────────────────────────────────────────────────────────────────── */
+function setConnStatus(state, label) {
+    const el = document.getElementById('connIndicator');
+    const lbl = el.querySelector('.conn-label');
+    el.className = `conn-indicator ${state}`;
+    lbl.textContent = label;
+}
+
+function setTableLoading(loading) {
+    const tbody = document.getElementById('tableBody');
+    if (loading) {
+        tbody.innerHTML = `
+      <tr>
+        <td colspan="11" class="table-empty">
+          <div class="empty-state">
+            <span class="spinner"></span>
+            <p>Loading data…</p>
+          </div>
+        </td>
+      </tr>`;
+    }
+}
+
+function showToast(msg, type = 'info') {
+    const container = document.getElementById('toastContainer');
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = msg;
+    container.appendChild(toast);
+
+    setTimeout(() => {
+        toast.classList.add('toast-out');
+        setTimeout(() => toast.remove(), 300);
+    }, 3500);
+}
+
+function animateCount(id, target) {
+    const el = document.getElementById(id);
+    const start = parseInt(el.textContent) || 0;
+    const dur = 400;
+    const t0 = performance.now();
+
+    function step(now) {
+        const p = Math.min((now - t0) / dur, 1);
+        el.textContent = Math.round(start + (target - start) * easeOut(p));
+        if (p < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+}
+
+function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
+
+function startClock() {
+    function tick() {
+        const now = new Date();
+        document.getElementById('headerClock').textContent =
+            now.toLocaleTimeString('en-GB', { hour12: false });
+        document.getElementById('headerDate').textContent =
+            now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    }
+    tick();
+    setInterval(tick, 1000);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   14. DATE / STRING UTILITIES
+   ────────────────────────────────────────────────────────────────── */
+
+/**
+ * Natural (numeric-aware) string comparison.
+ * "K9" < "K10" < "K11",  "M1" < "M2" < "M10"
+ * Splits each string into alternating text/number chunks and
+ * compares numbers numerically, text alphabetically.
+ */
+function naturalSort(a, b) {
+    const re = /(\d+)|(\D+)/g;
+    const tokA = String(a ?? '').match(re) || [];
+    const tokB = String(b ?? '').match(re) || [];
+    const len = Math.max(tokA.length, tokB.length);
+
+    for (let i = 0; i < len; i++) {
+        if (i >= tokA.length) return -1;
+        if (i >= tokB.length) return 1;
+        const numA = parseFloat(tokA[i]);
+        const numB = parseFloat(tokB[i]);
+        const cmp = (!isNaN(numA) && !isNaN(numB))
+            ? numA - numB
+            : tokA[i].localeCompare(tokB[i]);
+        if (cmp !== 0) return cmp;
+    }
+    return 0;
+}
+function todayStr() {
+    return new Date().toISOString().slice(0, 10);
+}
+
+function formatDate(isoStr) {
+    if (!isoStr || isoStr === '—') return '—';
+    const d = new Date(isoStr + 'T00:00:00');
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function daysBetween(from, to) {
+    const a = new Date(from + 'T00:00:00');
+    const b = new Date(to + 'T00:00:00');
+    return Math.max(0, Math.round((b - a) / 86400000));
+}
+
+function currentWeekRange() {
+    const now = new Date();
+    const day = now.getDay();            // 0=Sun … 6=Sat
+    // Work week: Sunday(0) → Thursday(4); weekend: Friday(5), Saturday(6)
+    const diff = (day === 0 ? 0 : day <= 4 ? -day : 7 - day);
+    const sun = new Date(now);
+    sun.setDate(now.getDate() + diff);
+    const thu = new Date(sun);
+    thu.setDate(sun.getDate() + 4);
+    return {
+        weekStart: sun.toISOString().slice(0, 10),
+        weekEnd: thu.toISOString().slice(0, 10),
+    };
+}
+
+function currentMonthRange() {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    const monthStart = new Date(y, m, 1).toISOString().slice(0, 10);
+    const monthEnd = new Date(y, m + 1, 0).toISOString().slice(0, 10);
+    return { monthStart, monthEnd };
+}
+
+function generateDateRange(startStr, endStr) {
+    const dates = [];
+    const cur = new Date(startStr + 'T00:00:00');
+    const end = new Date(endStr + 'T00:00:00');
+
+    while (cur <= end) {
+        dates.push(cur.toISOString().slice(0, 10));
+        cur.setDate(cur.getDate() + 1);
+    }
+    return dates;
+}
+
+/** Parse dates like "23-Feb-26", "23-Feb-2026", or ISO "2026-02-23" */
+function parseDateStr(raw) {
+    if (!raw) return null;
+    raw = raw.trim();
+
+    // Already ISO
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+    // DD-Mon-YY or DD-Mon-YYYY
+    const m = raw.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/);
+    if (m) {
+        const months = {
+            jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+            jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+        };
+        const day = m[1].padStart(2, '0');
+        const mon = months[m[2].toLowerCase()];
+        let yr = m[3];
+        if (yr.length === 2) yr = '20' + yr;
+        if (!mon) return null;
+        return `${yr}-${mon}-${day}`;
+    }
+
+    return null;
+}
+
+function getVal(id) {
+    return document.getElementById(id)?.value?.trim() || '';
+}
+
+function esc(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   15. BOOTSTRAP
+   ────────────────────────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', () => initializeApp());
+/* ================================================================
+   GANTT CHART ADDITIONS — append to bottom of app.js
+   Then apply the two small patches described at the bottom.
+   ================================================================ */
+
+/* ──────────────────────────────────────────────────────────────────
+   GANTT CONSTANTS
+   ────────────────────────────────────────────────────────────────── */
+const GANTT_LABEL_W = 220;   // px — frozen left label column width
+const GANTT_DAY_W = 36;    // px — width of each day column
+const GANTT_ROW_H = 40;    // px — unit row height
+const GANTT_GRP_H = 30;    // px — vehicle group header row height
+
+// Colour palette for process stations (cycles if > 10 unique stations)
+const GANTT_PALETTE = [
+    '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
+    '#06b6d4', '#f97316', '#84cc16', '#6366f1', '#e11d48',
+    '#0ea5e9', '#a855f7', '#d97706', '#4ade80', '#38bdf8',
+];
+const _stationColors = {};
+let _colorIdx = 0;
+
+function ganttStationColor(name) {
+    if (!_stationColors[name]) {
+        _stationColors[name] = GANTT_PALETTE[_colorIdx++ % GANTT_PALETTE.length];
+    }
+    return _stationColors[name];
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   SPECIAL BACKGROUND ZONES
+   Add / edit entries here to show coloured bands on the gantt.
+   type must match a CSS class: gc-zone-{type}
+   ────────────────────────────────────────────────────────────────── */
+const SPECIAL_ZONES = [
+    // { start: '2026-03-20', end: '2026-03-25', type: 'holiday', label: 'Public Holiday' },
+    // { start: '2026-03-26', end: '2026-04-05', type: 'fat',     label: 'FAT Period'     },
+];
+
+/* ──────────────────────────────────────────────────────────────────
+   FISCAL WEEK NUMBER  (Sunday-based — week starts Sunday)
+   ────────────────────────────────────────────────────────────────── */
+function getISOWeek(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00');
+    // Shift so Sunday = 0, and find the Sunday that starts this week
+    const day = d.getDay();             // 0=Sun … 6=Sat
+    const sun = new Date(d);
+    sun.setDate(d.getDate() - day);     // rewind to Sunday of this week
+    // Week 1 = the week containing Jan 1
+    const jan1 = new Date(sun.getFullYear(), 0, 1);
+    const jan1Day = jan1.getDay();
+    const firstSun = new Date(jan1);
+    firstSun.setDate(jan1.getDate() - jan1Day); // Sunday on or before Jan 1
+    return Math.floor((sun - firstSun) / (7 * 86400000)) + 1;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   WIRE GANTT CONTROLS  — call from wireEvents()
+   ────────────────────────────────────────────────────────────────── */
+function wireGanttControls() {
+    // Default range: first day of current month → last day 2 months out
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    const defaultStart = new Date(y, m, 1).toISOString().slice(0, 10);
+    const defaultEnd = new Date(y, m + 3, 0).toISOString().slice(0, 10);
+
+    const gsEl = document.getElementById('ganttStart');
+    const geEl = document.getElementById('ganttEnd');
+    if (gsEl) gsEl.value = defaultStart;
+    if (geEl) geEl.value = defaultEnd;
+
+    document.getElementById('btnGanttRefresh')?.addEventListener('click', () => {
+        renderGantt(currentData, gsEl?.value, geEl?.value);
+    });
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   MAIN RENDER FUNCTION
+   Call:  renderGantt(plansArray, 'YYYY-MM-DD', 'YYYY-MM-DD')
+   ────────────────────────────────────────────────────────────────── */
+function renderGantt(plans, startDate, endDate) {
+    const inner = document.getElementById('ganttInner');
+    if (!inner) return;
+
+    if (!plans?.length || !startDate || !endDate || startDate > endDate) {
+        inner.innerHTML = `
+      <div class="gantt-empty-state">
+        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="6" y="6" width="36" height="36" rx="4"/>
+          <path d="M14 18h20M14 26h12M14 34h8"/>
+        </svg>
+        <p>Load data and set a date range, then click <strong>Refresh</strong> to render the schedule.</p>
+      </div>`;
+        document.getElementById('ganttLegend').innerHTML = '';
+        return;
+    }
+
+    // ── 1. Build day array ────────────────────────────────────────
+    const days = generateDateRange(startDate, endDate); // reuse existing helper
+    const numDays = days.length;
+    const totalW = numDays * GANTT_DAY_W;
+    const innerW = GANTT_LABEL_W + totalW;
+    const today = todayStr();
+
+    // Pre-compute metadata for each day (avoid repeated Date construction)
+    const dayMeta = days.map(d => {
+        const dt = new Date(d + 'T00:00:00');
+        const dow = dt.getDay();
+        return {
+            date: d,
+            dayNum: dt.getDate(),
+            month: dt.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }),
+            isoWeek: getISOWeek(d),
+            weekend: dow === 5 || dow === 6,
+            isToday: d === today,
+        };
+    });
+
+    // Fast lookup: date string → column index
+    const dayIndex = Object.fromEntries(days.map((d, i) => [d, i]));
+
+    // ── 2. Group plans ─────────────────────────────────────────────
+    // Only include tasks that overlap the visible date range
+    const visible = plans.filter(p =>
+        p.start_date <= endDate && p.end_date >= startDate
+    );
+
+    const groups = {};
+    visible.forEach(p => {
+        if (!groups[p.vehicle]) groups[p.vehicle] = {};
+        if (!groups[p.vehicle][p.vehicle_no]) groups[p.vehicle][p.vehicle_no] = [];
+        groups[p.vehicle][p.vehicle_no].push(p);
+    });
+
+    const vehicleKeys = Object.keys(groups).sort(naturalSort);
+
+    if (!vehicleKeys.length) {
+        inner.innerHTML = `
+      <div class="gantt-empty-state">
+        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="6" y="6" width="36" height="36" rx="4"/>
+          <path d="M14 24h20M24 14v20"/>
+        </svg>
+        <p>No tasks fall within the selected date range.</p>
+      </div>`;
+        return;
+    }
+
+    // ── 3. Header HTML ─────────────────────────────────────────────
+    let mHtml = `<div class="gh-corner" style="width:${GANTT_LABEL_W}px;height:28px"></div>`;
+    let wHtml = `<div class="gh-corner" style="width:${GANTT_LABEL_W}px;height:22px"></div>`;
+    let dHtml = `<div class="gh-corner gh-corner-label" style="width:${GANTT_LABEL_W}px;height:28px">Vehicle / Unit</div>`;
+
+    let runMonth = '', runMonthSpan = 0;
+    let runWeek = -1, runWeekSpan = 0;
+
+    dayMeta.forEach((dm, i) => {
+        // Month grouping
+        if (dm.month !== runMonth) {
+            if (runMonth) {
+                mHtml += `<div class="gh-month" style="width:${runMonthSpan * GANTT_DAY_W}px">${runMonth}</div>`;
+            }
+            runMonth = dm.month; runMonthSpan = 1;
+        } else { runMonthSpan++; }
+
+        // Fiscal week grouping
+        if (dm.isoWeek !== runWeek) {
+            if (runWeek !== -1) {
+                wHtml += `<div class="gh-week" style="width:${runWeekSpan * GANTT_DAY_W}px">FW${runWeek}</div>`;
+            }
+            runWeek = dm.isoWeek; runWeekSpan = 1;
+        } else { runWeekSpan++; }
+
+        // Day cell
+        dHtml += `<div class="gh-day${dm.weekend ? ' gh-day-we' : ''}${dm.isToday ? ' gh-day-today' : ''}"
+      style="width:${GANTT_DAY_W}px;height:28px">${dm.dayNum}</div>`;
+    });
+
+    // Flush last groups
+    mHtml += `<div class="gh-month" style="width:${runMonthSpan * GANTT_DAY_W}px">${runMonth}</div>`;
+    wHtml += `<div class="gh-week"  style="width:${runWeekSpan * GANTT_DAY_W}px">FW${runWeek}</div>`;
+
+    // ── 4. Background day cells (shared template per row) ─────────
+    const bgCells = dayMeta.map(dm =>
+        `<div class="gc-cell${dm.weekend ? ' gc-cell-we' : ''}" style="width:${GANTT_DAY_W}px"></div>`
+    ).join('');
+
+    // ── 5. Special zone bands ──────────────────────────────────────
+    let zonesHtml = '';
+    SPECIAL_ZONES.forEach(z => {
+        // Clamp zone to visible range
+        const s = z.start > startDate ? z.start : startDate;
+        const e = z.end < endDate ? z.end : endDate;
+        const si = dayIndex[s];
+        const ei = dayIndex[e];
+        if (si === undefined || ei === undefined || si > ei) return;
+
+        const left = GANTT_LABEL_W + si * GANTT_DAY_W;
+        const width = (ei - si + 1) * GANTT_DAY_W;
+        zonesHtml += `
+      <div class="gc-zone gc-zone-${esc(z.type)}"
+           style="left:${left}px;width:${width}px"
+           title="${esc(z.label || z.type)}">
+        <span class="gc-zone-label">${esc(z.label || z.type)}</span>
+      </div>`;
+    });
+
+    // Today marker
+    if (dayIndex[today] !== undefined) {
+        const todayLeft = GANTT_LABEL_W + dayIndex[today] * GANTT_DAY_W + Math.floor(GANTT_DAY_W / 2);
+        zonesHtml += `<div class="gc-today-line" style="left:${todayLeft}px"></div>`;
+    }
+
+    // ── 6. Body rows ───────────────────────────────────────────────
+    let bodyHtml = zonesHtml;
+
+    vehicleKeys.forEach(vehicle => {
+        const unitKeys = Object.keys(groups[vehicle]).sort(naturalSort);
+
+        // Vehicle group header row
+        bodyHtml += `
+      <div class="gr gr-group" style="height:${GANTT_GRP_H}px">
+        <div class="gr-label gr-group-label" style="width:${GANTT_LABEL_W}px">
+          <svg class="gr-label-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect x="2" y="3" width="12" height="10" rx="1.5"/>
+            <path d="M5 8h6M5 11h4"/>
+          </svg>
+          ${esc(vehicle)}
+        </div>
+        <div class="gr-track gr-track-group" style="width:${totalW}px">${bgCells}</div>
+      </div>`;
+
+        // Unit rows
+        unitKeys.forEach(unit => {
+            const tasks = groups[vehicle][unit];
+
+            // ── Lane assignment for overlapping bars ─────────────────────
+            // Sort by start date so we process left-to-right
+            const positioned = tasks
+                .map(task => {
+                    let si = dayIndex[task.start_date] ?? (task.start_date < startDate ? 0 : null);
+                    let ei = dayIndex[task.end_date] ?? (task.end_date > endDate ? numDays - 1 : null);
+                    if (si === null || ei === null || si > ei) return null;
+                    return { task, si, ei };
+                })
+                .filter(Boolean)
+                .sort((a, b) => a.si - b.si);
+
+            // Assign each task to the lowest lane it doesn't collide with
+            const laneEndAt = [];   // laneEndAt[lane] = ei of last task placed there
+            positioned.forEach(p => {
+                let lane = 0;
+                while (laneEndAt[lane] !== undefined && laneEndAt[lane] >= p.si) lane++;
+                p.lane = lane;
+                laneEndAt[lane] = p.ei;
+            });
+
+            const numLanes = laneEndAt.length || 1;
+            const BAR_H = 22;   // px — bar height per lane
+            const BAR_GAP = 6;    // px — gap between lanes
+            const LANE_H = BAR_H + BAR_GAP;
+            const rowH = Math.max(GANTT_ROW_H, numLanes * LANE_H + BAR_GAP * 2);
+
+            // ── Build bar HTML ───────────────────────────────────────────
+            const bars = positioned.map(({ task, si, ei, lane }) => {
+                const left = si * GANTT_DAY_W;
+                const width = Math.max((ei - si + 1) * GANTT_DAY_W - 3, 6);
+                // Vertical centre of this lane
+                const topPx = BAR_GAP + lane * LANE_H + Math.floor((LANE_H - BAR_H) / 2);
+
+                const color = ganttStationColor(task.process_station);
+                const status = calculateStatus(task);
+                const actualStart = task.progress?.actual_start_date || null;
+
+                let shadow = '';
+                let extraCls = '';
+                if (status === 'Completed') shadow = `;box-shadow:0 0 0 2px #22c55e inset,0 2px 6px rgba(0,0,0,.3)`;
+                else if (status === 'Late') shadow = `;box-shadow:0 0 0 2px #ef4444 inset,0 2px 6px rgba(0,0,0,.3)`;
+                else if (status === 'Overdue') extraCls = ' gc-bar-overdue';
+                else if (status === 'In Progress') shadow = `;box-shadow:0 0 0 2px #f59e0b inset,0 2px 6px rgba(0,0,0,.3)`;
+                else shadow = `;box-shadow:0 2px 6px rgba(0,0,0,.3)`;
+
+                let actualStartMarker = '';
+                if (actualStart && dayIndex[actualStart] !== undefined) {
+                    const aIdx = dayIndex[actualStart];
+                    const tickLeft = (aIdx - si) * GANTT_DAY_W;
+                    const tickColor = actualStart > task.start_date ? '#ef4444' : '#22c55e';
+                    actualStartMarker = `<div class="gc-actual-start-tick" style="left:${tickLeft}px;border-color:${tickColor}" title="Actual start: ${formatDate(actualStart)}"></div>`;
+                }
+
+                const tip = [
+                    `${task.vehicle}  ${task.vehicle_no}`,
+                    `Station      : ${task.process_station}`,
+                    `Planned      : ${formatDate(task.start_date)} → ${formatDate(task.end_date)}`,
+                    actualStart ? `Actual Start : ${formatDate(actualStart)}` : '',
+                    task.progress?.completion_date ? `Completed    : ${formatDate(task.progress.completion_date)}` : '',
+                    `Status       : ${status}`,
+                    task.remark ? `Remark       : ${task.remark}` : '',
+                ].filter(Boolean).join('\n');
+
+                // Use absolute top instead of the old top:50% transform
+                return `<div class="gc-bar${extraCls}"
+          style="left:${left}px;width:${width}px;height:${BAR_H}px;top:${topPx}px;transform:none;background:${color}${shadow}"
+          title="${esc(tip)}">
+          ${actualStartMarker}
+          <span class="gc-bar-text">${esc(task.process_station)}</span>
+        </div>`;
+            }).join('');
+
+            bodyHtml += `
+        <div class="gr" style="height:${rowH}px">
+          <div class="gr-label gr-unit-label" style="width:${GANTT_LABEL_W}px">
+            <span class="gr-unit-dot"></span>
+            <span class="gr-unit-name">${esc(unit)}</span>
+          </div>
+          <div class="gr-track" style="width:${totalW}px;height:${rowH}px">
+            ${bgCells}
+            ${bars}
+          </div>
+        </div>`;
+        });
+    });
+
+    // ── 7. Assemble ────────────────────────────────────────────────
+    inner.innerHTML = `
+    <div class="gantt-wrap" style="min-width:${innerW}px">
+      <div class="gantt-head">
+        <div class="gh-row gh-row-month">${mHtml}</div>
+        <div class="gh-row gh-row-week">${wHtml}</div>
+        <div class="gh-row gh-row-day">${dHtml}</div>
+      </div>
+      <div class="gantt-body">${bodyHtml}</div>
+    </div>`;
+
+    // ── 8. Legend ──────────────────────────────────────────────────
+    const legend = document.getElementById('ganttLegend');
+    if (legend) {
+        legend.innerHTML = Object.entries(_stationColors).map(([name, color]) => `
+      <div class="gantt-legend-item">
+        <span class="gantt-legend-dot" style="background:${color}"></span>
+        <span class="gantt-legend-label">${esc(name)}</span>
+      </div>`).join('');
+    }
+
+    // ── 9. Show zone key bar if zones exist ────────────────────────
+    const zoneKeyEl = document.getElementById('ganttZoneKey');
+    if (zoneKeyEl) zoneKeyEl.style.display = SPECIAL_ZONES.length ? 'flex' : 'none';
+
+    // ── 10. Auto-scroll to today ───────────────────────────────────
+    if (dayIndex[today] !== undefined) {
+        const scrollRoot = document.getElementById('ganttScrollRoot');
+        if (scrollRoot) {
+            const todayPx = GANTT_LABEL_W + dayIndex[today] * GANTT_DAY_W;
+            const offset = Math.max(0, todayPx - scrollRoot.clientWidth / 2);
+            setTimeout(() => { scrollRoot.scrollLeft = offset; }, 60);
+        }
+    }
+}
+
+/* ================================================================
+   REPORT ENGINE
+   PDF  → jsPDF + jsPDF-AutoTable
+   Excel→ SheetJS (XLSX)
+   ================================================================ */
+
+/* ─── Report definitions ────────────────────────────────────────── */
+const REPORT_TYPES = {
+    full: { label: 'Full Report', filter: () => true },
+    today: { label: "Today's Plan", filter: r => r.start_date <= todayStr() && r.end_date >= todayStr() },
+    overdue: { label: 'Overdue Report', filter: r => calculateStatus(r) === 'Overdue' },
+    inprogress: { label: 'In Progress Report', filter: r => calculateStatus(r) === 'In Progress' },
+    completed: { label: 'Completed Report', filter: r => ['Completed', 'Late'].includes(calculateStatus(r)) },
+    late: { label: 'Late Completions', filter: r => calculateStatus(r) === 'Late' },
+    planned: { label: 'Not Started Report', filter: r => calculateStatus(r) === 'Planned' },
+    vehicle: {
+        label: 'By Vehicle Report', filter: r => {
+            const v = getVal('filterVehicle');
+            return v ? r.vehicle === v : true;
+        }
+    },
+};
+
+/* ─── Build the row array for a report ─────────────────────────── */
+function buildReportRows(typeKey, fromDate, toDate) {
+    const def = REPORT_TYPES[typeKey];
+    if (!def) return [];
+
+    let rows = currentData.filter(def.filter);
+
+    if (fromDate) rows = rows.filter(r => r.start_date >= fromDate);
+    if (toDate) rows = rows.filter(r => r.start_date <= toDate);
+
+    return rows;
+}
+
+/* ─── Column config ─────────────────────────────────────────────── */
+const REPORT_COLUMNS = [
+    { header: '#', key: (r, i) => i + 1 },
+    { header: 'Vehicle', key: r => r.vehicle },
+    { header: 'Unit', key: r => r.vehicle_no },
+    { header: 'Station', key: r => r.process_station },
+    { header: 'Category', key: r => getCategory(r.process_station) },
+    { header: 'Week', key: r => r.week || '—' },
+    { header: 'Planned Start', key: r => formatDate(r.start_date) },
+    { header: 'Planned End', key: r => formatDate(r.end_date) },
+    { header: 'Actual Start', key: r => r.progress?.actual_start_date ? formatDate(r.progress.actual_start_date) : '—' },
+    { header: 'Completed On', key: r => r.progress?.completion_date ? formatDate(r.progress.completion_date) : '—' },
+    { header: 'Status', key: r => calculateStatus(r) },
+    {
+        header: 'Delay (days)', key: r => {
+            const d = delayDays(r);
+            return d > 0 ? `+${d}d` : calculateStatus(r) === 'Completed' ? 'On Time' : '—';
+        }
+    },
+    { header: 'Remark', key: r => r.remark || '' },
+];
+
+/* ─── Status → colour map for PDF ──────────────────────────────── */
+const STATUS_COLORS = {
+    'Completed': [34, 197, 94],
+    'Late': [249, 115, 22],
+    'Overdue': [239, 68, 68],
+    'In Progress': [245, 158, 11],
+    'Planned': [59, 130, 246],
+};
+
+/* ─── Summary stats block ───────────────────────────────────────── */
+function buildSummaryStats(rows) {
+    const total = rows.length;
+    const completed = rows.filter(r => calculateStatus(r) === 'Completed').length;
+    const late = rows.filter(r => calculateStatus(r) === 'Late').length;
+    const overdue = rows.filter(r => calculateStatus(r) === 'Overdue').length;
+    const inProgress = rows.filter(r => calculateStatus(r) === 'In Progress').length;
+    const planned = rows.filter(r => calculateStatus(r) === 'Planned').length;
+    const pct = total ? Math.round(((completed + late) / total) * 100) : 0;
+    return { total, completed, late, overdue, inProgress, planned, pct };
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   PDF EXPORT
+   ══════════════════════════════════════════════════════════════════ */
+function exportPDF(typeKey, fromDate, toDate) {
+    const def = REPORT_TYPES[typeKey];
+    const rows = buildReportRows(typeKey, fromDate, toDate);
+
+    if (!rows.length) {
+        showToast('No data matches this report criteria.', 'error');
+        return;
+    }
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+    const PAGE_W = doc.internal.pageSize.getWidth();
+    const MARGIN = 14;
+    const now = new Date().toLocaleString('en-GB');
+    const stats = buildSummaryStats(rows);
+    const vehicle = getVal('filterVehicle') || 'All';
+
+    // ── Header band ──────────────────────────────────────────────────
+    doc.setFillColor(15, 17, 23);
+    doc.rect(0, 0, PAGE_W, 22, 'F');
+
+    doc.setTextColor(79, 142, 247);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(15);
+    doc.text('KD1 ASSEMBLY CONTROL SYSTEM', MARGIN, 10);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(120, 140, 170);
+    doc.text(def.label.toUpperCase(), MARGIN, 16);
+    doc.text(`Generated: ${now}`, PAGE_W - MARGIN, 16, { align: 'right' });
+
+    // ── Summary strip ────────────────────────────────────────────────
+    const stats_y = 26;
+    const boxes = [
+        { label: 'Total', value: stats.total, r: 220, g: 230, b: 255 },
+        { label: 'Completed', value: stats.completed, r: 34, g: 197, b: 94 },
+        { label: 'In Progress', value: stats.inProgress, r: 245, g: 158, b: 11 },
+        { label: 'Overdue', value: stats.overdue, r: 239, g: 68, b: 68 },
+        { label: 'Late', value: stats.late, r: 249, g: 115, b: 22 },
+        { label: 'Planned', value: stats.planned, r: 59, g: 130, b: 246 },
+        { label: 'Progress', value: `${stats.pct}%`, r: 120, g: 140, b: 170 },
+    ];
+
+    const boxW = (PAGE_W - MARGIN * 2) / boxes.length;
+    boxes.forEach((b, i) => {
+        const bx = MARGIN + i * boxW;
+        doc.setFillColor(b.r, b.g, b.b);
+        doc.roundedRect(bx, stats_y, boxW - 2, 14, 2, 2, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.text(String(b.value), bx + (boxW - 2) / 2, stats_y + 6, { align: 'center' });
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6.5);
+        doc.text(b.label, bx + (boxW - 2) / 2, stats_y + 11, { align: 'center' });
+    });
+
+    // Vehicle filter badge
+    if (vehicle !== 'All') {
+        doc.setFillColor(30, 37, 55);
+        doc.setTextColor(120, 140, 170);
+        doc.setFontSize(8);
+        doc.text(`Vehicle filter: ${vehicle}`, MARGIN, stats_y + 20);
+    }
+
+    // Date range note
+    let rangeNote = '';
+    if (fromDate || toDate) rangeNote = `Date range: ${fromDate || '…'} → ${toDate || '…'}`;
+    if (rangeNote) {
+        doc.setFontSize(8);
+        doc.setTextColor(120, 140, 170);
+        doc.text(rangeNote, PAGE_W - MARGIN, stats_y + 20, { align: 'right' });
+    }
+
+    // ── Table ────────────────────────────────────────────────────────
+    const tableTop = stats_y + 24;
+    const headers = REPORT_COLUMNS.map(c => c.header);
+    const body = rows.map((r, i) => REPORT_COLUMNS.map(c => String(c.key(r, i) ?? '')));
+
+    doc.autoTable({
+        startY: tableTop,
+        head: [headers],
+        body: body,
+        margin: { left: MARGIN, right: MARGIN },
+        styles: {
+            fontSize: 7.5,
+            cellPadding: 2.5,
+            font: 'helvetica',
+            textColor: [226, 232, 244],
+            fillColor: [22, 27, 39],
+            lineColor: [42, 51, 80],
+            lineWidth: 0.3,
+            overflow: 'ellipsize',
+        },
+        headStyles: {
+            fillColor: [30, 37, 55],
+            textColor: [120, 140, 170],
+            fontStyle: 'bold',
+            fontSize: 7,
+            halign: 'center',
+        },
+        alternateRowStyles: {
+            fillColor: [19, 24, 35],
+        },
+        columnStyles: {
+            0: { halign: 'center', cellWidth: 8 },   // #
+            1: { cellWidth: 16 },                      // Vehicle
+            2: { cellWidth: 14 },                      // Unit
+            3: { cellWidth: 28 },                      // Station
+            4: { cellWidth: 18 },                      // Category
+            5: { cellWidth: 12 },                      // Week
+            6: { cellWidth: 20 },                      // Planned Start
+            7: { cellWidth: 20 },                      // Planned End
+            8: { cellWidth: 20 },                      // Actual Start
+            9: { cellWidth: 20 },                      // Completed On
+            10: { halign: 'center', cellWidth: 18 },    // Status
+            11: { halign: 'center', cellWidth: 16 },    // Delay
+            12: { cellWidth: 'auto' },                  // Remark
+        },
+        didDrawCell(data) {
+            // Colour the Status cell
+            if (data.section === 'body' && data.column.index === 10) {
+                const status = data.cell.raw;
+                const clr = STATUS_COLORS[status];
+                if (clr) {
+                    doc.setFillColor(...clr);
+                    const r = data.cell.x + 1;
+                    const t = data.cell.y + 1.5;
+                    const w = data.cell.width - 2;
+                    const h = data.cell.height - 3;
+                    doc.roundedRect(r, t, w, h, 1, 1, 'F');
+                    doc.setTextColor(255, 255, 255);
+                    doc.setFontSize(6.5);
+                    doc.text(status, r + w / 2, t + h / 2 + 0.5, { align: 'center', baseline: 'middle' });
+                }
+            }
+        },
+        didDrawPage(data) {
+            // Page footer
+            const pY = doc.internal.pageSize.getHeight() - 6;
+            doc.setFontSize(7);
+            doc.setTextColor(74, 85, 117);
+            doc.text('KD1 Assembly Control System — Confidential', MARGIN, pY);
+            doc.text(
+                `Page ${data.pageNumber} of ${doc.internal.getNumberOfPages()}`,
+                PAGE_W - MARGIN, pY, { align: 'right' }
+            );
+        },
+    });
+
+    // ── Save ─────────────────────────────────────────────────────────
+    const dateSuffix = new Date().toISOString().slice(0, 10);
+    doc.save(`KD1_${def.label.replace(/\s+/g, '_')}_${dateSuffix}.pdf`);
+    showToast(`PDF exported — ${rows.length} rows`, 'success');
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   EXCEL EXPORT
+   ══════════════════════════════════════════════════════════════════ */
+function exportExcel(typeKey, fromDate, toDate) {
+    const def = REPORT_TYPES[typeKey];
+    const rows = buildReportRows(typeKey, fromDate, toDate);
+
+    if (!rows.length) {
+        showToast('No data matches this report criteria.', 'error');
+        return;
+    }
+
+    const stats = buildSummaryStats(rows);
+    const wb = XLSX.utils.book_new();
+
+    // ── Sheet 1: Data ────────────────────────────────────────────────
+    const headers = REPORT_COLUMNS.map(c => c.header);
+    const data = [
+        headers,
+        ...rows.map((r, i) => REPORT_COLUMNS.map(c => {
+            const v = c.key(r, i);
+            // Keep delay as number for Excel
+            if (c.header === 'Delay (days)') return delayDays(r) || '';
+            return v ?? '';
+        })),
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(data);
+
+    // Column widths
+    ws['!cols'] = [
+        { wch: 5 },  // #
+        { wch: 10 },  // Vehicle
+        { wch: 10 },  // Unit
+        { wch: 26 },  // Station
+        { wch: 14 },  // Category
+        { wch: 8 },  // Week
+        { wch: 14 },  // Planned Start
+        { wch: 14 },  // Planned End
+        { wch: 14 },  // Actual Start
+        { wch: 14 },  // Completed On
+        { wch: 13 },  // Status
+        { wch: 12 },  // Delay
+        { wch: 22 },  // Remark
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Report Data');
+
+    // ── Sheet 2: Summary ─────────────────────────────────────────────
+    const summaryData = [
+        ['KD1 Assembly Control System'],
+        [def.label],
+        [`Generated: ${new Date().toLocaleString('en-GB')}`],
+        [],
+        ['Metric', 'Count'],
+        ['Total Tasks', stats.total],
+        ['Completed', stats.completed],
+        ['In Progress', stats.inProgress],
+        ['Planned', stats.planned],
+        ['Overdue', stats.overdue],
+        ['Late', stats.late],
+        ['Progress %', `${stats.pct}%`],
+    ];
+
+    if (getVal('filterVehicle')) summaryData.push(['Vehicle Filter', getVal('filterVehicle')]);
+    if (fromDate || toDate) summaryData.push(['Date Range', `${fromDate || '…'} → ${toDate || '…'}`]);
+
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+    wsSummary['!cols'] = [{ wch: 20 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+    // ── Sheet 3: By Vehicle breakdown ────────────────────────────────
+    const vehicles = [...new Set(rows.map(r => r.vehicle))].sort(naturalSort);
+    const breakdownHdr = ['Vehicle', 'Total', 'Completed', 'In Progress', 'Planned', 'Overdue', 'Late', 'Progress %'];
+    const breakdownRows = vehicles.map(v => {
+        const vRows = rows.filter(r => r.vehicle === v);
+        const s = buildSummaryStats(vRows);
+        return [v, s.total, s.completed, s.inProgress, s.planned, s.overdue, s.late, `${s.pct}%`];
+    });
+
+    const wsBreakdown = XLSX.utils.aoa_to_sheet([breakdownHdr, ...breakdownRows]);
+    wsBreakdown['!cols'] = breakdownHdr.map(() => ({ wch: 14 }));
+    XLSX.utils.book_append_sheet(wb, wsBreakdown, 'By Vehicle');
+
+    // ── Save ─────────────────────────────────────────────────────────
+    const dateSuffix = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `KD1_${def.label.replace(/\s+/g, '_')}_${dateSuffix}.xlsx`);
+    showToast(`Excel exported — ${rows.length} rows across 3 sheets`, 'success');
+}
+
+/* ─── Wire the modal ────────────────────────────────────────────── */
+function wireReportModal() {
+    const overlay = document.getElementById('reportModalOverlay');
+    const close = () => { overlay.style.display = 'none'; };
+
+    document.getElementById('btnReports').addEventListener('click', () => {
+        updateReportPreview();
+        overlay.style.display = 'flex';
+    });
+    document.getElementById('reportModalClose').addEventListener('click', close);
+    document.getElementById('reportModalCancel').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+    // Live preview count when type or dates change
+    overlay.querySelectorAll('input[name="reportType"]').forEach(radio => {
+        radio.addEventListener('change', updateReportPreview);
+    });
+    document.getElementById('reportDateFrom').addEventListener('change', updateReportPreview);
+    document.getElementById('reportDateTo').addEventListener('change', updateReportPreview);
+
+    document.getElementById('btnExportPDF').addEventListener('click', () => {
+        const type = document.querySelector('input[name="reportType"]:checked')?.value || 'full';
+        exportPDF(type, getVal('reportDateFrom'), getVal('reportDateTo'));
+    });
+
+    document.getElementById('btnExportExcel').addEventListener('click', () => {
+        const type = document.querySelector('input[name="reportType"]:checked')?.value || 'full';
+        exportExcel(type, getVal('reportDateFrom'), getVal('reportDateTo'));
+    });
+}
+
+function updateReportPreview() {
+    const type = document.querySelector('input[name="reportType"]:checked')?.value || 'full';
+    const from = getVal('reportDateFrom');
+    const to = getVal('reportDateTo');
+    const count = buildReportRows(type, from, to).length;
+    const bar = document.getElementById('reportPreviewBar');
+    const cnt = document.getElementById('reportPreviewCount');
+    const hint = bar?.querySelector('.report-preview-hint');
+
+    if (cnt) cnt.textContent = `${count} task${count !== 1 ? 's' : ''} match`;
+    if (hint) hint.textContent = count ? 'Ready to export' : 'No tasks match — adjust filters or date range';
+    if (bar) bar.style.borderColor = count ? 'rgba(79,142,247,.4)' : 'rgba(239,68,68,.4)';
+}
+
+/* ================================================================
+   USER MANAGEMENT  (master_admin only)
+   ================================================================ */
+let _auditLogOffset = 0;
+const AUDIT_PAGE_SIZE = 50;
+
+function openUserMgmt() {
+    document.getElementById('userMgmtOverlay').style.display = 'flex';
+    loadUserList();
+}
+function closeUserMgmt() {
+    document.getElementById('userMgmtOverlay').style.display = 'none';
+    closeUserForm();
+}
+
+async function loadUserList() {
+    const tbody = document.getElementById('umTableBody');
+    tbody.innerHTML = `<tr><td colspan="6" class="table-empty"><div class="empty-state"><span class="spinner"></span><p>Loading…</p></div></td></tr>`;
+
+    const { data: users, error } = await db
+        .from('planning_app_users')
+        .select('id,email,full_name,role,is_active,created_at')
+        .order('created_at', { ascending: true });
+
+    if (error) {
+        tbody.innerHTML = `<tr><td colspan="6" class="table-empty"><div class="empty-state"><p>Error loading users.</p></div></td></tr>`;
+        return;
+    }
+
+    document.getElementById('umUserCount').textContent =
+        `${users.length} user${users.length !== 1 ? 's' : ''}`;
+
+    const currentUserId = getCurrentUser()?.id;
+
+    tbody.innerHTML = users.map(u => {
+        const isMe = u.id === currentUserId;
+        return `
+    <tr>
+      <td><strong>${esc(u.full_name)}</strong>${isMe ? ' <span style="font-size:.68rem;color:var(--clr-accent)">(you)</span>' : ''}</td>
+      <td class="mono" style="font-size:.8rem">${esc(u.email)}</td>
+      <td><span class="role-pill ${u.role}">${u.role.replace('_', ' ')}</span></td>
+      <td><span class="status-pill ${u.is_active ? 'active' : 'inactive'}">${u.is_active ? 'Active' : 'Inactive'}</span></td>
+      <td class="mono" style="font-size:.75rem;color:var(--clr-text-muted)">${new Date(u.created_at).toLocaleDateString('en-GB')}</td>
+      <td>
+        <div class="um-action-cell">
+          <button class="btn-um-edit" onclick="openUserForm('${u.id}')">Edit</button>
+          ${!isMe ? `<button class="btn-um-del" onclick="deleteUser('${u.id}','${esc(u.full_name)}')">Delete</button>` : ''}
+        </div>
+      </td>
+    </tr>`;
+    }).join('');
+}
+
+async function openUserForm(userId) {
+    const form = document.getElementById('umForm');
+    form.style.display = '';
+    document.getElementById('umFormTitle').textContent = userId ? 'Edit User' : 'Add New User';
+    document.getElementById('umEditId').value = userId || '';
+    document.getElementById('umFullName').value = '';
+    document.getElementById('umEmail').value = '';
+    document.getElementById('umRole').value = 'viewer';
+    document.getElementById('umPassword').value = '';
+    document.getElementById('umActive').value = 'true';
+    document.getElementById('umFormError').textContent = '';
+
+    const hint = document.getElementById('umPasswordHint');
+    if (hint) hint.style.display = userId ? 'inline' : 'none';
+
+    if (userId) {
+        const { data } = await db.from('planning_app_users').select('*').eq('id', userId).maybeSingle();
+        if (data) {
+            document.getElementById('umFullName').value = data.full_name;
+            document.getElementById('umEmail').value = data.email;
+            document.getElementById('umRole').value = data.role;
+            document.getElementById('umActive').value = String(data.is_active);
+        }
+    }
+
+    form.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function closeUserForm() {
+    document.getElementById('umForm').style.display = 'none';
+}
+
+async function saveUser() {
+    const userId = document.getElementById('umEditId').value;
+    const fullName = document.getElementById('umFullName').value.trim();
+    const email = document.getElementById('umEmail').value.trim().toLowerCase();
+    const role = document.getElementById('umRole').value;
+    const password = document.getElementById('umPassword').value;
+    const isActive = document.getElementById('umActive').value === 'true';
+    const errEl = document.getElementById('umFormError');
+    errEl.textContent = '';
+
+    if (!fullName || !email) { errEl.textContent = 'Name and email are required.'; return; }
+    if (!userId && !password) { errEl.textContent = 'Password is required for new users.'; return; }
+
+    const payload = { full_name: fullName, email, role, is_active: isActive, updated_at: new Date().toISOString() };
+    if (password) payload.password_hash = await sha256(password);
+
+    try {
+        if (userId) {
+            const { data: before } = await db.from('planning_app_users').select('*').eq('id', userId).maybeSingle();
+            const { error } = await db.from('planning_app_users').update(payload).eq('id', userId);
+            if (error) throw error;
+            const { data: after } = await db.from('planning_app_users').select('id,email,full_name,role,is_active').eq('id', userId).maybeSingle();
+            const safeBefore = { ...before }; delete safeBefore.password_hash;
+            const safeAfter = { ...after }; delete safeAfter.password_hash;
+            await auditLog('UPDATE', 'planning_app_users', userId, safeBefore, safeAfter);
+            showToast('User updated.', 'success');
+        } else {
+            payload.created_at = new Date().toISOString();
+            const { data: inserted, error } = await db.from('planning_app_users').insert(payload).select('id,email,full_name,role').single();
+            if (error) throw error;
+            await auditLog('INSERT', 'planning_app_users', inserted.id, null,
+                { email: inserted.email, full_name: inserted.full_name, role: inserted.role });
+            showToast('User created.', 'success');
+        }
+        closeUserForm();
+        loadUserList();
+    } catch (e) {
+        errEl.textContent = e.message?.includes('duplicate') ? 'Email already exists.' : (e.message || 'Save failed.');
+    }
+}
+
+async function deleteUser(userId, name) {
+    if (!confirm(`Delete user "${name}"? This cannot be undone.`)) return;
+    const { data: before } = await db.from('planning_app_users')
+        .select('id,email,full_name,role').eq('id', userId).maybeSingle();
+    const { error } = await db.from('planning_app_users').delete().eq('id', userId);
+    if (error) { showToast('Delete failed: ' + error.message, 'error'); return; }
+    await auditLog('DELETE', 'planning_app_users', userId, before, null);
+    showToast(`User "${name}" deleted.`, 'success');
+    loadUserList();
+}
+
+/* ================================================================
+   AUDIT LOG VIEWER  (master_admin only)
+   ================================================================ */
+let _auditTotal = 0;
+const _diffStore = {};
+
+function openAuditLog() {
+    document.getElementById('auditLogOverlay').style.display = 'flex';
+    _auditLogOffset = 0;
+    loadAuditLog(true);
+}
+function closeAuditLog() {
+    document.getElementById('auditLogOverlay').style.display = 'none';
+}
+
+function resetAuditFilters() {
+    document.getElementById('alFilterAction').value = '';
+    document.getElementById('alFilterTable').value = '';
+    document.getElementById('alFilterDate').value = '';
+    _auditLogOffset = 0;
+    loadAuditLog(true);
+}
+
+async function loadAuditLog(reset = false) {
+    if (reset) _auditLogOffset = 0;
+
+    const action = document.getElementById('alFilterAction').value;
+    const table = document.getElementById('alFilterTable').value;
+    const date = document.getElementById('alFilterDate').value;
+    const tbody = document.getElementById('alTableBody');
+
+    if (reset) {
+        tbody.innerHTML = `<tr><td colspan="8" class="table-empty"><div class="empty-state"><span class="spinner"></span><p>Loading…</p></div></td></tr>`;
+    }
+
+    let query = db
+        .from('planning_audit_log')
+        .select('*', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(_auditLogOffset, _auditLogOffset + AUDIT_PAGE_SIZE - 1);
+
+    if (action) query = query.eq('action', action);
+    if (table) query = query.eq('table_name', table);
+    if (date) query = query
+        .gte('created_at', date + 'T00:00:00')
+        .lte('created_at', date + 'T23:59:59');
+
+    const { data, count, error } = await query;
+
+    if (error) {
+        tbody.innerHTML = `<tr><td colspan="8" class="table-empty"><div class="empty-state"><p>Error: ${esc(error.message)}</p></div></td></tr>`;
+        return;
+    }
+
+    _auditTotal = count || 0;
+    document.getElementById('alEntryCount').textContent = `${_auditTotal} entries`;
+
+    const rows = (data || []).map((entry, idx) => {
+        const hasDiff = entry.data_before || entry.data_after;
+        const dt = new Date(entry.created_at);
+        const rowId = `al-row-${_auditLogOffset + idx}`;
+        if (hasDiff) _diffStore[rowId] = { before: entry.data_before, after: entry.data_after };
+        return `
+    <tr id="${rowId}">
+      <td class="mono" style="font-size:.75rem;white-space:nowrap">
+        ${dt.toLocaleDateString('en-GB')} ${dt.toLocaleTimeString('en-GB', { hour12: false })}
+      </td>
+      <td style="font-size:.8rem">${esc(entry.user_email)}</td>
+      <td><span class="role-pill ${entry.user_role}">${entry.user_role.replace('_', ' ')}</span></td>
+      <td><span class="al-action ${entry.action}">${entry.action}</span></td>
+      <td class="mono" style="font-size:.75rem;color:var(--clr-text-muted)">${esc(entry.table_name || '—')}</td>
+      <td class="mono" style="font-size:.75rem;color:var(--clr-text-muted)">${esc(entry.record_id || '—')}</td>
+      <td class="mono" style="font-size:.75rem;color:var(--clr-text-muted)">${esc(entry.ip_address || '—')}</td>
+      <td>
+        ${hasDiff
+                ? `<button class="al-diff-btn" onclick="toggleDiff(this,'${rowId}')">View diff</button>`
+                : '<span style="color:var(--clr-text-dim);font-size:.75rem">—</span>'}
+      </td>
+    </tr>`;
+    });
+
+    if (reset) {
+        tbody.innerHTML = rows.join('') ||
+            `<tr><td colspan="8" class="table-empty"><div class="empty-state"><p>No audit entries match the filters.</p></div></td></tr>`;
+    } else {
+        rows.forEach(r => tbody.insertAdjacentHTML('beforeend', r));
+    }
+
+    _auditLogOffset += (data?.length || 0);
+
+    const moreBtn = document.getElementById('btnAlMore');
+    if (moreBtn) {
+        moreBtn.style.display = (_auditLogOffset < _auditTotal) ? '' : 'none';
+        moreBtn.onclick = () => loadAuditLog(false);
+    }
+}
+
+function toggleDiff(btn, rowId) {
+    const existing = document.getElementById('diff-' + rowId);
+    if (existing) { existing.remove(); btn.textContent = 'View diff'; return; }
+
+    btn.textContent = 'Hide diff';
+    const { before, after } = _diffStore[rowId] || {};
+    const tr = document.getElementById(rowId);
+    const diffRow = document.createElement('tr');
+    diffRow.id = 'diff-' + rowId;
+    diffRow.className = 'al-diff-row';
+    diffRow.innerHTML = `
+    <td colspan="8">
+      <div class="al-diff-wrap">
+        <div class="al-diff-panel">
+          <h5>Before</h5>
+          <pre>${esc(before ? JSON.stringify(before, null, 2) : '(none)')}</pre>
+        </div>
+        <div class="al-diff-panel">
+          <h5>After</h5>
+          <pre>${esc(after ? JSON.stringify(after, null, 2) : '(none)')}</pre>
+        </div>
+      </div>
+    </td>`;
+    tr.insertAdjacentElement('afterend', diffRow);
+}
