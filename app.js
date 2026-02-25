@@ -123,10 +123,6 @@ const CATEGORY_MAP = {
     'Turret/Gun': 'Assembly',
     'Hydraulic': 'Assembly',
     'Bore Sight': 'Assembly',
-    'Track': 'Assembly',
-    'Electric/Interior': 'Assembly',
-    'Automation': 'Assembly',
-    'Final Assembly': 'Assembly',
     // Final Test
     '#1Insp': 'Final Test',
     'TEST RUN': 'Final Test',
@@ -423,10 +419,21 @@ function renderTable(data) {
            <span class="inline-date-none">—</span>
          </div>`;
 
+        // ── Completion note icon ─────────────────────────────────────
+        const note = row.progress?.notes || '';
+        const noteBtn = note
+            ? `<button class="btn-note-icon" data-plan-id="${row.id}" title="${esc(note)}">
+           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7">
+             <rect x="2" y="2" width="12" height="12" rx="2"/>
+             <path d="M5 6h6M5 8.5h6M5 11h4"/>
+           </svg>
+         </button>`
+            : '';
+
         // ── Action — Mark Complete button for non-done rows ───────────
         const actionHtml = isDone
-            ? `<button class="btn btn-done" disabled>✓ Done</button>`
-            : `<button class="btn btn-action" data-plan-id="${row.id}" data-idx="${idx}">Mark Complete</button>`;
+            ? `<div class="action-cell">${noteBtn}<button class="btn btn-done" disabled>✓ Done</button></div>`
+            : `<div class="action-cell">${noteBtn}<button class="btn btn-action" data-plan-id="${row.id}" data-idx="${idx}">Mark Complete</button></div>`;
 
         return `
       <tr>
@@ -496,6 +503,120 @@ function renderTable(data) {
         btn.addEventListener('click', () =>
             saveCompletionDate(parseInt(btn.dataset.planId), '')
         );
+    });
+
+    // ── Note icon — show popover on click ───────────────────────
+    tbody.querySelectorAll('.btn-note-icon').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            document.querySelectorAll('.note-popover').forEach(p => p.remove());
+
+            const planId = parseInt(btn.dataset.planId);
+            const note = btn.getAttribute('title');
+
+            const popover = document.createElement('div');
+            popover.className = 'note-popover';
+            popover.dataset.planId = planId;
+
+            function renderView() {
+                popover.innerHTML = `
+          <div class="note-popover-header">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7">
+              <rect x="2" y="2" width="12" height="12" rx="2"/>
+              <path d="M5 6h6M5 8.5h6M5 11h4"/>
+            </svg>
+            Completion Note
+            <div class="note-popover-actions">
+              <button class="note-action-btn note-edit-btn" title="Edit note">
+                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9.5 2.5l2 2L4 12H2v-2L9.5 2.5z"/></svg>
+              </button>
+              <button class="note-action-btn note-delete-btn" title="Delete note">
+                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3.5h10M5 3.5V2h4v1.5M5.5 6v5M8.5 6v5M3 3.5l.7 8h6.6l.7-8"/></svg>
+              </button>
+              <button class="note-popover-close" title="Close">✕</button>
+            </div>
+          </div>
+          <div class="note-popover-body">${esc(popover._currentNote ?? note)}</div>`;
+
+                popover.querySelector('.note-popover-close').addEventListener('click', () => popover.remove());
+
+                popover.querySelector('.note-edit-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    renderEdit();
+                });
+
+                popover.querySelector('.note-delete-btn').addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    if (!confirm('Delete this completion note?')) return;
+                    await saveNoteOnly(planId, '');
+                    btn.setAttribute('title', '');
+                    btn.closest('.action-cell').querySelector('.btn-note-icon')?.remove();
+                    popover.remove();
+                });
+            }
+
+            function renderEdit() {
+                const current = popover._currentNote ?? note;
+                popover.innerHTML = `
+          <div class="note-popover-header">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9.5 2.5l2 2L4 12H2v-2L9.5 2.5z"/></svg>
+            Edit Note
+            <button class="note-popover-close" title="Cancel">✕</button>
+          </div>
+          <div class="note-popover-edit-body">
+            <textarea class="note-edit-textarea" rows="4" placeholder="Completion note…">${esc(current)}</textarea>
+            <div class="note-edit-footer">
+              <button class="btn btn-primary btn-sm note-save-btn">Save</button>
+              <button class="btn btn-ghost btn-sm note-cancel-btn">Cancel</button>
+            </div>
+          </div>`;
+
+                const ta = popover.querySelector('.note-edit-textarea');
+                ta.focus();
+                ta.setSelectionRange(ta.value.length, ta.value.length);
+
+                popover.querySelector('.note-popover-close').addEventListener('click', () => {
+                    renderView();
+                });
+                popover.querySelector('.note-cancel-btn').addEventListener('click', () => {
+                    renderView();
+                });
+                popover.querySelector('.note-save-btn').addEventListener('click', async () => {
+                    const newNote = ta.value.trim();
+                    await saveNoteOnly(planId, newNote);
+                    popover._currentNote = newNote;
+                    btn.setAttribute('title', newNote);
+                    // If note was cleared, remove the icon button entirely and close
+                    if (!newNote) {
+                        btn.closest('.action-cell')?.querySelector('.btn-note-icon')?.remove();
+                        popover.remove();
+                        return;
+                    }
+                    renderView();
+                });
+            }
+
+            popover._currentNote = note;
+            renderView();
+
+            document.body.appendChild(popover);
+
+            // Position below the button
+            const rect = btn.getBoundingClientRect();
+            const pw = 280;
+            let left = rect.left + window.scrollX;
+            if (left + pw > window.innerWidth - 16) left = window.innerWidth - pw - 16;
+            popover.style.left = left + 'px';
+            popover.style.top = (rect.bottom + window.scrollY + 6) + 'px';
+            popover.style.width = pw + 'px';
+
+            setTimeout(() => document.addEventListener('click', function handler(ev) {
+                if (!popover.contains(ev.target)) {
+                    popover.remove();
+                    document.removeEventListener('click', handler);
+                }
+            }), 0);
+        });
     });
 
     // ── Mark Complete button ──────────────────────────────────────
@@ -655,20 +776,20 @@ function renderLineChart(data) {
             scales: {
                 x: {
                     ticks: {
-                        color: '#7a8baa',
+                        color: themeChartColors().text,
                         font: { family: 'DM Mono', size: 10 },
                         maxTicksLimit: 10,
                         maxRotation: 45,
                     },
-                    grid: { color: '#2a3350' },
+                    grid: { color: themeChartColors().grid },
                 },
                 y: {
                     ticks: {
-                        color: '#7a8baa',
+                        color: themeChartColors().text,
                         font: { family: 'DM Mono', size: 11 },
                         stepSize: 1,
                     },
-                    grid: { color: '#2a3350' },
+                    grid: { color: themeChartColors().grid },
                     beginAtZero: true,
                 },
             },
@@ -680,44 +801,45 @@ function renderLineChart(data) {
 }
 
 function chartOptions(yLabel) {
+    const c = themeChartColors();
     return {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
             legend: {
                 labels: {
-                    color: '#7a8baa',
+                    color: c.text,
                     font: { family: 'Inter', size: 11 },
                     boxWidth: 12,
                     padding: 14,
                 },
             },
             tooltip: {
-                backgroundColor: '#161b27',
-                borderColor: '#2a3350',
+                backgroundColor: c.tooltipBg,
+                borderColor: c.tooltipBdr,
                 borderWidth: 1,
-                titleColor: '#e2e8f4',
-                bodyColor: '#7a8baa',
+                titleColor: c.tooltipTtl,
+                bodyColor: c.tooltipBdy,
                 padding: 10,
             },
         },
         scales: {
             x: {
-                ticks: { color: '#7a8baa', font: { family: 'DM Mono', size: 11 } },
-                grid: { color: '#2a3350' },
+                ticks: { color: c.text, font: { family: 'DM Mono', size: 11 } },
+                grid: { color: c.grid },
             },
             y: {
                 ticks: {
-                    color: '#7a8baa',
+                    color: c.text,
                     font: { family: 'DM Mono', size: 11 },
                     stepSize: 1,
                 },
-                grid: { color: '#2a3350' },
+                grid: { color: c.grid },
                 beginAtZero: true,
                 title: {
                     display: true,
                     text: yLabel,
-                    color: '#4a5575',
+                    color: c.axisLabel,
                     font: { size: 10, family: 'Inter' },
                 },
             },
@@ -814,6 +936,38 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
 
     } catch (err) {
         showToast('Error saving completion date: ' + err.message, 'error');
+        console.error(err);
+    }
+}
+
+/**
+ * Save (or clear) just the notes field on an existing progress row.
+ * Does NOT touch completed / completion_date.
+ */
+async function saveNoteOnly(planId, noteText) {
+    const valueToSave = noteText.trim() || null;
+    try {
+        const { data: existing } = await db
+            .from('assembly_progress')
+            .select('id, notes')
+            .eq('plan_id', planId)
+            .maybeSingle();
+
+        if (existing) {
+            const before = { notes: existing.notes };
+            const { error } = await db
+                .from('assembly_progress')
+                .update({ notes: valueToSave, updated_at: new Date().toISOString() })
+                .eq('id', existing.id);
+            if (error) throw error;
+            await auditLog('UPDATE', 'assembly_progress', planId,
+                before, { notes: valueToSave });
+            showToast(valueToSave ? 'Note updated.' : 'Note deleted.', 'success');
+        } else {
+            showToast('No progress record found to update.', 'error');
+        }
+    } catch (err) {
+        showToast('Error saving note: ' + err.message, 'error');
         console.error(err);
     }
 }
@@ -1200,7 +1354,58 @@ function esc(str) {
 /* ──────────────────────────────────────────────────────────────────
    15. BOOTSTRAP
    ────────────────────────────────────────────────────────────────── */
-document.addEventListener('DOMContentLoaded', () => initializeApp());
+
+/* ================================================================
+   THEME ENGINE  — dark (default) / light
+   Preference stored in localStorage so it survives page reloads.
+   Applied on <html> via data-theme attribute to leverage CSS vars.
+   Must run synchronously before DOMContentLoaded to prevent flash.
+   ================================================================ */
+const THEME_KEY = 'kd1_theme';
+
+(function applyStoredTheme() {
+    const stored = localStorage.getItem(THEME_KEY);
+    if (stored === 'light') document.documentElement.setAttribute('data-theme', 'light');
+})();
+
+function getCurrentTheme() {
+    return document.documentElement.getAttribute('data-theme') || 'dark';
+}
+
+function setTheme(theme) {
+    if (theme === 'light') {
+        document.documentElement.setAttribute('data-theme', 'light');
+    } else {
+        document.documentElement.removeAttribute('data-theme');
+    }
+    localStorage.setItem(THEME_KEY, theme);
+    // Re-render charts with correct palette for new theme
+    if (currentData.length) renderCharts(currentData);
+}
+
+function toggleTheme() {
+    setTheme(getCurrentTheme() === 'dark' ? 'light' : 'dark');
+}
+
+/** Return the correct colour set for charts based on current theme */
+function themeChartColors() {
+    const light = getCurrentTheme() === 'light';
+    return {
+        text: light ? '#475569' : '#7a8baa',
+        grid: light ? '#e2e8f0' : '#2a3350',
+        tooltipBg: light ? '#1e293b' : '#161b27',
+        tooltipBdr: light ? '#334155' : '#2a3350',
+        tooltipTtl: light ? '#f1f5f9' : '#e2e8f4',
+        tooltipBdy: light ? '#94a3b8' : '#7a8baa',
+        axisLabel: light ? '#94a3b8' : '#4a5575',
+    };
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Wire theme toggle
+    document.getElementById('btnTheme')?.addEventListener('click', toggleTheme);
+    initializeApp();
+});
 /* ================================================================
    GANTT CHART ADDITIONS — append to bottom of app.js
    Then apply the two small patches described at the bottom.
@@ -1316,6 +1521,8 @@ function renderGantt(plans, startDate, endDate) {
             month: dt.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }),
             isoWeek: getISOWeek(d),
             weekend: dow === 5 || dow === 6,
+            isFri: dow === 5,
+            isSat: dow === 6,
             isToday: d === today,
         };
     });
@@ -1376,7 +1583,7 @@ function renderGantt(plans, startDate, endDate) {
         } else { runWeekSpan++; }
 
         // Day cell
-        dHtml += `<div class="gh-day${dm.weekend ? ' gh-day-we' : ''}${dm.isToday ? ' gh-day-today' : ''}"
+        dHtml += `<div class="gh-day${dm.isFri ? ' gh-day-fri' : dm.isSat ? ' gh-day-sat' : ''}${dm.isToday ? ' gh-day-today' : ''}"
       style="width:${GANTT_DAY_W}px;height:28px">${dm.dayNum}</div>`;
     });
 
@@ -1386,7 +1593,7 @@ function renderGantt(plans, startDate, endDate) {
 
     // ── 4. Background day cells (shared template per row) ─────────
     const bgCells = dayMeta.map(dm =>
-        `<div class="gc-cell${dm.weekend ? ' gc-cell-we' : ''}" style="width:${GANTT_DAY_W}px"></div>`
+        `<div class="gc-cell${dm.isFri ? ' gc-cell-fri' : dm.isSat ? ' gc-cell-sat' : ''}" style="width:${GANTT_DAY_W}px"></div>`
     ).join('');
 
     // ── 5. Special zone bands ──────────────────────────────────────
@@ -1585,7 +1792,7 @@ const REPORT_TYPES = {
 };
 
 /* ─── Build the row array for a report ─────────────────────────── */
-function buildReportRows(typeKey, fromDate, toDate) {
+function buildReportRows(typeKey, fromDate, toDate, category) {
     const def = REPORT_TYPES[typeKey];
     if (!def) return [];
 
@@ -1593,6 +1800,7 @@ function buildReportRows(typeKey, fromDate, toDate) {
 
     if (fromDate) rows = rows.filter(r => r.start_date >= fromDate);
     if (toDate) rows = rows.filter(r => r.start_date <= toDate);
+    if (category) rows = rows.filter(r => getCategory(r.process_station) === category);
 
     return rows;
 }
@@ -1617,6 +1825,7 @@ const REPORT_COLUMNS = [
         }
     },
     { header: 'Remark', key: r => r.remark || '' },
+    { header: 'Completion Note', key: r => r.progress?.notes || '' },
 ];
 
 /* ─── Status → colour map for PDF ──────────────────────────────── */
@@ -1641,11 +1850,11 @@ function buildSummaryStats(rows) {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   PDF EXPORT
+   PDF EXPORT  — white / print-friendly theme
    ══════════════════════════════════════════════════════════════════ */
-function exportPDF(typeKey, fromDate, toDate) {
+function exportPDF(typeKey, fromDate, toDate, category) {
     const def = REPORT_TYPES[typeKey];
-    const rows = buildReportRows(typeKey, fromDate, toDate);
+    const rows = buildReportRows(typeKey, fromDate, toDate, category);
 
     if (!rows.length) {
         showToast('No data matches this report criteria.', 'error');
@@ -1656,73 +1865,118 @@ function exportPDF(typeKey, fromDate, toDate) {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
     const PAGE_W = doc.internal.pageSize.getWidth();
+    const PAGE_H = doc.internal.pageSize.getHeight();
     const MARGIN = 14;
     const now = new Date().toLocaleString('en-GB');
     const stats = buildSummaryStats(rows);
     const vehicle = getVal('filterVehicle') || 'All';
 
-    // ── Header band ──────────────────────────────────────────────────
-    doc.setFillColor(15, 17, 23);
-    doc.rect(0, 0, PAGE_W, 22, 'F');
+    // ── White page background ─────────────────────────────────────────
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
 
-    doc.setTextColor(79, 142, 247);
+    // ── Header band — navy blue accent bar ───────────────────────────
+    doc.setFillColor(30, 58, 138);      // navy
+    doc.rect(0, 0, PAGE_W, 20, 'F');
+
+    // KD1 badge box
+    doc.setFillColor(59, 130, 246);
+    doc.roundedRect(MARGIN, 4, 18, 12, 2, 2, 'F');
+    doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(15);
-    doc.text('KD1 ASSEMBLY CONTROL SYSTEM', MARGIN, 10);
-
-    doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
-    doc.setTextColor(120, 140, 170);
-    doc.text(def.label.toUpperCase(), MARGIN, 16);
+    doc.text('KD1', MARGIN + 9, 11.5, { align: 'center' });
+
+    // Title
+    doc.setFontSize(13);
+    doc.setTextColor(255, 255, 255);
+    doc.text('Assembly Control System', MARGIN + 22, 10);
+
+    // Sub-title / report label
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(147, 197, 253);   // light blue
+    doc.text(def.label.toUpperCase(), MARGIN + 22, 16);
+
+    // Generated timestamp (right-aligned)
+    doc.setFontSize(7.5);
+    doc.setTextColor(186, 230, 253);
     doc.text(`Generated: ${now}`, PAGE_W - MARGIN, 16, { align: 'right' });
 
-    // ── Summary strip ────────────────────────────────────────────────
-    const stats_y = 26;
+    // ── Active filter chips (vehicle / category / date) ───────────────
+    let chipX = MARGIN;
+    const chipY = 24;
+    const chipH = 6;
+    const chipPad = 3;
+    const chips = [];
+    if (vehicle !== 'All') chips.push(`Vehicle: ${vehicle}`);
+    if (category) chips.push(`Category: ${category}`);
+    if (fromDate || toDate) chips.push(`Date: ${fromDate || '…'} → ${toDate || '…'}`);
+
+    chips.forEach(label => {
+        const w = doc.getTextWidth(label) + chipPad * 2;
+        doc.setFillColor(239, 246, 255);
+        doc.setDrawColor(147, 197, 253);
+        doc.roundedRect(chipX, chipY, w, chipH, 1, 1, 'FD');
+        doc.setTextColor(30, 64, 175);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(6.5);
+        doc.text(label, chipX + chipPad, chipY + chipH - 1.5);
+        chipX += w + 4;
+    });
+
+    // ── Summary stats row ─────────────────────────────────────────────
+    const stats_y = chips.length ? 34 : 26;
     const boxes = [
-        { label: 'Total', value: stats.total, r: 220, g: 230, b: 255 },
-        { label: 'Completed', value: stats.completed, r: 34, g: 197, b: 94 },
-        { label: 'In Progress', value: stats.inProgress, r: 245, g: 158, b: 11 },
-        { label: 'Overdue', value: stats.overdue, r: 239, g: 68, b: 68 },
-        { label: 'Late', value: stats.late, r: 249, g: 115, b: 22 },
-        { label: 'Planned', value: stats.planned, r: 59, g: 130, b: 246 },
-        { label: 'Progress', value: `${stats.pct}%`, r: 120, g: 140, b: 170 },
+        { label: 'Total Tasks', value: stats.total, r: 30, g: 58, b: 138 },
+        { label: 'Completed', value: stats.completed, r: 22, g: 163, b: 74 },
+        { label: 'In Progress', value: stats.inProgress, r: 217, g: 119, b: 6 },
+        { label: 'Overdue', value: stats.overdue, r: 220, g: 38, b: 38 },
+        { label: 'Late', value: stats.late, r: 234, g: 88, b: 12 },
+        { label: 'Not Started', value: stats.planned, r: 100, g: 116, b: 139 },
+        { label: 'Completion %', value: `${stats.pct}%`, r: 15, g: 118, b: 110 },
     ];
 
     const boxW = (PAGE_W - MARGIN * 2) / boxes.length;
     boxes.forEach((b, i) => {
         const bx = MARGIN + i * boxW;
+
+        // Card background
+        doc.setFillColor(248, 250, 252);
+        doc.setDrawColor(b.r, b.g, b.b);
+        doc.setLineWidth(0.4);
+        doc.roundedRect(bx, stats_y, boxW - 2, 14, 2, 2, 'FD');
+
+        // Top accent line
         doc.setFillColor(b.r, b.g, b.b);
-        doc.roundedRect(bx, stats_y, boxW - 2, 14, 2, 2, 'F');
-        doc.setTextColor(255, 255, 255);
+        doc.rect(bx, stats_y, boxW - 2, 2, 'F');
+
+        // Value
+        doc.setTextColor(b.r, b.g, b.b);
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(11);
-        doc.text(String(b.value), bx + (boxW - 2) / 2, stats_y + 6, { align: 'center' });
+        doc.text(String(b.value), bx + (boxW - 2) / 2, stats_y + 8, { align: 'center' });
+
+        // Label
+        doc.setTextColor(100, 116, 139);
         doc.setFont('helvetica', 'normal');
-        doc.setFontSize(6.5);
-        doc.text(b.label, bx + (boxW - 2) / 2, stats_y + 11, { align: 'center' });
+        doc.setFontSize(5.5);
+        doc.text(b.label.toUpperCase(), bx + (boxW - 2) / 2, stats_y + 12.5, { align: 'center' });
     });
 
-    // Vehicle filter badge
-    if (vehicle !== 'All') {
-        doc.setFillColor(30, 37, 55);
-        doc.setTextColor(120, 140, 170);
-        doc.setFontSize(8);
-        doc.text(`Vehicle filter: ${vehicle}`, MARGIN, stats_y + 20);
-    }
-
-    // Date range note
-    let rangeNote = '';
-    if (fromDate || toDate) rangeNote = `Date range: ${fromDate || '…'} → ${toDate || '…'}`;
-    if (rangeNote) {
-        doc.setFontSize(8);
-        doc.setTextColor(120, 140, 170);
-        doc.text(rangeNote, PAGE_W - MARGIN, stats_y + 20, { align: 'right' });
-    }
-
-    // ── Table ────────────────────────────────────────────────────────
-    const tableTop = stats_y + 24;
+    // ── Data table ────────────────────────────────────────────────────
+    const tableTop = stats_y + 18;
     const headers = REPORT_COLUMNS.map(c => c.header);
     const body = rows.map((r, i) => REPORT_COLUMNS.map(c => String(c.key(r, i) ?? '')));
+
+    // Status badge colours for white background (darker shades)
+    const STATUS_COLORS_LIGHT = {
+        'Completed': { bg: [220, 252, 231], text: [21, 128, 61] },
+        'Late': { bg: [255, 237, 213], text: [154, 52, 18] },
+        'Overdue': { bg: [254, 226, 226], text: [153, 27, 27] },
+        'In Progress': { bg: [254, 243, 199], text: [146, 64, 14] },
+        'Planned': { bg: [219, 234, 254], text: [30, 64, 175] },
+    };
 
     doc.autoTable({
         startY: tableTop,
@@ -1733,80 +1987,111 @@ function exportPDF(typeKey, fromDate, toDate) {
             fontSize: 7.5,
             cellPadding: 2.5,
             font: 'helvetica',
-            textColor: [226, 232, 244],
-            fillColor: [22, 27, 39],
-            lineColor: [42, 51, 80],
-            lineWidth: 0.3,
+            textColor: [30, 41, 59],       // slate-800
+            fillColor: [255, 255, 255],
+            lineColor: [226, 232, 240],    // slate-200
+            lineWidth: 0.25,
             overflow: 'ellipsize',
         },
         headStyles: {
-            fillColor: [30, 37, 55],
-            textColor: [120, 140, 170],
+            fillColor: [30, 58, 138],      // navy — matches header bar
+            textColor: [255, 255, 255],
             fontStyle: 'bold',
             fontSize: 7,
             halign: 'center',
         },
         alternateRowStyles: {
-            fillColor: [19, 24, 35],
+            fillColor: [248, 250, 252],      // slate-50
         },
         columnStyles: {
-            0: { halign: 'center', cellWidth: 8 },   // #
-            1: { cellWidth: 16 },                      // Vehicle
-            2: { cellWidth: 14 },                      // Unit
-            3: { cellWidth: 28 },                      // Station
-            4: { cellWidth: 18 },                      // Category
-            5: { cellWidth: 12 },                      // Week
-            6: { cellWidth: 20 },                      // Planned Start
-            7: { cellWidth: 20 },                      // Planned End
-            8: { cellWidth: 20 },                      // Actual Start
-            9: { cellWidth: 20 },                      // Completed On
-            10: { halign: 'center', cellWidth: 18 },    // Status
-            11: { halign: 'center', cellWidth: 16 },    // Delay
-            12: { cellWidth: 'auto' },                  // Remark
+            0: { halign: 'center', cellWidth: 8 },
+            1: { cellWidth: 16 },
+            2: { cellWidth: 14 },
+            3: { cellWidth: 28 },
+            4: { cellWidth: 18 },
+            5: { cellWidth: 12 },
+            6: { cellWidth: 20 },
+            7: { cellWidth: 20 },
+            8: { cellWidth: 20 },
+            9: { cellWidth: 20 },
+            10: { halign: 'center', cellWidth: 18 },
+            11: { halign: 'center', cellWidth: 16 },
+            12: { cellWidth: 24 },
+            13: { cellWidth: 'auto' },
         },
         didDrawCell(data) {
-            // Colour the Status cell
             if (data.section === 'body' && data.column.index === 10) {
                 const status = data.cell.raw;
-                const clr = STATUS_COLORS[status];
+                const clr = STATUS_COLORS_LIGHT[status];
                 if (clr) {
-                    doc.setFillColor(...clr);
-                    const r = data.cell.x + 1;
-                    const t = data.cell.y + 1.5;
-                    const w = data.cell.width - 2;
-                    const h = data.cell.height - 3;
-                    doc.roundedRect(r, t, w, h, 1, 1, 'F');
-                    doc.setTextColor(255, 255, 255);
-                    doc.setFontSize(6.5);
-                    doc.text(status, r + w / 2, t + h / 2 + 0.5, { align: 'center', baseline: 'middle' });
+                    // Badge background
+                    doc.setFillColor(...clr.bg);
+                    doc.setDrawColor(...clr.bg);
+                    const px = data.cell.x + 1;
+                    const py = data.cell.y + 1.5;
+                    const pw = data.cell.width - 2;
+                    const ph = data.cell.height - 3;
+                    doc.roundedRect(px, py, pw, ph, 1, 1, 'F');
+                    // Badge text
+                    doc.setTextColor(...clr.text);
+                    doc.setFont('helvetica', 'bold');
+                    doc.setFontSize(6);
+                    doc.text(status, px + pw / 2, py + ph / 2 + 0.5, { align: 'center', baseline: 'middle' });
+                }
+            }
+            // Delay cell — red text if value starts with +
+            if (data.section === 'body' && data.column.index === 11) {
+                const val = data.cell.raw;
+                if (String(val).startsWith('+')) {
+                    doc.setTextColor(153, 27, 27);
+                    doc.setFont('helvetica', 'bold');
+                    doc.setFontSize(7);
+                    doc.text(val, data.cell.x + data.cell.width / 2,
+                        data.cell.y + data.cell.height / 2 + 0.5,
+                        { align: 'center', baseline: 'middle' });
                 }
             }
         },
         didDrawPage(data) {
-            // Page footer
-            const pY = doc.internal.pageSize.getHeight() - 6;
-            doc.setFontSize(7);
-            doc.setTextColor(74, 85, 117);
-            doc.text('KD1 Assembly Control System — Confidential', MARGIN, pY);
+            // Thin navy top stripe on continuation pages
+            if (data.pageNumber > 1) {
+                doc.setFillColor(30, 58, 138);
+                doc.rect(0, 0, PAGE_W, 6, 'F');
+                doc.setTextColor(186, 230, 253);
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(6.5);
+                doc.text('KD1 Assembly Control System — ' + def.label, MARGIN, 4.5);
+            }
+            // Footer separator line
+            const pY = PAGE_H - 8;
+            doc.setDrawColor(226, 232, 240);
+            doc.setLineWidth(0.3);
+            doc.line(MARGIN, pY, PAGE_W - MARGIN, pY);
+
+            doc.setFontSize(6.5);
+            doc.setTextColor(148, 163, 184);
+            doc.setFont('helvetica', 'normal');
+            doc.text('KD1 Assembly Control System — Confidential', MARGIN, pY + 3.5);
             doc.text(
                 `Page ${data.pageNumber} of ${doc.internal.getNumberOfPages()}`,
-                PAGE_W - MARGIN, pY, { align: 'right' }
+                PAGE_W - MARGIN, pY + 3.5, { align: 'right' }
             );
         },
     });
 
     // ── Save ─────────────────────────────────────────────────────────
+    const catSuffix = category ? `_${category.replace(/\s+/g, '_')}` : '';
     const dateSuffix = new Date().toISOString().slice(0, 10);
-    doc.save(`KD1_${def.label.replace(/\s+/g, '_')}_${dateSuffix}.pdf`);
+    doc.save(`KD1_${def.label.replace(/\s+/g, '_')}${catSuffix}_${dateSuffix}.pdf`);
     showToast(`PDF exported — ${rows.length} rows`, 'success');
 }
 
 /* ══════════════════════════════════════════════════════════════════
    EXCEL EXPORT
    ══════════════════════════════════════════════════════════════════ */
-function exportExcel(typeKey, fromDate, toDate) {
+function exportExcel(typeKey, fromDate, toDate, category) {
     const def = REPORT_TYPES[typeKey];
-    const rows = buildReportRows(typeKey, fromDate, toDate);
+    const rows = buildReportRows(typeKey, fromDate, toDate, category);
 
     if (!rows.length) {
         showToast('No data matches this report criteria.', 'error');
@@ -1866,6 +2151,7 @@ function exportExcel(typeKey, fromDate, toDate) {
     ];
 
     if (getVal('filterVehicle')) summaryData.push(['Vehicle Filter', getVal('filterVehicle')]);
+    if (category) summaryData.push(['Category Filter', category]);
     if (fromDate || toDate) summaryData.push(['Date Range', `${fromDate || '…'} → ${toDate || '…'}`]);
 
     const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
@@ -1887,7 +2173,8 @@ function exportExcel(typeKey, fromDate, toDate) {
 
     // ── Save ─────────────────────────────────────────────────────────
     const dateSuffix = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `KD1_${def.label.replace(/\s+/g, '_')}_${dateSuffix}.xlsx`);
+    const catSuffix2 = category ? `_${category.replace(/\s+/g, '_')}` : '';
+    XLSX.writeFile(wb, `KD1_${def.label.replace(/\s+/g, '_')}${catSuffix2}_${dateSuffix}.xlsx`);
     showToast(`Excel exported — ${rows.length} rows across 3 sheets`, 'success');
 }
 
@@ -1904,21 +2191,22 @@ function wireReportModal() {
     document.getElementById('reportModalCancel').addEventListener('click', close);
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
-    // Live preview count when type or dates change
+    // Live preview count when type, dates, or category change
     overlay.querySelectorAll('input[name="reportType"]').forEach(radio => {
         radio.addEventListener('change', updateReportPreview);
     });
     document.getElementById('reportDateFrom').addEventListener('change', updateReportPreview);
     document.getElementById('reportDateTo').addEventListener('change', updateReportPreview);
+    document.getElementById('reportCategory').addEventListener('change', updateReportPreview);
 
     document.getElementById('btnExportPDF').addEventListener('click', () => {
         const type = document.querySelector('input[name="reportType"]:checked')?.value || 'full';
-        exportPDF(type, getVal('reportDateFrom'), getVal('reportDateTo'));
+        exportPDF(type, getVal('reportDateFrom'), getVal('reportDateTo'), getVal('reportCategory'));
     });
 
     document.getElementById('btnExportExcel').addEventListener('click', () => {
         const type = document.querySelector('input[name="reportType"]:checked')?.value || 'full';
-        exportExcel(type, getVal('reportDateFrom'), getVal('reportDateTo'));
+        exportExcel(type, getVal('reportDateFrom'), getVal('reportDateTo'), getVal('reportCategory'));
     });
 }
 
@@ -1926,12 +2214,14 @@ function updateReportPreview() {
     const type = document.querySelector('input[name="reportType"]:checked')?.value || 'full';
     const from = getVal('reportDateFrom');
     const to = getVal('reportDateTo');
-    const count = buildReportRows(type, from, to).length;
+    const category = getVal('reportCategory');
+    const count = buildReportRows(type, from, to, category).length;
     const bar = document.getElementById('reportPreviewBar');
     const cnt = document.getElementById('reportPreviewCount');
     const hint = bar?.querySelector('.report-preview-hint');
 
-    if (cnt) cnt.textContent = `${count} task${count !== 1 ? 's' : ''} match`;
+    const catLabel = category ? ` · ${category}` : '';
+    if (cnt) cnt.textContent = `${count} task${count !== 1 ? 's' : ''} match${catLabel}`;
     if (hint) hint.textContent = count ? 'Ready to export' : 'No tasks match — adjust filters or date range';
     if (bar) bar.style.borderColor = count ? 'rgba(79,142,247,.4)' : 'rgba(239,68,68,.4)';
 }

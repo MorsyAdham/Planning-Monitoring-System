@@ -10,9 +10,16 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Inter:wght@300;400;500;600&display=swap"
         rel="stylesheet" />
-        
-    <link rel="icon" type="image/png" href="favicon.png">
     <link rel="stylesheet" href="styles.css" />
+    <!-- ── Apply stored theme before first paint (prevents flash) ── -->
+    <script>
+        (function () {
+            try {
+                if (localStorage.getItem('kd1_theme') === 'light')
+                    document.documentElement.setAttribute('data-theme', 'light');
+            } catch (e) { }
+        })();
+    </script>
     <!-- ── Auth guard: redirect to login before anything else loads ── -->
     <script>
         (function () {
@@ -32,11 +39,24 @@
             <div class="header-brand">
                 <div class="brand-badge">KD1</div>
                 <div class="brand-text">
-                    <span class="brand-title">Assembly Control</span>
+                    <span class="brand-title">Production Planning Control</span>
                     <span class="brand-sub">Plan vs Actual Tracking System</span>
                 </div>
             </div>
             <div class="header-meta">
+                <!-- Theme toggle -->
+                <button class="btn-theme" id="btnTheme" title="Toggle light / dark theme">
+                    <!-- Sun — shown in dark mode -->
+                    <svg class="icon-sun" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <circle cx="10" cy="10" r="4" />
+                        <path
+                            d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42" />
+                    </svg>
+                    <!-- Moon — shown in light mode -->
+                    <svg class="icon-moon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <path d="M17.5 12A7.5 7.5 0 018 2.5a7.5 7.5 0 100 15 7.5 7.5 0 009.5-5.5z" />
+                    </svg>
+                </button>
                 <div class="header-clock" id="headerClock">--:--:--</div>
                 <div class="header-date" id="headerDate">--</div>
                 <div class="conn-indicator" id="connIndicator">
@@ -457,14 +477,26 @@
                         </div>
                     </div>
 
-                    <!-- Date range (optional) -->
-                    <div class="form-group">
-                        <label class="form-label">Date Range <span class="form-label-optional">(optional — filters by
-                                planned start)</span></label>
-                        <div class="report-date-row">
-                            <input type="date" id="reportDateFrom" class="filter-control" placeholder="From" />
-                            <span class="report-date-sep">→</span>
-                            <input type="date" id="reportDateTo" class="filter-control" placeholder="To" />
+                    <!-- Date range + Category filter row -->
+                    <div class="report-filter-row">
+                        <div class="form-group" style="flex:1">
+                            <label class="form-label">Date Range <span class="form-label-optional">(optional — filters
+                                    by planned start)</span></label>
+                            <div class="report-date-row">
+                                <input type="date" id="reportDateFrom" class="filter-control" placeholder="From" />
+                                <span class="report-date-sep">→</span>
+                                <input type="date" id="reportDateTo" class="filter-control" placeholder="To" />
+                            </div>
+                        </div>
+                        <div class="form-group" style="min-width:180px">
+                            <label class="form-label">Category <span
+                                    class="form-label-optional">(optional)</span></label>
+                            <select id="reportCategory" class="filter-control">
+                                <option value="">All Categories</option>
+                                <option value="Assembly">Assembly</option>
+                                <option value="Final Test">Final Test</option>
+                                <option value="Processing">Processing</option>
+                            </select>
                         </div>
                     </div>
 
