@@ -123,6 +123,10 @@ const CATEGORY_MAP = {
     'Turret/Gun': 'Assembly',
     'Hydraulic': 'Assembly',
     'Bore Sight': 'Assembly',
+    'Track': 'Assembly',
+    'Electric/Interior': 'Assembly',
+    'Automation': 'Assembly',
+    'Final Assembly': 'Assembly',
     // Final Test
     '#1Insp': 'Final Test',
     'TEST RUN': 'Final Test',
