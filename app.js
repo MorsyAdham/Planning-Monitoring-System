@@ -113,6 +113,37 @@ async function doLogout() {
     window.location.href = 'login.html';
 }
 
+
+/* ──────────────────────────────────────────────────────────────────
+   STATION CODE LOOKUP
+   Returns the station code (A01, A02, …) for a given
+   process_station name + vehicle type.
+   ────────────────────────────────────────────────────────────────── */
+const _STATION_CODES = {
+    'Suspension': 'A01',
+    'Interior': 'A03',
+    'Turret/Gun': 'A05/A11',
+    'Hydraulic': 'A06',
+    'Bore Sight': 'A07',
+    'Turret': 'A08',
+    'T/Electric (TURRET)': 'A09',
+    'Hyd / Sub (TURRET)': 'A10',
+    'Electric/Interior': 'A12',
+    'Automation': 'A14',
+    'Final Assembly': 'A15',
+};
+
+function getStationCode(station, vehicle) {
+    if (_STATION_CODES[station]) return _STATION_CODES[station];
+    const isK9 = /K9/i.test(String(vehicle || ''));
+    // H/Electric → A02 (K9), Track → A02 (K10/K11)
+    if (station === 'H/Electric') return isK9 ? 'A02' : '';
+    if (station === 'Track') return isK9 ? '' : 'A02';
+    // Engine → A04 (K9), A13 (K10/K11)
+    if (station === 'Engine') return isK9 ? 'A04' : 'A13';
+    return '';
+}
+
 /* ──────────────────────────────────────────────────────────────────
    CATEGORY MAP — process_station → category
    ────────────────────────────────────────────────────────────────── */
@@ -177,12 +208,6 @@ const STATION_DEFAULTS = {
     'Final Check': 1,
     // Processing
     'Processing': 5,
-    'Clean/dry': 1,
-    'Masking': 1,
-    'Sanding': 1,
-    'Painting': 1,
-    'Touch-up': 1,
-    'Attaching': 1,
 };
 
 function getCategory(processStation) {
@@ -386,18 +411,34 @@ async function loadData() {
         }
         const data = allData;
 
-        // Flatten progress (take first/only row per plan)
+        // Flatten progress — handle both array (old) and single object (new, after UNIQUE constraint)
+        // PostgREST returns a single object instead of array when it detects a 1:1 relationship
         currentData = data.map(plan => {
-            const prog = plan.assembly_progress && plan.assembly_progress.length > 0
-                ? plan.assembly_progress[0]
-                : null;
+            const raw = plan.assembly_progress;
+            let prog = null;
+            if (raw) {
+                if (Array.isArray(raw)) {
+                    // Legacy: array of rows — take most recently updated
+                    if (raw.length > 0) {
+                        prog = raw.slice().sort((a, b) =>
+                            (b.updated_at || '').localeCompare(a.updated_at || '')
+                        )[0];
+                    }
+                } else if (typeof raw === 'object') {
+                    // PostgREST 1:1 mode: single object returned directly
+                    prog = raw;
+                }
+            }
             return { ...plan, progress: prog };
         });
 
-        // Natural sort: vehicle (K9→K10→K11) → vehicle_no (M1→M2→M3) → start_date
+        // Sort: vehicle → unit → week (numeric FW01…) → planned start_date
         currentData.sort((a, b) => {
             const vCmp = vehicleSort(a.vehicle, b.vehicle); if (vCmp !== 0) return vCmp;
             const uCmp = naturalSort(a.vehicle_no, b.vehicle_no); if (uCmp !== 0) return uCmp;
+            const wA = parseInt((a.week || '').replace(/\D/g, ''), 10) || 9999;
+            const wB = parseInt((b.week || '').replace(/\D/g, ''), 10) || 9999;
+            if (wA !== wB) return wA - wB;
             return (a.start_date || '').localeCompare(b.start_date || '');
         });
 
@@ -482,7 +523,7 @@ function renderTable(data) {
     if (!data.length) {
         tbody.innerHTML = `
       <tr>
-        <td colspan="11" class="table-empty">
+        <td colspan="13" class="table-empty">
           <div class="empty-state">
             <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="6" width="36" height="36" rx="4"/><path d="M16 24h16M24 16v16"/></svg>
             <p>No records match the current filters.</p>
@@ -565,6 +606,7 @@ function renderTable(data) {
         <td><strong>${esc(row.vehicle)}</strong></td>
         <td class="mono">${esc(row.vehicle_no)}</td>
         <td>${esc(row.process_station)}</td>
+        <td class="mono station-code-cell">${getStationCode(row.process_station, row.vehicle) || '—'}</td>
         <td class="mono">${esc(row.week || '—')}</td>
         <td class="mono">${formatDate(row.start_date)}</td>
         <td class="mono">${formatDate(row.end_date)}</td>
@@ -1101,8 +1143,8 @@ function renderBarChart(data) {
                 {
                     label: 'Late',
                     data: counts.map(c => c.late),
-                    backgroundColor: 'rgba(249,115,22,.75)',
-                    borderColor: '#f97316',
+                    backgroundColor: 'rgba(139,92,246,.75)',
+                    borderColor: '#8b5cf6',
                     borderWidth: 1,
                     borderRadius: 4,
                 },
@@ -1274,9 +1316,17 @@ async function saveActualStart(planId, dateValue) {
     const valueToSave = dateValue || null;
 
     try {
-        // Snapshot before for audit
-        const { data: snapBefore } = await db
-            .from('assembly_progress').select('*').eq('plan_id', planId).maybeSingle();
+        // Fetch ALL rows for this plan_id — guard against duplicate rows
+        const { data: allRows } = await db
+            .from('assembly_progress').select('*').eq('plan_id', planId).order('updated_at', { ascending: false });
+
+        const snapBefore = allRows?.[0] || null;
+
+        // If duplicates exist, delete the extras to keep the table clean
+        if (allRows && allRows.length > 1) {
+            const extraIds = allRows.slice(1).map(r => r.id);
+            await db.from('assembly_progress').delete().in('id', extraIds);
+        }
 
         if (snapBefore) {
             const { error } = await db
@@ -1325,8 +1375,15 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
     const valueToSave = dateValue || null;
 
     try {
-        const { data: snapBefore } = await db
-            .from('assembly_progress').select('*').eq('plan_id', planId).maybeSingle();
+        const { data: allRowsC } = await db
+            .from('assembly_progress').select('*').eq('plan_id', planId).order('updated_at', { ascending: false });
+
+        const snapBefore = allRowsC?.[0] || null;
+
+        if (allRowsC && allRowsC.length > 1) {
+            const extraIds = allRowsC.slice(1).map(r => r.id);
+            await db.from('assembly_progress').delete().in('id', extraIds);
+        }
 
         if (snapBefore) {
             const { error } = await db
@@ -1400,7 +1457,8 @@ async function saveNoteOnly(planId, noteText) {
 
 function openCompleteModal(planId, idx) {
     activePlanId = planId;
-    const row = currentData[idx];
+    // Always look up by planId — idx can drift after in-place re-renders
+    const row = currentData.find(t => t.id === planId) || currentData[idx];
     const actualStart = row.progress?.actual_start_date;
 
     document.getElementById('modalInfo').innerHTML = `
@@ -1433,8 +1491,15 @@ async function markComplete() {
     closeModal();
 
     try {
-        const { data: snapBefore } = await db
-            .from('assembly_progress').select('*').eq('plan_id', planId).maybeSingle();
+        const { data: allRowsM } = await db
+            .from('assembly_progress').select('*').eq('plan_id', planId).order('updated_at', { ascending: false });
+
+        const snapBefore = allRowsM?.[0] || null;
+
+        if (allRowsM && allRowsM.length > 1) {
+            const extraIds = allRowsM.slice(1).map(r => r.id);
+            await db.from('assembly_progress').delete().in('id', extraIds);
+        }
 
         const payload = {
             plan_id: planId,
@@ -1642,7 +1707,7 @@ function setTableLoading(loading) {
     if (loading) {
         tbody.innerHTML = `
       <tr>
-        <td colspan="11" class="table-empty">
+        <td colspan="13" class="table-empty">
           <div class="empty-state">
             <span class="spinner"></span>
             <p>Loading data…</p>
@@ -2389,8 +2454,8 @@ const REPORT_COLUMNS = [
 /* ─── Status → colour map for PDF ──────────────────────────────── */
 const STATUS_COLORS = {
     'Completed': [34, 197, 94],
-    'Late Completion': [249, 115, 22],
-    'Overdue': [239, 68, 68],
+    'Late Completion': [139, 92, 246],  // purple — matches VPX dot
+    'Overdue': [220, 38, 38],
     'In Progress': [245, 158, 11],
     'Planned': [59, 130, 246],
 };
@@ -2490,7 +2555,7 @@ function exportPDF(typeKey, fromDate, toDate, category) {
         { label: 'Completed', value: stats.completed, r: 22, g: 163, b: 74 },
         { label: 'In Progress', value: stats.inProgress, r: 217, g: 119, b: 6 },
         { label: 'Overdue', value: stats.overdue, r: 220, g: 38, b: 38 },
-        { label: 'Late Completion', value: stats.late, r: 234, g: 88, b: 12 },
+        { label: 'Late Completion', value: stats.late, r: 139, g: 92, b: 246 },
         { label: 'Not Started', value: stats.planned, r: 100, g: 116, b: 139 },
         { label: 'Completion %', value: `${stats.pct}%`, r: 15, g: 118, b: 110 },
     ];
@@ -2530,7 +2595,7 @@ function exportPDF(typeKey, fromDate, toDate, category) {
     // Status badge colours for white background (darker shades)
     const STATUS_COLORS_LIGHT = {
         'Completed': { bg: [220, 252, 231], text: [21, 128, 61] },
-        'Late Completion': { bg: [255, 237, 213], text: [154, 52, 18] },
+        'Late Completion': { bg: [237, 233, 254], text: [109, 40, 217] },  // purple
         'Overdue': { bg: [254, 226, 226], text: [153, 27, 27] },
         'In Progress': { bg: [254, 243, 199], text: [146, 64, 14] },
         'Planned': { bg: [219, 234, 254], text: [30, 64, 175] },
@@ -2788,7 +2853,7 @@ function exportVpxPDF() {
     const legend = [
         { label: 'On Schedule', r: 34, g: 197, b: 94 },
         { label: 'In Progress', r: 245, g: 158, b: 11 },
-        { label: 'Late Completion', r: 249, g: 115, b: 22 },
+        { label: 'Late Completion', r: 139, g: 92, b: 246 },
         { label: 'Overdue', r: 220, g: 38, b: 38 },
         { label: 'Planned', r: 148, g: 163, b: 184 },
     ];
@@ -2825,11 +2890,11 @@ function exportVpxPDF() {
 
     // Status colour helper
     function statusDotRGB(status) {
-        if (status === 'Completed') return [34, 197, 94];
-        if (status === 'In Progress') return [245, 158, 11];
-        if (status === 'Late Completion') return [249, 115, 22];
-        if (status === 'Overdue') return [220, 38, 38];
-        return [148, 163, 184];  // Planned
+        if (status === 'Completed') return [34, 197, 94];   // green
+        if (status === 'In Progress') return [245, 158, 11];   // amber
+        if (status === 'Late Completion') return [139, 92, 246];   // purple — matches VPX dot
+        if (status === 'Overdue') return [220, 38, 38];   // red
+        return [148, 163, 184];                                      // grey — Planned
     }
 
     // Column header

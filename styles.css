@@ -672,6 +672,7 @@ body {
 
 .table-responsive {
     overflow-x: auto;
+    overflow-y: auto;
     max-height: 500px;
 }
 
@@ -3814,4 +3815,17 @@ th.vpx-grp-processing:first-of-type {
     gap: 10px;
     padding: 14px 20px;
     border-bottom: 1px solid var(--clr-border);
+}
+
+/* ── Station code cell in assembly plan table ──────────────────── */
+.station-code-cell {
+    font-size: .72rem;
+    font-weight: 600;
+    color: var(--clr-accent);
+    letter-spacing: .04em;
+    white-space: nowrap;
+}
+
+[data-theme="light"] .station-code-cell {
+    color: #1d4ed8;
 }

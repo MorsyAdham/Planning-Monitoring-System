@@ -40,7 +40,7 @@
             <div class="header-brand">
                 <div class="brand-badge">KD1</div>
                 <div class="brand-text">
-                    <span class="brand-title">Production Plan Control</span>
+                    <span class="brand-title">Assembly Control</span>
                     <span class="brand-sub">Plan vs Actual Tracking System</span>
                 </div>
             </div>
@@ -429,7 +429,8 @@
                             <path d="M15 15l-3-3" />
                         </svg>
                         <input type="text" id="tableSearch" class="table-search-input"
-                            placeholder="Search vehicle, unit, station…" autocomplete="off" />
+                            placeholder="Search vehicle, unit, station…" autocomplete="off" name="table-search-x"
+                            role="searchbox" />
                     </div>
                     <div class="table-actions-header">
                         <span class="row-count" id="rowCount">0 records</span>
@@ -473,6 +474,7 @@
                                 <th>Vehicle</th>
                                 <th>Unit</th>
                                 <th>Station / Process</th>
+                                <th>Code</th>
                                 <th>Week</th>
                                 <th>Planned Start</th>
                                 <th>Planned End</th>
@@ -485,7 +487,7 @@
                         </thead>
                         <tbody id="tableBody">
                             <tr>
-                                <td colspan="11" class="table-empty">
+                                <td colspan="13" class="table-empty">
                                     <div class="empty-state">
                                         <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
                                             <rect x="6" y="6" width="36" height="36" rx="4" />
@@ -715,51 +717,53 @@
 
                     <!-- Add / Edit form (hidden by default) -->
                     <div class="um-form" id="umForm" style="display:none">
-                        <div class="um-form-header">
-                            <span id="umFormTitle">Add New User</span>
-                            <button class="modal-close" id="umFormClose">&#x2715;</button>
-                        </div>
-                        <div class="um-form-body">
-                            <input type="hidden" id="umEditId" />
-                            <div class="um-form-grid">
-                                <div class="form-group">
-                                    <label class="form-label" for="umFullName">Full Name</label>
-                                    <input type="text" id="umFullName" class="filter-control" placeholder="John Doe" />
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label" for="umEmail">Email</label>
-                                    <input type="email" id="umEmail" class="filter-control"
-                                        placeholder="user@example.com" />
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label" for="umRole">Role</label>
-                                    <select id="umRole" class="filter-control">
-                                        <option value="viewer">Viewer — read only</option>
-                                        <option value="planner">Planner — edit plan schedule</option>
-                                        <option value="admin">Admin — edit data &amp; plan</option>
-                                        <option value="master_admin">Master Admin — full access</option>
-                                    </select>
-                                </div>
-                                <div class="form-group" id="umPasswordGroup">
-                                    <label class="form-label" for="umPassword">Password <span id="umPasswordHint"
-                                            class="form-label-optional">(leave blank to keep current)</span></label>
-                                    <input type="password" id="umPassword" class="filter-control"
-                                        placeholder="••••••••" />
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label" for="umActive">Account Status</label>
-                                    <select id="umActive" class="filter-control">
-                                        <option value="true">Active</option>
-                                        <option value="false">Inactive</option>
-                                    </select>
+                        <form autocomplete="off" onsubmit="return false">
+                            <div class="um-form-header">
+                                <span id="umFormTitle">Add New User</span>
+                                <button class="modal-close" id="umFormClose">&#x2715;</button>
+                            </div>
+                            <div class="um-form-body">
+                                <input type="hidden" id="umEditId" />
+                                <div class="um-form-grid">
+                                    <div class="form-group">
+                                        <label class="form-label" for="umFullName">Full Name</label>
+                                        <input type="text" id="umFullName" class="filter-control"
+                                            placeholder="John Doe" />
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label" for="umEmail">Email</label>
+                                        <input type="email" id="umEmail" class="filter-control"
+                                            placeholder="user@example.com" autocomplete="username" />
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label" for="umRole">Role</label>
+                                        <select id="umRole" class="filter-control">
+                                            <option value="viewer">Viewer — read only</option>
+                                            <option value="planner">Planner — edit plan schedule</option>
+                                            <option value="admin">Admin — edit data &amp; plan</option>
+                                            <option value="master_admin">Master Admin — full access</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group" id="umPasswordGroup">
+                                        <label class="form-label" for="umPassword">Password <span id="umPasswordHint"
+                                                class="form-label-optional">(leave blank to keep current)</span></label>
+                                        <input type="password" id="umPassword" class="filter-control"
+                                            placeholder="••••••••" autocomplete="new-password" />
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label" for="umActive">Account Status</label>
+                                        <select id="umActive" class="filter-control">
+                                            <option value="true">Active</option>
+                                            <option value="false">Inactive</option>
+                                        </select>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                        <div class="um-form-footer">
-                            <button class="btn btn-primary" id="btnUmSave">Save User</button>
-                            <button class="btn btn-ghost" id="btnUmCancel">Cancel</button>
-                            <span class="um-form-error" id="umFormError"></span>
-                        </div>
+                            <div class="um-form-footer">
+                                <button class="btn btn-primary" id="btnUmSave">Save User</button>
+                                <button class="btn btn-ghost" id="btnUmCancel">Cancel</button>
+                                <span class="um-form-error" id="umFormError"></span>
+                            </div>
                     </div>
 
                 </div>
@@ -1078,14 +1082,16 @@
     </footer>
 
     <!-- Supabase CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"
+        crossorigin="anonymous"></script>
     <!-- Chart.js CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js" crossorigin="anonymous"></script>
     <!-- jsPDF + AutoTable (PDF export) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.7.1/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.7.1/jspdf.plugin.autotable.min.js"
+        crossorigin="anonymous"></script>
     <!-- SheetJS (Excel export) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" crossorigin="anonymous"></script>
     <!-- App -->
     <script src="app.js"></script>
 </body>
