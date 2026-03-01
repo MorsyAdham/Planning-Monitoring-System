@@ -1371,10 +1371,9 @@ body {
     user-select: none;
 }
 
-/* Friday — warm amber */
+/* Friday columns are hidden from Gantt (not rendered) — class kept for safety */
 .gh-day-fri {
-    background: rgba(245, 158, 11, .1);
-    color: rgba(245, 158, 11, .8);
+    display: none;
 }
 
 /* Saturday — blue */
@@ -1475,7 +1474,7 @@ body {
 }
 
 .gc-cell-fri {
-    background: rgba(245, 158, 11, .04);
+    display: none;
 }
 
 .gc-cell-sat {
@@ -2073,6 +2072,11 @@ body {
     color: var(--clr-accent);
 }
 
+.nav-role-badge.role-planner {
+    background: rgba(245, 158, 11, .12);
+    color: #f59e0b;
+}
+
 .nav-role-badge.role-viewer {
     background: rgba(34, 197, 94, .1);
     color: var(--clr-completed);
@@ -2223,6 +2227,11 @@ body {
 .role-pill.admin {
     background: var(--clr-accent-dim);
     color: var(--clr-accent);
+}
+
+.role-pill.planner {
+    background: rgba(245, 158, 11, .12);
+    color: #f59e0b;
 }
 
 .role-pill.viewer {
@@ -2650,11 +2659,7 @@ body {
     border-color: #e2e8f0;
 }
 
-[data-theme="light"] .gh-day-fri {
-    background: rgba(245, 158, 11, .12) !important;
-    color: #92400e !important;
-}
-
+/* Friday columns not rendered — light theme override not needed */
 [data-theme="light"] .gh-day-sat {
     background: rgba(59, 130, 246, .12) !important;
     color: #1d4ed8 !important;
@@ -2674,10 +2679,6 @@ body {
 
 [data-theme="light"] .gc-cell {
     border-color: #e2e8f0;
-}
-
-[data-theme="light"] .gc-cell-fri {
-    background: rgba(245, 158, 11, .07);
 }
 
 [data-theme="light"] .gc-cell-sat {
@@ -2829,4 +2830,988 @@ body {
 [data-theme="light"] .report-type-card input:checked+.rtc-inner {
     background: #eff6ff;
     border-color: #2563eb;
+}
+
+/* ================================================================
+   GANTT EDIT MODE
+   ================================================================ */
+
+/* Edit toggle button — turns amber when active */
+.gantt-edit-toggle {
+    border-color: rgba(245, 158, 11, .4);
+    color: #f59e0b;
+}
+
+.gantt-edit-toggle:hover {
+    background: rgba(245, 158, 11, .1);
+    border-color: #f59e0b;
+    color: #f59e0b;
+}
+
+/* Edit-mode bar (shown when edit mode is on) */
+.gantt-edit-bar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 6px 12px;
+    background: rgba(245, 158, 11, .08);
+    border: 1px solid rgba(245, 158, 11, .25);
+    border-radius: var(--radius-sm);
+    animation: editBarSlide .2s ease;
+}
+
+@keyframes editBarSlide {
+    from {
+        opacity: 0;
+        transform: translateY(-6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.gantt-edit-badge {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: #f59e0b;
+    color: #000;
+    font-family: var(--ff-display);
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .1em;
+    border-radius: 4px;
+    padding: 3px 8px;
+    white-space: nowrap;
+}
+
+.gantt-edit-hint {
+    font-size: .78rem;
+    color: var(--clr-text-muted);
+    white-space: nowrap;
+}
+
+.gantt-edit-sat-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: .8rem;
+    color: var(--clr-text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.gantt-edit-sat-toggle input {
+    cursor: pointer;
+    accent-color: #f59e0b;
+}
+
+/* Undo / Redo button group */
+.gantt-undo-group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.gantt-undo-btn {
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 4px 9px !important;
+    gap: 5px;
+    font-size: .75rem !important;
+    transition: background .12s, color .12s, opacity .12s;
+}
+
+.gantt-undo-btn+.gantt-undo-btn {
+    border-left: 1px solid var(--clr-border) !important;
+}
+
+.gantt-undo-btn:disabled {
+    opacity: .35;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.gantt-undo-btn:not(:disabled):hover {
+    background: rgba(79, 142, 247, .12);
+    color: #4f8ef7;
+}
+
+.gantt-undo-btn:not(:disabled):hover svg {
+    stroke: #4f8ef7;
+}
+
+[data-theme="light"] .gantt-undo-group {
+    border-color: #e2e8f0;
+}
+
+[data-theme="light"] .gantt-undo-btn+.gantt-undo-btn {
+    border-color: #e2e8f0 !important;
+}
+
+/* Draggable bars — animate a subtle glow in edit mode */
+.gantt-edit-active .gc-bar {
+    cursor: grab !important;
+    transition: box-shadow .15s, opacity .15s;
+}
+
+.gantt-edit-active .gc-bar:hover {
+    box-shadow: 0 0 0 2px #4f8ef7, 0 4px 16px rgba(79, 142, 247, .35) !important;
+    transform: translateY(-1px) !important;
+}
+
+.gantt-edit-active .gc-bar:active {
+    cursor: grabbing !important;
+}
+
+/* Overlay stripe on gantt body to make it visually obvious we're in edit mode */
+.gantt-edit-active .gantt-body::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border: 2px solid rgba(245, 158, 11, .3);
+    border-radius: 4px;
+    z-index: 0;
+}
+
+/* Light theme overrides for edit mode */
+[data-theme="light"] .gantt-edit-bar {
+    background: #fffbeb;
+    border-color: rgba(217, 119, 6, .3);
+}
+
+[data-theme="light"] .gantt-edit-badge {
+    background: #d97706;
+    color: #fff;
+}
+
+[data-theme="light"] .gantt-edit-toggle {
+    border-color: rgba(217, 119, 6, .5);
+    color: #b45309;
+}
+
+/* ================================================================
+   GANTT BAR — delete button & add block modal
+   ================================================================ */
+
+/* Delete ✕ button on each bar in edit mode */
+.gc-bar-delete {
+    position: absolute;
+    top: 2px;
+    right: 3px;
+    background: rgba(0, 0, 0, .35);
+    border: none;
+    border-radius: 3px;
+    color: #fff;
+    cursor: pointer;
+    font-size: .6rem;
+    line-height: 1;
+    padding: 1px 4px;
+    opacity: 0;
+    transition: opacity .15s, background .15s;
+    z-index: 10;
+}
+
+.gc-bar:hover .gc-bar-delete {
+    opacity: 1;
+}
+
+.gc-bar-delete:hover {
+    background: rgba(239, 68, 68, .85);
+}
+
+/* Make bars position:relative so the absolute button sits inside */
+.gc-bar {
+    position: absolute;
+}
+
+/* already set, but reinforced */
+
+/* Add block modal — computed date preview strip */
+.ab-preview {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+    padding: 9px 12px;
+    background: var(--clr-accent-dim);
+    border: 1px solid rgba(79, 142, 247, .25);
+    border-radius: var(--radius-sm);
+    font-size: .82rem;
+    color: var(--clr-text-muted);
+}
+
+.ab-preview strong {
+    color: var(--clr-text);
+}
+
+.ab-error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 8px 12px;
+    background: rgba(239, 68, 68, .08);
+    border: 1px solid rgba(239, 68, 68, .3);
+    border-radius: var(--radius-sm);
+    font-size: .82rem;
+    color: #ef4444;
+}
+
+/* Light theme */
+[data-theme="light"] .gc-bar-delete {
+    background: rgba(0, 0, 0, .2);
+}
+
+[data-theme="light"] .ab-preview {
+    background: #eff6ff;
+    border-color: rgba(37, 99, 235, .2);
+}
+
+/* ── Bar edit (pencil) button ───────────────────────────────────── */
+.gc-bar-edit {
+    position: absolute;
+    top: 2px;
+    right: 22px;
+    /* sits left of the delete button */
+    background: rgba(0, 0, 0, .35);
+    border: none;
+    border-radius: 3px;
+    color: #fff;
+    cursor: pointer;
+    font-size: .65rem;
+    line-height: 1;
+    padding: 1px 4px;
+    opacity: 0;
+    transition: opacity .15s, background .15s;
+    z-index: 10;
+}
+
+.gc-bar:hover .gc-bar-edit {
+    opacity: 1;
+}
+
+.gc-bar-edit:hover {
+    background: rgba(79, 142, 247, .85);
+}
+
+/* Edit block — block info label */
+.eb-block-info {
+    background: var(--clr-surface-2);
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-sm);
+    padding: 7px 10px;
+    font-size: .85rem;
+    color: var(--clr-text);
+    font-weight: 600;
+}
+
+[data-theme="light"] .gc-bar-edit {
+    background: rgba(0, 0, 0, .2);
+}
+
+[data-theme="light"] .gc-bar-edit:hover {
+    background: rgba(37, 99, 235, .8);
+}
+
+/* ================================================================
+   GANTT EDIT — lane buttons, move-mode toggle
+   ================================================================ */
+
+/* ▲▼ lane priority buttons */
+.gc-bar-lane {
+    position: absolute;
+    top: 2px;
+    background: rgba(0, 0, 0, .3);
+    border: none;
+    border-radius: 3px;
+    color: rgba(255, 255, 255, .8);
+    cursor: pointer;
+    font-size: .5rem;
+    line-height: 1;
+    padding: 2px 3px;
+    opacity: 0;
+    transition: opacity .15s, background .15s;
+    z-index: 10;
+}
+
+.gc-bar-lane-up {
+    left: 3px;
+}
+
+.gc-bar-lane-dn {
+    left: 18px;
+}
+
+.gc-bar:hover .gc-bar-lane {
+    opacity: 1;
+}
+
+.gc-bar-lane:hover {
+    background: rgba(99, 102, 241, .85);
+    color: #fff;
+}
+
+/* Move-mode segmented toggle */
+.gantt-move-toggle {
+    display: flex;
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.gmt-btn {
+    background: var(--clr-surface-2);
+    border: none;
+    color: var(--clr-text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--ff-body);
+    font-size: .75rem;
+    font-weight: 500;
+    padding: 5px 10px;
+    transition: background .15s, color .15s;
+    white-space: nowrap;
+}
+
+.gmt-btn+.gmt-btn {
+    border-left: 1px solid var(--clr-border);
+}
+
+.gmt-btn:hover {
+    background: var(--clr-surface);
+    color: var(--clr-text);
+}
+
+.gmt-btn.gmt-active {
+    background: rgba(245, 158, 11, .18);
+    color: #f59e0b;
+    font-weight: 600;
+}
+
+/* Drag ghost — smooth snap indicators */
+.gc-bar-dragging {
+    outline: 2px dashed rgba(79, 142, 247, .7) !important;
+    outline-offset: 2px !important;
+}
+
+/* Light theme */
+[data-theme="light"] .gc-bar-lane {
+    background: rgba(0, 0, 0, .15);
+    color: rgba(0, 0, 0, .6);
+}
+
+[data-theme="light"] .gc-bar-lane:hover {
+    background: rgba(99, 102, 241, .7);
+    color: #fff;
+}
+
+[data-theme="light"] .gantt-move-toggle {
+    border-color: #cbd5e1;
+}
+
+[data-theme="light"] .gmt-btn {
+    background: #f8fafc;
+    color: #64748b;
+}
+
+[data-theme="light"] .gmt-btn+.gmt-btn {
+    border-color: #cbd5e1;
+}
+
+[data-theme="light"] .gmt-btn.gmt-active {
+    background: #fffbeb;
+    color: #b45309;
+}
+
+/* ── Auto-computed week badge (read-only, shown in Edit Block modal) ── */
+.eb-week-badge {
+    display: inline-flex;
+    align-items: center;
+    background: var(--clr-accent-dim);
+    border: 1px solid rgba(79, 142, 247, .25);
+    border-radius: var(--radius-sm);
+    color: var(--clr-accent);
+    font-family: var(--ff-mono);
+    font-size: .82rem;
+    font-weight: 600;
+    letter-spacing: .04em;
+    padding: 5px 10px;
+}
+
+[data-theme="light"] .eb-week-badge {
+    background: #eff6ff;
+    border-color: rgba(37, 99, 235, .2);
+    color: #1d4ed8;
+}
+
+/* ================================================================
+   VEHICLE PRODUCTION PROGRESS MATRIX  (VPX)
+   ================================================================ */
+
+.vpx-section {
+    padding: 0 var(--page-pad) 32px;
+}
+
+.vpx-card {
+    background: var(--clr-surface);
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.vpx-card-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--clr-border-soft);
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.vpx-title-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.vpx-title {
+    font-family: var(--ff-display);
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: .05em;
+    color: var(--clr-text);
+    margin: 0;
+}
+
+.vpx-subtitle {
+    font-size: .72rem;
+    color: var(--clr-text-dim);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+.vpx-header-right {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+
+/* Legend */
+.vpx-legend {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+
+.vpx-leg-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: .72rem;
+    color: var(--clr-text-muted);
+    font-weight: 500;
+}
+
+/* Dot indicator */
+.vpx-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: inline-block;
+}
+
+.vpx-dot-ok {
+    background: #22c55e;
+    box-shadow: 0 0 4px rgba(34, 197, 94, .5);
+}
+
+.vpx-dot-prog {
+    background: #f59e0b;
+    box-shadow: 0 0 4px rgba(245, 158, 11, .5);
+}
+
+.vpx-dot-late {
+    background: #8b5cf6;
+    box-shadow: 0 0 4px rgba(139, 92, 246, .55);
+}
+
+/* purple — distinct from green/amber/red/grey */
+.vpx-dot-over {
+    background: #dc2626;
+    box-shadow: 0 0 6px rgba(220, 38, 38, .8);
+    animation: vpx-pulse 1.8s ease-in-out infinite;
+}
+
+.vpx-dot-plan {
+    background: var(--clr-text-dim);
+}
+
+@keyframes vpx-pulse {
+
+    0%,
+    100% {
+        box-shadow: 0 0 3px rgba(220, 38, 38, .4);
+    }
+
+    50% {
+        box-shadow: 0 0 10px rgba(220, 38, 38, .8);
+    }
+}
+
+/* Scroll wrapper */
+.vpx-scroll-wrap {
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 750px;
+}
+
+.vpx-scroll-wrap::-webkit-scrollbar {
+    height: 6px;
+    width: 6px;
+}
+
+.vpx-scroll-wrap::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.vpx-scroll-wrap::-webkit-scrollbar-thumb {
+    background: var(--clr-border);
+    border-radius: 3px;
+}
+
+/* Empty state */
+.vpx-empty {
+    padding: 40px 24px;
+    text-align: center;
+    color: var(--clr-text-dim);
+    font-size: .875rem;
+}
+
+/* ── Table ────────────────────────────────────────────────────── */
+.vpx-table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: max-content;
+    font-size: .72rem;
+}
+
+/* Sticky first column */
+/* ── Sticky vehicle column (left) — matches Gantt .gr-label ─────── */
+.vpx-td-vehicle {
+    position: sticky;
+    left: 0;
+    z-index: 20;
+    background: var(--clr-surface);
+    min-width: 140px;
+    white-space: nowrap;
+    border-right: 2px solid var(--clr-border);
+    box-shadow: 2px 0 5px rgba(0, 0, 0, .18);
+}
+
+/* Corner header cell — matches Gantt .gh-corner */
+.vpx-th-vehicle {
+    position: sticky;
+    left: 0;
+    top: 0;
+    z-index: 40;
+    background: var(--clr-surface-2);
+    min-width: 140px;
+    white-space: nowrap;
+    border-right: 2px solid var(--clr-border);
+    box-shadow: 2px 0 5px rgba(0, 0, 0, .18);
+    font-size: .68rem;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--clr-text-muted);
+    padding: 0 14px;
+    vertical-align: middle;
+}
+
+/* Vehicle group row — matches Gantt .gr-group */
+.vpx-row-group td {
+    height: 32px;
+}
+
+/* Vehicle group cell — matches Gantt .gr-group-label */
+.vpx-td-group {
+    background: var(--clr-surface-2) !important;
+    vertical-align: middle;
+    padding: 0 14px;
+    height: 32px;
+}
+
+.vpx-td-group>.vpx-veh-icon,
+.vpx-td-group>.vpx-veh-name {
+    vertical-align: middle;
+}
+
+.vpx-td-group>.vpx-veh-icon {
+    margin-right: 8px;
+}
+
+.vpx-veh-icon {
+    width: 14px;
+    height: 14px;
+    color: var(--clr-accent);
+    flex-shrink: 0;
+}
+
+.vpx-veh-name {
+    font-family: var(--ff-display);
+    font-size: .92rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    color: var(--clr-text);
+}
+
+/* Group fill cells (rest of row when vehicle header shown) */
+.vpx-group-fill {
+    background: var(--clr-surface-2) !important;
+    border-bottom: 1px solid var(--clr-border-soft);
+}
+
+/* Unit cell — matches Gantt .gr-unit-label */
+.vpx-td-unit {
+    vertical-align: middle;
+    padding: 0 14px;
+    height: 44px;
+    border-bottom: 1px solid var(--clr-border-soft);
+}
+
+.vpx-unit-dot {
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 8px;
+}
+
+.vpx-unit-name {
+    vertical-align: middle;
+}
+
+.vpx-unit-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--clr-text-dim);
+}
+
+.vpx-unit-name {
+    font-family: var(--ff-mono);
+    font-size: .78rem;
+    color: var(--clr-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ── Sticky header rows (top) ────────────────────────────────────── */
+/* Group header row — sticky top, behind vehicle corner */
+.vpx-group-row th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--clr-surface-2);
+    color: var(--clr-text-muted);
+    font-family: var(--ff-display);
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    padding: 7px 8px 5px;
+    text-align: center;
+    border-bottom: 1px solid var(--clr-border);
+    border-right: 1px solid var(--clr-border-soft);
+    white-space: nowrap;
+}
+
+/* Column code row — sits below group row, so push it down */
+.vpx-col-row th {
+    position: sticky;
+    top: 29px;
+    /* height of group row */
+    z-index: 10;
+    background: var(--clr-surface-2);
+    color: var(--clr-text-muted);
+    font-size: .68rem;
+    font-weight: 600;
+    padding: 5px 5px 6px;
+    text-align: center;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--clr-border);
+    cursor: default;
+}
+
+/* Column group colour accents */
+.vpx-th-group.vpx-grp-assembly,
+.vpx-th-col.vpx-grp-assembly {
+    border-bottom: 2px solid rgba(79, 142, 247, .45);
+}
+
+.vpx-th-group.vpx-grp-final-test,
+.vpx-th-col.vpx-grp-final-test {
+    border-bottom: 2px solid rgba(139, 92, 246, .45);
+}
+
+.vpx-th-group.vpx-grp-processing,
+.vpx-th-col.vpx-grp-processing {
+    border-bottom: 2px solid rgba(245, 158, 11, .45);
+}
+
+
+
+/* Data cell */
+.vpx-cell {
+    padding: 5px 5px;
+    text-align: center;
+    border-bottom: 1px solid rgba(255, 255, 255, .04);
+    border-right: 1px solid rgba(255, 255, 255, .03);
+    vertical-align: middle;
+    transition: background .15s;
+    cursor: default;
+    min-width: 68px;
+}
+
+.vpx-cell:hover {
+    background: rgba(255, 255, 255, .06) !important;
+}
+
+.vpx-cell-empty {
+    color: var(--clr-text-dim);
+    font-size: .68rem;
+}
+
+/* Status background tints per status */
+.vpx-status-completed {
+    background: rgba(34, 197, 94, .06);
+}
+
+.vpx-status-in-progress {
+    background: rgba(245, 158, 11, .07);
+}
+
+.vpx-status-late {
+    background: rgba(139, 92, 246, .09);
+}
+
+/* purple tint — Late Completion */
+.vpx-status-overdue {
+    background: rgba(220, 38, 38, .12);
+}
+
+.vpx-status-planned {
+    background: transparent;
+}
+
+/* Dot + dates layout inside cell */
+.vpx-cell {
+    display: table-cell;
+    /* reset for flex children */
+}
+
+.vpx-cell>.vpx-dot {
+    display: block;
+    margin: 0 auto 3px;
+}
+
+.vpx-dates {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    line-height: 1.25;
+}
+
+.vpx-date-plan {
+    font-size: .63rem;
+    color: var(--clr-text-muted);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.vpx-date-act {
+    font-size: .63rem;
+    color: var(--clr-text);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.vpx-date-none {
+    color: var(--clr-text-dim);
+    font-weight: 400;
+}
+
+/* Row alternating backgrounds */
+.vpx-row:nth-child(even) .vpx-cell {
+    background-color: rgba(255, 255, 255, .015);
+}
+
+/* Vehicle column on even rows must stay solid — never transparent */
+.vpx-row:nth-child(even) .vpx-td-vehicle {
+    background: color-mix(in srgb, var(--clr-surface) 97%, white 3%);
+}
+
+/* Column group visual separators */
+.vpx-cell.vpx-grp-final-test:first-of-type,
+th.vpx-grp-final-test:first-of-type {
+    border-left: 2px solid rgba(139, 92, 246, .25);
+}
+
+.vpx-cell.vpx-grp-processing:first-of-type,
+th.vpx-grp-processing:first-of-type {
+    border-left: 2px solid rgba(245, 158, 11, .25);
+}
+
+/* ── Light theme ───────────────────────────────────────────────── */
+[data-theme="light"] .vpx-card {
+    background: #fff;
+    border-color: #e2e8f0;
+}
+
+[data-theme="light"] .vpx-th-vehicle {
+    background: #f8fafc;
+}
+
+[data-theme="light"] .vpx-td-vehicle {
+    background: #fff;
+}
+
+[data-theme="light"] .vpx-group-row th,
+[data-theme="light"] .vpx-col-row th {
+    background: #f8fafc;
+}
+
+[data-theme="light"] .vpx-cell:hover {
+    background: rgba(0, 0, 0, .04) !important;
+}
+
+[data-theme="light"] .vpx-status-completed {
+    background: rgba(34, 197, 94, .07);
+}
+
+[data-theme="light"] .vpx-status-in-progress {
+    background: rgba(245, 158, 11, .08);
+}
+
+[data-theme="light"] .vpx-status-late {
+    background: rgba(139, 92, 246, .08);
+}
+
+/* purple — Late Completion */
+[data-theme="light"] .vpx-status-overdue {
+    background: rgba(220, 38, 38, .1);
+}
+
+[data-theme="light"] .vpx-row:nth-child(even) .vpx-cell,
+[data-theme="light"] .vpx-row:nth-child(even) .vpx-td-vehicle {
+    background: #f9fafb;
+}
+
+[data-theme="light"] .vpx-td-vehicle {
+    border-bottom-color: #f1f5f9;
+}
+
+[data-theme="light"] .vpx-cell {
+    border-bottom-color: #f1f5f9;
+    border-right-color: #f1f5f9;
+}
+
+/* VPX — N/A cell (station not applicable for this vehicle type) */
+.vpx-cell-na {
+    color: var(--clr-text-dim);
+    font-size: .65rem;
+    font-style: italic;
+    background: repeating-linear-gradient(135deg,
+            transparent,
+            transparent 3px,
+            rgba(255, 255, 255, .03) 3px,
+            rgba(255, 255, 255, .03) 6px);
+}
+
+.vpx-na {
+    opacity: .45;
+}
+
+/* Final Inspection group accent */
+.vpx-th-group.vpx-grp-final-inspection,
+.vpx-th-col.vpx-grp-final-inspection {
+    border-bottom: 2px solid rgba(34, 197, 94, .45);
+}
+
+[data-theme="light"] .vpx-cell-na {
+    background: repeating-linear-gradient(135deg, transparent, transparent 3px, rgba(0, 0, 0, .03) 3px, rgba(0, 0, 0, .03) 6px);
+}
+
+/* ── Table search bar ─────────────────────────────────────────── */
+.table-search-wrap {
+    position: relative;
+    flex: 1;
+    max-width: 280px;
+}
+
+.table-search-icon {
+    position: absolute;
+    left: 9px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 14px;
+    height: 14px;
+    color: var(--clr-text-dim);
+    pointer-events: none;
+}
+
+.table-search-input {
+    width: 100%;
+    padding: 6px 10px 6px 30px;
+    background: var(--clr-surface-2);
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-sm);
+    color: var(--clr-text);
+    font-size: .8rem;
+    font-family: var(--ff-body);
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+}
+
+.table-search-input::placeholder {
+    color: var(--clr-text-dim);
+}
+
+.table-search-input:focus {
+    border-color: var(--clr-accent);
+    box-shadow: 0 0 0 3px var(--clr-accent-dim);
+}
+
+[data-theme="light"] .table-search-input {
+    background: #fff;
+    border-color: #e2e8f0;
+    color: #0f172a;
+}
+
+/* Make table-card-header flex so search + actions sit side-by-side */
+.table-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--clr-border);
 }

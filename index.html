@@ -4,12 +4,13 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>KD1 Assembly — Plan vs Actual</title>
+    <title>Production Plan Monitoring System</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
         href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Inter:wght@300;400;500;600&display=swap"
         rel="stylesheet" />
+    <link rel="shortcut icon" href="favicon.png" type="image/x-icon">
     <link rel="stylesheet" href="styles.css" />
     <!-- ── Apply stored theme before first paint (prevents flash) ── -->
     <script>
@@ -39,7 +40,7 @@
             <div class="header-brand">
                 <div class="brand-badge">KD1</div>
                 <div class="brand-text">
-                    <span class="brand-title">Production Planning Control</span>
+                    <span class="brand-title">Production Plan Control</span>
                     <span class="brand-sub">Plan vs Actual Tracking System</span>
                 </div>
             </div>
@@ -106,6 +107,12 @@
                     <label class="filter-label" for="filterVehicle">Vehicle</label>
                     <select id="filterVehicle" class="filter-control">
                         <option value="">All Vehicles</option>
+                    </select>
+                </div>
+                <div class="filter-item">
+                    <label class="filter-label" for="filterUnit">Unit</label>
+                    <select id="filterUnit" class="filter-control">
+                        <option value="">All Units</option>
                     </select>
                 </div>
                 <div class="filter-item">
@@ -188,7 +195,7 @@
                     </div>
                     <div class="card-body">
                         <span class="card-value" id="sumLate">0</span>
-                        <span class="card-label">Late</span>
+                        <span class="card-label">Late Completion</span>
                     </div>
                 </div>
                 <div class="summary-card card-overdue">
@@ -246,6 +253,84 @@
                                 Refresh
                             </button>
                         </div>
+                        <div class="filter-item" style="padding-top:18px">
+                            <button class="btn btn-ghost gantt-edit-toggle" id="btnGanttEdit">
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14.5 2.5l3 3L6 17H3v-3L14.5 2.5z" />
+                                </svg>
+                                Edit Plan
+                            </button>
+                        </div>
+                        <!-- Edit-mode toolbar (hidden until edit mode activated) -->
+                        <div class="gantt-edit-bar" id="ganttEditBar" style="display:none">
+                            <span class="gantt-edit-badge">
+                                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"
+                                    style="width:12px;height:12px">
+                                    <path d="M10 1.5l2.5 2.5L4 12.5H1.5V10L10 1.5z" />
+                                </svg>
+                                EDIT MODE
+                            </span>
+                            <!-- Move scope toggle -->
+                            <div class="gantt-move-toggle" id="ganttMoveToggle"
+                                title="Choose what gets moved when dragging">
+                                <button class="gmt-btn gmt-active" id="gmtSingle" data-mode="single">
+                                    <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"
+                                        style="width:11px;height:11px">
+                                        <rect x="1" y="4" width="12" height="6" rx="1.5" />
+                                    </svg>
+                                    Block
+                                </button>
+                                <button class="gmt-btn" id="gmtLane" data-mode="lane">
+                                    <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"
+                                        style="width:11px;height:11px">
+                                        <rect x="1" y="2" width="12" height="4" rx="1" />
+                                        <rect x="1" y="8" width="12" height="4" rx="1" />
+                                    </svg>
+                                    Lane
+                                </button>
+                                <button class="gmt-btn" id="gmtPlan" data-mode="plan">
+                                    <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"
+                                        style="width:11px;height:11px">
+                                        <rect x="1" y="1" width="12" height="3" rx="1" />
+                                        <rect x="1" y="5.5" width="12" height="3" rx="1" />
+                                        <rect x="1" y="10" width="12" height="3" rx="1" />
+                                    </svg>
+                                    Full Plan
+                                </button>
+                            </div>
+                            <button class="btn btn-primary btn-sm" id="btnAddBlock" style="gap:5px">
+                                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"
+                                    style="width:12px;height:12px">
+                                    <path d="M7 2v10M2 7h10" />
+                                </svg>
+                                Add Block
+                            </button>
+                            <label class="gantt-edit-sat-toggle">
+                                <input type="checkbox" id="ganttSatToggle" />
+                                Include Saturdays
+                            </label>
+                            <div class="gantt-undo-group">
+                                <button class="btn btn-ghost btn-sm gantt-undo-btn" id="btnGanttUndo" disabled
+                                    title="Nothing to undo">
+                                    <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"
+                                        style="width:12px;height:12px">
+                                        <path d="M2 7a5 5 0 1 1 1.5 3.5" />
+                                        <path d="M2 3.5V7h3.5" />
+                                    </svg>
+                                    Undo
+                                </button>
+                                <button class="btn btn-ghost btn-sm gantt-undo-btn" id="btnGanttRedo" disabled
+                                    title="Nothing to redo">
+                                    <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"
+                                        style="width:12px;height:12px">
+                                        <path d="M12 7a5 5 0 1 0-1.5 3.5" />
+                                        <path d="M12 3.5V7H8.5" />
+                                    </svg>
+                                    Redo
+                                </button>
+                            </div>
+                            <button class="btn btn-ghost btn-sm" id="btnGanttEditDone">Done</button>
+                        </div>
                     </div>
                 </div>
                 <div class="gantt-legend" id="ganttLegend"></div>
@@ -272,13 +357,49 @@
             </div>
         </section>
 
+
+        <!-- ═══════════════════════════════════ VEHICLE PROGRESS MATRIX -->
+        <section class="vpx-section" aria-label="Vehicle Production Progress">
+            <div class="vpx-card">
+                <div class="vpx-card-header">
+                    <div class="vpx-title-wrap">
+                        <h3 class="vpx-title">Vehicle Production Progress</h3>
+                        <span class="vpx-subtitle">Station-by-station planned vs actual · hover for details</span>
+                    </div>
+                    <div class="vpx-header-right">
+                        <button class="btn btn-outline btn-sm" id="btnVpxPdf" title="Export as PDF (light mode)">
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
+                                style="width:14px;height:14px">
+                                <path d="M4 4h8l4 4v10H4V4z" />
+                                <path d="M12 4v4h4" />
+                                <path d="M7 12h6M7 15h4" />
+                            </svg>
+                            Export PDF
+                        </button>
+                        <div class="vpx-legend">
+                            <span class="vpx-leg-item"><span class="vpx-dot vpx-dot-ok"></span>On Schedule</span>
+                            <span class="vpx-leg-item"><span class="vpx-dot vpx-dot-prog"></span>In Progress</span>
+                            <span class="vpx-leg-item"><span class="vpx-dot vpx-dot-late"></span>Late Completion</span>
+                            <span class="vpx-leg-item"><span class="vpx-dot vpx-dot-over"></span>Overdue</span>
+                            <span class="vpx-leg-item"><span class="vpx-dot vpx-dot-plan"></span>Planned</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="vpx-scroll-wrap" id="vpxScrollWrap">
+                    <div id="vpxMatrix">
+                        <div class="vpx-empty">Load data to view the progress matrix.</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <!-- ═══════════════════════════════════════════════ CHARTS -->
         <section class="charts-section" aria-label="Charts">
             <div class="charts-grid">
                 <div class="chart-card">
                     <div class="chart-card-header">
                         <h3 class="chart-title">Status Breakdown</h3>
-                        <span class="chart-subtitle">Planned · Completed · Late · Overdue</span>
+                        <span class="chart-subtitle">Planned · Completed · Late Completion · Overdue</span>
                     </div>
                     <div class="chart-canvas-wrap">
                         <canvas id="barChart"></canvas>
@@ -301,6 +422,15 @@
             <div class="table-card">
                 <div class="table-card-header">
                     <h3 class="table-title">Assembly Plan Details</h3>
+                    <div class="table-search-wrap">
+                        <svg class="table-search-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <circle cx="8.5" cy="8.5" r="5.5" />
+                            <path d="M15 15l-3-3" />
+                        </svg>
+                        <input type="text" id="tableSearch" class="table-search-input"
+                            placeholder="Search vehicle, unit, station…" autocomplete="off" />
+                    </div>
                     <div class="table-actions-header">
                         <span class="row-count" id="rowCount">0 records</span>
                         <button class="btn btn-outline btn-sm" id="btnReports">
@@ -604,9 +734,10 @@
                                 <div class="form-group">
                                     <label class="form-label" for="umRole">Role</label>
                                     <select id="umRole" class="filter-control">
-                                        <option value="viewer">Viewer</option>
-                                        <option value="admin">Admin</option>
-                                        <option value="master_admin">Master Admin</option>
+                                        <option value="viewer">Viewer — read only</option>
+                                        <option value="planner">Planner — edit plan schedule</option>
+                                        <option value="admin">Admin — edit data &amp; plan</option>
+                                        <option value="master_admin">Master Admin — full access</option>
                                     </select>
                                 </div>
                                 <div class="form-group" id="umPasswordGroup">
@@ -708,6 +839,202 @@
                         <button class="btn btn-ghost btn-sm" id="btnAlMore" style="display:none">Load more…</button>
                     </div>
 
+                </div>
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════ ADD BLOCK MODAL -->
+        <div class="modal-overlay" id="addBlockOverlay" style="display:none" role="dialog" aria-modal="true">
+            <div class="modal" style="max-width:460px">
+                <div class="modal-header">
+                    <h4 class="modal-title">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
+                            style="width:17px;height:17px;vertical-align:-3px;margin-right:8px">
+                            <path d="M10 4v12M4 10h12" />
+                        </svg>
+                        Add Plan Block
+                    </h4>
+                    <button class="modal-close" id="addBlockClose">&#x2715;</button>
+                </div>
+                <div class="modal-body" style="padding:20px 24px">
+                    <div class="um-form-grid" style="grid-template-columns:1fr 1fr;gap:14px 18px">
+
+                        <div class="form-group">
+                            <label class="form-label" for="abVehicle">Vehicle</label>
+                            <select id="abVehicle" class="filter-control"></select>
+                        </div>
+
+                        <!-- New vehicle input (hidden unless "+ New Vehicle" selected) -->
+                        <div class="form-group" id="abNewVehicleGroup" style="display:none">
+                            <label class="form-label" for="abNewVehicle">New Vehicle Name</label>
+                            <input type="text" id="abNewVehicle" class="filter-control" placeholder="e.g. K15" />
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="abUnit">Unit / Vehicle No.</label>
+                            <select id="abUnit" class="filter-control"></select>
+                        </div>
+
+                        <!-- New unit input (hidden unless "+ New Unit" selected) -->
+                        <div class="form-group" id="abNewUnitGroup" style="display:none">
+                            <label class="form-label" for="abNewUnit">New Unit / Vehicle No.</label>
+                            <input type="text" id="abNewUnit" class="filter-control" placeholder="e.g. M4" />
+                        </div>
+
+                        <div class="form-group" style="grid-column:1/-1">
+                            <label class="form-label" for="abStation">Process / Station</label>
+                            <select id="abStation" class="filter-control">
+                                <optgroup label="Assembly">
+                                    <option value="Suspension">Suspension (2d)</option>
+                                    <option value="Turret">Turret (2d)</option>
+                                    <option value="T/Electric (TURRET)">T/Electric (TURRET) (2d)</option>
+                                    <option value="Hyd / Sub (TURRET)">Hyd / Sub (TURRET) (2d)</option>
+                                    <option value="H/Electric">H/Electric (2d)</option>
+                                    <option value="Interior">Interior (2d)</option>
+                                    <option value="Engine">Engine (2d)</option>
+                                    <option value="Turret/Gun">Turret/Gun (2d)</option>
+                                    <option value="Hydraulic">Hydraulic (2d)</option>
+                                    <option value="Bore Sight">Bore Sight (2d)</option>
+                                    <option value="Track">Track (2d)</option>
+                                    <option value="Electric/Interior">Electric/Interior (2d)</option>
+                                    <option value="Automation">Automation (2d)</option>
+                                    <option value="Final Assembly">Final Assembly (2d)</option>
+                                </optgroup>
+                                <optgroup label="Final Test">
+                                    <option value="#1Insp">#1Insp (1d)</option>
+                                    <option value="TEST RUN">TEST RUN (3d)</option>
+                                    <option value="Performance test">Performance test (3d)</option>
+                                    <option value="REPAIR">REPAIR (1d)</option>
+                                    <option value="CHECK">CHECK (1d)</option>
+                                    <option value="Powerpack check">Powerpack check (1d)</option>
+                                    <option value="Final Check">Final Check (1d)</option>
+                                </optgroup>
+                                <optgroup label="Processing">
+                                    <option value="Processing">Processing (5d)</option>
+                                </optgroup>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="abStart">Start Date</label>
+                            <input type="date" id="abStart" class="filter-control" />
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="abDuration">Duration (working days)</label>
+                            <input type="number" id="abDuration" class="filter-control" min="1" max="60" value="2" />
+                        </div>
+
+                        <div class="form-group" style="grid-column:1/-1">
+                            <label class="form-label" for="abRemark">Remark (optional)</label>
+                            <input type="text" id="abRemark" class="filter-control"
+                                placeholder="Notes for this block" />
+                        </div>
+
+                    </div>
+                    <!-- Preview of computed end date -->
+                    <div class="ab-preview" id="abPreview" style="display:none">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"
+                            style="width:13px;height:13px;flex-shrink:0">
+                            <rect x="2" y="3" width="12" height="11" rx="2" />
+                            <path d="M2 7h12M6 3V1M10 3V1" />
+                        </svg>
+                        Block will run: <strong id="abPreviewText">—</strong>
+                    </div>
+                    <div class="ab-error" id="abError" style="display:none"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" id="btnAddBlockSave">Add to Plan</button>
+                    <button class="btn btn-ghost" id="btnAddBlockCancel">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════════ EDIT BLOCK MODAL -->
+        <div class="modal-overlay" id="editBlockOverlay" style="display:none" role="dialog" aria-modal="true">
+            <div class="modal" style="max-width:400px">
+                <div class="modal-header">
+                    <h4 class="modal-title">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
+                            style="width:17px;height:17px;vertical-align:-3px;margin-right:8px">
+                            <path d="M14.5 2.5l3 3L6 17H3v-3L14.5 2.5z" />
+                        </svg>
+                        Edit Block
+                    </h4>
+                    <button class="modal-close" id="editBlockClose">&#x2715;</button>
+                </div>
+                <div class="modal-body" style="padding:20px 24px">
+                    <input type="hidden" id="ebPlanId" />
+                    <div class="um-form-grid" style="grid-template-columns:1fr 1fr;gap:14px 18px">
+
+                        <div class="form-group" style="grid-column:1/-1">
+                            <label class="form-label">Block</label>
+                            <div class="eb-block-info" id="ebBlockInfo">—</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Week (auto)</label>
+                            <div class="eb-week-badge" id="ebWeekBadge">—</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="ebStart">Start Date</label>
+                            <input type="date" id="ebStart" class="filter-control" />
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="ebDuration">Duration (working days)</label>
+                            <input type="number" id="ebDuration" class="filter-control" min="1" max="90" />
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="ebRemark">Remark</label>
+                            <input type="text" id="ebRemark" class="filter-control" />
+                        </div>
+
+                    </div>
+                    <div class="ab-preview" id="ebPreview" style="display:none">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"
+                            style="width:13px;height:13px;flex-shrink:0">
+                            <rect x="2" y="3" width="12" height="11" rx="2" />
+                            <path d="M2 7h12M6 3V1M10 3V1" />
+                        </svg>
+                        Block will run: <strong id="ebPreviewText">—</strong>
+                    </div>
+                    <div class="ab-error" id="ebError" style="display:none"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" id="btnEditBlockSave">Save Changes</button>
+                    <button class="btn btn-ghost" id="btnEditBlockCancel">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════ GANTT SATURDAY CONFIRMATION MODAL -->
+        <div class="modal-overlay" id="satModalOverlay" style="display:none" role="dialog" aria-modal="true">
+            <div class="modal" style="max-width:400px">
+                <div class="modal-header">
+                    <h4 class="modal-title">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"
+                            style="width:17px;height:17px;vertical-align:-3px;margin-right:8px">
+                            <rect x="3" y="4" width="14" height="13" rx="2" />
+                            <path d="M3 8h14M8 4V2M12 4V2" />
+                        </svg>
+                        Include Saturdays?
+                    </h4>
+                </div>
+                <div class="modal-body" style="padding:20px 24px">
+                    <p style="font-size:.9rem;color:var(--clr-text-muted);line-height:1.6">
+                        One or more rescheduled dates land on a <strong
+                            style="color:var(--clr-text)">Saturday</strong>.<br>
+                        Should Saturday be counted as a working day for this move?
+                    </p>
+                    <p style="font-size:.78rem;color:var(--clr-text-dim);margin-top:10px">
+                        Fridays are always skipped automatically.
+                    </p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" id="satModalYes">Yes, include Saturday</button>
+                    <button class="btn btn-ghost" id="satModalNo">No, skip Saturday</button>
                 </div>
             </div>
         </div>

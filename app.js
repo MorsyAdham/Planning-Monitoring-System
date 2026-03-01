@@ -23,7 +23,9 @@ function getCurrentUser() {
 }
 function isMasterAdmin() { return getCurrentUser()?.role === 'master_admin'; }
 function isAdmin() { return ['master_admin', 'admin'].includes(getCurrentUser()?.role); }
-function canWrite() { return isAdmin(); }  // master_admin is included via isAdmin()
+function isPlanner() { return ['master_admin', 'admin', 'planner'].includes(getCurrentUser()?.role); }
+function canWrite() { return isAdmin(); }      // admin data edits (start/complete/notes)
+function canEditPlan() { return isMasterAdmin() || getCurrentUser()?.role === 'planner'; }  // Gantt plan edits
 function getCachedIP() { return getCurrentUser()?.ip || 'unknown'; }
 
 async function sha256(str) {
@@ -72,7 +74,7 @@ function populateNavbar() {
 
     const roleBadge = document.getElementById('navRoleBadge');
     if (roleBadge) {
-        const labels = { master_admin: 'Master Admin', admin: 'Admin', viewer: 'Viewer' };
+        const labels = { master_admin: 'Master Admin', admin: 'Admin', planner: 'Planner', viewer: 'Viewer' };
         roleBadge.textContent = labels[user.role] || user.role;
         roleBadge.className = `nav-role-badge role-${user.role.replace('_', '-')}`;
     }
@@ -89,6 +91,9 @@ function populateNavbar() {
 
     // Viewer: CSS disables all edit controls
     if (!canWrite()) document.body.classList.add('viewer-mode');
+    // Hide Edit Plan button unless user can edit the schedule
+    const btnEdit = document.getElementById('btnGanttEdit');
+    if (btnEdit) btnEdit.style.display = canEditPlan() ? '' : 'none';
 }
 
 async function doLogout() {
@@ -136,12 +141,48 @@ const CATEGORY_MAP = {
     'Powerpack check': 'Final Test',
     'Final Check': 'Final Test',
     // Processing
+    'Processing': 'Processing',
     'Clean/dry': 'Processing',
     'Masking': 'Processing',
     'Sanding': 'Processing',
     'Painting': 'Processing',
     'Touch-up': 'Processing',
     'Attaching': 'Processing',
+};
+
+/* Station default durations (working days) */
+const STATION_DEFAULTS = {
+    // Assembly (2 days each)
+    'Suspension': 2,
+    'Turret': 2,
+    'T/Electric (TURRET)': 2,
+    'Hyd / Sub (TURRET)': 2,
+    'H/Electric': 2,
+    'Interior': 2,
+    'Engine': 2,
+    'Turret/Gun': 2,
+    'Hydraulic': 2,
+    'Bore Sight': 2,
+    'Track': 2,
+    'Electric/Interior': 2,
+    'Automation': 2,
+    'Final Assembly': 2,
+    // Final Test
+    '#1Insp': 1,
+    'TEST RUN': 3,
+    'Performance test': 3,
+    'REPAIR': 1,
+    'CHECK': 1,
+    'Powerpack check': 1,
+    'Final Check': 1,
+    // Processing
+    'Processing': 5,
+    'Clean/dry': 1,
+    'Masking': 1,
+    'Sanding': 1,
+    'Painting': 1,
+    'Touch-up': 1,
+    'Attaching': 1,
 };
 
 function getCategory(processStation) {
@@ -185,17 +226,31 @@ async function initializeApp() {
    ────────────────────────────────────────────────────────────────── */
 async function loadFilters() {
     try {
-        const { data: plans, error } = await db
-            .from('assembly_plan')
-            .select('vehicle, week');
+        // Paginate to get all vehicles/weeks (same 1000-row limit applies)
+        let plans = [];
+        let fFrom = 0;
+        while (true) {
+            const { data: page, error } = await db
+                .from('assembly_plan')
+                .select('vehicle, vehicle_no, start_date, week')
+                .range(fFrom, fFrom + 999);
+            if (error) throw error;
+            if (!page?.length) break;
+            plans = plans.concat(page);
+            if (page.length < 1000) break;
+            fFrom += 1000;
+        }
 
-        if (error) throw error;
-
-        const vehicles = [...new Set(plans.map(r => r.vehicle))].sort(naturalSort);
-        const weeks = [...new Set(plans.map(r => r.week).filter(Boolean))].sort(naturalSort);
+        const vehicles = [...new Set(plans.map(r => r.vehicle))].sort(vehicleSort);
+        const weeks = [...new Set(plans.map(r => r.start_date ? weekLabel(r.start_date) : r.week).filter(Boolean))]
+            .sort((a, b) => parseInt(a.replace(/[^0-9]/g, ''), 10) - parseInt(b.replace(/[^0-9]/g, ''), 10));
 
         populateSelect('filterVehicle', vehicles, 'All Vehicles');
         populateSelect('filterWeek', weeks, 'All Weeks');
+
+        // Units across all vehicles
+        const units = [...new Set(plans.map(r => r.vehicle_no).filter(Boolean))].sort(naturalSort);
+        populateSelect('filterUnit', units, 'All Units');
 
     } catch (err) {
         showToast('Failed to load filter options.', 'error');
@@ -219,6 +274,47 @@ function populateSelect(id, values, placeholder) {
 /* ──────────────────────────────────────────────────────────────────
    5. DATA LOADING
    ────────────────────────────────────────────────────────────────── */
+
+/** Save current table scroll position and return it */
+function saveScrollPos() {
+    const wrap = document.getElementById('tableWrap') || document.querySelector('.table-scroll-wrap');
+    return { top: wrap?.scrollTop || 0, left: wrap?.scrollLeft || 0, el: wrap };
+}
+/** Restore scroll position (deferred to after DOM paint) */
+function restoreScrollPos(pos) {
+    if (!pos?.el) return;
+    requestAnimationFrame(() => {
+        pos.el.scrollTop = pos.top;
+        pos.el.scrollLeft = pos.left;
+    });
+}
+
+/**
+ * Re-render all derived views (table, summary, charts, VPX, Gantt)
+ * from currentData without touching the DB.  Always preserves scroll.
+ * Call this after any in-memory mutation of currentData.
+ */
+function refreshAllViews() {
+    const category = getVal('filterCategory');
+    const displayData = category
+        ? currentData.filter(r => getCategory(r.process_station) === category)
+        : currentData;
+
+    const pos = saveScrollPos();
+    renderTable(displayData);
+    restoreScrollPos(pos);
+
+    updateSummary(displayData);
+    renderCharts(displayData);
+    renderVPX(currentData);
+
+    const gsEl = document.getElementById('ganttStart');
+    const geEl = document.getElementById('ganttEnd');
+    if (gsEl?.value && geEl?.value) {
+        renderGantt(displayData, gsEl.value, geEl.value);
+    }
+}
+
 async function loadData() {
     try {
         setTableLoading(true);
@@ -238,9 +334,21 @@ async function loadData() {
         const vehicle = getVal('filterVehicle');
         if (vehicle) query = query.eq('vehicle', vehicle);
 
-        // Week filter
+        // Unit filter
+        const unit = getVal('filterUnit');
+        if (unit) query = query.eq('vehicle_no', unit);
+
+        // Week filter — include all tasks whose date range overlaps the selected ISO week
         const week = getVal('filterWeek');
-        if (week) query = query.eq('week', week);
+        if (week) {
+            const wr = isoWeekDateRange(week);
+            if (wr) {
+                // Task overlaps week if: start_date <= weekEnd AND end_date >= weekStart
+                query = query
+                    .lte('start_date', wr.weekEnd)
+                    .gte('end_date', wr.weekStart);
+            }
+        }
 
         // Time-frame filter
         const tf = getVal('filterTimeFrame');
@@ -264,8 +372,19 @@ async function loadData() {
             if (ed) query = query.lte('end_date', ed);
         }
 
-        const { data, error } = await query;
-        if (error) throw error;
+        // Supabase returns max 1000 rows by default — fetch all pages
+        let allData = [];
+        let from = 0;
+        const PAGE = 1000;
+        while (true) {
+            const { data: page, error: pageErr } = await query.range(from, from + PAGE - 1);
+            if (pageErr) throw pageErr;
+            if (!page?.length) break;
+            allData = allData.concat(page);
+            if (page.length < PAGE) break;  // last page
+            from += PAGE;
+        }
+        const data = allData;
 
         // Flatten progress (take first/only row per plan)
         currentData = data.map(plan => {
@@ -277,7 +396,7 @@ async function loadData() {
 
         // Natural sort: vehicle (K9→K10→K11) → vehicle_no (M1→M2→M3) → start_date
         currentData.sort((a, b) => {
-            const vCmp = naturalSort(a.vehicle, b.vehicle); if (vCmp !== 0) return vCmp;
+            const vCmp = vehicleSort(a.vehicle, b.vehicle); if (vCmp !== 0) return vCmp;
             const uCmp = naturalSort(a.vehicle_no, b.vehicle_no); if (uCmp !== 0) return uCmp;
             return (a.start_date || '').localeCompare(b.start_date || '');
         });
@@ -291,6 +410,7 @@ async function loadData() {
         renderTable(displayData);
         updateSummary(displayData);
         renderCharts(displayData);
+        renderVPX(currentData);   // always use full currentData (not category-filtered)
 
         // Auto-refresh gantt with current date range
         const gsEl = document.getElementById('ganttStart');
@@ -320,7 +440,7 @@ function calculateStatus(row) {
     // Completed on time: done and finished by the planned end date
     if (completed && compDate && compDate <= endDate) return 'Completed';
     // Late: done but finished after the planned end date
-    if (completed && compDate && compDate > endDate) return 'Late';
+    if (completed && compDate && compDate > endDate) return 'Late Completion';
     // Overdue: not done and today is past the planned end date
     if (!completed && today > endDate) return 'Overdue';
     // In Progress: actual start date has been entered but not yet complete
@@ -375,14 +495,14 @@ function renderTable(data) {
     tbody.innerHTML = data.map((row, idx) => {
         const status = calculateStatus(row);
         const delay = delayDays(row);
-        const badgeCls = `badge badge-${status.toLowerCase().replace(' ', '-')}`;
+        const badgeCls = `badge badge-${status.toLowerCase().replace(' ', '-').replace('late-completion', 'late')}`;
         const compDate = row.progress?.completion_date || null;
         const actualStart = row.progress?.actual_start_date || '';
-        const isDone = status === 'Completed' || status === 'Late';
+        const isDone = status === 'Completed' || status === 'Late Completion';
 
         // ── Delay label ───────────────────────────────────────────────
         let delayHtml;
-        if (delay > 0 && (status === 'Late' || status === 'Overdue')) {
+        if (delay > 0 && (status === 'Late Completion' || status === 'Overdue')) {
             delayHtml = `<span class="delay-positive">+${delay}d</span>`;
         } else if (delay > 0 && status === 'In Progress') {
             delayHtml = `<span class="delay-positive" title="Started ${delay}d late">+${delay}d start</span>`;
@@ -523,6 +643,14 @@ function renderTable(data) {
             popover.dataset.planId = planId;
 
             function renderView() {
+                const adminBtns = isAdmin() ? `
+          <button class="note-action-btn note-edit-btn" title="Edit note">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9.5 2.5l2 2L4 12H2v-2L9.5 2.5z"/></svg>
+          </button>
+          <button class="note-action-btn note-delete-btn" title="Delete note">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3.5h10M5 3.5V2h4v1.5M5.5 6v5M8.5 6v5M3 3.5l.7 8h6.6l.7-8"/></svg>
+          </button>` : '';
+
                 popover.innerHTML = `
           <div class="note-popover-header">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7">
@@ -531,12 +659,7 @@ function renderTable(data) {
             </svg>
             Completion Note
             <div class="note-popover-actions">
-              <button class="note-action-btn note-edit-btn" title="Edit note">
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9.5 2.5l2 2L4 12H2v-2L9.5 2.5z"/></svg>
-              </button>
-              <button class="note-action-btn note-delete-btn" title="Delete note">
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3.5h10M5 3.5V2h4v1.5M5.5 6v5M8.5 6v5M3 3.5l.7 8h6.6l.7-8"/></svg>
-              </button>
+              ${adminBtns}
               <button class="note-popover-close" title="Close">✕</button>
             </div>
           </div>
@@ -544,19 +667,21 @@ function renderTable(data) {
 
                 popover.querySelector('.note-popover-close').addEventListener('click', () => popover.remove());
 
-                popover.querySelector('.note-edit-btn').addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    renderEdit();
-                });
+                if (isAdmin()) {
+                    popover.querySelector('.note-edit-btn').addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        renderEdit();
+                    });
 
-                popover.querySelector('.note-delete-btn').addEventListener('click', async (e) => {
-                    e.stopPropagation();
-                    if (!confirm('Delete this completion note?')) return;
-                    await saveNoteOnly(planId, '');
-                    btn.setAttribute('title', '');
-                    btn.closest('.action-cell').querySelector('.btn-note-icon')?.remove();
-                    popover.remove();
-                });
+                    popover.querySelector('.note-delete-btn').addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        if (!confirm('Delete this completion note?')) return;
+                        await saveNoteOnly(planId, '');
+                        btn.setAttribute('title', '');
+                        btn.closest('.action-cell').querySelector('.btn-note-icon')?.remove();
+                        popover.remove();
+                    });
+                }
             }
 
             function renderEdit() {
@@ -638,7 +763,7 @@ function renderTable(data) {
 function updateSummary(data) {
     const total = data.length;
     const completed = data.filter(r => calculateStatus(r) === 'Completed').length;
-    const late = data.filter(r => calculateStatus(r) === 'Late').length;
+    const late = data.filter(r => calculateStatus(r) === 'Late Completion').length;
     const overdue = data.filter(r => calculateStatus(r) === 'Overdue').length;
     const pct = total ? Math.round(((completed + late) / total) * 100) : 0;
 
@@ -653,20 +778,301 @@ function updateSummary(data) {
 /* ──────────────────────────────────────────────────────────────────
    9. CHARTS
    ────────────────────────────────────────────────────────────────── */
+
+/* ================================================================
+   VEHICLE PRODUCTION PROGRESS MATRIX (VPX)
+   ================================================================ */
+
+// Station column definitions — ordered exactly as they flow in production
+/**
+ * VPX column definitions.
+ *
+ * Each column has:
+ *   code    — the station code shown in the header (A01, A05/A11, …)
+ *   name    — full station name shown as column tooltip
+ *   resolve — function(vehicle) → station key to look up in row.stations,
+ *             or null if this column is N/A for that vehicle
+ *   group   — column group label
+ *
+ * Vehicle-specific rules:
+ *   A02 → H/Electric (K9 family) | Track (K10/K11 family)
+ *   A04 → Engine (K9 only — K10/K11 show this station at A13)
+ *   A13 → Engine (K10/K11 only)
+ */
+const _isK9 = v => /K9/i.test(String(v));
+const _isK10K11 = v => /K1[01]/i.test(String(v));
+
+const VPX_COLUMNS = [
+    // ── Assembly ──────────────────────────────────────────────────────
+    {
+        code: 'A01', name: 'Suspension',
+        resolve: () => 'Suspension',
+        group: 'Assembly',
+    },
+    {
+        code: 'A02', name: 'H/Electric (K9) · Track (K10/K11)',
+        resolve: v => _isK9(v) ? 'H/Electric' : 'Track',
+        group: 'Assembly',
+    },
+    {
+        code: 'A03', name: 'Interior',
+        resolve: () => 'Interior',
+        group: 'Assembly',
+    },
+    {
+        code: 'A04', name: 'Engine (K9)',
+        resolve: v => _isK9(v) ? 'Engine' : null,   // K10/K11 use A13
+        group: 'Assembly',
+    },
+    {
+        code: 'A05/A11', name: 'Turret/Gun',
+        resolve: () => 'Turret/Gun',
+        group: 'Assembly',
+    },
+    {
+        code: 'A06', name: 'Hydraulic',
+        resolve: () => 'Hydraulic',
+        group: 'Assembly',
+    },
+    {
+        code: 'A07', name: 'Bore Sight',
+        resolve: () => 'Bore Sight',
+        group: 'Assembly',
+    },
+    {
+        code: 'A08', name: 'Turret',
+        resolve: () => 'Turret',
+        group: 'Assembly',
+    },
+    {
+        code: 'A09', name: 'T/Electric (TURRET)',
+        resolve: () => 'T/Electric (TURRET)',
+        group: 'Assembly',
+    },
+    {
+        code: 'A10', name: 'Hyd / Sub (TURRET)',
+        resolve: () => 'Hyd / Sub (TURRET)',
+        group: 'Assembly',
+    },
+    {
+        code: 'A12', name: 'Electric/Interior',
+        resolve: () => 'Electric/Interior',
+        group: 'Assembly',
+    },
+    {
+        code: 'A13', name: 'Engine (K10/K11)',
+        resolve: v => _isK9(v) ? null : 'Engine',   // K9 uses A04
+        group: 'Assembly',
+    },
+    {
+        code: 'A14', name: 'Automation',
+        resolve: () => 'Automation',
+        group: 'Assembly',
+    },
+    {
+        code: 'A15', name: 'Final Assembly',
+        resolve: () => 'Final Assembly',
+        group: 'Assembly',
+    },
+    // ── Processing ────────────────────────────────────────────────────
+    {
+        code: 'Proc.', name: 'Processing',
+        resolve: () => 'Processing',
+        group: 'Processing',
+    },
+    // ── Final Inspection ──────────────────────────────────────────────
+    {
+        code: 'F.Insp', name: 'Final Inspection',
+        resolve: () => 'Final Inspection',
+        group: 'Final Inspection',
+    },
+    // ── Final Test ────────────────────────────────────────────────────
+    {
+        code: '#1Insp', name: '#1 Inspection',
+        resolve: () => '#1Insp',
+        group: 'Final Test',
+    },
+    {
+        code: 'T.Run', name: 'TEST RUN',
+        resolve: () => 'TEST RUN',
+        group: 'Final Test',
+    },
+    {
+        code: 'Perf.', name: 'Performance test',
+        resolve: () => 'Performance test',
+        group: 'Final Test',
+    },
+    {
+        code: 'Repair', name: 'REPAIR',
+        resolve: () => 'REPAIR',
+        group: 'Final Test',
+    },
+    {
+        code: 'Check', name: 'CHECK',
+        resolve: () => 'CHECK',
+        group: 'Final Test',
+    },
+    {
+        code: 'PP Chk', name: 'Powerpack check',
+        resolve: () => 'Powerpack check',
+        group: 'Final Test',
+    },
+    {
+        code: 'F.Chk', name: 'Final Check',
+        resolve: () => 'Final Check',
+        group: 'Final Test',
+    },
+];
+
+function renderVPX(data) {
+    const container = document.getElementById('vpxMatrix');
+    if (!container) return;
+
+    if (!data?.length) {
+        container.innerHTML = '<div class="vpx-empty">Load data to view the progress matrix.</div>';
+        return;
+    }
+
+    // Build row data: one row per vehicle+unit
+    const rowMap = {};
+    data.forEach(task => {
+        const rowKey = task.vehicle + '||' + task.vehicle_no;
+        if (!rowMap[rowKey])
+            rowMap[rowKey] = { vehicle: task.vehicle, vehicle_no: task.vehicle_no, stations: {} };
+        const existing = rowMap[rowKey].stations[task.process_station];
+        if (!existing || task.end_date > existing.end_date)
+            rowMap[rowKey].stations[task.process_station] = task;
+    });
+
+    const rows = Object.values(rowMap).sort((a, b) => {
+        const vc = vehicleSort(a.vehicle, b.vehicle);
+        return vc !== 0 ? vc : naturalSort(a.vehicle_no, b.vehicle_no);
+    });
+
+    const usedStations = new Set(data.map(t => t.process_station));
+
+    // A column is active if at least one vehicle resolves a non-null station key in data
+    const activeCols = VPX_COLUMNS.filter(col =>
+        rows.some(row => { const k = col.resolve(row.vehicle); return k !== null && usedStations.has(k); })
+    );
+
+    if (!activeCols.length) {
+        container.innerHTML = '<div class="vpx-empty">No station data matches the known column list.</div>';
+        return;
+    }
+
+    // Column group spans
+    const groups = [];
+    activeCols.forEach(col => {
+        if (!groups.length || groups[groups.length - 1].label !== col.group)
+            groups.push({ label: col.group, span: 1 });
+        else
+            groups[groups.length - 1].span++;
+    });
+
+    function grpSlug(g) { return g.toLowerCase().replace(/[^a-z0-9]+/g, '-'); }
+
+    let html = '<table class="vpx-table" role="grid"><thead>';
+
+    // Group header row
+    html += '<tr class="vpx-group-row"><th class="vpx-th-vehicle" rowspan="2">Vehicle &middot; Unit</th>';
+    groups.forEach(g => {
+        html += '<th class="vpx-th-group vpx-grp-' + grpSlug(g.label) + '" colspan="' + g.span + '">' + g.label + '</th>';
+    });
+    html += '</tr><tr class="vpx-col-row">';
+    activeCols.forEach((col, ci) => {
+        html += '<th class="vpx-th-col vpx-grp-' + grpSlug(col.group) + '" data-col="' + ci + '" title="' + col.name + '">' + col.code + '</th>';
+    });
+    html += '</tr></thead><tbody>';
+
+    // Group rows by vehicle so we can insert vehicle header rows like Gantt
+    const vehicles = [...new Set(rows.map(r => r.vehicle))];
+
+    rows.forEach((row, ri) => {
+        // Insert a vehicle group header row before first unit of each vehicle — matches Gantt gr-group-label
+        const prevVehicle = ri > 0 ? rows[ri - 1].vehicle : null;
+        if (row.vehicle !== prevVehicle) {
+            html += '<tr class="vpx-row vpx-row-group">';
+            html += '<td class="vpx-td-vehicle vpx-td-group" colspan="1">'
+                + '<svg class="vpx-veh-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 8h6M5 11h4"/></svg>'
+                + '<span class="vpx-veh-name">' + esc(row.vehicle) + '</span>'
+                + '</td>';
+            // Fill rest of columns with empty group cells (same bg)
+            activeCols.forEach(() => { html += '<td class="vpx-group-fill"></td>'; });
+            html += '</tr>';
+        }
+
+        html += '<tr class="vpx-row" data-ri="' + ri + '">';
+        html += '<td class="vpx-td-vehicle vpx-td-unit">'
+            + '<span class="vpx-unit-dot"></span>'
+            + '<span class="vpx-unit-name">' + esc(row.vehicle_no) + '</span>'
+            + '</td>';
+
+        activeCols.forEach((col, ci) => {
+            var grpCls = 'vpx-grp-' + grpSlug(col.group);
+            var stationKey = col.resolve(row.vehicle);
+
+            if (stationKey === null) {
+                html += '<td class="vpx-cell vpx-cell-na ' + grpCls + '" data-ri="' + ri + '" data-ci="' + ci + '" title="' + col.name + ' — N/A for ' + esc(row.vehicle) + '"><span class="vpx-na">N/A</span></td>';
+                return;
+            }
+
+            var task = row.stations[stationKey];
+            if (!task) {
+                html += '<td class="vpx-cell vpx-cell-empty ' + grpCls + '" data-ri="' + ri + '" data-ci="' + ci + '" title="' + col.name + ' — not yet planned">—</td>';
+                return;
+            }
+
+            var status = calculateStatus(task);
+            var planned = task.end_date;
+            var actual = (task.progress && task.progress.completion_date) || null;
+            var actStart = (task.progress && task.progress.actual_start_date) || null;
+
+            var dotClass = status === 'Completed' ? 'vpx-dot-ok'
+                : status === 'In Progress' ? 'vpx-dot-prog'
+                    : status === 'Late Completion' ? 'vpx-dot-late'
+                        : status === 'Overdue' ? 'vpx-dot-over'
+                            : 'vpx-dot-plan';
+
+            var tipParts = [
+                col.code + '  ' + task.process_station,
+                'Planned    : ' + formatDate(task.start_date) + ' \u2192 ' + formatDate(planned),
+                actStart ? 'Actual start: ' + formatDate(actStart) : null,
+                actual ? 'Completed   : ' + formatDate(actual) : null,
+                'Status     : ' + status,
+                task.remark ? 'Remark      : ' + task.remark : null,
+            ].filter(Boolean).join('\n');
+
+            var statusSlug = status.toLowerCase().replace(/\s+/g, '-').replace('late-completion', 'late');
+
+            html += '<td class="vpx-cell ' + grpCls + ' vpx-status-' + statusSlug + '" data-ri="' + ri + '" data-ci="' + ci + '" title="' + tipParts.replace(/"/g, "'") + '">'
+                + '<span class="vpx-dot ' + dotClass + '"></span>'
+                + '<div class="vpx-dates">'
+                + '<span class="vpx-date-plan">' + (formatDate(planned) || '—') + '</span>'
+                + '<span class="vpx-date-act' + (actual ? '' : ' vpx-date-none') + '">' + (actual ? formatDate(actual) : '—') + '</span>'
+                + '</div></td>';
+        });
+
+        html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
 function renderCharts(data) {
     renderBarChart(data);
     renderLineChart(data);
 }
 
 function renderBarChart(data) {
-    const vehicles = [...new Set(data.map(r => r.vehicle))].sort(naturalSort);
+    const vehicles = [...new Set(data.map(r => r.vehicle))].sort(vehicleSort);
 
     const counts = vehicles.map(v => {
         const rows = data.filter(r => r.vehicle === v);
         return {
             planned: rows.filter(r => calculateStatus(r) === 'Planned').length,
             completed: rows.filter(r => calculateStatus(r) === 'Completed').length,
-            late: rows.filter(r => calculateStatus(r) === 'Late').length,
+            late: rows.filter(r => calculateStatus(r) === 'Late Completion').length,
             overdue: rows.filter(r => calculateStatus(r) === 'Overdue').length,
         };
     });
@@ -741,7 +1147,7 @@ function renderLineChart(data) {
         data.filter(r => {
             const s = calculateStatus(r);
             const cd = r.progress?.completion_date;
-            return (s === 'Completed' || s === 'Late') && cd && cd <= d;
+            return (s === 'Completed' || s === 'Late Completion') && cd && cd <= d;
         }).length
     );
 
@@ -895,7 +1301,15 @@ async function saveActualStart(planId, dateValue) {
         );
 
         showToast(valueToSave ? 'Start date saved.' : 'Start date cleared.', 'success');
-        await loadData();
+        // In-place update: patch currentData and re-render without scroll reset
+        const row = currentData.find(t => t.id === planId);
+        if (row) {
+            row.progress = snapAfter || row.progress || {};
+            row.progress.actual_start_date = valueToSave;
+            refreshAllViews();
+        } else {
+            await loadData();
+        }
 
     } catch (err) {
         showToast('Error saving start date: ' + err.message, 'error');
@@ -905,7 +1319,7 @@ async function saveActualStart(planId, dateValue) {
 
 async function saveCompletionDate(planId, dateValue, silent = false) {
     // silent = cancel — just reload display without writing
-    if (silent) { await loadData(); return; }
+    if (silent) { refreshAllViews(); return; }
     if (!canWrite()) { showToast('Viewer accounts cannot edit data.', 'error'); return; }
 
     const valueToSave = dateValue || null;
@@ -936,7 +1350,15 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
         );
 
         showToast(valueToSave ? 'Completion date saved.' : 'Completion date cleared.', 'success');
-        await loadData();
+        const row2 = currentData.find(t => t.id === planId);
+        if (row2) {
+            row2.progress = snapAfter || row2.progress || {};
+            row2.progress.completed = !!valueToSave;
+            row2.progress.completion_date = valueToSave;
+            refreshAllViews();
+        } else {
+            await loadData();
+        }
 
     } catch (err) {
         showToast('Error saving completion date: ' + err.message, 'error');
@@ -1045,7 +1467,16 @@ async function markComplete() {
         );
 
         showToast('Progress saved successfully.', 'success');
-        await loadData();
+        const mRow = currentData.find(t => t.id === planId);
+        if (mRow) {
+            mRow.progress = snapAfter || mRow.progress || {};
+            mRow.progress.completed = true;
+            mRow.progress.completion_date = compDate;
+            mRow.progress.notes = notes || null;
+            refreshAllViews();
+        } else {
+            await loadData();
+        }
 
     } catch (err) {
         showToast('Error saving progress: ' + err.message, 'error');
@@ -1072,7 +1503,8 @@ async function importPlan() {
         const start_date = parseDateStr(rawStart);
         const end_date = parseDateStr(rawEnd);
         if (!start_date || !end_date) continue;
-        rows.push({ vehicle, vehicle_no, process_station, week, start_date, end_date, remark: remarkParts.join(',').trim() });
+        const computedWeek = start_date ? weekLabel(start_date) : (week || null);
+        rows.push({ vehicle, vehicle_no, process_station, week: computedWeek, start_date, end_date, remark: remarkParts.join(',').trim() });
     }
 
     if (!rows.length) { showToast('No valid rows found. Check format.', 'error'); return; }
@@ -1157,16 +1589,41 @@ function wireEvents() {
     });
     document.getElementById('btnAlApply')?.addEventListener('click', () => loadAuditLog(true));
     document.getElementById('btnAlReset')?.addEventListener('click', resetAuditFilters);
+
+    // ── Live table search (wire ONCE here, not inside resetFilters) ────
+    document.getElementById('tableSearch')?.addEventListener('input', function () {
+        const q = this.value.trim().toLowerCase();
+        const cat = getVal('filterCategory');
+        const base = cat ? currentData.filter(r => getCategory(r.process_station) === cat) : currentData;
+        const filtered = q ? base.filter(r =>
+            (r.vehicle || '').toLowerCase().includes(q) ||
+            (r.vehicle_no || '').toLowerCase().includes(q) ||
+            (r.process_station || '').toLowerCase().includes(q) ||
+            (r.remark || '').toLowerCase().includes(q) ||
+            (r.week || '').toLowerCase().includes(q)
+        ) : base;
+        const pos = saveScrollPos();
+        renderTable(filtered);
+        document.getElementById('rowCount').textContent =
+            filtered.length + ' record' + (filtered.length !== 1 ? 's' : '') + (q ? ' (filtered)' : '');
+        restoreScrollPos(pos);
+    });
+
+    // VPX PDF export
+    document.getElementById('btnVpxPdf')?.addEventListener('click', exportVpxPDF);
 }
 
 function resetFilters() {
-    ['filterVehicle', 'filterWeek', 'filterTimeFrame', 'filterCategory'].forEach(id => {
-        document.getElementById(id).value = '';
+    ['filterVehicle', 'filterUnit', 'filterWeek', 'filterTimeFrame', 'filterCategory'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
     });
     document.getElementById('filterStartDate').value = '';
     document.getElementById('filterEndDate').value = '';
     document.getElementById('customDateStart').style.display = 'none';
     document.getElementById('customDateEnd').style.display = 'none';
+    const srch = document.getElementById('tableSearch');
+    if (srch) srch.value = '';
     loadData();
 }
 
@@ -1263,6 +1720,18 @@ function naturalSort(a, b) {
         if (cmp !== 0) return cmp;
     }
     return 0;
+}
+
+/**
+ * Vehicle-specific sort: K9 → K10 → K11 → K9-FOC → K10-FOC → K11-FOC
+ * Rule: non-FOC variants come before FOC variants; within each group,
+ * sort numerically (naturalSort on the base number).
+ */
+function vehicleSort(a, b) {
+    const focA = /foc/i.test(String(a));
+    const focB = /foc/i.test(String(b));
+    if (focA !== focB) return focA ? 1 : -1;   // non-FOC first
+    return naturalSort(a, b);                   // same group → numeric order
 }
 function todayStr() {
     return new Date().toISOString().slice(0, 10);
@@ -1452,18 +1921,64 @@ const SPECIAL_ZONES = [
 /* ──────────────────────────────────────────────────────────────────
    FISCAL WEEK NUMBER  (Sunday-based — week starts Sunday)
    ────────────────────────────────────────────────────────────────── */
-function getISOWeek(dateStr) {
+/**
+ * ISO 8601 week number (1–53).  Week 1 is the week containing the first
+ * Thursday of the year, and weeks run Monday → Sunday.
+ * Returns { week, year } — the year may differ from the calendar year
+ * for days in late December / early January.
+ */
+function getISOWeekInfo(dateStr) {
     const d = new Date(dateStr + 'T00:00:00');
-    // Shift so Sunday = 0, and find the Sunday that starts this week
-    const day = d.getDay();             // 0=Sun … 6=Sat
-    const sun = new Date(d);
-    sun.setDate(d.getDate() - day);     // rewind to Sunday of this week
-    // Week 1 = the week containing Jan 1
-    const jan1 = new Date(sun.getFullYear(), 0, 1);
-    const jan1Day = jan1.getDay();
-    const firstSun = new Date(jan1);
-    firstSun.setDate(jan1.getDate() - jan1Day); // Sunday on or before Jan 1
-    return Math.floor((sun - firstSun) / (7 * 86400000)) + 1;
+    // Shift to Thursday of the same week (ISO weeks anchored to Thursday)
+    const thu = new Date(d);
+    thu.setDate(d.getDate() - ((d.getDay() + 6) % 7) + 3); // Monday=0 offset
+    const year = thu.getFullYear();
+    const jan4 = new Date(year, 0, 4);   // Jan 4 is always in week 1
+    const week = 1 + Math.round((thu - jan4) / (7 * 86400000));
+    return { week, year };
+}
+
+/** Return ISO week number (1–53) for a date string. */
+function getISOWeek(dateStr) {
+    return getISOWeekInfo(dateStr).week;
+}
+
+/**
+ * Return a "FW##" label derived from a task's start_date.
+ * This is the canonical week stored on every plan row.
+ */
+function weekLabel(dateStr) {
+    const { week } = getISOWeekInfo(dateStr);
+    return 'FW' + String(week).padStart(2, '0');
+}
+
+/**
+ * Given a week label like "FW09" (optionally "FW9"), return the
+ * Monday and Sunday of that ISO week for the current or nearest year.
+ * Returns { weekStart, weekEnd } as YYYY-MM-DD strings.
+ */
+function isoWeekDateRange(label) {
+    const num = parseInt(label.replace(/[^0-9]/g, ''), 10);
+    if (!num) return null;
+    // Determine which year: use the year whose FW#{num} is closest to today
+    const todayD = new Date(todayStr() + 'T00:00:00');
+    const year = todayD.getFullYear();
+    // Jan 4 of that year is always in week 1 → find Monday of week 1
+    function weekStart(y) {
+        const jan4 = new Date(y, 0, 4);
+        const w1Mon = new Date(jan4);
+        w1Mon.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7));
+        const mon = new Date(w1Mon);
+        mon.setDate(w1Mon.getDate() + (num - 1) * 7);
+        const sun = new Date(mon);
+        sun.setDate(mon.getDate() + 6);
+        return { weekStart: localDateStr(mon), weekEnd: localDateStr(sun) };
+    }
+    // Try current year; if the week is in the past by more than 26 weeks, try next year
+    const r = weekStart(year);
+    const delta = (new Date(r.weekStart + 'T00:00:00') - todayD) / 86400000;
+    if (delta < -183) return weekStart(year + 1);
+    return r;
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -1474,8 +1989,8 @@ function wireGanttControls() {
     const now = new Date();
     const y = now.getFullYear();
     const m = now.getMonth();
-    const defaultStart = new Date(y, m, 1).toISOString().slice(0, 10);
-    const defaultEnd = new Date(y, m + 3, 0).toISOString().slice(0, 10);
+    const defaultStart = new Date(y, m - 2, 1).toISOString().slice(0, 10);
+    const defaultEnd = new Date(y, m + 4, 0).toISOString().slice(0, 10);
 
     const gsEl = document.getElementById('ganttStart');
     const geEl = document.getElementById('ganttEnd');
@@ -1508,14 +2023,16 @@ function renderGantt(plans, startDate, endDate) {
         return;
     }
 
-    // ── 1. Build day array ────────────────────────────────────────
-    const days = generateDateRange(startDate, endDate); // reuse existing helper
+    // ── 1. Build day array (Fridays excluded from grid) ─────────────
+    const allDays = generateDateRange(startDate, endDate);
+    // Strip out every Friday — they are never shown as columns
+    const days = allDays.filter(d => new Date(d + 'T00:00:00').getDay() !== 5);
     const numDays = days.length;
     const totalW = numDays * GANTT_DAY_W;
     const innerW = GANTT_LABEL_W + totalW;
     const today = todayStr();
 
-    // Pre-compute metadata for each day (avoid repeated Date construction)
+    // Pre-compute metadata for each non-Friday day
     const dayMeta = days.map(d => {
         const dt = new Date(d + 'T00:00:00');
         const dow = dt.getDay();
@@ -1524,15 +2041,33 @@ function renderGantt(plans, startDate, endDate) {
             dayNum: dt.getDate(),
             month: dt.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }),
             isoWeek: getISOWeek(d),
-            weekend: dow === 5 || dow === 6,
-            isFri: dow === 5,
             isSat: dow === 6,
             isToday: d === today,
         };
     });
 
-    // Fast lookup: date string → column index
+    // Fast lookup: date string → column index (Fridays have no entry)
     const dayIndex = Object.fromEntries(days.map((d, i) => [d, i]));
+
+    /**
+     * Resolve a date to the nearest column index.
+     * If the date is a Friday (not in dayIndex), snap forward to Saturday
+     * (or Monday if Saturday is also absent), then fall back to clamping.
+     */
+    function resolveCol(dateStr, clampFallback) {
+        if (dayIndex[dateStr] !== undefined) return dayIndex[dateStr];
+        // Try next few days
+        for (let n = 1; n <= 3; n++) {
+            const next = addDays(dateStr, n);
+            if (dayIndex[next] !== undefined) return dayIndex[next];
+        }
+        // Try previous days
+        for (let n = 1; n <= 3; n++) {
+            const prev = addDays(dateStr, -n);
+            if (dayIndex[prev] !== undefined) return dayIndex[prev];
+        }
+        return clampFallback;
+    }
 
     // ── 2. Group plans ─────────────────────────────────────────────
     // Only include tasks that overlap the visible date range
@@ -1547,7 +2082,7 @@ function renderGantt(plans, startDate, endDate) {
         groups[p.vehicle][p.vehicle_no].push(p);
     });
 
-    const vehicleKeys = Object.keys(groups).sort(naturalSort);
+    const vehicleKeys = Object.keys(groups).sort(vehicleSort);
 
     if (!vehicleKeys.length) {
         inner.innerHTML = `
@@ -1587,7 +2122,7 @@ function renderGantt(plans, startDate, endDate) {
         } else { runWeekSpan++; }
 
         // Day cell
-        dHtml += `<div class="gh-day${dm.isFri ? ' gh-day-fri' : dm.isSat ? ' gh-day-sat' : ''}${dm.isToday ? ' gh-day-today' : ''}"
+        dHtml += `<div class="gh-day${dm.isSat ? ' gh-day-sat' : ''}${dm.isToday ? ' gh-day-today' : ''}"
       style="width:${GANTT_DAY_W}px;height:28px">${dm.dayNum}</div>`;
     });
 
@@ -1597,7 +2132,7 @@ function renderGantt(plans, startDate, endDate) {
 
     // ── 4. Background day cells (shared template per row) ─────────
     const bgCells = dayMeta.map(dm =>
-        `<div class="gc-cell${dm.isFri ? ' gc-cell-fri' : dm.isSat ? ' gc-cell-sat' : ''}" style="width:${GANTT_DAY_W}px"></div>`
+        `<div class="gc-cell${dm.isSat ? ' gc-cell-sat' : ''}" style="width:${GANTT_DAY_W}px"></div>`
     ).join('');
 
     // ── 5. Special zone bands ──────────────────────────────────────
@@ -1606,9 +2141,9 @@ function renderGantt(plans, startDate, endDate) {
         // Clamp zone to visible range
         const s = z.start > startDate ? z.start : startDate;
         const e = z.end < endDate ? z.end : endDate;
-        const si = dayIndex[s];
-        const ei = dayIndex[e];
-        if (si === undefined || ei === undefined || si > ei) return;
+        const si = dayIndex[s] ?? resolveCol(s, null);
+        const ei = dayIndex[e] ?? resolveCol(e, null);
+        if (si === null || ei === null || si > ei) return;
 
         const left = GANTT_LABEL_W + si * GANTT_DAY_W;
         const width = (ei - si + 1) * GANTT_DAY_W;
@@ -1621,8 +2156,9 @@ function renderGantt(plans, startDate, endDate) {
     });
 
     // Today marker
-    if (dayIndex[today] !== undefined) {
-        const todayLeft = GANTT_LABEL_W + dayIndex[today] * GANTT_DAY_W + Math.floor(GANTT_DAY_W / 2);
+    const todayCol = dayIndex[today] ?? resolveCol(today, null);
+    if (todayCol !== null) {
+        const todayLeft = GANTT_LABEL_W + todayCol * GANTT_DAY_W + Math.floor(GANTT_DAY_W / 2);
         zonesHtml += `<div class="gc-today-line" style="left:${todayLeft}px"></div>`;
     }
 
@@ -1653,16 +2189,26 @@ function renderGantt(plans, startDate, endDate) {
             // Sort by start date so we process left-to-right
             const positioned = tasks
                 .map(task => {
-                    let si = dayIndex[task.start_date] ?? (task.start_date < startDate ? 0 : null);
-                    let ei = dayIndex[task.end_date] ?? (task.end_date > endDate ? numDays - 1 : null);
-                    if (si === null || ei === null || si > ei) return null;
-                    return { task, si, ei };
+                    // Clamp tasks that start before / end after the visible range
+                    const rawSi = task.start_date < startDate ? 0 : resolveCol(task.start_date, null);
+                    const rawEi = task.end_date > endDate ? numDays - 1 : resolveCol(task.end_date, null);
+                    if (rawSi === null || rawEi === null || rawSi > rawEi) return null;
+                    return { task, si: rawSi, ei: rawEi };
                 })
                 .filter(Boolean)
                 .sort((a, b) => a.si - b.si);
 
+            // Sort by user-set lane priority first, then by start column
+            // _laneOrder[id] is a small integer the user controls with ▲▼ buttons
+            positioned.sort((a, b) => {
+                const pa = _laneOrder[a.task.id] ?? 0;
+                const pb = _laneOrder[b.task.id] ?? 0;
+                if (pa !== pb) return pa - pb;
+                return a.si - b.si;
+            });
+
             // Assign each task to the lowest lane it doesn't collide with
-            const laneEndAt = [];   // laneEndAt[lane] = ei of last task placed there
+            const laneEndAt = [];
             positioned.forEach(p => {
                 let lane = 0;
                 while (laneEndAt[lane] !== undefined && laneEndAt[lane] >= p.si) lane++;
@@ -1690,7 +2236,7 @@ function renderGantt(plans, startDate, endDate) {
                 let shadow = '';
                 let extraCls = '';
                 if (status === 'Completed') shadow = `;box-shadow:0 0 0 2px #22c55e inset,0 2px 6px rgba(0,0,0,.3)`;
-                else if (status === 'Late') shadow = `;box-shadow:0 0 0 2px #ef4444 inset,0 2px 6px rgba(0,0,0,.3)`;
+                else if (status === 'Late Completion') shadow = `;box-shadow:0 0 0 2px #8b5cf6 inset,0 2px 6px rgba(0,0,0,.3)`;  // purple
                 else if (status === 'Overdue') extraCls = ' gc-bar-overdue';
                 else if (status === 'In Progress') shadow = `;box-shadow:0 0 0 2px #f59e0b inset,0 2px 6px rgba(0,0,0,.3)`;
                 else shadow = `;box-shadow:0 2px 6px rgba(0,0,0,.3)`;
@@ -1714,11 +2260,19 @@ function renderGantt(plans, startDate, endDate) {
                 ].filter(Boolean).join('\n');
 
                 // Use absolute top instead of the old top:50% transform
+                const laneUp = _ganttEditMode ? `<button class="gc-bar-lane gc-bar-lane-up"   data-plan-id="${task.id}" title="Move lane up">&#9650;</button>` : '';
+                const laneDown = _ganttEditMode ? `<button class="gc-bar-lane gc-bar-lane-dn"   data-plan-id="${task.id}" title="Move lane down">&#9660;</button>` : '';
+                const editBtns = _ganttEditMode ? `
+          <button class="gc-bar-edit"   data-plan-id="${task.id}" title="Edit block">&#9998;</button>
+          <button class="gc-bar-delete" data-plan-id="${task.id}" title="Delete block">&#x2715;</button>` : '';
                 return `<div class="gc-bar${extraCls}"
+          data-plan-id="${task.id}"
           style="left:${left}px;width:${width}px;height:${BAR_H}px;top:${topPx}px;transform:none;background:${color}${shadow}"
           title="${esc(tip)}">
+          ${laneUp}${laneDown}
           ${actualStartMarker}
           <span class="gc-bar-text">${esc(task.process_station)}</span>
+          ${editBtns}
         </div>`;
             }).join('');
 
@@ -1784,8 +2338,8 @@ const REPORT_TYPES = {
     today: { label: "Today's Plan", filter: r => r.start_date <= todayStr() && r.end_date >= todayStr() },
     overdue: { label: 'Overdue Report', filter: r => calculateStatus(r) === 'Overdue' },
     inprogress: { label: 'In Progress Report', filter: r => calculateStatus(r) === 'In Progress' },
-    completed: { label: 'Completed Report', filter: r => ['Completed', 'Late'].includes(calculateStatus(r)) },
-    late: { label: 'Late Completions', filter: r => calculateStatus(r) === 'Late' },
+    completed: { label: 'Completed Report', filter: r => ['Completed', 'Late Completion'].includes(calculateStatus(r)) },
+    late: { label: 'Late Completions', filter: r => calculateStatus(r) === 'Late Completion' },
     planned: { label: 'Not Started Report', filter: r => calculateStatus(r) === 'Planned' },
     vehicle: {
         label: 'By Vehicle Report', filter: r => {
@@ -1835,7 +2389,7 @@ const REPORT_COLUMNS = [
 /* ─── Status → colour map for PDF ──────────────────────────────── */
 const STATUS_COLORS = {
     'Completed': [34, 197, 94],
-    'Late': [249, 115, 22],
+    'Late Completion': [249, 115, 22],
     'Overdue': [239, 68, 68],
     'In Progress': [245, 158, 11],
     'Planned': [59, 130, 246],
@@ -1845,7 +2399,7 @@ const STATUS_COLORS = {
 function buildSummaryStats(rows) {
     const total = rows.length;
     const completed = rows.filter(r => calculateStatus(r) === 'Completed').length;
-    const late = rows.filter(r => calculateStatus(r) === 'Late').length;
+    const late = rows.filter(r => calculateStatus(r) === 'Late Completion').length;
     const overdue = rows.filter(r => calculateStatus(r) === 'Overdue').length;
     const inProgress = rows.filter(r => calculateStatus(r) === 'In Progress').length;
     const planned = rows.filter(r => calculateStatus(r) === 'Planned').length;
@@ -1936,7 +2490,7 @@ function exportPDF(typeKey, fromDate, toDate, category) {
         { label: 'Completed', value: stats.completed, r: 22, g: 163, b: 74 },
         { label: 'In Progress', value: stats.inProgress, r: 217, g: 119, b: 6 },
         { label: 'Overdue', value: stats.overdue, r: 220, g: 38, b: 38 },
-        { label: 'Late', value: stats.late, r: 234, g: 88, b: 12 },
+        { label: 'Late Completion', value: stats.late, r: 234, g: 88, b: 12 },
         { label: 'Not Started', value: stats.planned, r: 100, g: 116, b: 139 },
         { label: 'Completion %', value: `${stats.pct}%`, r: 15, g: 118, b: 110 },
     ];
@@ -1976,7 +2530,7 @@ function exportPDF(typeKey, fromDate, toDate, category) {
     // Status badge colours for white background (darker shades)
     const STATUS_COLORS_LIGHT = {
         'Completed': { bg: [220, 252, 231], text: [21, 128, 61] },
-        'Late': { bg: [255, 237, 213], text: [154, 52, 18] },
+        'Late Completion': { bg: [255, 237, 213], text: [154, 52, 18] },
         'Overdue': { bg: [254, 226, 226], text: [153, 27, 27] },
         'In Progress': { bg: [254, 243, 199], text: [146, 64, 14] },
         'Planned': { bg: [219, 234, 254], text: [30, 64, 175] },
@@ -2150,7 +2704,7 @@ function exportExcel(typeKey, fromDate, toDate, category) {
         ['In Progress', stats.inProgress],
         ['Planned', stats.planned],
         ['Overdue', stats.overdue],
-        ['Late', stats.late],
+        ['Late Completion', stats.late],
         ['Progress %', `${stats.pct}%`],
     ];
 
@@ -2163,8 +2717,8 @@ function exportExcel(typeKey, fromDate, toDate, category) {
     XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
 
     // ── Sheet 3: By Vehicle breakdown ────────────────────────────────
-    const vehicles = [...new Set(rows.map(r => r.vehicle))].sort(naturalSort);
-    const breakdownHdr = ['Vehicle', 'Total', 'Completed', 'In Progress', 'Planned', 'Overdue', 'Late', 'Progress %'];
+    const vehicles = [...new Set(rows.map(r => r.vehicle))].sort(vehicleSort);
+    const breakdownHdr = ['Vehicle', 'Total', 'Completed', 'In Progress', 'Planned', 'Overdue', 'Late Completion', 'Progress %'];
     const breakdownRows = vehicles.map(v => {
         const vRows = rows.filter(r => r.vehicle === v);
         const s = buildSummaryStats(vRows);
@@ -2180,6 +2734,232 @@ function exportExcel(typeKey, fromDate, toDate, category) {
     const catSuffix2 = category ? `_${category.replace(/\s+/g, '_')}` : '';
     XLSX.writeFile(wb, `KD1_${def.label.replace(/\s+/g, '_')}${catSuffix2}_${dateSuffix}.xlsx`);
     showToast(`Excel exported — ${rows.length} rows across 3 sheets`, 'success');
+}
+
+
+/* ================================================================
+   VPX — PDF EXPORT  (light mode, landscape A4)
+   ================================================================ */
+function exportVpxPDF() {
+    if (!currentData?.length) {
+        showToast('No data to export.', 'error');
+        return;
+    }
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const PAGE_W = doc.internal.pageSize.getWidth();   // 297
+    const PAGE_H = doc.internal.pageSize.getHeight();  // 210
+    const MARGIN = 10;
+    const now = new Date().toLocaleString('en-GB');
+
+    // ── White background ────────────────────────────────────────────
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
+
+    // ── Header band ─────────────────────────────────────────────────
+    doc.setFillColor(30, 58, 138);
+    doc.rect(0, 0, PAGE_W, 18, 'F');
+
+    // Badge
+    doc.setFillColor(59, 130, 246);
+    doc.roundedRect(MARGIN, 3.5, 16, 11, 2, 2, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.text('KD1', MARGIN + 8, 10.5, { align: 'center' });
+
+    // Title
+    doc.setFontSize(12);
+    doc.setTextColor(255, 255, 255);
+    doc.text('Vehicle Production Progress', MARGIN + 20, 9.5);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(147, 197, 253);
+    doc.text('STATION-BY-STATION PLANNED VS ACTUAL', MARGIN + 20, 15);
+
+    doc.setFontSize(7);
+    doc.setTextColor(186, 230, 253);
+    doc.text('Generated: ' + now, PAGE_W - MARGIN, 15, { align: 'right' });
+
+    // ── Legend ──────────────────────────────────────────────────────
+    const legY = 22;
+    const legend = [
+        { label: 'On Schedule', r: 34, g: 197, b: 94 },
+        { label: 'In Progress', r: 245, g: 158, b: 11 },
+        { label: 'Late Completion', r: 249, g: 115, b: 22 },
+        { label: 'Overdue', r: 220, g: 38, b: 38 },
+        { label: 'Planned', r: 148, g: 163, b: 184 },
+    ];
+    let legX = MARGIN;
+    legend.forEach(l => {
+        doc.setFillColor(l.r, l.g, l.b);
+        doc.circle(legX + 1.5, legY, 1.5, 'F');
+        doc.setTextColor(30, 41, 59);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6.5);
+        doc.text(l.label, legX + 4.5, legY + 0.8);
+        legX += doc.getTextWidth(l.label) + 9;
+    });
+
+    // ── Build table data ─────────────────────────────────────────────
+    // Determine active columns (same logic as renderVPX)
+    const rowMap = {};
+    currentData.forEach(task => {
+        const rk = task.vehicle + '||' + task.vehicle_no;
+        if (!rowMap[rk]) rowMap[rk] = { vehicle: task.vehicle, vehicle_no: task.vehicle_no, stations: {} };
+        const ex = rowMap[rk].stations[task.process_station];
+        if (!ex || task.end_date > ex.end_date) rowMap[rk].stations[task.process_station] = task;
+    });
+
+    const rows = Object.values(rowMap).sort((a, b) => {
+        const vc = vehicleSort(a.vehicle, b.vehicle);
+        return vc !== 0 ? vc : naturalSort(a.vehicle_no, b.vehicle_no);
+    });
+
+    const usedStations = new Set(currentData.map(t => t.process_station));
+    const activeCols = VPX_COLUMNS.filter(col =>
+        rows.some(row => { const k = col.resolve(row.vehicle); return k !== null && usedStations.has(k); })
+    );
+
+    // Status colour helper
+    function statusDotRGB(status) {
+        if (status === 'Completed') return [34, 197, 94];
+        if (status === 'In Progress') return [245, 158, 11];
+        if (status === 'Late Completion') return [249, 115, 22];
+        if (status === 'Overdue') return [220, 38, 38];
+        return [148, 163, 184];  // Planned
+    }
+
+    // Column header
+    const head = [['Vehicle · Unit', ...activeCols.map(c => c.code)]];
+
+    // Rows
+    const body = rows.map(row => {
+        return [
+            row.vehicle + '\n' + row.vehicle_no,
+            ...activeCols.map(col => {
+                const k = col.resolve(row.vehicle);
+                if (k === null) return 'N/A';
+                const task = row.stations[k];
+                if (!task) return '—';
+                const actual = task.progress?.completion_date || null;
+                const planned = task.end_date;
+                return (planned ? planned.slice(5) : '?') + (actual ? '\n' + actual.slice(5) : '');
+            }),
+        ];
+    });
+
+    // ── AutoTable ────────────────────────────────────────────────────
+    const tableStartY = legY + 6;
+    const colCount = 1 + activeCols.length;
+    const vehicleColW = 22;
+    const stationColW = Math.min(14, (PAGE_W - MARGIN * 2 - vehicleColW) / activeCols.length);
+
+    doc.autoTable({
+        startY: tableStartY,
+        margin: { left: MARGIN, right: MARGIN },
+        head: head,
+        body: body,
+        columnStyles: {
+            0: { cellWidth: vehicleColW, fontStyle: 'bold' },
+            ...Object.fromEntries(activeCols.map((_, i) => [i + 1, { cellWidth: stationColW, halign: 'center', fontSize: 5.5 }])),
+        },
+        headStyles: {
+            fillColor: [30, 58, 138],
+            textColor: [255, 255, 255],
+            fontStyle: 'bold',
+            fontSize: 6,
+            cellPadding: 1.5,
+            halign: 'center',
+        },
+        styles: {
+            fontSize: 6,
+            cellPadding: 1.5,
+            overflow: 'linebreak',
+            lineColor: [226, 232, 240],
+            lineWidth: 0.2,
+            textColor: [30, 41, 59],
+        },
+        alternateRowStyles: {
+            fillColor: [248, 250, 252],
+        },
+        bodyStyles: {
+            fillColor: [255, 255, 255],
+        },
+        // Colour each cell by status
+        didDrawCell(data) {
+            if (data.section !== 'body' || data.column.index === 0) return;
+            const colIdx = data.column.index - 1;
+            const col = activeCols[colIdx];
+            const rowIdx = data.row.index;
+            const rowData = rows[rowIdx];
+            if (!col || !rowData) return;
+
+            const k = col.resolve(rowData.vehicle);
+            if (!k) return;
+            const task = rowData.stations[k];
+            if (!task) return;
+
+            const status = calculateStatus(task);
+            const [r, g, b] = statusDotRGB(status);
+
+            // Tint background
+            const alpha = 0.12;
+            doc.setFillColor(
+                Math.round(255 - (255 - r) * alpha),
+                Math.round(255 - (255 - g) * alpha),
+                Math.round(255 - (255 - b) * alpha)
+            );
+            doc.rect(data.cell.x, data.cell.y, data.cell.width, data.cell.height, 'F');
+
+            // Dot
+            doc.setFillColor(r, g, b);
+            doc.circle(data.cell.x + data.cell.width / 2, data.cell.y + 2, 1.2, 'F');
+
+            // Re-draw text on top (autoTable text already drawn, need to redraw)
+            const txt = data.cell.raw || '';
+            const lines = String(txt).split('\n');
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(5.5);
+            doc.setTextColor(30, 41, 59);
+            lines.forEach((line, li) => {
+                doc.text(line, data.cell.x + data.cell.width / 2, data.cell.y + 4.5 + li * 3.2, { align: 'center' });
+            });
+        },
+        // Column group header (second header row for group names)
+        didParseCell(data) {
+            if (data.section === 'head' && data.row.index === 0 && data.column.index > 0) {
+                const col = activeCols[data.column.index - 1];
+                if (col) {
+                    const grpColors = {
+                        'Assembly': [30, 58, 138],
+                        'Processing': [120, 53, 15],
+                        'Final Inspection': [6, 95, 70],
+                        'Final Test': [76, 29, 149],
+                    };
+                    const [r, g, b] = grpColors[col.group] || [30, 58, 138];
+                    data.cell.styles.fillColor = [r, g, b];
+                }
+            }
+        },
+    });
+
+    // ── Footer ───────────────────────────────────────────────────────
+    const fY = PAGE_H - 5;
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(MARGIN, fY - 2, PAGE_W - MARGIN, fY - 2);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(148, 163, 184);
+    doc.text('KD1 Assembly Control System · Vehicle Production Progress', MARGIN, fY);
+    doc.text(`Page 1 of ${doc.internal.getNumberOfPages()}`, PAGE_W - MARGIN, fY, { align: 'right' });
+
+    const ds = new Date().toISOString().slice(0, 10);
+    doc.save('KD1_VehicleProgress_' + ds + '.pdf');
+    showToast('PDF exported successfully.', 'success');
 }
 
 /* ─── Wire the modal ────────────────────────────────────────────── */
@@ -2489,3 +3269,890 @@ function toggleDiff(btn, rowId) {
     </td>`;
     tr.insertAdjacentElement('afterend', diffRow);
 }
+
+
+/* ================================================================
+   GANTT EDIT MODE — drag-to-reschedule with cascade + Friday skip
+   ================================================================ */
+
+let _ganttEditMode = false;
+let _ganttSatAllowed = false;
+let _ganttSatAsked = false;
+let _ganttMoveMode = 'single';
+const _laneOrder = {};
+
+/* ── Undo / Redo stacks ─────────────────────────────────────────── */
+// Each entry: array of { id, newStart, newEnd, oldStart, oldEnd }
+const _undoStack = [];
+const _redoStack = [];
+const _UNDO_LIMIT = 50;
+
+function _pushUndo(changes) {
+    _undoStack.push(changes);
+    if (_undoStack.length > _UNDO_LIMIT) _undoStack.shift();
+    _redoStack.length = 0;      // new action clears redo branch
+    _syncUndoButtons();
+}
+
+function _syncUndoButtons() {
+    const btnU = document.getElementById('btnGanttUndo');
+    const btnR = document.getElementById('btnGanttRedo');
+    if (btnU) {
+        btnU.disabled = _undoStack.length === 0;
+        btnU.setAttribute('title', _undoStack.length
+            ? 'Undo last move (' + _undoStack.length + ' in history)'
+            : 'Nothing to undo');
+    }
+    if (btnR) {
+        btnR.disabled = _redoStack.length === 0;
+        btnR.setAttribute('title', _redoStack.length
+            ? 'Redo (' + _redoStack.length + ' available)'
+            : 'Nothing to redo');
+    }
+}
+
+function _clearUndoHistory() {
+    _undoStack.length = 0;
+    _redoStack.length = 0;
+    _syncUndoButtons();
+}
+
+/* ── Toggle edit mode ────────────────────────────────────────────── */
+function setGanttEditMode(on) {
+    _ganttEditMode = on;
+    document.getElementById('ganttEditBar').style.display = on ? 'flex' : 'none';
+    document.getElementById('btnGanttEdit').style.display = on ? 'none' : '';
+    // Sync undo button states whenever edit mode changes
+    _syncUndoButtons();
+
+    // Sync Saturday checkbox with current session value
+    const satCk = document.getElementById('ganttSatToggle');
+    if (satCk) satCk.checked = _ganttSatAllowed;
+
+    // Re-render so bars get / lose draggable handles
+    const gsEl = document.getElementById('ganttStart');
+    const geEl = document.getElementById('ganttEnd');
+    renderGantt(currentData, gsEl?.value, geEl?.value);
+
+    // Toggle CSS edit-mode class on the gantt body
+    const body = document.querySelector('.gantt-body');
+    if (body) body.classList.toggle('gantt-edit-active', on);
+}
+
+/* ── Saturday modal (promise-based) ─────────────────────────────── */
+function askSaturday() {
+    return new Promise(resolve => {
+        if (_ganttSatAsked) { resolve(_ganttSatAllowed); return; }
+        const overlay = document.getElementById('satModalOverlay');
+        overlay.style.display = 'flex';
+
+        const yes = document.getElementById('satModalYes');
+        const no = document.getElementById('satModalNo');
+
+        function finish(allow) {
+            overlay.style.display = 'none';
+            _ganttSatAsked = true;
+            _ganttSatAllowed = allow;
+            yes.removeEventListener('click', onYes);
+            no.removeEventListener('click', onNo);
+            resolve(allow);
+        }
+        function onYes() { finish(true); }
+        function onNo() { finish(false); }
+        yes.addEventListener('click', onYes);
+        no.addEventListener('click', onNo);
+    });
+}
+
+/* ── Date arithmetic helpers ─────────────────────────────────────── */
+
+/** Add `n` calendar days to a YYYY-MM-DD string */
+/**
+ * Format a Date object as YYYY-MM-DD using LOCAL date parts.
+ * This avoids the UTC-rollback bug: toISOString() converts to UTC first,
+ * which subtracts hours for timezones east of UTC (e.g. Cairo UTC+2),
+ * causing dates to silently shift back by one day.
+ */
+function localDateStr(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${dd}`;
+}
+
+function addDays(dateStr, n) {
+    const d = new Date(dateStr + 'T00:00:00');
+    d.setDate(d.getDate() + n);
+    return localDateStr(d);
+}
+
+/** Difference in calendar days: dateB − dateA (positive = B is after A) */
+function dayDiff(dateA, dateB) {
+    const a = new Date(dateA + 'T00:00:00');
+    const b = new Date(dateB + 'T00:00:00');
+    return Math.round((b - a) / 86400000);
+}
+
+/**
+ * Advance a date forward if it lands on a non-working day.
+ * Friday (5) is always skipped.
+ * Saturday (6) skipped unless allowSat === true.
+ */
+function skipNonWorking(dateStr, allowSat) {
+    const d = new Date(dateStr + 'T00:00:00');
+    const skip = day => day === 5 || (!allowSat && day === 6);
+    let guard = 0;
+    while (skip(d.getDay()) && guard++ < 7) {
+        d.setDate(d.getDate() + 1);
+    }
+    return localDateStr(d);
+}
+
+/**
+ * Shift a task's start_date by `deltaDays`, preserving its duration.
+ * Adjusts the new start forward if it lands on a non-working day.
+ * Returns { newStart, newEnd }.
+ */
+function shiftTask(task, deltaDays, allowSat) {
+    const duration = dayDiff(task.start_date, task.end_date); // original duration in days
+    let rawStart = addDays(task.start_date, deltaDays);
+    const newStart = skipNonWorking(rawStart, allowSat);
+    const newEnd = addDays(newStart, duration);
+    return { newStart, newEnd };
+}
+
+/* ── Cascade logic ───────────────────────────────────────────────── */
+/**
+ * Given a moved task and the shift delta, cascade all subsequent tasks
+ * of the same vehicle+unit that originally started ON OR AFTER the
+ * moved task's original start date (excluding the moved task itself).
+ *
+ * Returns an array of { id, newStart, newEnd, oldStart, oldEnd }.
+ */
+function cascadeTasks(movedTask, deltaDays, allowSat) {
+    const { vehicle, vehicle_no, start_date: origStart, id: movedId } = movedTask;
+
+    const siblings = currentData.filter(t =>
+        t.vehicle === vehicle &&
+        t.vehicle_no === vehicle_no &&
+        t.id !== movedId &&
+        t.start_date > origStart   // strictly AFTER the moved task (avoids overlap-lock)
+    );
+
+    return siblings.map(t => {
+        const { newStart, newEnd } = shiftTask(t, deltaDays, allowSat);
+        return { id: t.id, newStart, newEnd, oldStart: t.start_date, oldEnd: t.end_date, task: t };
+    });
+}
+
+/* ── Save plan changes to Supabase — single batch upsert ────────── */
+/**
+ * Low-level batch date update — fires DB writes in parallel.
+ * Used by both savePlanChanges AND undo/redo.
+ * Does NOT push to undo stack or show "saving" toast.
+ * Returns true on success, false on error.
+ */
+async function _applyDateChanges(changes) {
+    const results = await Promise.all(
+        changes.map(ch =>
+            db.from('assembly_plan')
+                .update({ start_date: ch.newStart, end_date: ch.newEnd, week: weekLabel(ch.newStart) })
+                .eq('id', ch.id)
+                .select('id')
+        )
+    );
+    const failed = results.filter(r => r.error);
+    if (failed.length) throw new Error(failed[0].error.message);
+
+    changes.forEach(ch => {
+        const row = currentData.find(t => t.id === ch.id);
+        if (row) {
+            row.start_date = ch.newStart;
+            row.end_date = ch.newEnd;
+            row.week = weekLabel(ch.newStart);
+        }
+    });
+}
+
+async function savePlanChanges(changes) {
+    if (!changes.length) return;
+
+    showToast(`Saving ${changes.length} block${changes.length > 1 ? 's' : ''}…`, 'info');
+
+    try {
+        await _applyDateChanges(changes);
+
+        await auditLog('UPDATE', 'assembly_plan', 'batch-move',
+            { count: changes.length, ids: changes.map(c => c.id) },
+            { count: changes.length, sample: { id: changes[0].id, newStart: changes[0].newStart } }
+        );
+
+        showToast(`${changes.length} block${changes.length > 1 ? 's' : ''} rescheduled ✓`, 'success');
+        _pushUndo(changes);
+        refreshAllViews();
+    } catch (err) {
+        showToast('Error saving plan: ' + err.message, 'error');
+        console.error(err);
+        await loadData();
+    }
+}
+
+
+/* ── Undo / Redo ─────────────────────────────────────────────────── */
+
+async function undoGantt() {
+    if (!_undoStack.length) return;
+    const changes = _undoStack.pop();
+
+    // Invert: swap newStart↔oldStart, newEnd↔oldEnd
+    const inverse = changes.map(ch => ({
+        id: ch.id,
+        newStart: ch.oldStart,
+        newEnd: ch.oldEnd,
+        oldStart: ch.newStart,
+        oldEnd: ch.newEnd,
+    }));
+
+    showToast(`Undoing ${inverse.length} block move${inverse.length > 1 ? 's' : ''}…`, 'info');
+    try {
+        await _applyDateChanges(inverse);
+        await auditLog('UPDATE', 'assembly_plan', 'undo',
+            { count: inverse.length }, { count: inverse.length, sample: { id: inverse[0].id, newStart: inverse[0].newStart } });
+
+        _redoStack.push(changes);   // original forward changes become redo
+        _syncUndoButtons();
+        showToast('Undo applied ✓', 'success');
+        refreshAllViews();
+    } catch (err) {
+        _undoStack.push(changes);   // put back on failure
+        showToast('Undo failed: ' + err.message, 'error');
+        console.error(err);
+        await loadData();
+    }
+}
+
+async function redoGantt() {
+    if (!_redoStack.length) return;
+    const changes = _redoStack.pop();
+
+    showToast(`Redoing ${changes.length} block move${changes.length > 1 ? 's' : ''}…`, 'info');
+    try {
+        await _applyDateChanges(changes);
+        await auditLog('UPDATE', 'assembly_plan', 'redo',
+            { count: changes.length }, { count: changes.length, sample: { id: changes[0].id, newStart: changes[0].newStart } });
+
+        _undoStack.push(changes);   // goes back onto undo stack
+        _syncUndoButtons();
+        showToast('Redo applied ✓', 'success');
+        refreshAllViews();
+    } catch (err) {
+        _redoStack.push(changes);   // put back on failure
+        showToast('Redo failed: ' + err.message, 'error');
+        console.error(err);
+        await loadData();
+    }
+}
+/* ── Drag-and-drop engine attached to rendered bars ─────────────── */
+
+/**
+ * Called from renderGantt after bars are injected into the DOM.
+ * Finds all .gc-bar[data-plan-id] elements and attaches pointer-drag handlers.
+ */
+function wireGanttDragEdit(dayIndex, days) {
+    if (!_ganttEditMode) return;
+
+    const bars = document.querySelectorAll('.gc-bar[data-plan-id]');
+    bars.forEach(bar => {
+        bar.style.cursor = 'grab';
+        bar.addEventListener('pointerdown', onBarPointerDown);
+    });
+
+    function onBarPointerDown(e) {
+        if (!_ganttEditMode) return;
+        if (!canEditPlan()) { showToast('Only planners and admins can edit the plan.', 'error'); return; }
+        // Let delete / edit buttons handle their own clicks — don't start a drag
+        if (e.target.closest('.gc-bar-delete') || e.target.closest('.gc-bar-edit') || e.target.closest('.gc-bar-lane')) return;
+
+        e.preventDefault();
+        const bar = e.currentTarget;
+        const planId = parseInt(bar.dataset.planId);
+        const task = currentData.find(t => t.id === planId);
+        if (!task) return;
+
+        bar.setPointerCapture(e.pointerId);
+        bar.style.cursor = 'grabbing';
+        bar.style.opacity = '0.75';
+        bar.style.zIndex = '999';
+        bar.style.boxShadow = '0 8px 32px rgba(0,0,0,.6), 0 0 0 2px #4f8ef7';
+        bar.style.transition = 'none';
+
+        const startX = e.clientX;
+        const origLeft = parseInt(bar.style.left);
+        let deltaPx = 0;
+        let deltaDays = 0;
+
+        function onMove(ev) {
+            deltaPx = ev.clientX - startX;
+            deltaDays = Math.round(deltaPx / GANTT_DAY_W);
+            bar.style.left = (origLeft + deltaDays * GANTT_DAY_W) + 'px';
+        }
+
+        async function onUp() {
+            bar.releasePointerCapture(e.pointerId);
+            bar.removeEventListener('pointermove', onMove);
+            bar.removeEventListener('pointerup', onUp);
+            bar.style.cursor = 'grab';
+            bar.style.opacity = '1';
+            bar.style.zIndex = '';
+            bar.style.transition = '';
+
+            if (deltaDays === 0) { bar.style.left = origLeft + 'px'; return; }
+
+            const allowSat = await askSaturday();
+
+            let allChanges;
+
+            if (_ganttMoveMode === 'lane') {
+                // Every block for the same vehicle + unit
+                allChanges = currentData
+                    .filter(t => t.vehicle === task.vehicle && t.vehicle_no === task.vehicle_no)
+                    .map(t => {
+                        const { newStart, newEnd } = shiftTask(t, deltaDays, allowSat);
+                        return { id: t.id, newStart, newEnd, oldStart: t.start_date, oldEnd: t.end_date };
+                    });
+            } else if (_ganttMoveMode === 'plan') {
+                // Every single block in the entire plan
+                allChanges = currentData.map(t => {
+                    const { newStart, newEnd } = shiftTask(t, deltaDays, allowSat);
+                    return { id: t.id, newStart, newEnd, oldStart: t.start_date, oldEnd: t.end_date };
+                });
+            } else {
+                // Single block only
+                const { newStart, newEnd } = shiftTask(task, deltaDays, allowSat);
+                allChanges = [{ id: task.id, newStart, newEnd, oldStart: task.start_date, oldEnd: task.end_date }];
+            }
+
+            bar.style.left = origLeft + 'px'; // reset; re-render fixes it
+
+            await savePlanChanges(allChanges);
+
+            const gsEl = document.getElementById('ganttStart');
+            const geEl = document.getElementById('ganttEnd');
+            renderGantt(currentData, gsEl?.value, geEl?.value);
+        }
+
+        bar.addEventListener('pointermove', onMove);
+        bar.addEventListener('pointerup', onUp);
+    }
+}
+
+/* ── Wire into ganttControls (extend wireGanttControls) ─────────── */
+const _origWireGantt = wireGanttControls;
+wireGanttControls = function () {
+    _origWireGantt();
+
+    document.getElementById('btnGanttEdit')?.addEventListener('click', () => setGanttEditMode(true));
+    document.getElementById('btnGanttEditDone')?.addEventListener('click', () => {
+        _ganttSatAsked = false; // reset for next edit session
+        setGanttEditMode(false);
+    });
+
+    // Saturday toggle checkbox (updates the session preference live)
+    document.getElementById('ganttSatToggle')?.addEventListener('change', function () {
+        _ganttSatAllowed = this.checked;
+        _ganttSatAsked = true;
+    });
+
+    // Move-mode toggle: Single block | Full Lane
+    document.getElementById('ganttMoveToggle')?.addEventListener('click', function (e) {
+        const btn = e.target.closest('.gmt-btn');
+        if (!btn) return;
+        _ganttMoveMode = btn.dataset.mode;
+        this.querySelectorAll('.gmt-btn').forEach(b => b.classList.toggle('gmt-active', b === btn));
+    });
+
+    // Undo / Redo buttons
+    document.getElementById('btnGanttUndo')?.addEventListener('click', undoGantt);
+    document.getElementById('btnGanttRedo')?.addEventListener('click', redoGantt);
+
+    // Keyboard: Ctrl+Z = undo, Ctrl+Y or Ctrl+Shift+Z = redo (only while in edit mode)
+    document.addEventListener('keydown', function (e) {
+        if (!_ganttEditMode) return;
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+        if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'z') { e.preventDefault(); undoGantt(); }
+        if (e.ctrlKey && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) { e.preventDefault(); redoGantt(); }
+    });
+};
+
+/* ── Patch renderGantt to pass data-plan-id on bars and wire drag ── */
+/* ── Extend renderGantt: wire drag handles + re-apply edit class ── */
+const _origRenderGantt = renderGantt;
+renderGantt = function (plans, startDate, endDate) {
+    _origRenderGantt(plans, startDate, endDate);
+
+    // data-plan-id is now baked directly into each bar's HTML, so no
+    // post-render tagging is needed.  We only need to attach drag handlers.
+    if (!plans?.length || !startDate || !endDate) return;
+
+    const days2 = generateDateRange(startDate, endDate)
+        .filter(d => new Date(d + 'T00:00:00').getDay() !== 5);   // exclude Fridays
+    const dayIdx2 = {};
+    days2.forEach((d, i) => { dayIdx2[d] = i; });
+
+    wireGanttDragEdit(dayIdx2, days2);
+
+    // Re-apply edit-active CSS class (re-render rebuilds the DOM)
+    if (_ganttEditMode) {
+        const body = document.querySelector('.gantt-body');
+        if (body) body.classList.add('gantt-edit-active');
+    }
+};
+
+/* ================================================================
+   GANTT BLOCK MANAGEMENT — delete & add
+   ================================================================ */
+
+/* ── Delete a block ──────────────────────────────────────────────── */
+async function deleteGanttBlock(planId) {
+    if (!canEditPlan()) { showToast('Only planners and admins can delete blocks.', 'error'); return; }
+
+    const task = currentData.find(t => t.id === planId);
+    if (!task) return;
+
+    if (!confirm(`Delete "${task.process_station}" for ${task.vehicle} ${task.vehicle_no}?\n${formatDate(task.start_date)} → ${formatDate(task.end_date)}\n\nThis cannot be undone.`)) return;
+
+    try {
+        // Delete any associated progress record first
+        if (task.progress?.id) {
+            await db.from('assembly_progress').delete().eq('id', task.progress.id);
+        }
+
+        const { error } = await db.from('assembly_plan').delete().eq('id', planId);
+        if (error) throw error;
+
+        await auditLog('DELETE', 'assembly_plan', planId,
+            {
+                vehicle: task.vehicle, vehicle_no: task.vehicle_no, process_station: task.process_station,
+                start_date: task.start_date, end_date: task.end_date
+            }, null);
+
+        // Remove from in-memory data
+        currentData = currentData.filter(t => t.id !== planId);
+
+        showToast(`"${task.process_station}" deleted.`, 'success');
+
+        const gsEl = document.getElementById('ganttStart');
+        const geEl = document.getElementById('ganttEnd');
+        renderGantt(currentData, gsEl?.value, geEl?.value);
+
+    } catch (err) {
+        showToast('Delete failed: ' + err.message, 'error');
+        console.error(err);
+    }
+}
+
+/* ── Wire bar action buttons via event delegation on ganttInner ── */
+function wireBarDeleteButtons() {
+    // Use event delegation on the gantt body — avoids the timing race
+    // where pointerdown captures before click fires on child buttons.
+    const inner = document.getElementById('ganttInner');
+    if (!inner) return;
+
+    // Remove any existing delegated listener before re-adding (avoids duplicates)
+    inner.removeEventListener('click', _ganttBarClickHandler);
+    inner.addEventListener('click', _ganttBarClickHandler);
+}
+
+function _ganttBarClickHandler(e) {
+    // Delete button
+    const delBtn = e.target.closest('.gc-bar-delete');
+    if (delBtn) {
+        e.stopPropagation();
+        const planId = parseInt(delBtn.dataset.planId);
+        deleteGanttBlock(planId);
+        return;
+    }
+    // Edit button
+    const editBtn = e.target.closest('.gc-bar-edit');
+    if (editBtn) {
+        e.stopPropagation();
+        const planId = parseInt(editBtn.dataset.planId);
+        openEditBlockModal(planId);
+        return;
+    }
+    // Lane up button — decrease priority number (moves bar toward lane 0 = top)
+    const laneUp = e.target.closest('.gc-bar-lane-up');
+    if (laneUp) {
+        e.stopPropagation();
+        const planId = parseInt(laneUp.dataset.planId);
+        _laneOrder[planId] = (_laneOrder[planId] ?? 0) - 1;
+        const gsEl = document.getElementById('ganttStart');
+        const geEl = document.getElementById('ganttEnd');
+        renderGantt(currentData, gsEl?.value, geEl?.value);
+        return;
+    }
+    // Lane down button — increase priority number (moves bar toward higher lanes)
+    const laneDown = e.target.closest('.gc-bar-lane-dn');
+    if (laneDown) {
+        e.stopPropagation();
+        const planId = parseInt(laneDown.dataset.planId);
+        _laneOrder[planId] = (_laneOrder[planId] ?? 0) + 1;
+        const gsEl = document.getElementById('ganttStart');
+        const geEl = document.getElementById('ganttEnd');
+        renderGantt(currentData, gsEl?.value, geEl?.value);
+        return;
+    }
+}
+
+/* ── Add Block modal ─────────────────────────────────────────────── */
+function openAddBlockModal() {
+    if (!canEditPlan()) { showToast('Only planners and admins can add blocks.', 'error'); return; }
+
+    const overlay = document.getElementById('addBlockOverlay');
+
+    // Populate vehicle dropdown from current data + "+ New Vehicle" option
+    const vehicles = [...new Set(currentData.map(t => t.vehicle))].sort(vehicleSort);
+    const vSel = document.getElementById('abVehicle');
+    vSel.innerHTML =
+        vehicles.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('') +
+        `<option value="__new__">+ New Vehicle…</option>`;
+
+    // Reset fields
+    document.getElementById('abStart').value = todayStr();
+    document.getElementById('abRemark').value = '';
+    document.getElementById('abNewVehicle').value = '';
+    document.getElementById('abNewVehicleGroup').style.display = 'none';
+    document.getElementById('abError').style.display = 'none';
+
+    // Populate unit dropdown for first vehicle
+    updateAbUnits();
+    updateAbPreview();
+
+    overlay.style.display = 'flex';
+}
+
+function closeAddBlockModal() {
+    document.getElementById('addBlockOverlay').style.display = 'none';
+}
+
+function updateAbUnits() {
+    const vSel = document.getElementById('abVehicle');
+    const vehicle = vSel.value;
+    const uSel = document.getElementById('abUnit');
+    const newVGrp = document.getElementById('abNewVehicleGroup');
+    const newUGrp = document.getElementById('abNewUnitGroup');
+
+    if (vehicle === '__new__') {
+        newVGrp.style.display = 'block';
+        uSel.innerHTML = `<option value="__new__">+ New Unit…</option>`;
+        newUGrp.style.display = 'block';
+        return;
+    }
+    newVGrp.style.display = 'none';
+
+    const units = [...new Set(
+        currentData.filter(t => t.vehicle === vehicle).map(t => t.vehicle_no)
+    )].sort(naturalSort);
+
+    uSel.innerHTML =
+        units.map(u => `<option value="${esc(u)}">${esc(u)}</option>`).join('') +
+        `<option value="__new__">+ New Unit…</option>`;
+
+    const uVal = uSel.value;
+    newUGrp.style.display = (uVal === '__new__') ? 'block' : 'none';
+}
+
+/**
+ * Compute end date from start + working-day duration,
+ * skipping Friday and (optionally) Saturday.
+ */
+function computeEndDate(startStr, durationDays, allowSat) {
+    let d = new Date(startStr + 'T00:00:00');
+    let worked = 0;
+    const isFri = day => day === 5;
+    const isSat = day => day === 6;
+
+    while (worked < durationDays) {
+        const dow = d.getDay();
+        if (!isFri(dow) && !(isSat(dow) && !allowSat)) {
+            worked++;
+        }
+        if (worked < durationDays) d.setDate(d.getDate() + 1);
+    }
+    return localDateStr(d);
+}
+
+function updateAbPreview() {
+    const station = document.getElementById('abStation').value;
+    const startStr = document.getElementById('abStart').value;
+    const durStr = document.getElementById('abDuration').value;
+
+    // Auto-fill duration when station changes
+    if (STATION_DEFAULTS[station] !== undefined) {
+        document.getElementById('abDuration').value = STATION_DEFAULTS[station];
+    }
+
+    const duration = parseInt(document.getElementById('abDuration').value) || 1;
+    const preview = document.getElementById('abPreview');
+    const text = document.getElementById('abPreviewText');
+
+    if (startStr && duration > 0) {
+        const allowSat = document.getElementById('ganttSatToggle')?.checked || false;
+        const endStr = computeEndDate(startStr, duration, allowSat);
+        text.textContent = `${formatDate(startStr)} → ${formatDate(endStr)}`;
+        preview.style.display = 'flex';
+    } else {
+        preview.style.display = 'none';
+    }
+}
+
+async function saveAddBlock() {
+    // Resolve new vehicle / unit names
+    let vehicle = document.getElementById('abVehicle').value;
+    if (vehicle === '__new__') {
+        vehicle = document.getElementById('abNewVehicle').value.trim();
+        if (!vehicle) {
+            const errEl = document.getElementById('abError');
+            errEl.textContent = 'Please enter a name for the new vehicle.';
+            errEl.style.display = 'flex'; return;
+        }
+    }
+    let unit = document.getElementById('abUnit').value;
+    if (unit === '__new__') {
+        unit = document.getElementById('abNewUnit').value.trim();
+        if (!unit) {
+            const errEl = document.getElementById('abError');
+            errEl.textContent = 'Please enter a name for the new unit.';
+            errEl.style.display = 'flex'; return;
+        }
+    }
+    const station = document.getElementById('abStation').value;
+    const startStr = document.getElementById('abStart').value;
+    const duration = parseInt(document.getElementById('abDuration').value) || 0;
+    const remark = document.getElementById('abRemark').value.trim();
+    const errEl = document.getElementById('abError');
+
+    errEl.style.display = 'none';
+
+    if (!vehicle || !unit || !station || !startStr || duration < 1) {
+        errEl.textContent = 'Please fill in all required fields with a valid duration.';
+        errEl.style.display = 'flex';
+        return;
+    }
+
+    // Skip Friday for start date
+    const allowSat = document.getElementById('ganttSatToggle')?.checked || false;
+    const adjStart = skipNonWorking(startStr, allowSat);
+    const endStr = computeEndDate(adjStart, duration, allowSat);
+
+    const payload = {
+        vehicle,
+        vehicle_no: unit,
+        process_station: station,
+        start_date: adjStart,
+        end_date: endStr,
+        week: weekLabel(adjStart),   // auto-computed from start date
+        remark: remark || null,
+    };
+
+    try {
+        const { data: inserted, error } = await db
+            .from('assembly_plan')
+            .insert(payload)
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        await auditLog('INSERT', 'assembly_plan', inserted.id, null, payload);
+
+        // Add to in-memory data with no progress
+        currentData.push({ ...inserted, progress: null });
+        currentData.sort((a, b) => {
+            const vCmp = vehicleSort(a.vehicle, b.vehicle); if (vCmp) return vCmp;
+            const uCmp = naturalSort(a.vehicle_no, b.vehicle_no); if (uCmp) return uCmp;
+            return (a.start_date || '').localeCompare(b.start_date || '');
+        });
+
+        showToast(`"${station}" added to ${vehicle} ${unit}`, 'success');
+        closeAddBlockModal();
+
+        const gsEl = document.getElementById('ganttStart');
+        const geEl = document.getElementById('ganttEnd');
+        renderGantt(currentData, gsEl?.value, geEl?.value);
+
+    } catch (err) {
+        errEl.textContent = 'Save failed: ' + err.message;
+        errEl.style.display = 'flex';
+        console.error(err);
+    }
+}
+
+/* ── Extend wireGanttControls with add/delete wiring ────────────── */
+const _origWireGanttFull = wireGanttControls;
+wireGanttControls = function () {
+    _origWireGanttFull();
+
+    // Add Block modal
+    document.getElementById('btnAddBlock')?.addEventListener('click', openAddBlockModal);
+    document.getElementById('addBlockClose')?.addEventListener('click', closeAddBlockModal);
+    document.getElementById('btnAddBlockCancel')?.addEventListener('click', closeAddBlockModal);
+    document.getElementById('addBlockOverlay')?.addEventListener('click', function (e) {
+        if (e.target === this) closeAddBlockModal();
+    });
+    document.getElementById('btnAddBlockSave')?.addEventListener('click', saveAddBlock);
+
+    // Live preview wiring
+    document.getElementById('abStation')?.addEventListener('change', updateAbPreview);
+    document.getElementById('abStart')?.addEventListener('change', updateAbPreview);
+    document.getElementById('abDuration')?.addEventListener('input', updateAbPreview);
+    document.getElementById('abVehicle')?.addEventListener('change', () => {
+        updateAbUnits();
+        updateAbPreview();
+    });
+    document.getElementById('abUnit')?.addEventListener('change', () => {
+        const newUGrp = document.getElementById('abNewUnitGroup');
+        if (newUGrp) newUGrp.style.display =
+            document.getElementById('abUnit').value === '__new__' ? 'block' : 'none';
+        updateAbPreview();
+    });
+};
+
+/* ── Extend wireGanttDragEdit to also wire delete buttons ────────── */
+const _origWireGanttDragEdit = wireGanttDragEdit;
+wireGanttDragEdit = function (dayIndex, days) {
+    _origWireGanttDragEdit(dayIndex, days);
+    if (_ganttEditMode) wireBarDeleteButtons();
+};
+
+/* ================================================================
+   EDIT BLOCK MODAL — change start date, duration, week, remark
+   ================================================================ */
+
+function openEditBlockModal(planId) {
+    if (!canEditPlan()) { showToast('Only planners and admins can edit blocks.', 'error'); return; }
+
+    const task = currentData.find(t => t.id === planId);
+    if (!task) return;
+
+    document.getElementById('ebPlanId').value = planId;
+    document.getElementById('ebBlockInfo').textContent =
+        `${task.vehicle} ${task.vehicle_no} — ${task.process_station}`;
+    document.getElementById('ebStart').value = task.start_date;
+    document.getElementById('ebRemark').value = task.remark || '';
+    document.getElementById('ebError').style.display = 'none';
+    const badge = document.getElementById('ebWeekBadge');
+    if (badge) badge.textContent = task.start_date ? weekLabel(task.start_date) : '—';
+
+    // Compute current duration in calendar days, then re-express as working days
+    const calDays = dayDiff(task.start_date, task.end_date);
+    document.getElementById('ebDuration').value = Math.max(1, calDays);
+
+    updateEbPreview();
+
+    document.getElementById('editBlockOverlay').style.display = 'flex';
+}
+
+function closeEditBlockModal() {
+    document.getElementById('editBlockOverlay').style.display = 'none';
+}
+
+function updateEbPreview() {
+    const startStr = document.getElementById('ebStart').value;
+    const duration = parseInt(document.getElementById('ebDuration').value) || 0;
+    const preview = document.getElementById('ebPreview');
+    const text = document.getElementById('ebPreviewText');
+
+    // Update auto-computed week badge
+    const badge = document.getElementById('ebWeekBadge');
+    if (badge) badge.textContent = startStr ? weekLabel(startStr) : '—';
+
+    if (startStr && duration > 0) {
+        const allowSat = document.getElementById('ganttSatToggle')?.checked || false;
+        const endStr = computeEndDate(startStr, duration, allowSat);
+        text.textContent = `${formatDate(startStr)} → ${formatDate(endStr)}`;
+        preview.style.display = 'flex';
+    } else {
+        preview.style.display = 'none';
+    }
+}
+
+async function saveEditBlock() {
+    const planId = parseInt(document.getElementById('ebPlanId').value);
+    const startStr = document.getElementById('ebStart').value;
+    const duration = parseInt(document.getElementById('ebDuration').value) || 0;
+    const remark = document.getElementById('ebRemark').value.trim();
+    const errEl = document.getElementById('ebError');
+
+    errEl.style.display = 'none';
+
+    if (!startStr || duration < 1) {
+        errEl.textContent = 'Please set a valid start date and duration (at least 1 day).';
+        errEl.style.display = 'flex';
+        return;
+    }
+
+    const task = currentData.find(t => t.id === planId);
+    if (!task) return;
+
+    const allowSat = document.getElementById('ganttSatToggle')?.checked || false;
+    const adjStart = skipNonWorking(startStr, allowSat);
+    const endStr = computeEndDate(adjStart, duration, allowSat);
+
+    const before = {
+        start_date: task.start_date, end_date: task.end_date,
+        week: task.week, remark: task.remark
+    };
+    const computedWeek = weekLabel(adjStart);
+    const after = {
+        start_date: adjStart, end_date: endStr,
+        week: computedWeek, remark: remark || null
+    };
+
+    try {
+        const { error } = await db
+            .from('assembly_plan')
+            .update({
+                start_date: adjStart, end_date: endStr,
+                week: computedWeek, remark: remark || null
+            })
+            .eq('id', planId);
+
+        if (error) throw error;
+
+        await auditLog('UPDATE', 'assembly_plan', planId, before, after);
+
+        // Update in-memory
+        Object.assign(task, {
+            start_date: adjStart, end_date: endStr,
+            week: computedWeek, remark: remark || null
+        });
+
+        showToast('Block updated.', 'success');
+        closeEditBlockModal();
+
+        const gsEl = document.getElementById('ganttStart');
+        const geEl = document.getElementById('ganttEnd');
+        renderGantt(currentData, gsEl?.value, geEl?.value);
+
+    } catch (err) {
+        errEl.textContent = 'Save failed: ' + err.message;
+        errEl.style.display = 'flex';
+        console.error(err);
+    }
+}
+
+/* Wire edit block modal from wireEvents */
+(function wireEditBlock() {
+    // Called on DOMContentLoaded, safe to query the DOM
+    window.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('editBlockClose')?.addEventListener('click', closeEditBlockModal);
+        document.getElementById('btnEditBlockCancel')?.addEventListener('click', closeEditBlockModal);
+        document.getElementById('btnEditBlockSave')?.addEventListener('click', saveEditBlock);
+        document.getElementById('editBlockOverlay')?.addEventListener('click', function (e) {
+            if (e.target === this) closeEditBlockModal();
+        });
+        document.getElementById('ebStart')?.addEventListener('change', updateEbPreview);
+        document.getElementById('ebDuration')?.addEventListener('input', updateEbPreview);
+    });
+})();
