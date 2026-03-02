@@ -331,7 +331,7 @@ function refreshAllViews() {
 
     updateSummary(displayData);
     renderCharts(displayData);
-    renderVPX(currentData);
+    renderVPX(displayData);
 
     const gsEl = document.getElementById('ganttStart');
     const geEl = document.getElementById('ganttEnd');
@@ -451,7 +451,7 @@ async function loadData() {
         renderTable(displayData);
         updateSummary(displayData);
         renderCharts(displayData);
-        renderVPX(currentData);   // always use full currentData (not category-filtered)
+        renderVPX(displayData);   // use same filtered data as table/charts
 
         // Auto-refresh gantt with current date range
         const gsEl = document.getElementById('ganttStart');
@@ -2811,6 +2811,17 @@ function exportVpxPDF() {
         return;
     }
 
+    // Apply same category filter as the table/VPX view
+    const _vpxCategory = getVal('filterCategory');
+    const vpxData = _vpxCategory
+        ? currentData.filter(r => getCategory(r.process_station) === _vpxCategory)
+        : currentData;
+
+    if (!vpxData.length) {
+        showToast('No data matches the current filters.', 'error');
+        return;
+    }
+
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const PAGE_W = doc.internal.pageSize.getWidth();   // 297
@@ -2871,7 +2882,7 @@ function exportVpxPDF() {
     // ── Build table data ─────────────────────────────────────────────
     // Determine active columns (same logic as renderVPX)
     const rowMap = {};
-    currentData.forEach(task => {
+    vpxData.forEach(task => {
         const rk = task.vehicle + '||' + task.vehicle_no;
         if (!rowMap[rk]) rowMap[rk] = { vehicle: task.vehicle, vehicle_no: task.vehicle_no, stations: {} };
         const ex = rowMap[rk].stations[task.process_station];
@@ -2883,7 +2894,7 @@ function exportVpxPDF() {
         return vc !== 0 ? vc : naturalSort(a.vehicle_no, b.vehicle_no);
     });
 
-    const usedStations = new Set(currentData.map(t => t.process_station));
+    const usedStations = new Set(vpxData.map(t => t.process_station));
     const activeCols = VPX_COLUMNS.filter(col =>
         rows.some(row => { const k = col.resolve(row.vehicle); return k !== null && usedStations.has(k); })
     );
