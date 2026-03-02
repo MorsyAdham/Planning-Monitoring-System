@@ -930,36 +930,6 @@ const VPX_COLUMNS = [
     },
     // ── Final Test ────────────────────────────────────────────────────
     {
-        code: '#1Insp', name: '#1 Inspection',
-        resolve: () => '#1Insp',
-        group: 'Final Test',
-    },
-    {
-        code: 'T.Run', name: 'TEST RUN',
-        resolve: () => 'TEST RUN',
-        group: 'Final Test',
-    },
-    {
-        code: 'Perf.', name: 'Performance test',
-        resolve: () => 'Performance test',
-        group: 'Final Test',
-    },
-    {
-        code: 'Repair', name: 'REPAIR',
-        resolve: () => 'REPAIR',
-        group: 'Final Test',
-    },
-    {
-        code: 'Check', name: 'CHECK',
-        resolve: () => 'CHECK',
-        group: 'Final Test',
-    },
-    {
-        code: 'PP Chk', name: 'Powerpack check',
-        resolve: () => 'Powerpack check',
-        group: 'Final Test',
-    },
-    {
         code: 'F.Chk', name: 'Final Check',
         resolve: () => 'Final Check',
         group: 'Final Test',
