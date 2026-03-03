@@ -320,20 +320,36 @@ async function loadUnitCodes() {
 }
 
 /** Populate unit filter showing "M1 · EGY N25020" format */
-function populateUnitFilter(units) {
+function populateUnitFilter(units, vehicle) {
     const sel = document.getElementById('filterUnit');
     const currentVal = sel.value;
     sel.innerHTML = '<option value="">All Units</option>';
     units.forEach(u => {
-        // Find vehicle for this unit_no from currentData or unitCodeMap keys
-        const key = Object.keys(unitCodeMap).find(k => k.split('||')[1] === u);
-        const code = key ? unitCodeMap[key] : '';
+        // Scope lookup to specific vehicle when known, otherwise take first match
+        let code = '';
+        if (vehicle) {
+            code = unitCodeMap[vehicle + '||' + u] || '';
+        } else {
+            const key = Object.keys(unitCodeMap).find(k => k.split('||')[1] === u);
+            code = key ? unitCodeMap[key] : '';
+        }
         const opt = document.createElement('option');
         opt.value = u;
         opt.textContent = code ? u + ' · ' + code : u;
         sel.appendChild(opt);
     });
     if (currentVal) sel.value = currentVal;
+}
+
+/** Called when filterVehicle changes — cascade unit dropdown */
+function onVehicleFilterChange() {
+    const vehicle = getVal('filterVehicle');
+    // Gather units for the selected vehicle (or all units if none selected)
+    const sourceRows = vehicle
+        ? currentData.filter(r => r.vehicle === vehicle)
+        : currentData;
+    const units = [...new Set(sourceRows.map(r => r.vehicle_no).filter(Boolean))].sort(naturalSort);
+    populateUnitFilter(units, vehicle || null);
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -1619,6 +1635,9 @@ function wireEvents() {
     document.getElementById('btnApply').addEventListener('click', loadData);
     document.getElementById('btnReset').addEventListener('click', resetFilters);
 
+    // Cascade: when vehicle changes, update unit dropdown to match
+    document.getElementById('filterVehicle')?.addEventListener('change', onVehicleFilterChange);
+
     // Show/hide custom date fields
     document.getElementById('filterTimeFrame').addEventListener('change', function () {
         const isCustom = this.value === 'custom';
@@ -1719,6 +1738,9 @@ function resetFilters() {
     document.getElementById('customDateEnd').style.display = 'none';
     const srch = document.getElementById('tableSearch');
     if (srch) srch.value = '';
+    // Restore full unit list with no vehicle scope
+    const allUnits = [...new Set(currentData.map(r => r.vehicle_no).filter(Boolean))].sort(naturalSort);
+    populateUnitFilter(allUnits, null);
     loadData();
 }
 
