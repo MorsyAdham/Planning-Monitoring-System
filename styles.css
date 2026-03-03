@@ -294,7 +294,7 @@ body {
 /* ─── Main ──────────────────────────────────────────────────────── */
 .page-main {
     flex: 1;
-    max-width: 1600px;
+    max-width: 1700px;
     width: 100%;
     margin: 0 auto;
     padding: 24px;
@@ -1446,6 +1446,16 @@ body {
     flex-shrink: 0;
 }
 
+.gr-unit-code {
+    display: block;
+    font-size: .6rem;
+    color: var(--clr-text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 1px;
+}
+
 .gr-unit-name {
     font-family: var(--ff-mono);
     font-size: .78rem;
@@ -2120,7 +2130,7 @@ body {
 
 .um-table-wrap {
     overflow: auto;
-    max-height: 340px;
+    max-height: 520px;
 }
 
 .um-table td,
@@ -3349,11 +3359,11 @@ body {
 }
 
 .vpx-dot-late {
-    background: #8b5cf6;
-    box-shadow: 0 0 4px rgba(139, 92, 246, .55);
+    background: #3b82f6;
+    box-shadow: 0 0 4px rgba(59, 130, 246, .55);
 }
 
-/* purple — distinct from green/amber/red/grey */
+/* blue — Late Completion */
 .vpx-dot-over {
     background: #dc2626;
     box-shadow: 0 0 6px rgba(220, 38, 38, .8);
@@ -3507,6 +3517,18 @@ body {
     vertical-align: middle;
 }
 
+.vpx-unit-code {
+    display: block;
+    font-size: .58rem;
+    color: var(--clr-text-dim);
+    letter-spacing: .02em;
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 80px;
+}
+
 .vpx-unit-dot {
     width: 6px;
     height: 6px;
@@ -3609,10 +3631,10 @@ body {
 }
 
 .vpx-status-late {
-    background: rgba(139, 92, 246, .09);
+    background: rgba(59, 130, 246, .09);
 }
 
-/* purple tint — Late Completion */
+/* blue tint — Late Completion */
 .vpx-status-overdue {
     background: rgba(220, 38, 38, .12);
 }
@@ -3641,17 +3663,19 @@ body {
 }
 
 .vpx-date-plan {
-    font-size: .63rem;
+    font-size: .58rem;
     color: var(--clr-text-muted);
     font-weight: 500;
     white-space: nowrap;
+    letter-spacing: -.01em;
 }
 
 .vpx-date-act {
-    font-size: .63rem;
+    font-size: .58rem;
     color: var(--clr-text);
     font-weight: 600;
     white-space: nowrap;
+    letter-spacing: -.01em;
 }
 
 .vpx-date-none {
@@ -3672,7 +3696,7 @@ body {
 /* Column group visual separators */
 .vpx-cell.vpx-grp-final-test:first-of-type,
 th.vpx-grp-final-test:first-of-type {
-    border-left: 2px solid rgba(139, 92, 246, .25);
+    border-left: 2px solid rgba(59, 130, 246, .25);
 }
 
 .vpx-cell.vpx-grp-processing:first-of-type,
@@ -3712,10 +3736,10 @@ th.vpx-grp-processing:first-of-type {
 }
 
 [data-theme="light"] .vpx-status-late {
-    background: rgba(139, 92, 246, .08);
+    background: rgba(59, 130, 246, .08);
 }
 
-/* purple — Late Completion */
+/* blue — Late Completion */
 [data-theme="light"] .vpx-status-overdue {
     background: rgba(220, 38, 38, .1);
 }
@@ -3818,6 +3842,14 @@ th.vpx-grp-processing:first-of-type {
 }
 
 /* ── Station code cell in assembly plan table ──────────────────── */
+.unit-code-badge {
+    font-size: .65rem;
+    color: var(--clr-text-dim);
+    letter-spacing: .02em;
+    display: block;
+    margin-top: 1px;
+}
+
 .station-code-cell {
     font-size: .72rem;
     font-weight: 600;
@@ -3826,6 +3858,14 @@ th.vpx-grp-processing:first-of-type {
     white-space: nowrap;
 }
 
-[data-theme="light"] .station-code-cell {
+[data-theme="light"] .unit-code-badge {
+    font-size: .65rem;
+    color: var(--clr-text-dim);
+    letter-spacing: .02em;
+    display: block;
+    margin-top: 1px;
+}
+
+.station-code-cell {
     color: #1d4ed8;
 }

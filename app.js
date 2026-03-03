@@ -82,6 +82,10 @@ function populateNavbar() {
     const logoutBtn = document.getElementById('btnLogout');
     if (logoutBtn) logoutBtn.style.display = 'flex';
 
+    if (isAdmin()) {
+        const ucBtn = document.getElementById('btnUnitCodes');
+        if (ucBtn) ucBtn.style.display = 'flex';
+    }
     if (isMasterAdmin()) {
         const auditBtn = document.getElementById('btnAuditLog');
         if (auditBtn) auditBtn.style.display = 'flex';
@@ -217,6 +221,7 @@ let db = null;
 let barChartInst = null;
 let lineChartInst = null;
 let currentData = [];      // flat merged rows
+let unitCodeMap = {};      // { 'K9||M1': 'EGY N25020', ... }
 let activePlanId = null;    // plan row being marked complete
 
 /* ──────────────────────────────────────────────────────────────────
@@ -275,7 +280,10 @@ async function loadFilters() {
 
         // Units across all vehicles
         const units = [...new Set(plans.map(r => r.vehicle_no).filter(Boolean))].sort(naturalSort);
-        populateSelect('filterUnit', units, 'All Units');
+
+        // Load unit codes and populate unit filter with codes shown
+        await loadUnitCodes();
+        populateUnitFilter(units);
 
     } catch (err) {
         showToast('Failed to load filter options.', 'error');
@@ -291,6 +299,38 @@ function populateSelect(id, values, placeholder) {
         const opt = document.createElement('option');
         opt.value = v;
         opt.textContent = v;
+        sel.appendChild(opt);
+    });
+    if (currentVal) sel.value = currentVal;
+}
+
+/** Load vehicle_units table into unitCodeMap */
+async function loadUnitCodes() {
+    try {
+        const { data, error } = await db.from('vehicle_units').select('vehicle, vehicle_no, unit_code');
+        if (error) throw error;
+        unitCodeMap = {};
+        (data || []).forEach(r => {
+            unitCodeMap[r.vehicle + '||' + r.vehicle_no] = r.unit_code || '';
+        });
+    } catch (e) {
+        console.warn('vehicle_units table not found or error — unit codes disabled:', e.message);
+        unitCodeMap = {};
+    }
+}
+
+/** Populate unit filter showing "M1 · EGY N25020" format */
+function populateUnitFilter(units) {
+    const sel = document.getElementById('filterUnit');
+    const currentVal = sel.value;
+    sel.innerHTML = '<option value="">All Units</option>';
+    units.forEach(u => {
+        // Find vehicle for this unit_no from currentData or unitCodeMap keys
+        const key = Object.keys(unitCodeMap).find(k => k.split('||')[1] === u);
+        const code = key ? unitCodeMap[key] : '';
+        const opt = document.createElement('option');
+        opt.value = u;
+        opt.textContent = code ? u + ' · ' + code : u;
         sel.appendChild(opt);
     });
     if (currentVal) sel.value = currentVal;
@@ -604,7 +644,7 @@ function renderTable(data) {
       <tr>
         <td class="mono">${idx + 1}</td>
         <td><strong>${esc(row.vehicle)}</strong></td>
-        <td class="mono">${esc(row.vehicle_no)}</td>
+        <td class="mono">${esc(row.vehicle_no)}${getUnitCode(row.vehicle, row.vehicle_no) ? '<br><span class="unit-code-badge">' + esc(getUnitCode(row.vehicle, row.vehicle_no)) + '</span>' : ''}</td>
         <td>${esc(row.process_station)}</td>
         <td class="mono station-code-cell">${getStationCode(row.process_station, row.vehicle) || '—'}</td>
         <td class="mono">${esc(row.week || '—')}</td>
@@ -1015,9 +1055,11 @@ function renderVPX(data) {
         }
 
         html += '<tr class="vpx-row" data-ri="' + ri + '">';
+        var _uc = getUnitCode(row.vehicle, row.vehicle_no);
         html += '<td class="vpx-td-vehicle vpx-td-unit">'
             + '<span class="vpx-unit-dot"></span>'
             + '<span class="vpx-unit-name">' + esc(row.vehicle_no) + '</span>'
+            + (_uc ? '<span class="vpx-unit-code">' + esc(_uc) + '</span>' : '')
             + '</td>';
 
         activeCols.forEach((col, ci) => {
@@ -1057,11 +1099,17 @@ function renderVPX(data) {
 
             var statusSlug = status.toLowerCase().replace(/\s+/g, '-').replace('late-completion', 'late');
 
+            // Short date ranges for planned and actual (no year)
+            var planRange = formatDateShort(task.start_date) + ' → ' + formatDateShort(planned);
+            var actRange = actStart
+                ? formatDateShort(actStart) + ' → ' + (actual ? formatDateShort(actual) : '?')
+                : (actual ? '? → ' + formatDateShort(actual) : null);
+
             html += '<td class="vpx-cell ' + grpCls + ' vpx-status-' + statusSlug + '" data-ri="' + ri + '" data-ci="' + ci + '" title="' + tipParts.replace(/"/g, "'") + '">'
                 + '<span class="vpx-dot ' + dotClass + '"></span>'
                 + '<div class="vpx-dates">'
-                + '<span class="vpx-date-plan">' + (formatDate(planned) || '—') + '</span>'
-                + '<span class="vpx-date-act' + (actual ? '' : ' vpx-date-none') + '">' + (actual ? formatDate(actual) : '—') + '</span>'
+                + '<span class="vpx-date-plan">' + planRange + '</span>'
+                + '<span class="vpx-date-act' + (actRange ? '' : ' vpx-date-none') + '">' + (actRange || '—') + '</span>'
                 + '</div></td>';
         });
 
@@ -1113,8 +1161,8 @@ function renderBarChart(data) {
                 {
                     label: 'Late',
                     data: counts.map(c => c.late),
-                    backgroundColor: 'rgba(139,92,246,.75)',
-                    borderColor: '#8b5cf6',
+                    backgroundColor: 'rgba(59,130,246,.75)',
+                    borderColor: '#3b82f6',
                     borderWidth: 1,
                     borderRadius: 4,
                 },
@@ -1432,7 +1480,7 @@ function openCompleteModal(planId, idx) {
     const actualStart = row.progress?.actual_start_date;
 
     document.getElementById('modalInfo').innerHTML = `
-    <strong>${esc(row.vehicle)} · ${esc(row.vehicle_no)}</strong><br>
+    <strong>${esc(row.vehicle)} · ${esc(row.vehicle_no)}${getUnitCode(row.vehicle, row.vehicle_no) ? ' <span style="font-weight:400;opacity:.7;font-size:.85em">(' + esc(getUnitCode(row.vehicle, row.vehicle_no)) + ')</span>' : ''}</strong><br>
     ${esc(row.process_station)}<br>
     <small>Planned: ${formatDate(row.start_date)} → ${formatDate(row.end_date)}</small>
     ${actualStart ? `<br><small>Actual start: ${formatDate(actualStart)}</small>` : ''}
@@ -1605,6 +1653,18 @@ function wireEvents() {
     // ── Auth controls ────────────────────────────────────────────────
     document.getElementById('btnLogout')?.addEventListener('click', doLogout);
 
+    // Unit Codes (admin+ — button hidden for viewers/planners)
+    document.getElementById('btnUnitCodes')?.addEventListener('click', openUnitCodes);
+    document.getElementById('unitCodesClose')?.addEventListener('click', closeUnitCodes);
+    document.getElementById('unitCodesOverlay')?.addEventListener('click', function (e) {
+        if (e.target === this) closeUnitCodes();
+    });
+    document.getElementById('btnAddUnitCode')?.addEventListener('click', () => openUcForm(null));
+    document.getElementById('btnUcSave')?.addEventListener('click', saveUnitCode);
+    document.getElementById('btnUcCancel')?.addEventListener('click', closeUcForm);
+    document.getElementById('ucFormClose')?.addEventListener('click', closeUcForm);
+    document.getElementById('ucVehicle')?.addEventListener('change', populateUcUnits);
+
     // User Management (master_admin only — button hidden for others)
     document.getElementById('btnUserMgmt')?.addEventListener('click', openUserMgmt);
     document.getElementById('userMgmtClose')?.addEventListener('click', closeUserMgmt);
@@ -1776,6 +1836,24 @@ function formatDate(isoStr) {
     if (!isoStr || isoStr === '—') return '—';
     const d = new Date(isoStr + 'T00:00:00');
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+/** Short date — "01 Jan" (no year), used in VPX cells */
+function formatDateShort(isoStr) {
+    if (!isoStr || isoStr === '—') return '—';
+    const d = new Date(isoStr + 'T00:00:00');
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+}
+
+/** Return the unit code for a vehicle+unit combo, or '' */
+function getUnitCode(vehicle, vehicle_no) {
+    return unitCodeMap[vehicle + '||' + vehicle_no] || '';
+}
+
+/** Format unit label: "M1" or "M1 · EGY N25020" */
+function unitLabel(vehicle, vehicle_no) {
+    const code = getUnitCode(vehicle, vehicle_no);
+    return code ? vehicle_no + ' · ' + code : vehicle_no;
 }
 
 function daysBetween(from, to) {
@@ -2271,7 +2349,7 @@ function renderGantt(plans, startDate, endDate) {
                 let shadow = '';
                 let extraCls = '';
                 if (status === 'Completed') shadow = `;box-shadow:0 0 0 2px #22c55e inset,0 2px 6px rgba(0,0,0,.3)`;
-                else if (status === 'Late Completion') shadow = `;box-shadow:0 0 0 2px #8b5cf6 inset,0 2px 6px rgba(0,0,0,.3)`;  // purple
+                else if (status === 'Late Completion') shadow = `;box-shadow:0 0 0 2px #3b82f6 inset,0 2px 6px rgba(0,0,0,.3)`;  // blue
                 else if (status === 'Overdue') extraCls = ' gc-bar-overdue';
                 else if (status === 'In Progress') shadow = `;box-shadow:0 0 0 2px #f59e0b inset,0 2px 6px rgba(0,0,0,.3)`;
                 else shadow = `;box-shadow:0 2px 6px rgba(0,0,0,.3)`;
@@ -2316,6 +2394,7 @@ function renderGantt(plans, startDate, endDate) {
           <div class="gr-label gr-unit-label" style="width:${GANTT_LABEL_W}px">
             <span class="gr-unit-dot"></span>
             <span class="gr-unit-name">${esc(unit)}</span>
+            ${getUnitCode(vehicle, unit) ? `<span class="gr-unit-code">${esc(getUnitCode(vehicle, unit))}</span>` : ''}
           </div>
           <div class="gr-track" style="width:${totalW}px;height:${rowH}px">
             ${bgCells}
@@ -2424,7 +2503,7 @@ const REPORT_COLUMNS = [
 /* ─── Status → colour map for PDF ──────────────────────────────── */
 const STATUS_COLORS = {
     'Completed': [34, 197, 94],
-    'Late Completion': [139, 92, 246],  // purple — matches VPX dot
+    'Late Completion': [59, 130, 246],  // blue
     'Overdue': [220, 38, 38],
     'In Progress': [245, 158, 11],
     'Planned': [59, 130, 246],
@@ -2525,7 +2604,7 @@ function exportPDF(typeKey, fromDate, toDate, category) {
         { label: 'Completed', value: stats.completed, r: 22, g: 163, b: 74 },
         { label: 'In Progress', value: stats.inProgress, r: 217, g: 119, b: 6 },
         { label: 'Overdue', value: stats.overdue, r: 220, g: 38, b: 38 },
-        { label: 'Late Completion', value: stats.late, r: 139, g: 92, b: 246 },
+        { label: 'Late Completion', value: stats.late, r: 59, g: 130, b: 246 },
         { label: 'Not Started', value: stats.planned, r: 100, g: 116, b: 139 },
         { label: 'Completion %', value: `${stats.pct}%`, r: 15, g: 118, b: 110 },
     ];
@@ -2565,7 +2644,7 @@ function exportPDF(typeKey, fromDate, toDate, category) {
     // Status badge colours for white background (darker shades)
     const STATUS_COLORS_LIGHT = {
         'Completed': { bg: [220, 252, 231], text: [21, 128, 61] },
-        'Late Completion': { bg: [237, 233, 254], text: [109, 40, 217] },  // purple
+        'Late Completion': { bg: [219, 234, 254], text: [37, 99, 235] },  // blue
         'Overdue': { bg: [254, 226, 226], text: [153, 27, 27] },
         'In Progress': { bg: [254, 243, 199], text: [146, 64, 14] },
         'Planned': { bg: [219, 234, 254], text: [30, 64, 175] },
@@ -2584,7 +2663,7 @@ function exportPDF(typeKey, fromDate, toDate, category) {
             fillColor: [255, 255, 255],
             lineColor: [226, 232, 240],    // slate-200
             lineWidth: 0.25,
-            overflow: 'ellipsize',
+            overflow: 'linebreak',
         },
         headStyles: {
             fillColor: [30, 58, 138],      // navy — matches header bar
@@ -2609,8 +2688,8 @@ function exportPDF(typeKey, fromDate, toDate, category) {
             9: { cellWidth: 20 },
             10: { halign: 'center', cellWidth: 18 },
             11: { halign: 'center', cellWidth: 16 },
-            12: { cellWidth: 24 },
-            13: { cellWidth: 'auto' },
+            12: { cellWidth: 28, overflow: 'linebreak', valign: 'top' },
+            13: { cellWidth: 40, overflow: 'linebreak', valign: 'top' },
         },
         didDrawCell(data) {
             if (data.section === 'body' && data.column.index === 10) {
@@ -2632,15 +2711,21 @@ function exportPDF(typeKey, fromDate, toDate, category) {
                     doc.text(status, px + pw / 2, py + ph / 2 + 0.5, { align: 'center', baseline: 'middle' });
                 }
             }
-            // Delay cell — red text if value starts with +
+            // Delay cell — erase autoTable text then redraw in red
             if (data.section === 'body' && data.column.index === 11) {
-                const val = data.cell.raw;
-                if (String(val).startsWith('+')) {
+                const val = String(data.cell.raw || '');
+                if (val.startsWith('+')) {
+                    // Cover the black text autoTable already drew
+                    const bg = data.row.index % 2 === 0 ? [255, 255, 255] : [248, 250, 252];
+                    doc.setFillColor(...bg);
+                    doc.rect(data.cell.x + 0.2, data.cell.y + 0.2,
+                        data.cell.width - 0.4, data.cell.height - 0.4, 'F');
+                    // Redraw in red
                     doc.setTextColor(153, 27, 27);
                     doc.setFont('helvetica', 'bold');
                     doc.setFontSize(7);
                     doc.text(val, data.cell.x + data.cell.width / 2,
-                        data.cell.y + data.cell.height / 2 + 0.5,
+                        data.cell.y + data.cell.height / 2,
                         { align: 'center', baseline: 'middle' });
                 }
             }
@@ -2832,9 +2917,9 @@ function exportVpxPDF() {
     // ── Legend ──────────────────────────────────────────────────────
     const legY = 22;
     const legend = [
-        { label: 'On Schedule', r: 34, g: 197, b: 94 },
+        { label: 'Completed', r: 34, g: 197, b: 94 },
         { label: 'In Progress', r: 245, g: 158, b: 11 },
-        { label: 'Late Completion', r: 139, g: 92, b: 246 },
+        { label: 'Late Completion', r: 59, g: 130, b: 246 },
         { label: 'Overdue', r: 220, g: 38, b: 38 },
         { label: 'Planned', r: 148, g: 163, b: 184 },
     ];
@@ -2873,7 +2958,7 @@ function exportVpxPDF() {
     function statusDotRGB(status) {
         if (status === 'Completed') return [34, 197, 94];   // green
         if (status === 'In Progress') return [245, 158, 11];   // amber
-        if (status === 'Late Completion') return [139, 92, 246];   // purple — matches VPX dot
+        if (status === 'Late Completion') return [59, 130, 246];   // blue
         if (status === 'Overdue') return [220, 38, 38];   // red
         return [148, 163, 184];                                      // grey — Planned
     }
@@ -2884,15 +2969,20 @@ function exportVpxPDF() {
     // Rows
     const body = rows.map(row => {
         return [
-            row.vehicle + '\n' + row.vehicle_no,
+            row.vehicle + '\n' + unitLabel(row.vehicle, row.vehicle_no),
             ...activeCols.map(col => {
                 const k = col.resolve(row.vehicle);
                 if (k === null) return 'N/A';
                 const task = row.stations[k];
                 if (!task) return '—';
                 const actual = task.progress?.completion_date || null;
+                const actStart2 = task.progress?.actual_start_date || null;
                 const planned = task.end_date;
-                return (planned ? planned.slice(5) : '?') + (actual ? '\n' + actual.slice(5) : '');
+                const planStr = (task.start_date ? task.start_date.slice(5) : '?') + ' > ' + (planned ? planned.slice(5) : '?');
+                const actStr = actStart2
+                    ? actStart2.slice(5) + ' > ' + (actual ? actual.slice(5) : '?')
+                    : (actual ? '? > ' + actual.slice(5) : '');
+                return planStr + (actStr ? '\n' + actStr : '');
             }),
         ];
     });
@@ -2974,7 +3064,7 @@ function exportVpxPDF() {
                 doc.text(line, data.cell.x + data.cell.width / 2, data.cell.y + 4.5 + li * 3.2, { align: 'center' });
             });
         },
-        // Column group header (second header row for group names)
+        // Column group header colours + suppress autoTable text in body station cells
         didParseCell(data) {
             if (data.section === 'head' && data.row.index === 0 && data.column.index > 0) {
                 const col = activeCols[data.column.index - 1];
@@ -2988,6 +3078,10 @@ function exportVpxPDF() {
                     const [r, g, b] = grpColors[col.group] || [30, 58, 138];
                     data.cell.styles.fillColor = [r, g, b];
                 }
+            }
+            // Hide autoTable's own text for station cells — we redraw manually in didDrawCell
+            if (data.section === 'body' && data.column.index > 0) {
+                data.cell.styles.textColor = [255, 255, 255]; // invisible on white bg
             }
         },
     });
@@ -3061,6 +3155,141 @@ function updateReportPreview() {
    ================================================================ */
 let _auditLogOffset = 0;
 const AUDIT_PAGE_SIZE = 50;
+
+/* ──────────────────────────────────────────────────────────────────
+   UNIT CODES MANAGEMENT
+   ────────────────────────────────────────────────────────────────── */
+
+function openUnitCodes() {
+    document.getElementById('unitCodesOverlay').style.display = 'flex';
+    loadUcTable();
+}
+function closeUnitCodes() {
+    document.getElementById('unitCodesOverlay').style.display = 'none';
+    closeUcForm();
+}
+
+async function loadUcTable() {
+    const tbody = document.getElementById('ucTableBody');
+    tbody.innerHTML = '<tr><td colspan="4" class="table-empty"><span class="spinner"></span> Loading…</td></tr>';
+    try {
+        const { data, error } = await db.from('vehicle_units')
+            .select('*');
+        if (error) throw error;
+
+        // Sort properly: vehicle type order, then natural unit number (M1, M2 … M10, not M1, M10, M2)
+        const sorted = (data || []).slice().sort((a, b) => {
+            const vc = vehicleSort(a.vehicle, b.vehicle);
+            if (vc !== 0) return vc;
+            return naturalSort(a.vehicle_no, b.vehicle_no);
+        });
+
+        document.getElementById('ucCount').textContent = sorted.length + ' units';
+        if (!sorted.length) {
+            tbody.innerHTML = '<tr><td colspan="4" class="table-empty">No unit codes yet. Click "Add / Edit Code" to begin.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = sorted.map(r => `
+      <tr>
+        <td>${esc(r.vehicle)}</td>
+        <td>${esc(r.vehicle_no)}</td>
+        <td class="mono">${esc(r.unit_code)}</td>
+        <td>
+          <button class="btn btn-xs btn-ghost" onclick="openUcForm(${r.id})">Edit</button>
+          <button class="btn btn-xs btn-danger" onclick="deleteUnitCode(${r.id})">Delete</button>
+        </td>
+      </tr>`).join('');
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="4" class="table-empty">Error loading unit codes.</td></tr>';
+        console.error(e);
+    }
+}
+
+async function openUcForm(id) {
+    document.getElementById('ucForm').style.display = 'block';
+    document.getElementById('ucFormTitle').textContent = id ? 'Edit Unit Code' : 'Add Unit Code';
+    document.getElementById('ucFormError').textContent = '';
+
+    // Populate vehicle select from current plan data
+    const vehicles = [...new Set(currentData.map(r => r.vehicle))].sort(vehicleSort);
+    const vSel = document.getElementById('ucVehicle');
+    vSel.innerHTML = vehicles.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+
+    if (id) {
+        const { data } = await db.from('vehicle_units').select('*').eq('id', id).maybeSingle();
+        if (data) {
+            document.getElementById('ucEditId').value = id;
+            vSel.value = data.vehicle;
+            populateUcUnits();
+            document.getElementById('ucUnit').value = data.vehicle_no;
+            document.getElementById('ucCode').value = data.unit_code;
+            return;
+        }
+    }
+    document.getElementById('ucEditId').value = '';
+    populateUcUnits();
+    document.getElementById('ucCode').value = '';
+}
+
+function populateUcUnits() {
+    const vehicle = document.getElementById('ucVehicle')?.value;
+    const units = [...new Set(currentData.filter(r => r.vehicle === vehicle).map(r => r.vehicle_no))].sort(naturalSort);
+    const uSel = document.getElementById('ucUnit');
+    uSel.innerHTML = units.map(u => `<option value="${esc(u)}">${esc(u)}</option>`).join('');
+}
+
+function closeUcForm() {
+    document.getElementById('ucForm').style.display = 'none';
+}
+
+async function saveUnitCode() {
+    const id = document.getElementById('ucEditId').value;
+    const vehicle = document.getElementById('ucVehicle').value.trim();
+    const unit = document.getElementById('ucUnit').value.trim();
+    const code = document.getElementById('ucCode').value.trim();
+    const errEl = document.getElementById('ucFormError');
+
+    if (!vehicle || !unit || !code) { errEl.textContent = 'All fields are required.'; return; }
+
+    try {
+        let error;
+        if (id) {
+            ({ error } = await db.from('vehicle_units')
+                .update({ vehicle, vehicle_no: unit, unit_code: code, updated_at: new Date().toISOString() })
+                .eq('id', id));
+        } else {
+            ({ error } = await db.from('vehicle_units')
+                .upsert({ vehicle, vehicle_no: unit, unit_code: code, updated_at: new Date().toISOString() },
+                    { onConflict: 'vehicle,vehicle_no' }));
+        }
+        if (error) throw error;
+
+        // Refresh in-memory map and re-render
+        await loadUnitCodes();
+        populateUnitFilter([...new Set(currentData.map(r => r.vehicle_no).filter(Boolean))].sort(naturalSort));
+        refreshAllViews();
+        closeUcForm();
+        loadUcTable();
+        showToast('Unit code saved.', 'success');
+    } catch (e) {
+        errEl.textContent = e.message;
+    }
+}
+
+async function deleteUnitCode(id) {
+    if (!confirm('Delete this unit code?')) return;
+    try {
+        const { error } = await db.from('vehicle_units').delete().eq('id', id);
+        if (error) throw error;
+        await loadUnitCodes();
+        populateUnitFilter([...new Set(currentData.map(r => r.vehicle_no).filter(Boolean))].sort(naturalSort));
+        refreshAllViews();
+        loadUcTable();
+        showToast('Unit code deleted.', 'success');
+    } catch (e) {
+        showToast('Delete failed: ' + e.message, 'error');
+    }
+}
 
 function openUserMgmt() {
     document.getElementById('userMgmtOverlay').style.display = 'flex';

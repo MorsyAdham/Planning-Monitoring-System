@@ -40,7 +40,7 @@
             <div class="header-brand">
                 <div class="brand-badge">KD1</div>
                 <div class="brand-text">
-                    <span class="brand-title">Assembly Control</span>
+                    <span class="brand-title">Production Planning & Monitoring Control</span>
                     <span class="brand-sub">Plan vs Actual Tracking System</span>
                 </div>
             </div>
@@ -70,6 +70,14 @@
                         <path d="M4 4h12v2H4zM4 8h12v2H4zM4 12h8v2H4z" />
                         <circle cx="15" cy="13" r="3.5" />
                         <path d="M17 15l1.5 1.5" />
+                    </svg>
+                </button>
+                <!-- ── Unit Codes button (admin+) ── -->
+                <button class="btn-nav-icon" id="btnUnitCodes" title="Unit Codes" style="display:none">
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"
+                        style="width:18px;height:18px">
+                        <rect x="2" y="4" width="16" height="12" rx="2" />
+                        <path d="M6 8h8M6 12h5" />
                     </svg>
                 </button>
                 <!-- ── User Management button (master_admin only) ── -->
@@ -377,7 +385,7 @@
                             Export PDF
                         </button>
                         <div class="vpx-legend">
-                            <span class="vpx-leg-item"><span class="vpx-dot vpx-dot-ok"></span>On Schedule</span>
+                            <span class="vpx-leg-item"><span class="vpx-dot vpx-dot-ok"></span>Completed</span>
                             <span class="vpx-leg-item"><span class="vpx-dot vpx-dot-prog"></span>In Progress</span>
                             <span class="vpx-leg-item"><span class="vpx-dot vpx-dot-late"></span>Late Completion</span>
                             <span class="vpx-leg-item"><span class="vpx-dot vpx-dot-over"></span>Overdue</span>
@@ -661,6 +669,86 @@
         </div>
 
         <!-- ═══════════════════════════════════════════ USER MANAGEMENT MODAL -->
+        <!-- ═══════════════════════════════════════════════ UNIT CODES MODAL -->
+        <div class="modal-overlay modal-overlay-wide" id="unitCodesOverlay" style="display:none;" role="dialog"
+            aria-modal="true" aria-labelledby="unitCodesTitle">
+            <div class="modal modal-wide">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="unitCodesTitle">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"
+                            style="width:18px;height:18px;vertical-align:-3px;margin-right:8px">
+                            <rect x="2" y="4" width="16" height="12" rx="2" />
+                            <path d="M6 8h8M6 12h5" />
+                        </svg>
+                        Unit Codes
+                    </h4>
+                    <button class="modal-close" id="unitCodesClose">&#x2715;</button>
+                </div>
+                <div class="modal-body" style="padding:0">
+                    <div class="um-toolbar">
+                        <span class="um-count" id="ucCount">0 units</span>
+                        <button class="btn btn-primary btn-sm" id="btnAddUnitCode">
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
+                                style="width:13px;height:13px">
+                                <path d="M10 4v12M4 10h12" />
+                            </svg>
+                            Add / Edit Code
+                        </button>
+                    </div>
+                    <div class="um-table-wrap">
+                        <table class="data-table um-table">
+                            <thead>
+                                <tr>
+                                    <th>Vehicle</th>
+                                    <th>Unit</th>
+                                    <th>Unit Code</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ucTableBody">
+                                <tr>
+                                    <td colspan="4" class="table-empty">
+                                        <div class="empty-state"><span class="spinner"></span>
+                                            <p>Loading…</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="um-form" id="ucForm" style="display:none">
+                        <div class="um-form-header">
+                            <span id="ucFormTitle">Add Unit Code</span>
+                            <button class="modal-close" id="ucFormClose">&#x2715;</button>
+                        </div>
+                        <div class="um-form-body">
+                            <div class="um-form-grid">
+                                <input type="hidden" id="ucEditId" />
+                                <div class="form-group">
+                                    <label class="form-label">Vehicle</label>
+                                    <select id="ucVehicle" class="filter-control"></select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Unit</label>
+                                    <select id="ucUnit" class="filter-control"></select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Unit Code</label>
+                                    <input type="text" id="ucCode" class="filter-control"
+                                        placeholder="e.g. EGY N25020" />
+                                </div>
+                            </div>
+                        </div>
+                        <div class="um-form-footer">
+                            <button class="btn btn-primary" id="btnUcSave">Save</button>
+                            <button class="btn btn-ghost" id="btnUcCancel">Cancel</button>
+                            <span class="um-form-error" id="ucFormError"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="modal-overlay modal-overlay-wide" id="userMgmtOverlay" style="display:none;" role="dialog"
             aria-modal="true" aria-labelledby="userMgmtTitle">
             <div class="modal modal-wide">
