@@ -1725,6 +1725,7 @@ function wireEvents() {
 
     // VPX PDF export
     document.getElementById('btnVpxPdf')?.addEventListener('click', exportVpxPDF);
+    document.getElementById('btnVpxExcel')?.addEventListener('click', exportVpxExcel);
 }
 
 function resetFilters() {
@@ -2899,45 +2900,54 @@ function exportVpxPDF() {
         return;
     }
 
+    // ── Build dynamic title from active filters ────────────────────
+    const _fVehicle = getVal('filterVehicle');
+    const _fUnit = getVal('filterUnit');
+    const _fCategory = getVal('filterCategory');
+    const _titleParts = ['KD1'];
+    if (_fVehicle) _titleParts.push(_fVehicle);
+    if (_fUnit) _titleParts.push(_fUnit);
+    if (_fCategory) _titleParts.push(_fCategory);
+    _titleParts.push('Vehicle Production Progress');
+    const _mainTitle = _titleParts.join(' ');
+
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const PAGE_W = doc.internal.pageSize.getWidth();   // 297
     const PAGE_H = doc.internal.pageSize.getHeight();  // 210
-    const MARGIN = 10;
+    const MARGIN = 12;
     const now = new Date().toLocaleString('en-GB');
 
     // ── White background ────────────────────────────────────────────
     doc.setFillColor(255, 255, 255);
     doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
 
-    // ── Header band ─────────────────────────────────────────────────
-    doc.setFillColor(30, 58, 138);
-    doc.rect(0, 0, PAGE_W, 18, 'F');
+    // ── Clean print-friendly header — black text on white ───────────
+    // Top rule
+    doc.setDrawColor(30, 41, 59);
+    doc.setLineWidth(0.6);
+    doc.line(MARGIN, 8, PAGE_W - MARGIN, 8);
 
-    // Badge
-    doc.setFillColor(59, 130, 246);
-    doc.roundedRect(MARGIN, 3.5, 16, 11, 2, 2, 'F');
-    doc.setTextColor(255, 255, 255);
+    // Main title
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.text('KD1', MARGIN + 8, 10.5, { align: 'center' });
+    doc.setFontSize(13);
+    doc.setTextColor(30, 41, 59);
+    doc.text(_mainTitle, MARGIN, 15);
 
-    // Title
-    doc.setFontSize(12);
-    doc.setTextColor(255, 255, 255);
-    doc.text('Vehicle Production Progress', MARGIN + 20, 9.5);
-
+    // Sub-label (right-aligned)
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
-    doc.setTextColor(147, 197, 253);
-    doc.text('STATION-BY-STATION PLANNED VS ACTUAL', MARGIN + 20, 15);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Station-by-Station Planned vs Actual', PAGE_W - MARGIN, 12, { align: 'right' });
+    doc.text('Generated: ' + now, PAGE_W - MARGIN, 17, { align: 'right' });
 
-    doc.setFontSize(7);
-    doc.setTextColor(186, 230, 253);
-    doc.text('Generated: ' + now, PAGE_W - MARGIN, 15, { align: 'right' });
+    // Bottom rule under header
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.3);
+    doc.line(MARGIN, 20, PAGE_W - MARGIN, 20);
 
     // ── Legend ──────────────────────────────────────────────────────
-    const legY = 22;
+    const legY = 26;
     const legend = [
         { label: 'Completed', r: 34, g: 197, b: 94 },
         { label: 'In Progress', r: 245, g: 158, b: 11 },
@@ -3010,7 +3020,7 @@ function exportVpxPDF() {
     });
 
     // ── AutoTable ────────────────────────────────────────────────────
-    const tableStartY = legY + 6;
+    const tableStartY = legY + 7;
     const colCount = 1 + activeCols.length;
     const vehicleColW = 22;
     const stationColW = Math.min(14, (PAGE_W - MARGIN * 2 - vehicleColW) / activeCols.length);
@@ -3025,12 +3035,14 @@ function exportVpxPDF() {
             ...Object.fromEntries(activeCols.map((_, i) => [i + 1, { cellWidth: stationColW, halign: 'center', fontSize: 5.5 }])),
         },
         headStyles: {
-            fillColor: [30, 58, 138],
-            textColor: [255, 255, 255],
+            fillColor: [241, 245, 249],
+            textColor: [30, 41, 59],
             fontStyle: 'bold',
             fontSize: 6,
             cellPadding: 1.5,
             halign: 'center',
+            lineColor: [148, 163, 184],
+            lineWidth: 0.3,
         },
         styles: {
             fontSize: 6,
@@ -3092,13 +3104,14 @@ function exportVpxPDF() {
                 const col = activeCols[data.column.index - 1];
                 if (col) {
                     const grpColors = {
-                        'Assembly': [30, 58, 138],
+                        'Assembly': [71, 85, 105],
                         'Processing': [120, 53, 15],
                         'Final Inspection': [6, 95, 70],
-                        'Final Test': [76, 29, 149],
+                        'Final Test': [51, 65, 85],
                     };
                     const [r, g, b] = grpColors[col.group] || [30, 58, 138];
                     data.cell.styles.fillColor = [r, g, b];
+                    data.cell.styles.textColor = [255, 255, 255];
                 }
             }
             // Hide autoTable's own text for station cells — we redraw manually in didDrawCell
@@ -3110,19 +3123,423 @@ function exportVpxPDF() {
 
     // ── Footer ───────────────────────────────────────────────────────
     const fY = PAGE_H - 5;
-    doc.setDrawColor(226, 232, 240);
+    doc.setDrawColor(203, 213, 225);
     doc.setLineWidth(0.3);
-    doc.line(MARGIN, fY - 2, PAGE_W - MARGIN, fY - 2);
+    doc.line(MARGIN, fY - 3, PAGE_W - MARGIN, fY - 3);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6);
-    doc.setTextColor(148, 163, 184);
-    doc.text('KD1 Assembly Control System · Vehicle Production Progress', MARGIN, fY);
+    doc.setTextColor(100, 116, 139);
+    doc.text('KD1 Assembly Control System | @ Adham Morsy · ' + _mainTitle, MARGIN, fY);
     doc.text(`Page 1 of ${doc.internal.getNumberOfPages()}`, PAGE_W - MARGIN, fY, { align: 'right' });
 
     const ds = new Date().toISOString().slice(0, 10);
     doc.save('KD1_VehicleProgress_' + ds + '.pdf');
     showToast('PDF exported successfully.', 'success');
 }
+
+
+/* ──────────────────────────────────────────────────────────────────
+   VPX EXCEL EXPORT  (ExcelJS — full cell styling)
+   ────────────────────────────────────────────────────────────────── */
+async function exportVpxExcel() {
+    if (!currentData?.length) { showToast('No data to export.', 'error'); return; }
+    if (typeof ExcelJS === 'undefined') {
+        showToast('ExcelJS not loaded yet — please wait a moment and try again.', 'error'); return;
+    }
+
+    const _fVehicle = getVal('filterVehicle');
+    const _fUnit = getVal('filterUnit');
+    const _fCategory = getVal('filterCategory');
+
+    const vpxData = _fCategory
+        ? currentData.filter(r => getCategory(r.process_station) === _fCategory)
+        : currentData;
+    if (!vpxData.length) { showToast('No data matches the current filters.', 'error'); return; }
+
+    // ── Build matrix rows ────────────────────────────────────────────
+    const rowMap = {};
+    vpxData.forEach(task => {
+        const rk = task.vehicle + '||' + task.vehicle_no;
+        if (!rowMap[rk]) rowMap[rk] = { vehicle: task.vehicle, vehicle_no: task.vehicle_no, stations: {} };
+        const ex = rowMap[rk].stations[task.process_station];
+        if (!ex || task.end_date > ex.end_date) rowMap[rk].stations[task.process_station] = task;
+    });
+    const rows = Object.values(rowMap).sort((a, b) => {
+        const vc = vehicleSort(a.vehicle, b.vehicle);
+        return vc !== 0 ? vc : naturalSort(a.vehicle_no, b.vehicle_no);
+    });
+    const usedStations = new Set(vpxData.map(t => t.process_station));
+    const activeCols = VPX_COLUMNS.filter(col =>
+        rows.some(row => { const k = col.resolve(row.vehicle); return k !== null && usedStations.has(k); })
+    );
+
+    // ── Title ────────────────────────────────────────────────────────
+    const titleParts = ['KD1'];
+    if (_fVehicle) titleParts.push(_fVehicle);
+    if (_fUnit) titleParts.push(_fUnit);
+    if (_fCategory) titleParts.push(_fCategory);
+    titleParts.push('Vehicle Production Progress');
+    const sheetTitle = titleParts.join(' ');
+
+    // ── Colour helpers ───────────────────────────────────────────────
+    // ExcelJS argb = 'FF' + hex (no #)
+    const STATUS_STYLE = {
+        'Completed': { bg: 'FFdcfce7', fg: 'FF15803d', dot: 'FF22c55e' },
+        'In Progress': { bg: 'FFfef9c3', fg: 'FF854d0e', dot: 'FFf59e0b' },
+        'Late Completion': { bg: 'FFdbeafe', fg: 'FF1d4ed8', dot: 'FF3b82f6' },
+        'Overdue': { bg: 'FFfee2e2', fg: 'FF991b1b', dot: 'FFdc2626' },
+        'Planned': { bg: 'FFf8fafc', fg: 'FF475569', dot: 'FF94a3b8' },
+        'N/A': { bg: 'FFf1f5f9', fg: 'FFcbd5e1', dot: null },
+    };
+    const GRP_COLOR = {
+        'Assembly': { bg: 'FF1e3a8a', fg: 'FFffffff' },
+        'Processing': { bg: 'FF78350f', fg: 'FFffffff' },
+        'Final Inspection': { bg: 'FF064e3b', fg: 'FFffffff' },
+        'Final Test': { bg: 'FF334155', fg: 'FFffffff' },
+    };
+
+    function cellStyle(argbBg, argbFg, bold = false, sz = 9, wrap = false, hAlign = 'center', vAlign = 'middle') {
+        return {
+            font: { name: 'Calibri', size: sz, bold, color: { argb: argbFg } },
+            fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: argbBg } },
+            alignment: { horizontal: hAlign, vertical: vAlign, wrapText: wrap },
+            border: {
+                top: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+                bottom: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+                left: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+                right: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+            },
+        };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  SHEET 1 — VPX Matrix
+    // ════════════════════════════════════════════════════════════════
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'KD1 Assembly Control System';
+    wb.created = new Date();
+
+    const ws = wb.addWorksheet('VPX Matrix', {
+        pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+        views: [{ state: 'frozen', xSplit: 1, ySplit: 5 }],
+    });
+
+    const totalCols = 1 + activeCols.length;
+
+    // ── Row 1: Main title ──────────────────────────────────────────
+    ws.addRow([sheetTitle]);
+    const titleRow = ws.getRow(1);
+    titleRow.height = 24;
+    const titleCell = ws.getCell('A1');
+    titleCell.font = { name: 'Calibri', size: 16, bold: true, color: { argb: 'FF1e293b' } };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFffffff' } };
+    titleCell.alignment = { vertical: 'middle', horizontal: 'left' };
+    ws.mergeCells(1, 1, 1, totalCols);
+
+    // ── Row 2: Sub-info ────────────────────────────────────────────
+    ws.addRow(['Station-by-Station Planned vs Actual  |  Generated: ' + new Date().toLocaleString('en-GB')]);
+    const subRow = ws.getRow(2);
+    subRow.height = 15;
+    const subCell = ws.getCell('A2');
+    subCell.font = { name: 'Calibri', size: 8, italic: true, color: { argb: 'FF64748b' } };
+    subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFffffff' } };
+    subCell.alignment = { vertical: 'middle', horizontal: 'left' };
+    ws.mergeCells(2, 1, 2, totalCols);
+
+    // ── Row 3: blank spacer ────────────────────────────────────────
+    ws.addRow([]);
+    ws.getRow(3).height = 6;
+
+    // ── Row 4: Group header ────────────────────────────────────────
+    const grpRowData = [''];
+    activeCols.forEach(col => grpRowData.push(col.group));
+    ws.addRow(grpRowData);
+    const grpRow = ws.getRow(4);
+    grpRow.height = 18;
+
+    // Style group header cells + merge consecutive same-group cells
+    let grpStart = 2, grpCurrent = activeCols[0]?.group;
+    const applyGrpMerge = (start, end, label) => {
+        if (start < end) ws.mergeCells(4, start, 4, end);
+        const gc = ws.getCell(4, start);
+        const gClr = GRP_COLOR[label] || { bg: 'FF334155', fg: 'FFffffff' };
+        gc.value = label;
+        gc.font = { name: 'Calibri', size: 9, bold: true, color: { argb: gClr.fg } };
+        gc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: gClr.bg } };
+        gc.alignment = { horizontal: 'center', vertical: 'middle' };
+    };
+    activeCols.forEach((col, i) => {
+        const colN = i + 2;
+        if (col.group !== grpCurrent) {
+            applyGrpMerge(grpStart, colN - 1, grpCurrent);
+            grpStart = colN;
+            grpCurrent = col.group;
+        }
+        if (i === activeCols.length - 1) applyGrpMerge(grpStart, colN, grpCurrent);
+    });
+    // Style the unit column header cell in row 4
+    const unitHdr4 = ws.getCell(4, 1);
+    unitHdr4.value = 'Vehicle · Unit';
+    unitHdr4.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FFffffff' } };
+    unitHdr4.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1e293b' } };
+    unitHdr4.alignment = { horizontal: 'center', vertical: 'middle' };
+
+    // ── Row 5: Station code header ─────────────────────────────────
+    const codeRowData = [''];
+    activeCols.forEach(col => codeRowData.push(col.code));
+    ws.addRow(codeRowData);
+    const codeRow = ws.getRow(5);
+    codeRow.height = 16;
+    for (let c = 1; c <= totalCols; c++) {
+        const cell = ws.getCell(5, c);
+        const isUnit = c === 1;
+        cell.font = { name: 'Calibri', size: 8, bold: true, color: { argb: isUnit ? 'FFffffff' : 'FF1e293b' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isUnit ? 'FF1e293b' : 'FFf1f5f9' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = {
+            top: { style: 'medium', color: { argb: 'FF94a3b8' } },
+            bottom: { style: 'medium', color: { argb: 'FF94a3b8' } },
+            left: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+            right: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+        };
+        if (c === 1) cell.value = '';
+        else {
+            const col = activeCols[c - 2];
+            cell.value = col ? col.code : '';
+        }
+    }
+
+    // ── Data rows ──────────────────────────────────────────────────
+    let prevVehicle = null;
+    let excelRowIdx = 6;
+
+    rows.forEach((row, ri) => {
+        // Vehicle group separator row
+        if (row.vehicle !== prevVehicle) {
+            ws.addRow([row.vehicle]);
+            const vRow = ws.getRow(excelRowIdx);
+            vRow.height = 14;
+            ws.mergeCells(excelRowIdx, 1, excelRowIdx, totalCols);
+            const vc = ws.getCell(excelRowIdx, 1);
+            vc.value = row.vehicle;
+            vc.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFffffff' } };
+            vc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
+            vc.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+            prevVehicle = row.vehicle;
+            excelRowIdx++;
+        }
+
+        // Unit data row
+        const dataRowArr = [unitLabel(row.vehicle, row.vehicle_no)];
+        activeCols.forEach(col => {
+            const k = col.resolve(row.vehicle);
+            if (k === null) { dataRowArr.push('N/A'); return; }
+            const task = row.stations[k];
+            if (!task) { dataRowArr.push(''); return; }
+            const status = calculateStatus(task);
+            const actStart = task.progress?.actual_start_date;
+            const actEnd = task.progress?.completion_date;
+            const planStr = (task.start_date || '?').slice(5) + ' > ' + (task.end_date || '?').slice(5);
+            const actStr = actStart
+                ? actStart.slice(5) + ' > ' + (actEnd ? actEnd.slice(5) : '?')
+                : (actEnd ? '? > ' + actEnd.slice(5) : '');
+            // Value: Status on line 1, planned on line 2, actual on line 3
+            dataRowArr.push(status + '\n' + planStr + (actStr ? '\n' + actStr : ''));
+        });
+
+        ws.addRow(dataRowArr);
+        const dRow = ws.getRow(excelRowIdx);
+        dRow.height = 34;
+
+        // Unit label cell
+        const unitCell = ws.getCell(excelRowIdx, 1);
+        unitCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FF1e293b' } };
+        unitCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf8fafc' } };
+        unitCell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1, wrapText: true };
+        unitCell.border = {
+            top: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+            bottom: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+            right: { style: 'medium', color: { argb: 'FF94a3b8' } },
+        };
+
+        // Station cells
+        activeCols.forEach((col, ci) => {
+            const c = ci + 2;
+            const cell = ws.getCell(excelRowIdx, c);
+            const k = col.resolve(row.vehicle);
+            if (k === null) {
+                cell.value = 'N/A';
+                cell.font = { name: 'Calibri', size: 7, color: { argb: 'FFcbd5e1' }, italic: true };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf8fafc' } };
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                cell.border = { top: { style: 'thin', color: { argb: 'FFe2e8f0' } }, bottom: { style: 'thin', color: { argb: 'FFe2e8f0' } }, left: { style: 'thin', color: { argb: 'FFe2e8f0' } }, right: { style: 'thin', color: { argb: 'FFe2e8f0' } } };
+                return;
+            }
+            const task = row.stations[k];
+            if (!task) {
+                cell.value = '';
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFffffff' } };
+                cell.border = { top: { style: 'thin', color: { argb: 'FFe2e8f0' } }, bottom: { style: 'thin', color: { argb: 'FFe2e8f0' } }, left: { style: 'thin', color: { argb: 'FFe2e8f0' } }, right: { style: 'thin', color: { argb: 'FFe2e8f0' } } };
+                return;
+            }
+            const status = calculateStatus(task);
+            const st = STATUS_STYLE[status] || STATUS_STYLE['Planned'];
+            const actStart = task.progress?.actual_start_date;
+            const actEnd = task.progress?.completion_date;
+            const planStr = (task.start_date || '?').slice(5) + ' > ' + (task.end_date || '?').slice(5);
+            const actStr = actStart
+                ? actStart.slice(5) + ' > ' + (actEnd ? actEnd.slice(5) : '?')
+                : (actEnd ? '? > ' + actEnd.slice(5) : '');
+
+            cell.value = {
+                richText: [
+                    { text: status + '\n', font: { bold: true, size: 8, color: { argb: st.fg }, name: 'Calibri' } },
+                    { text: 'P: ' + planStr, font: { size: 7, color: { argb: 'FF475569' }, name: 'Calibri' } },
+                    ...(actStr ? [{ text: '\nA: ' + actStr, font: { size: 7, bold: true, color: { argb: st.fg }, name: 'Calibri' } }] : []),
+                ]
+            };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: st.bg } };
+            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+            cell.border = {
+                top: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+                bottom: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+                left: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+                right: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+            };
+        });
+
+        excelRowIdx++;
+    });
+
+    // ── Column widths ──────────────────────────────────────────────
+    ws.getColumn(1).width = 24;
+    activeCols.forEach((_, i) => { ws.getColumn(i + 2).width = 15; });
+
+    // ════════════════════════════════════════════════════════════════
+    //  SHEET 2 — Key / Legend
+    // ════════════════════════════════════════════════════════════════
+    const wsKey = wb.addWorksheet('Key & Legend');
+    wsKey.views = [{}];
+    wsKey.getColumn(1).width = 5;
+    wsKey.getColumn(2).width = 22;
+    wsKey.getColumn(3).width = 50;
+    wsKey.getColumn(4).width = 22;
+    wsKey.getColumn(5).width = 22;
+
+    // Title
+    wsKey.addRow(['', 'KD1 VPX — Key & Legend']);
+    wsKey.mergeCells(1, 2, 1, 5);
+    const keyTitle = wsKey.getCell(1, 2);
+    keyTitle.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FF1e293b' } };
+    keyTitle.alignment = { vertical: 'middle' };
+    wsKey.getRow(1).height = 24;
+
+    wsKey.addRow([]);
+    wsKey.getRow(2).height = 8;
+
+    // Status section header
+    wsKey.addRow(['', 'STATUS COLOURS']);
+    wsKey.mergeCells(3, 2, 3, 5);
+    const secHdr = wsKey.getCell(3, 2);
+    secHdr.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FF64748b' } };
+    secHdr.border = { bottom: { style: 'medium', color: { argb: 'FFcbd5e1' } } };
+    wsKey.getRow(3).height = 16;
+
+    // Column headers for legend table
+    wsKey.addRow(['', 'Status', 'What it means', 'Planned Dates', 'Actual Dates']);
+    const legHdrRow = wsKey.getRow(4);
+    legHdrRow.height = 16;
+    [2, 3, 4, 5].forEach(c => {
+        const cell = wsKey.getCell(4, c);
+        cell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FFffffff' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1e293b' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = { bottom: { style: 'medium', color: { argb: 'FF334155' } } };
+    });
+
+    const legendRows = [
+        { status: 'Completed', meaning: 'Task finished on or before the planned end date.', plan: 'Start > End', actual: 'ActStart > ActEnd' },
+        { status: 'In Progress', meaning: 'Actual start recorded but task is not yet complete.', plan: 'Start > End', actual: 'ActStart > ?' },
+        { status: 'Late Completion', meaning: 'Task completed after the planned end date.', plan: 'Start > End', actual: 'ActStart > ActEnd (late)' },
+        { status: 'Overdue', meaning: 'Not complete and today is past the planned end date.', plan: 'Start > End', actual: '(none)' },
+        { status: 'Planned', meaning: 'Not yet started — no actual dates recorded.', plan: 'Start > End', actual: '(none)' },
+        { status: 'N/A', meaning: 'This station does not apply to this vehicle type.', plan: '—', actual: '—' },
+    ];
+
+    legendRows.forEach((lr, i) => {
+        wsKey.addRow(['', lr.status, lr.meaning, lr.plan, lr.actual]);
+        const r = i + 5;
+        const st = STATUS_STYLE[lr.status] || { bg: 'FFf1f5f9', fg: 'FF475569' };
+        wsKey.getRow(r).height = 20;
+        [2, 3, 4, 5].forEach(c => {
+            const cell = wsKey.getCell(r, c);
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: st.bg } };
+            cell.font = { name: 'Calibri', size: 9, bold: c === 2, color: { argb: st.fg } };
+            cell.alignment = { vertical: 'middle', wrapText: true, horizontal: c === 2 ? 'center' : 'left', indent: c > 2 ? 1 : 0 };
+            cell.border = {
+                top: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+                bottom: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+                left: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+                right: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+            };
+        });
+    });
+
+    // Spacer
+    wsKey.addRow([]); wsKey.getRow(11).height = 12;
+
+    // Reading guide section
+    wsKey.addRow(['', 'HOW TO READ A CELL']);
+    wsKey.mergeCells(12, 2, 12, 5);
+    const secHdr2 = wsKey.getCell(12, 2);
+    secHdr2.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FF64748b' } };
+    secHdr2.border = { bottom: { style: 'medium', color: { argb: 'FFcbd5e1' } } };
+    wsKey.getRow(12).height = 16;
+
+    const guideRows = [
+        ['', 'Line 1', 'Status label (e.g. Completed, Overdue…)', '', ''],
+        ['', 'Line 2', 'P: MM-DD > MM-DD   Planned start to planned end', '', ''],
+        ['', 'Line 3', 'A: MM-DD > MM-DD   Actual start to actual end (if recorded)', '', ''],
+        ['', 'Empty cell', 'Station not yet planned for this unit', '', ''],
+        ['', 'N/A', 'Station does not apply to this vehicle type', '', ''],
+    ];
+    guideRows.forEach((gr, i) => {
+        wsKey.addRow(gr);
+        const r = i + 13;
+        wsKey.getRow(r).height = 16;
+        const lbl = wsKey.getCell(r, 2);
+        const desc = wsKey.getCell(r, 3);
+        lbl.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FF334155' } };
+        lbl.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf1f5f9' } };
+        lbl.alignment = { vertical: 'middle', horizontal: 'center' };
+        desc.font = { name: 'Calibri', size: 9, color: { argb: 'FF475569' } };
+        desc.alignment = { vertical: 'middle', indent: 1 };
+        wsKey.mergeCells(r, 3, r, 5);
+        [2, 3].forEach(c => {
+            wsKey.getCell(r, c).border = {
+                top: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+                bottom: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+                left: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+                right: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+            };
+        });
+    });
+
+    // ── Save ───────────────────────────────────────────────────────
+    showToast('Building Excel…', 'info');
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'KD1_VehicleProgress_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('Excel exported successfully.', 'success');
+}
+
 
 /* ─── Wire the modal ────────────────────────────────────────────── */
 function wireReportModal() {

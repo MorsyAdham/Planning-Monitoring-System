@@ -375,7 +375,7 @@
                         <span class="vpx-subtitle">Station-by-station planned vs actual · hover for details</span>
                     </div>
                     <div class="vpx-header-right">
-                        <button class="btn btn-outline btn-sm" id="btnVpxPdf" title="Export as PDF (light mode)">
+                        <button class="btn btn-outline btn-sm" id="btnVpxPdf" title="Export print-friendly PDF">
                             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
                                 style="width:14px;height:14px">
                                 <path d="M4 4h8l4 4v10H4V4z" />
@@ -383,6 +383,15 @@
                                 <path d="M7 12h6M7 15h4" />
                             </svg>
                             Export PDF
+                        </button>
+                        <button class="btn btn-outline btn-sm" id="btnVpxExcel" title="Export as Excel">
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
+                                style="width:14px;height:14px">
+                                <path d="M4 4h8l4 4v10H4V4z" />
+                                <path d="M12 4v4h4" />
+                                <path d="M6 8l3 4m0-4l-3 4M13 8h2M13 12h2" />
+                            </svg>
+                            Export Excel
                         </button>
                         <div class="vpx-legend">
                             <span class="vpx-leg-item"><span class="vpx-dot vpx-dot-ok"></span>Completed</span>
@@ -1180,6 +1189,7 @@
         crossorigin="anonymous"></script>
     <!-- SheetJS (Excel export) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js" crossorigin="anonymous"></script>
     <!-- App -->
     <script src="app.js"></script>
 </body>
