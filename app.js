@@ -3129,7 +3129,7 @@ function exportVpxPDF() {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6);
     doc.setTextColor(100, 116, 139);
-    doc.text('KD1 Assembly Control System | @ Adham Morsy · ' + _mainTitle, MARGIN, fY);
+    doc.text('KD1 Assembly Control System | @ Adham morsy · ' + _mainTitle, MARGIN, fY);
     doc.text(`Page 1 of ${doc.internal.getNumberOfPages()}`, PAGE_W - MARGIN, fY, { align: 'right' });
 
     const ds = new Date().toISOString().slice(0, 10);
@@ -3645,6 +3645,9 @@ async function loadUcTable() {
 }
 
 async function openUcForm(id) {
+    // Hide table + toolbar so form footer (Save button) is not clipped
+    document.getElementById('ucTableBody').closest('.um-table-wrap').style.display = 'none';
+    document.querySelector('#unitCodesOverlay .um-toolbar').style.display = 'none';
     document.getElementById('ucForm').style.display = 'block';
     document.getElementById('ucFormTitle').textContent = id ? 'Edit Unit Code' : 'Add Unit Code';
     document.getElementById('ucFormError').textContent = '';
@@ -3679,6 +3682,9 @@ function populateUcUnits() {
 
 function closeUcForm() {
     document.getElementById('ucForm').style.display = 'none';
+    // Restore table + toolbar
+    document.getElementById('ucTableBody').closest('.um-table-wrap').style.display = '';
+    document.querySelector('#unitCodesOverlay .um-toolbar').style.display = '';
 }
 
 async function saveUnitCode() {
