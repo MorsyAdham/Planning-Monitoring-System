@@ -362,7 +362,7 @@
         <div class="login-header-inner">
             <div class="brand-badge">KD1</div>
             <div class="brand-text">
-                <span class="brand-title">Production Plan Control</span>
+                <span class="brand-title">Assembly Control</span>
                 <span class="brand-sub">Plan vs Actual Tracking System</span>
             </div>
         </div>
@@ -385,15 +385,21 @@
 
             <div class="form-group">
                 <label class="form-label" for="loginEmail">Email Address</label>
-                <input type="email" id="loginEmail" class="form-input" placeholder="you@example.com"
-                    autocomplete="email" />
+                <!-- Honeypot: tricks browser into filling this invisible field instead of the real one -->
+                <input type="email" name="email_fake" style="display:none" tabindex="-1" autocomplete="email"
+                    aria-hidden="true" />
+                <input type="text" id="loginEmail" class="form-input" placeholder="you@example.com" autocomplete="off"
+                    data-lpignore="true" data-form-type="other" spellcheck="false" />
             </div>
 
             <div class="form-group">
                 <label class="form-label" for="loginPassword">Password</label>
                 <div class="pw-wrap">
+                    <!-- Honeypot password -->
+                    <input type="password" name="password_fake" style="display:none" tabindex="-1"
+                        autocomplete="current-password" aria-hidden="true" />
                     <input type="password" id="loginPassword" class="form-input" placeholder="••••••••"
-                        autocomplete="current-password" />
+                        autocomplete="new-password" data-lpignore="true" data-form-type="other" />
                     <button class="pw-toggle" id="pwToggle" type="button" aria-label="Toggle password visibility">
                         <svg id="eyeIcon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                             <path d="M1 10s3.5-7 9-7 9 7 9 7-3.5 7-9 7-9-7-9-7z" />
@@ -560,6 +566,14 @@
         });
 
         /* ── If already logged in, redirect ─────────────────────────── */
+        // Clear any browser-autofilled values immediately on load
+        window.addEventListener('load', () => {
+            const em = document.getElementById('loginEmail');
+            const pw = document.getElementById('loginPassword');
+            if (em) { em.value = ''; em.setAttribute('type', 'text'); setTimeout(() => em.setAttribute('type', 'text'), 100); }
+            if (pw) { pw.value = ''; }
+        });
+
         if (sessionStorage.getItem(SESSION_KEY)) {
             window.location.href = 'index.html';
         }
