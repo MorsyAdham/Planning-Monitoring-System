@@ -236,7 +236,19 @@ async function initializeApp() {
 
     // Init Supabase client
     try {
-        db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        const _noopStorage = {
+            getItem: () => null,
+            setItem: () => { },
+            removeItem: () => { },
+        };
+        db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+            auth: {
+                persistSession: false,
+                autoRefreshToken: false,
+                detectSessionInUrl: false,
+                storage: _noopStorage,
+            },
+        });
         setConnStatus('connected', 'Connected');
     } catch (err) {
         setConnStatus('error', 'Connection Error');
@@ -2790,94 +2802,325 @@ function exportPDF(typeKey, fromDate, toDate, category) {
 /* ══════════════════════════════════════════════════════════════════
    EXCEL EXPORT
    ══════════════════════════════════════════════════════════════════ */
-function exportExcel(typeKey, fromDate, toDate, category) {
-    const def = REPORT_TYPES[typeKey];
-    const rows = buildReportRows(typeKey, fromDate, toDate, category);
-
-    if (!rows.length) {
-        showToast('No data matches this report criteria.', 'error');
-        return;
+async function exportExcel(typeKey, fromDate, toDate, category) {
+    if (typeof ExcelJS === 'undefined') {
+        showToast('ExcelJS not loaded — please wait and try again.', 'error'); return;
     }
 
+    const def = REPORT_TYPES[typeKey];
+    const rows = buildReportRows(typeKey, fromDate, toDate, category);
+    if (!rows.length) { showToast('No data matches this report criteria.', 'error'); return; }
+
     const stats = buildSummaryStats(rows);
-    const wb = XLSX.utils.book_new();
 
-    // ── Sheet 1: Data ────────────────────────────────────────────────
-    const headers = REPORT_COLUMNS.map(c => c.header);
-    const data = [
-        headers,
-        ...rows.map((r, i) => REPORT_COLUMNS.map(c => {
-            const v = c.key(r, i);
-            // Keep delay as number for Excel
-            if (c.header === 'Delay (days)') return delayDays(r) || '';
-            return v ?? '';
-        })),
-    ];
+    // ── Active filter labels for title ─────────────────────────────
+    const fVehicle = getVal('filterVehicle');
+    const fUnit = getVal('filterUnit');
+    const fWeek = getVal('filterWeek');
+    const fTF = getVal('filterTimeFrame');
+    const fCategory = category || getVal('filterCategory');
+    const fFrom = fromDate || getVal('filterStartDate');
+    const fTo = toDate || getVal('filterEndDate');
 
-    const ws = XLSX.utils.aoa_to_sheet(data);
+    const titleParts = ['KD1'];
+    if (fVehicle) titleParts.push(fVehicle);
+    if (fUnit) titleParts.push(fUnit);
+    if (fCategory) titleParts.push(fCategory);
+    titleParts.push(def.label);
+    const sheetTitle = titleParts.join(' · ');
 
-    // Column widths
-    ws['!cols'] = [
-        { wch: 5 },  // #
-        { wch: 10 },  // Vehicle
-        { wch: 10 },  // Unit
-        { wch: 26 },  // Station
-        { wch: 14 },  // Category
-        { wch: 8 },  // Week
-        { wch: 14 },  // Planned Start
-        { wch: 14 },  // Planned End
-        { wch: 14 },  // Actual Start
-        { wch: 14 },  // Completed On
-        { wch: 13 },  // Status
-        { wch: 12 },  // Delay
-        { wch: 22 },  // Remark
-    ];
+    const filterChips = [];
+    if (fVehicle) filterChips.push('Vehicle: ' + fVehicle);
+    if (fUnit) filterChips.push('Unit: ' + (getUnitCode(fVehicle, fUnit) ? fUnit + ' · ' + getUnitCode(fVehicle, fUnit) : fUnit));
+    if (fWeek) filterChips.push('Week: ' + fWeek);
+    if (fTF && fTF !== 'custom') filterChips.push('Time Frame: ' + fTF);
+    if (fFrom || fTo) filterChips.push('Dates: ' + (fFrom || '…') + ' → ' + (fTo || '…'));
+    if (fCategory) filterChips.push('Category: ' + fCategory);
 
-    XLSX.utils.book_append_sheet(wb, ws, 'Report Data');
+    // ── Colour palette (matches VPX Excel) ─────────────────────────
+    const ST = {
+        'Completed': { bg: 'FFdcfce7', fg: 'FF15803d', dot: 'FF22c55e' },
+        'In Progress': { bg: 'FFfef9c3', fg: 'FF854d0e', dot: 'FFf59e0b' },
+        'Late Completion': { bg: 'FFdbeafe', fg: 'FF1d4ed8', dot: 'FF3b82f6' },
+        'Overdue': { bg: 'FFfee2e2', fg: 'FF991b1b', dot: 'FFdc2626' },
+        'Planned': { bg: 'FFf8fafc', fg: 'FF475569', dot: 'FF94a3b8' },
+    };
+    const NAV = 'FF1e293b';
+    const HDR = 'FFf1f5f9';
+    const MUTE = 'FF64748b';
+    const BORD = 'FFe2e8f0';
+    const BORD_MED = 'FF94a3b8';
+    const WHITE = 'FFffffff';
+    const ALT = 'FFf9fafb';
 
-    // ── Sheet 2: Summary ─────────────────────────────────────────────
-    const summaryData = [
-        ['KD1 Assembly Control System'],
-        [def.label],
-        [`Generated: ${new Date().toLocaleString('en-GB')}`],
-        [],
-        ['Metric', 'Count'],
-        ['Total Tasks', stats.total],
-        ['Completed', stats.completed],
-        ['In Progress', stats.inProgress],
-        ['Planned', stats.planned],
-        ['Overdue', stats.overdue],
-        ['Late Completion', stats.late],
-        ['Progress %', `${stats.pct}%`],
-    ];
+    function border(style = 'thin') {
+        return {
+            top: { style, color: { argb: BORD } }, bottom: { style, color: { argb: BORD } },
+            left: { style, color: { argb: BORD } }, right: { style, color: { argb: BORD } }
+        };
+    }
+    function hdrBorder() {
+        return {
+            top: { style: 'medium', color: { argb: BORD_MED } }, bottom: { style: 'medium', color: { argb: BORD_MED } },
+            left: { style: 'thin', color: { argb: BORD } }, right: { style: 'thin', color: { argb: BORD } }
+        };
+    }
 
-    if (getVal('filterVehicle')) summaryData.push(['Vehicle Filter', getVal('filterVehicle')]);
-    if (category) summaryData.push(['Category Filter', category]);
-    if (fromDate || toDate) summaryData.push(['Date Range', `${fromDate || '…'} → ${toDate || '…'}`]);
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'KD1 Assembly Control System';
+    wb.created = new Date();
 
-    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
-    wsSummary['!cols'] = [{ wch: 20 }, { wch: 16 }];
-    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
-
-    // ── Sheet 3: By Vehicle breakdown ────────────────────────────────
-    const vehicles = [...new Set(rows.map(r => r.vehicle))].sort(vehicleSort);
-    const breakdownHdr = ['Vehicle', 'Total', 'Completed', 'In Progress', 'Planned', 'Overdue', 'Late Completion', 'Progress %'];
-    const breakdownRows = vehicles.map(v => {
-        const vRows = rows.filter(r => r.vehicle === v);
-        const s = buildSummaryStats(vRows);
-        return [v, s.total, s.completed, s.inProgress, s.planned, s.overdue, s.late, `${s.pct}%`];
+    // ════════════════════════════════════════════════════════════════
+    //  SHEET 1 — Report Data
+    // ════════════════════════════════════════════════════════════════
+    const ws = wb.addWorksheet('Report Data', {
+        pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+        views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }],
     });
 
-    const wsBreakdown = XLSX.utils.aoa_to_sheet([breakdownHdr, ...breakdownRows]);
-    wsBreakdown['!cols'] = breakdownHdr.map(() => ({ wch: 14 }));
-    XLSX.utils.book_append_sheet(wb, wsBreakdown, 'By Vehicle');
+    // Column config — add Unit Code after Unit
+    const COLS = [
+        { header: '#', width: 5, key: (r, i) => i + 1 },
+        { header: 'Vehicle', width: 10, key: r => r.vehicle },
+        { header: 'Unit', width: 10, key: r => r.vehicle_no },
+        { header: 'Unit Code', width: 16, key: r => getUnitCode(r.vehicle, r.vehicle_no) || '—' },
+        { header: 'Station', width: 26, key: r => r.process_station },
+        { header: 'Category', width: 14, key: r => getCategory(r.process_station) },
+        { header: 'Week', width: 8, key: r => r.week || '—' },
+        { header: 'Planned Start', width: 14, key: r => r.start_date || '—' },
+        { header: 'Planned End', width: 14, key: r => r.end_date || '—' },
+        { header: 'Actual Start', width: 14, key: r => r.progress?.actual_start_date || '—' },
+        { header: 'Completed On', width: 14, key: r => r.progress?.completion_date || '—' },
+        { header: 'Status', width: 18, key: r => calculateStatus(r) },
+        { header: 'Delay (days)', width: 13, key: r => { const d = delayDays(r); return d > 0 ? '+' + d + 'd' : calculateStatus(r) === 'Completed' ? 'On Time' : '—'; } },
+        { header: 'Remark', width: 22, key: r => r.remark || '' },
+        { header: 'Completion Note', width: 36, key: r => r.progress?.notes || '' },
+    ];
 
-    // ── Save ─────────────────────────────────────────────────────────
-    const dateSuffix = new Date().toISOString().slice(0, 10);
-    const catSuffix2 = category ? `_${category.replace(/\s+/g, '_')}` : '';
-    XLSX.writeFile(wb, `KD1_${def.label.replace(/\s+/g, '_')}${catSuffix2}_${dateSuffix}.xlsx`);
-    showToast(`Excel exported — ${rows.length} rows across 3 sheets`, 'success');
+    ws.columns = COLS.map(c => ({ width: c.width }));
+
+    // ── Row 1: Title ───────────────────────────────────────────────
+    ws.addRow([sheetTitle]);
+    ws.mergeCells(1, 1, 1, COLS.length);
+    const r1 = ws.getCell(1, 1);
+    r1.font = { name: 'Calibri', size: 15, bold: true, color: { argb: NAV } };
+    r1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: WHITE } };
+    r1.alignment = { vertical: 'middle', horizontal: 'left' };
+    ws.getRow(1).height = 26;
+
+    // ── Row 2: Filters & timestamp ─────────────────────────────────
+    const filterStr = filterChips.length ? filterChips.join('   |   ') : 'No filters applied';
+    ws.addRow(['Filters: ' + filterStr + '     Generated: ' + new Date().toLocaleString('en-GB')]);
+    ws.mergeCells(2, 1, 2, COLS.length);
+    const r2 = ws.getCell(2, 1);
+    r2.font = { name: 'Calibri', size: 8, italic: true, color: { argb: MUTE } };
+    r2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: WHITE } };
+    r2.alignment = { vertical: 'middle', horizontal: 'left' };
+    ws.getRow(2).height = 14;
+
+    // ── Row 3: Blank spacer ────────────────────────────────────────
+    ws.addRow([]);
+    ws.getRow(3).height = 5;
+
+    // ── Row 4: Column headers ──────────────────────────────────────
+    ws.addRow(COLS.map(c => c.header));
+    const hdrRow = ws.getRow(4);
+    hdrRow.height = 18;
+    COLS.forEach((_, ci) => {
+        const cell = ws.getCell(4, ci + 1);
+        cell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: WHITE } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAV } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false };
+        cell.border = hdrBorder();
+    });
+
+    // ── Data rows ──────────────────────────────────────────────────
+    rows.forEach((r, ri) => {
+        const status = calculateStatus(r);
+        const st = ST[status] || ST['Planned'];
+        const isAlt = ri % 2 === 1;
+        const rowBg = isAlt ? ALT : WHITE;
+
+        const values = COLS.map((c, ci) => c.key(r, ri));
+        ws.addRow(values);
+        const dataRow = ws.getRow(ri + 5);
+        dataRow.height = 16;
+
+        COLS.forEach((col, ci) => {
+            const cell = ws.getCell(ri + 5, ci + 1);
+            const colHdr = col.header;
+
+            // Status cell — coloured badge
+            if (colHdr === 'Status') {
+                cell.font = { name: 'Calibri', size: 8, bold: true, color: { argb: st.fg } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: st.bg } };
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            }
+            // Delay cell — red if positive
+            else if (colHdr === 'Delay (days)') {
+                const val = String(cell.value || '');
+                const isLate = val.startsWith('+');
+                cell.font = { name: 'Calibri', size: 8, bold: isLate, color: { argb: isLate ? 'FF991b1b' : 'FF475569' } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isLate ? 'FFfee2e2' : rowBg } };
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            }
+            // # column
+            else if (colHdr === '#') {
+                cell.font = { name: 'Calibri', size: 8, color: { argb: MUTE } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            }
+            // Unit Code — muted
+            else if (colHdr === 'Unit Code') {
+                cell.font = { name: 'Calibri', size: 8, italic: true, color: { argb: MUTE } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+                cell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+            }
+            // Notes — wrap text
+            else if (colHdr === 'Completion Note' || colHdr === 'Remark') {
+                cell.font = { name: 'Calibri', size: 8, color: { argb: NAV } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+                cell.alignment = { horizontal: 'left', vertical: 'top', wrapText: true, indent: 1 };
+                dataRow.height = Math.max(dataRow.height, 28);
+            }
+            // Default
+            else {
+                cell.font = { name: 'Calibri', size: 8, color: { argb: NAV } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+                cell.alignment = { horizontal: ci === 0 ? 'center' : 'left', vertical: 'middle', indent: ci > 0 ? 1 : 0 };
+            }
+            cell.border = border();
+        });
+    });
+
+    // ════════════════════════════════════════════════════════════════
+    //  SHEET 2 — Summary
+    // ════════════════════════════════════════════════════════════════
+    const wsSumm = wb.addWorksheet('Summary');
+    wsSumm.columns = [{ width: 24 }, { width: 16 }, { width: 14 }];
+
+    // Title
+    wsSumm.addRow([sheetTitle]);
+    wsSumm.mergeCells(1, 1, 1, 3);
+    const sT = wsSumm.getCell(1, 1);
+    sT.font = { name: 'Calibri', size: 14, bold: true, color: { argb: NAV } };
+    sT.alignment = { vertical: 'middle' };
+    wsSumm.getRow(1).height = 26;
+
+    wsSumm.addRow(['Generated: ' + new Date().toLocaleString('en-GB')]);
+    wsSumm.mergeCells(2, 1, 2, 3);
+    wsSumm.getCell(2, 1).font = { name: 'Calibri', size: 8, italic: true, color: { argb: MUTE } };
+    wsSumm.getRow(2).height = 14;
+
+    wsSumm.addRow([]); wsSumm.getRow(3).height = 8;
+
+    // Active filters block
+    if (filterChips.length) {
+        wsSumm.addRow(['Active Filters']);
+        wsSumm.mergeCells(4, 1, 4, 3);
+        wsSumm.getCell(4, 1).font = { name: 'Calibri', size: 9, bold: true, color: { argb: MUTE } };
+        wsSumm.getRow(4).height = 14;
+        filterChips.forEach((chip, i) => {
+            wsSumm.addRow(['', chip]);
+            const chipCell = wsSumm.getCell(5 + i, 2);
+            chipCell.font = { name: 'Calibri', size: 9, color: { argb: NAV } };
+            wsSumm.mergeCells(5 + i, 2, 5 + i, 3);
+            wsSumm.getRow(5 + i).height = 14;
+        });
+    }
+    const summDataStart = filterChips.length ? 5 + filterChips.length + 1 : 4;
+
+    // Stats header
+    wsSumm.addRow([]);
+    const shRow = wsSumm.addRow(['Metric', 'Count', '% of Total']);
+    shRow.height = 17;
+    [1, 2, 3].forEach(c => {
+        const cell = wsSumm.getCell(shRow.number, c);
+        cell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: WHITE } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAV } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = hdrBorder();
+    });
+
+    const summRows = [
+        { label: 'Total Tasks', val: stats.total, pct: '100%', bg: HDR, fg: NAV },
+        { label: 'Completed', val: stats.completed, pct: Math.round(stats.completed / stats.total * 100) + '%', bg: ST['Completed'].bg, fg: ST['Completed'].fg },
+        { label: 'In Progress', val: stats.inProgress, pct: Math.round(stats.inProgress / stats.total * 100) + '%', bg: ST['In Progress'].bg, fg: ST['In Progress'].fg },
+        { label: 'Planned', val: stats.planned, pct: Math.round(stats.planned / stats.total * 100) + '%', bg: ST['Planned'].bg, fg: ST['Planned'].fg },
+        { label: 'Overdue', val: stats.overdue, pct: Math.round(stats.overdue / stats.total * 100) + '%', bg: ST['Overdue'].bg, fg: ST['Overdue'].fg },
+        { label: 'Late Completion', val: stats.late, pct: Math.round(stats.late / stats.total * 100) + '%', bg: ST['Late Completion'].bg, fg: ST['Late Completion'].fg },
+        { label: 'Overall Progress', val: stats.pct + '%', pct: '', bg: 'FFe0f2fe', fg: 'FF0369a1' },
+    ];
+    summRows.forEach(sr => {
+        const row = wsSumm.addRow([sr.label, sr.val, sr.pct]);
+        row.height = 18;
+        [1, 2, 3].forEach(c => {
+            const cell = wsSumm.getCell(row.number, c);
+            cell.font = { name: 'Calibri', size: 9, bold: c === 1, color: { argb: sr.fg } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: sr.bg } };
+            cell.alignment = { horizontal: c === 1 ? 'left' : 'center', vertical: 'middle', indent: c === 1 ? 1 : 0 };
+            cell.border = border();
+        });
+    });
+
+    // ════════════════════════════════════════════════════════════════
+    //  SHEET 3 — By Vehicle Breakdown
+    // ════════════════════════════════════════════════════════════════
+    const wsBV = wb.addWorksheet('By Vehicle');
+    const BV_HDR = ['Vehicle', 'Total', 'Completed', 'In Progress', 'Planned', 'Overdue', 'Late Completion', 'Progress %'];
+    wsBV.columns = BV_HDR.map(() => ({ width: 16 }));
+
+    wsBV.addRow([sheetTitle]);
+    wsBV.mergeCells(1, 1, 1, BV_HDR.length);
+    wsBV.getCell(1, 1).font = { name: 'Calibri', size: 13, bold: true, color: { argb: NAV } };
+    wsBV.getCell(1, 1).alignment = { vertical: 'middle' };
+    wsBV.getRow(1).height = 22;
+    wsBV.addRow([]); wsBV.getRow(2).height = 6;
+
+    const bvHdrRow = wsBV.addRow(BV_HDR);
+    bvHdrRow.height = 17;
+    BV_HDR.forEach((_, ci) => {
+        const cell = wsBV.getCell(3, ci + 1);
+        cell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: WHITE } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAV } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = hdrBorder();
+    });
+
+    const vehicles = [...new Set(rows.map(r => r.vehicle))].sort(vehicleSort);
+    vehicles.forEach((v, vi) => {
+        const vRows = rows.filter(r => r.vehicle === v);
+        const s = buildSummaryStats(vRows);
+        const isAlt = vi % 2 === 1;
+        const rowBg = isAlt ? ALT : WHITE;
+        const bvRow = wsBV.addRow([v, s.total, s.completed, s.inProgress, s.planned, s.overdue, s.late, s.pct + '%']);
+        bvRow.height = 17;
+        BV_HDR.forEach((hdr, ci) => {
+            const cell = wsBV.getCell(bvRow.number, ci + 1);
+            let bg = rowBg, fg = NAV, bold = false;
+            if (hdr === 'Vehicle') { bold = true; }
+            if (hdr === 'Progress %') { bg = s.pct >= 80 ? ST['Completed'].bg : s.pct >= 40 ? ST['In Progress'].bg : ST['Overdue'].bg; fg = s.pct >= 80 ? ST['Completed'].fg : s.pct >= 40 ? ST['In Progress'].fg : ST['Overdue'].fg; }
+            if (hdr === 'Overdue' && s.overdue > 0) { bg = ST['Overdue'].bg; fg = ST['Overdue'].fg; }
+            if (hdr === 'Late Completion' && s.late > 0) { bg = ST['Late Completion'].bg; fg = ST['Late Completion'].fg; }
+            cell.font = { name: 'Calibri', size: 9, bold, color: { argb: fg } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+            cell.alignment = { horizontal: ci === 0 ? 'left' : 'center', vertical: 'middle', indent: ci === 0 ? 1 : 0 };
+            cell.border = border();
+        });
+    });
+
+    // ── Save ───────────────────────────────────────────────────────
+    showToast('Building Excel…', 'info');
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'KD1_' + def.label.replace(/\s+/g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+    showToast(`Excel exported — ${rows.length} rows`, 'success');
 }
+
 
 
 /* ================================================================
@@ -3129,7 +3372,7 @@ function exportVpxPDF() {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6);
     doc.setTextColor(100, 116, 139);
-    doc.text('KD1 Assembly Control System | @ Adham morsy · ' + _mainTitle, MARGIN, fY);
+    doc.text('KD1 Assembly Control System · ' + _mainTitle, MARGIN, fY);
     doc.text(`Page 1 of ${doc.internal.getNumberOfPages()}`, PAGE_W - MARGIN, fY, { align: 'right' });
 
     const ds = new Date().toISOString().slice(0, 10);
@@ -3567,9 +3810,9 @@ function wireReportModal() {
         exportPDF(type, getVal('reportDateFrom'), getVal('reportDateTo'), getVal('reportCategory'));
     });
 
-    document.getElementById('btnExportExcel').addEventListener('click', () => {
+    document.getElementById('btnExportExcel').addEventListener('click', async () => {
         const type = document.querySelector('input[name="reportType"]:checked')?.value || 'full';
-        exportExcel(type, getVal('reportDateFrom'), getVal('reportDateTo'), getVal('reportCategory'));
+        await exportExcel(type, getVal('reportDateFrom'), getVal('reportDateTo'), getVal('reportCategory'));
     });
 }
 

@@ -427,7 +427,7 @@
     </footer>
 
     <!-- Supabase CDN -->
-    <script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.8/dist/umd/supabase.min.js"></script>
 
     <script>
         'use strict';
@@ -436,7 +436,31 @@
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJpcXdmcWt1aGVieGNmdWNhbmd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYzNzM5NzQsImV4cCI6MjA4MTk0OTk3NH0.QkASAl8yzXfxVq0b0FdkXHTOpblldr2prCnImpV8ml8';
         const SESSION_KEY = 'kd1_session';
 
-        const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        // No-op storage prevents Supabase from touching localStorage/sessionStorage,
+        // which Edge/Brave tracking prevention blocks and causes a crash.
+        const _noopStorage = {
+            getItem: () => null,
+            setItem: () => { },
+            removeItem: () => { },
+        };
+
+        let db;
+        try {
+            db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+                auth: {
+                    persistSession: false,
+                    autoRefreshToken: false,
+                    detectSessionInUrl: false,
+                    storage: _noopStorage,
+                },
+            });
+        } catch (e) {
+            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;flex-direction:column;gap:12px">'
+                + '<p style="color:#dc2626;font-size:1rem">Connection failed — please disable tracking protection for this site and reload.</p>'
+                + '<button onclick="location.reload()" style="padding:8px 20px;background:#1e3a8a;color:#fff;border:none;border-radius:6px;cursor:pointer">Reload</button>'
+                + '</div>';
+            throw e;
+        }
 
         /* ── SHA-256 via Web Crypto ──────────────────────────────────── */
         async function sha256(str) {
