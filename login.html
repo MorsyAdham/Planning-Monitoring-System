@@ -1,603 +1,410 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Production Plan Monitoring System — Sign In</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-        href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Inter:wght@300;400;500;600&display=swap"
-        rel="stylesheet" />
-    <link rel="icon" type="image/png" href="favicon.png">
-    <style>
-        *,
-        *::before,
-        *::after {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Production Plan Monitoring System — Sign In</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+      href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Inter:wght@300;400;500;600&display=swap"
+      rel="stylesheet" />
+  <link rel="icon" type="image/png" href="favicon.png">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        :root {
-            --clr-bg: #0f1117;
-            --clr-surface: #161b27;
-            --clr-surface-2: #1e2537;
-            --clr-border: #2a3350;
-            --clr-text: #e2e8f4;
-            --clr-muted: #7a8baa;
-            --clr-dim: #4a5575;
-            --clr-accent: #4f8ef7;
-            --clr-accent-dim: rgba(79, 142, 247, .15);
-            --clr-error: #ef4444;
-            --ff-display: 'Rajdhani', sans-serif;
-            --ff-mono: 'DM Mono', monospace;
-            --ff-body: 'Inter', sans-serif;
-            --radius: 10px;
-            --radius-sm: 6px;
-        }
+    :root {
+      --clr-bg:         #0f1117;
+      --clr-surface:    #161b27;
+      --clr-surface-2:  #1e2537;
+      --clr-border:     #2a3350;
+      --clr-text:       #e2e8f4;
+      --clr-muted:      #7a8baa;
+      --clr-dim:        #4a5575;
+      --clr-accent:     #4f8ef7;
+      --clr-accent-dim: rgba(79,142,247,.15);
+      --clr-error:      #ef4444;
+      --ff-display:     'Rajdhani', sans-serif;
+      --ff-mono:        'DM Mono', monospace;
+      --ff-body:        'Inter', sans-serif;
+      --radius:         10px;
+      --radius-sm:      6px;
+    }
 
-        html {
-            font-size: 15px;
-            -webkit-font-smoothing: antialiased;
-        }
+    html { font-size: 15px; -webkit-font-smoothing: antialiased; }
 
-        body {
-            background: var(--clr-bg);
-            color: var(--clr-text);
-            font-family: var(--ff-body);
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-        }
+    body {
+      background: var(--clr-bg);
+      color: var(--clr-text);
+      font-family: var(--ff-body);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
 
-        /* ─── Background grid pattern ──────────────────────────────── */
-        body::before {
-            content: '';
-            position: fixed;
-            inset: 0;
-            background-image:
-                linear-gradient(rgba(79, 142, 247, .03) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(79, 142, 247, .03) 1px, transparent 1px);
-            background-size: 40px 40px;
-            pointer-events: none;
-        }
+    /* ─── Background grid pattern ──────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(79,142,247,.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(79,142,247,.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+    }
 
-        /* ─── Header ────────────────────────────────────────────────── */
-        .login-header {
-            border-bottom: 1px solid var(--clr-border);
-            background: var(--clr-surface);
-            padding: 0 24px;
-        }
+    /* ─── Header ────────────────────────────────────────────────── */
+    .login-header {
+      border-bottom: 1px solid var(--clr-border);
+      background: var(--clr-surface);
+      padding: 0 24px;
+    }
+    .login-header-inner {
+      max-width: 480px;
+      margin: 0 auto;
+      height: 58px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .brand-badge {
+      background: var(--clr-accent);
+      color: #fff;
+      font-family: var(--ff-display);
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: .12em;
+      padding: 4px 11px;
+      border-radius: var(--radius-sm);
+      line-height: 1;
+    }
+    .brand-text { display: flex; flex-direction: column; gap: 1px; }
+    .brand-title {
+      font-family: var(--ff-display);
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: .06em;
+    }
+    .brand-sub {
+      font-size: .68rem;
+      color: var(--clr-muted);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
 
-        .login-header-inner {
-            max-width: 480px;
-            margin: 0 auto;
-            height: 58px;
-            display: flex;
-            align-items: center;
-            gap: 14px;
-        }
+    /* ─── Main ──────────────────────────────────────────────────── */
+    .login-main {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 16px;
+    }
 
-        .brand-badge {
-            background: var(--clr-accent);
-            color: #fff;
-            font-family: var(--ff-display);
-            font-size: 1.1rem;
-            font-weight: 700;
-            letter-spacing: .12em;
-            padding: 4px 11px;
-            border-radius: var(--radius-sm);
-            line-height: 1;
-        }
+    .login-card {
+      background: var(--clr-surface);
+      border: 1px solid var(--clr-border);
+      border-radius: 14px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.5), 0 2px 16px rgba(0,0,0,.3);
+      padding: 36px 36px 28px;
+      width: 100%;
+      max-width: 400px;
+    }
 
-        .brand-text {
-            display: flex;
-            flex-direction: column;
-            gap: 1px;
-        }
+    .login-card-header { margin-bottom: 28px; }
+    .login-card-title {
+      font-family: var(--ff-display);
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+      color: var(--clr-text);
+      margin-bottom: 4px;
+    }
+    .login-card-sub {
+      font-size: .8rem;
+      color: var(--clr-muted);
+    }
 
-        .brand-title {
-            font-family: var(--ff-display);
-            font-size: 1.1rem;
-            font-weight: 700;
-            letter-spacing: .06em;
-        }
+    /* ─── Form ──────────────────────────────────────────────────── */
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+    .form-label {
+      font-size: .72rem;
+      font-weight: 600;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--clr-muted);
+    }
+    .form-input {
+      background: var(--clr-surface-2);
+      border: 1px solid var(--clr-border);
+      border-radius: var(--radius-sm);
+      color: var(--clr-text);
+      font-family: var(--ff-body);
+      font-size: .9rem;
+      padding: 10px 14px;
+      outline: none;
+      transition: border-color .2s, box-shadow .2s;
+      width: 100%;
+    }
+    .form-input:focus {
+      border-color: var(--clr-accent);
+      box-shadow: 0 0 0 3px rgba(79,142,247,.15);
+    }
+    .form-input.error {
+      border-color: var(--clr-error);
+      box-shadow: 0 0 0 3px rgba(239,68,68,.15);
+    }
 
-        .brand-sub {
-            font-size: .68rem;
-            color: var(--clr-muted);
-            letter-spacing: .08em;
-            text-transform: uppercase;
-        }
+    /* Password wrapper */
+    .pw-wrap { position: relative; }
+    .pw-wrap .form-input { padding-right: 42px; }
+    .pw-toggle {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: var(--clr-dim);
+      cursor: pointer;
+      padding: 4px;
+      line-height: 1;
+      transition: color .15s;
+    }
+    .pw-toggle:hover { color: var(--clr-muted); }
+    .pw-toggle svg { width: 16px; height: 16px; display: block; }
 
-        /* ─── Main ──────────────────────────────────────────────────── */
-        .login-main {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 32px 16px;
-        }
+    /* Error message */
+    .login-error {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      background: rgba(239,68,68,.1);
+      border: 1px solid rgba(239,68,68,.3);
+      border-radius: var(--radius-sm);
+      color: var(--clr-error);
+      font-size: .82rem;
+      padding: 10px 14px;
+      margin-bottom: 16px;
+    }
+    .login-error.visible { display: flex; }
+    .login-error svg { width: 15px; height: 15px; flex-shrink: 0; }
 
-        .login-card {
-            background: var(--clr-surface);
-            border: 1px solid var(--clr-border);
-            border-radius: 14px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, .5), 0 2px 16px rgba(0, 0, 0, .3);
-            padding: 36px 36px 28px;
-            width: 100%;
-            max-width: 400px;
-        }
+    /* Submit button */
+    .btn-login {
+      width: 100%;
+      background: var(--clr-accent);
+      border: none;
+      border-radius: var(--radius-sm);
+      color: #fff;
+      cursor: pointer;
+      font-family: var(--ff-body);
+      font-size: .9rem;
+      font-weight: 600;
+      letter-spacing: .03em;
+      padding: 11px;
+      margin-top: 4px;
+      transition: background .18s, transform .18s, box-shadow .18s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      position: relative;
+    }
+    .btn-login:hover {
+      background: #3a7ef0;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(79,142,247,.35);
+    }
+    .btn-login:active { transform: translateY(0); }
+    .btn-login:disabled {
+      opacity: .6;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    .btn-login svg { width: 16px; height: 16px; }
 
-        .login-card-header {
-            margin-bottom: 28px;
-        }
+    /* Spinner inside button */
+    .btn-spinner {
+      display: none;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255,255,255,.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .5s linear infinite;
+    }
+    .loading .btn-spinner { display: block; }
+    .loading .btn-icon   { display: none; }
 
-        .login-card-title {
-            font-family: var(--ff-display);
-            font-size: 1.5rem;
-            font-weight: 700;
-            letter-spacing: .04em;
-            color: var(--clr-text);
-            margin-bottom: 4px;
-        }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
-        .login-card-sub {
-            font-size: .8rem;
-            color: var(--clr-muted);
-        }
+    /* ─── Footer ────────────────────────────────────────────────── */
+    .login-footer {
+      text-align: center;
+      padding: 16px;
+      font-size: .72rem;
+      color: var(--clr-dim);
+      border-top: 1px solid var(--clr-border);
+    }
 
-        /* ─── Form ──────────────────────────────────────────────────── */
-        .form-group {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            margin-bottom: 16px;
-        }
+    /* ─── Security badge ────────────────────────────────────────── */
+    .security-note {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 20px;
+      font-size: .72rem;
+      color: var(--clr-dim);
+    }
+    .security-note svg { width: 13px; height: 13px; }
 
-        .form-label {
-            font-size: .72rem;
-            font-weight: 600;
-            letter-spacing: .1em;
-            text-transform: uppercase;
-            color: var(--clr-muted);
-        }
-
-        .form-input {
-            background: var(--clr-surface-2);
-            border: 1px solid var(--clr-border);
-            border-radius: var(--radius-sm);
-            color: var(--clr-text);
-            font-family: var(--ff-body);
-            font-size: .9rem;
-            padding: 10px 14px;
-            outline: none;
-            transition: border-color .2s, box-shadow .2s;
-            width: 100%;
-        }
-
-        .form-input:focus {
-            border-color: var(--clr-accent);
-            box-shadow: 0 0 0 3px rgba(79, 142, 247, .15);
-        }
-
-        .form-input.error {
-            border-color: var(--clr-error);
-            box-shadow: 0 0 0 3px rgba(239, 68, 68, .15);
-        }
-
-        /* Password wrapper */
-        .pw-wrap {
-            position: relative;
-        }
-
-        .pw-wrap .form-input {
-            padding-right: 42px;
-        }
-
-        .pw-toggle {
-            position: absolute;
-            right: 12px;
-            top: 50%;
-            transform: translateY(-50%);
-            background: none;
-            border: none;
-            color: var(--clr-dim);
-            cursor: pointer;
-            padding: 4px;
-            line-height: 1;
-            transition: color .15s;
-        }
-
-        .pw-toggle:hover {
-            color: var(--clr-muted);
-        }
-
-        .pw-toggle svg {
-            width: 16px;
-            height: 16px;
-            display: block;
-        }
-
-        /* Error message */
-        .login-error {
-            display: none;
-            align-items: center;
-            gap: 8px;
-            background: rgba(239, 68, 68, .1);
-            border: 1px solid rgba(239, 68, 68, .3);
-            border-radius: var(--radius-sm);
-            color: var(--clr-error);
-            font-size: .82rem;
-            padding: 10px 14px;
-            margin-bottom: 16px;
-        }
-
-        .login-error.visible {
-            display: flex;
-        }
-
-        .login-error svg {
-            width: 15px;
-            height: 15px;
-            flex-shrink: 0;
-        }
-
-        /* Submit button */
-        .btn-login {
-            width: 100%;
-            background: var(--clr-accent);
-            border: none;
-            border-radius: var(--radius-sm);
-            color: #fff;
-            cursor: pointer;
-            font-family: var(--ff-body);
-            font-size: .9rem;
-            font-weight: 600;
-            letter-spacing: .03em;
-            padding: 11px;
-            margin-top: 4px;
-            transition: background .18s, transform .18s, box-shadow .18s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            position: relative;
-        }
-
-        .btn-login:hover {
-            background: #3a7ef0;
-            transform: translateY(-1px);
-            box-shadow: 0 6px 20px rgba(79, 142, 247, .35);
-        }
-
-        .btn-login:active {
-            transform: translateY(0);
-        }
-
-        .btn-login:disabled {
-            opacity: .6;
-            cursor: not-allowed;
-            transform: none;
-            box-shadow: none;
-        }
-
-        .btn-login svg {
-            width: 16px;
-            height: 16px;
-        }
-
-        /* Spinner inside button */
-        .btn-spinner {
-            display: none;
-            width: 16px;
-            height: 16px;
-            border: 2px solid rgba(255, 255, 255, .3);
-            border-top-color: #fff;
-            border-radius: 50%;
-            animation: spin .5s linear infinite;
-        }
-
-        .loading .btn-spinner {
-            display: block;
-        }
-
-        .loading .btn-icon {
-            display: none;
-        }
-
-        @keyframes spin {
-            to {
-                transform: rotate(360deg);
-            }
-        }
-
-        /* ─── Footer ────────────────────────────────────────────────── */
-        .login-footer {
-            text-align: center;
-            padding: 16px;
-            font-size: .72rem;
-            color: var(--clr-dim);
-            border-top: 1px solid var(--clr-border);
-        }
-
-        /* ─── Security badge ────────────────────────────────────────── */
-        .security-note {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-            margin-top: 20px;
-            font-size: .72rem;
-            color: var(--clr-dim);
-        }
-
-        .security-note svg {
-            width: 13px;
-            height: 13px;
-        }
-
-        /* scrollbar */
-        ::-webkit-scrollbar {
-            width: 6px;
-            height: 6px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: var(--clr-bg);
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: var(--clr-border);
-            border-radius: 3px;
-        }
-    </style>
+    /* scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--clr-bg); }
+    ::-webkit-scrollbar-thumb { background: var(--clr-border); border-radius: 3px; }
+  </style>
 </head>
-
 <body>
 
-    <header class="login-header">
-        <div class="login-header-inner">
-            <div class="brand-badge">KD1</div>
-            <div class="brand-text">
-                <span class="brand-title">Assembly Control</span>
-                <span class="brand-sub">Plan vs Actual Tracking System</span>
-            </div>
+  <header class="login-header">
+    <div class="login-header-inner">
+      <div class="brand-badge">KD1</div>
+      <div class="brand-text">
+        <span class="brand-title">Assembly Control</span>
+        <span class="brand-sub">Plan vs Actual Tracking System</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="login-main">
+    <div class="login-card">
+      <div class="login-card-header">
+        <div class="login-card-title">Sign In</div>
+        <div class="login-card-sub">Enter your credentials to access the system</div>
+      </div>
+
+      <div class="login-error" id="loginError" role="alert">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="10" cy="10" r="8"/><path d="M10 6v4M10 14h.01"/>
+        </svg>
+        <span id="loginErrorMsg">Invalid email or password.</span>
+      </div>
+
+      <form id="loginForm" autocomplete="off" onsubmit="return false;">
+        <div class="form-group">
+          <label class="form-label" for="loginEmail">Email Address</label>
+          <input type="text" id="loginEmail" class="form-input"
+            placeholder="you@example.com"
+            autocomplete="off"
+            data-lpignore="true"
+            data-form-type="other"
+            spellcheck="false" />
         </div>
-    </header>
 
-    <main class="login-main">
-        <div class="login-card">
-            <div class="login-card-header">
-                <div class="login-card-title">Sign In</div>
-                <div class="login-card-sub">Enter your credentials to access the system</div>
-            </div>
-
-            <div class="login-error" id="loginError" role="alert">
-                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="10" cy="10" r="8" />
-                    <path d="M10 6v4M10 14h.01" />
-                </svg>
-                <span id="loginErrorMsg">Invalid email or password.</span>
-            </div>
-
-            <form id="loginForm" autocomplete="off" onsubmit="return false;">
-                <div class="form-group">
-                    <label class="form-label" for="loginEmail">Email Address</label>
-                    <input type="text" id="loginEmail" class="form-input" placeholder="you@example.com"
-                        autocomplete="off" data-lpignore="true" data-form-type="other" spellcheck="false" />
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label" for="loginPassword">Password</label>
-                    <div class="pw-wrap">
-                        <input type="password" id="loginPassword" class="form-input" placeholder="••••••••"
-                            autocomplete="new-password" data-lpignore="true" data-form-type="other" />
-                        <button class="pw-toggle" id="pwToggle" type="button" aria-label="Toggle password visibility">
-                            <svg id="eyeIcon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                                <path d="M1 10s3.5-7 9-7 9 7 9 7-3.5 7-9 7-9-7-9-7z" />
-                                <circle cx="10" cy="10" r="3" />
-                            </svg>
-                        </button>
-                    </div>
-                </div>
-
-                <button class="btn-login" id="btnLogin" type="button">
-                    <svg class="btn-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M3 10h14M10 4l7 6-7 6" />
-                    </svg>
-                    <span class="btn-spinner"></span>
-                    Sign In
-                </button>
-            </form>
-
-            <div class="security-note">
-                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                    <path d="M10 2l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V5l7-3z" />
-                </svg>
-                Secured with SHA-256 encryption
-            </div>
+        <div class="form-group">
+          <label class="form-label" for="loginPassword">Password</label>
+          <div class="pw-wrap">
+            <input type="password" id="loginPassword" class="form-input"
+              placeholder="••••••••"
+              autocomplete="new-password"
+              data-lpignore="true"
+              data-form-type="other" />
+            <button class="pw-toggle" id="pwToggle" type="button" aria-label="Toggle password visibility">
+              <svg id="eyeIcon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M1 10s3.5-7 9-7 9 7 9 7-3.5 7-9 7-9-7-9-7z"/>
+                <circle cx="10" cy="10" r="3"/>
+              </svg>
+            </button>
+          </div>
         </div>
-    </main>
 
-    <footer class="login-footer">
-        KD1 Assembly Control System &copy; 2026 &nbsp;|&nbsp; Adham Morsy
-    </footer>
+        <button class="btn-login" id="btnLogin" type="button">
+          <svg class="btn-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 10h14M10 4l7 6-7 6"/>
+          </svg>
+          <span class="btn-spinner"></span>
+          Sign In
+        </button>
+      </form>
 
-    <!-- Supabase CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.8/dist/umd/supabase.min.js"></script>
+      <div class="security-note">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M10 2l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V5l7-3z"/>
+        </svg>
+        Secured with SHA-256 encryption
+      </div>
+    </div>
+  </main>
 
-    <script>
-        'use strict';
+  <footer class="login-footer">
+    KD1 Assembly Control System &copy; 2026 &nbsp;|&nbsp; Adham Morsy
+  </footer>
 
-        const SUPABASE_URL = 'https://biqwfqkuhebxcfucangt.supabase.co';
-        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJpcXdmcWt1aGVieGNmdWNhbmd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYzNzM5NzQsImV4cCI6MjA4MTk0OTk3NH0.QkASAl8yzXfxVq0b0FdkXHTOpblldr2prCnImpV8ml8';
-        const SESSION_KEY = 'kd1_session';
+  <!-- Supabase CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.8/dist/umd/supabase.min.js"></script>
 
-        // No-op storage prevents Supabase from touching localStorage/sessionStorage,
-        // which Edge/Brave tracking prevention blocks and causes a crash.
-        const _noopStorage = {
-            getItem: () => null,
-            setItem: () => { },
-            removeItem: () => { },
-        };
-
-        let db;
-        try {
-            db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
-                auth: {
-                    persistSession: false,
-                    autoRefreshToken: false,
-                    detectSessionInUrl: false,
-                    storage: _noopStorage,
-                },
-            });
-        } catch (e) {
-            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;flex-direction:column;gap:12px">'
-                + '<p style="color:#dc2626;font-size:1rem">Connection failed — please disable tracking protection for this site and reload.</p>'
-                + '<button onclick="location.reload()" style="padding:8px 20px;background:#1e3a8a;color:#fff;border:none;border-radius:6px;cursor:pointer">Reload</button>'
-                + '</div>';
-            throw e;
-        }
-
-        /* ── SHA-256 via Web Crypto ──────────────────────────────────── */
-        async function sha256(str) {
-            const buf = new TextEncoder().encode(str);
-            const hash = await crypto.subtle.digest('SHA-256', buf);
-            return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
-        }
-
-        /* ── IP detection ────────────────────────────────────────────── */
-        async function getIP() {
-            try {
-                const r = await fetch('https://api.ipify.org?format=json');
-                const j = await r.json();
-                return j.ip || 'unknown';
-            } catch { return 'unknown'; }
-        }
-
-        /* ── Show error ──────────────────────────────────────────────── */
-        function showError(msg) {
-            const el = document.getElementById('loginError');
-            document.getElementById('loginErrorMsg').textContent = msg;
-            el.classList.add('visible');
-            document.getElementById('loginEmail').classList.add('error');
-            document.getElementById('loginPassword').classList.add('error');
-        }
-
-        function hideError() {
-            document.getElementById('loginError').classList.remove('visible');
-            document.getElementById('loginEmail').classList.remove('error');
-            document.getElementById('loginPassword').classList.remove('error');
-        }
-
-        /* ── Login flow ──────────────────────────────────────────────── */
-        async function doLogin() {
-            hideError();
-            const email = document.getElementById('loginEmail').value.trim().toLowerCase();
-            const password = document.getElementById('loginPassword').value;
-
-            if (!email || !password) {
-                showError('Please enter your email and password.');
-                return;
-            }
-
-            const btn = document.getElementById('btnLogin');
-            btn.disabled = true;
-            btn.classList.add('loading');
-
-            try {
-                const hash = await sha256(password);
-
-                const { data: user, error } = await db
-                    .from('planning_app_users')
-                    .select('id, email, full_name, role, is_active')
-                    .eq('email', email)
-                    .eq('password_hash', hash)
-                    .maybeSingle();
-
-                if (error) throw error;
-
-                if (!user) {
-                    showError('Invalid email or password. Please try again.');
-                    return;
-                }
-
-                if (!user.is_active) {
-                    showError('Your account has been deactivated. Contact the administrator.');
-                    return;
-                }
-
-                /* ── Fetch IP and store session ──────────────────────────── */
-                const ip = await getIP();
-
-                const session = {
-                    id: user.id,
-                    email: user.email,
-                    name: user.full_name,
-                    role: user.role,
-                    ip,
-                    loginAt: new Date().toISOString(),
-                };
-
-                sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
-
-                /* ── Log login event ─────────────────────────────────────── */
-                await db.from('planning_audit_log').insert({
-                    user_id: user.id,
-                    user_email: user.email,
-                    user_role: user.role,
-                    action: 'LOGIN',
-                    table_name: null,
-                    record_id: null,
-                    data_before: null,
-                    data_after: null,
-                    ip_address: ip,
-                });
-
-                window.location.href = 'index.html';
-
-            } catch (err) {
-                console.error(err);
-                showError('Connection error. Please try again.');
-            } finally {
-                btn.disabled = false;
-                btn.classList.remove('loading');
-            }
-        }
-
-        /* ── Events ──────────────────────────────────────────────────── */
-        document.getElementById('btnLogin').addEventListener('click', doLogin);
-
-        document.getElementById('loginPassword').addEventListener('keydown', e => {
-            if (e.key === 'Enter') doLogin();
-        });
-
-        document.getElementById('loginEmail').addEventListener('keydown', e => {
-            if (e.key === 'Enter') document.getElementById('loginPassword').focus();
-        });
-
-        /* ── Password visibility toggle ─────────────────────────────── */
-        document.getElementById('pwToggle').addEventListener('click', () => {
-            const inp = document.getElementById('loginPassword');
-            inp.type = inp.type === 'password' ? 'text' : 'password';
-        });
-
-        /* ── If already logged in, redirect ─────────────────────────── */
-        // Clear any browser-autofilled values immediately on load
-        window.addEventListener('load', () => {
-            const em = document.getElementById('loginEmail');
-            const pw = document.getElementById('loginPassword');
-            if (em) { em.value = ''; em.setAttribute('type', 'text'); setTimeout(() => em.setAttribute('type', 'text'), 100); }
-            if (pw) { pw.value = ''; }
-        });
-
-        if (sessionStorage.getItem(SESSION_KEY)) {
-            window.location.href = 'index.html';
-        }
-    </script>
+  <script>
+(function(){var _ld="J3VzZSBzdHJpY3QnOwogY29uc3QgU1VQQUJBU0VfVVJMID0gJ2h0dHBzOi8vYmlxd2Zxa3VoZWJ4Y2Z1Y2FuZ3Quc3VwYWJhc2UuY28nOwogY29uc3QgU1VQ"+
+"QUJBU0VfS0VZID0gJ2V5SmhiR2NpT2lKSVV6STFOaUlzSW5SNWNDSTZJa3BYVkNKOS5leUpwYzNNaU9pSnpkWEJoWW1GelpTSXNJbkpsWmlJNkltSnBjWGRt"+
+"Y1d0MWFHVmllR05tZFdOaGJtZDBJaXdpY205c1pTSTZJbUZ1YjI0aUxDSnBZWFFpT2pFM05qWXpOek01TnpRc0ltVjRjQ0k2TWpBNE1UazBPVGszTkgwLlFr"+
+"QVNBbDh5elhmeFZxMGIwRmRrWEhUT3BibGxkcjJwckNuSW1wVjhtbDgnOwogY29uc3QgU0VTU0lPTl9LRVkgPSAna2QxX3Nlc3Npb24nOwogY29uc3QgX25v"+
+"b3BTdG9yYWdlID0gewogZ2V0SXRlbTogKCkgPT4gbnVsbCwKIHNldEl0ZW06ICgpID0+IHt9LAogcmVtb3ZlSXRlbTogKCkgPT4ge30sCiB9OwogbGV0IGRi"+
+"OwogdHJ5IHsKIGRiID0gd2luZG93LnN1cGFiYXNlLmNyZWF0ZUNsaWVudChTVVBBQkFTRV9VUkwsIFNVUEFCQVNFX0tFWSwgewogYXV0aDogewogcGVyc2lz"+
+"dFNlc3Npb246IGZhbHNlLAogYXV0b1JlZnJlc2hUb2tlbjogZmFsc2UsCiBkZXRlY3RTZXNzaW9uSW5Vcmw6IGZhbHNlLAogc3RvcmFnZTogX25vb3BTdG9y"+
+"YWdlLAogfSwKIH0pOwogfSBjYXRjaCAoZSkgewogZG9jdW1lbnQuYm9keS5pbm5lckhUTUwgPSAnPGRpdiBzdHlsZT0iZGlzcGxheTpmbGV4O2FsaWduLWl0"+
+"ZW1zOmNlbnRlcjtqdXN0aWZ5LWNvbnRlbnQ6Y2VudGVyO2hlaWdodDoxMDB2aDtmb250LWZhbWlseTpzYW5zLXNlcmlmO2ZsZXgtZGlyZWN0aW9uOmNvbHVt"+
+"bjtnYXA6MTJweCI+JwogKyAnPHAgc3R5bGU9ImNvbG9yOiNkYzI2MjY7Zm9udC1zaXplOjFyZW0iPkNvbm5lY3Rpb24gZmFpbGVkIOKAlCBwbGVhc2UgZGlz"+
+"YWJsZSB0cmFja2luZyBwcm90ZWN0aW9uIGZvciB0aGlzIHNpdGUgYW5kIHJlbG9hZC48L3A+JwogKyAnPGJ1dHRvbiBvbmNsaWNrPSJsb2NhdGlvbi5yZWxv"+
+"YWQoKSIgc3R5bGU9InBhZGRpbmc6OHB4IDIwcHg7YmFja2dyb3VuZDojMWUzYThhO2NvbG9yOiNmZmY7Ym9yZGVyOm5vbmU7Ym9yZGVyLXJhZGl1czo2cHg7"+
+"Y3Vyc29yOnBvaW50ZXIiPlJlbG9hZDwvYnV0dG9uPicKICsgJzwvZGl2Pic7CiB0aHJvdyBlOwogfQogYXN5bmMgZnVuY3Rpb24gc2hhMjU2IChzdHIpIHsK"+
+"IGNvbnN0IGJ1ZiA9IG5ldyBUZXh0RW5jb2RlcigpLmVuY29kZShzdHIpOwogY29uc3QgaGFzaCA9IGF3YWl0IGNyeXB0by5zdWJ0bGUuZGlnZXN0KCdTSEEt"+
+"MjU2JywgYnVmKTsKIHJldHVybiBBcnJheS5mcm9tKG5ldyBVaW50OEFycmF5KGhhc2gpKS5tYXAoYiA9PiBiLnRvU3RyaW5nKDE2KS5wYWRTdGFydCgyLCcw"+
+"JykpLmpvaW4oJycpOwogfQogYXN5bmMgZnVuY3Rpb24gZ2V0SVAgKCkgewogdHJ5IHsKIGNvbnN0IHIgPSBhd2FpdCBmZXRjaCgnaHR0cHM6Ly9hcGkuaXBp"+
+"Znkub3JnP2Zvcm1hdD1qc29uJyk7CiBjb25zdCBqID0gYXdhaXQgci5qc29uKCk7CiByZXR1cm4gai5pcCB8fCAndW5rbm93bic7CiB9IGNhdGNoIHsgcmV0"+
+"dXJuICd1bmtub3duJzsgfQogfQogZnVuY3Rpb24gc2hvd0Vycm9yIChtc2cpIHsKIGNvbnN0IGVsID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ2xvZ2lu"+
+"RXJyb3InKTsKIGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCdsb2dpbkVycm9yTXNnJykudGV4dENvbnRlbnQgPSBtc2c7CiBlbC5jbGFzc0xpc3QuYWRkKCd2"+
+"aXNpYmxlJyk7CiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgnbG9naW5FbWFpbCcpLmNsYXNzTGlzdC5hZGQoJ2Vycm9yJyk7CiBkb2N1bWVudC5nZXRFbGVt"+
+"ZW50QnlJZCgnbG9naW5QYXNzd29yZCcpLmNsYXNzTGlzdC5hZGQoJ2Vycm9yJyk7CiB9CiBmdW5jdGlvbiBoaWRlRXJyb3IgKCkgewogZG9jdW1lbnQuZ2V0"+
+"RWxlbWVudEJ5SWQoJ2xvZ2luRXJyb3InKS5jbGFzc0xpc3QucmVtb3ZlKCd2aXNpYmxlJyk7CiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgnbG9naW5FbWFp"+
+"bCcpLmNsYXNzTGlzdC5yZW1vdmUoJ2Vycm9yJyk7CiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgnbG9naW5QYXNzd29yZCcpLmNsYXNzTGlzdC5yZW1vdmUo"+
+"J2Vycm9yJyk7CiB9CiBhc3luYyBmdW5jdGlvbiBkb0xvZ2luICgpIHsKIGhpZGVFcnJvcigpOwogY29uc3QgZW1haWwgPSBkb2N1bWVudC5nZXRFbGVtZW50"+
+"QnlJZCgnbG9naW5FbWFpbCcpLnZhbHVlLnRyaW0oKS50b0xvd2VyQ2FzZSgpOwogY29uc3QgcGFzc3dvcmQgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgn"+
+"bG9naW5QYXNzd29yZCcpLnZhbHVlOwogaWYgKCFlbWFpbCB8fCAhcGFzc3dvcmQpIHsKIHNob3dFcnJvcignUGxlYXNlIGVudGVyIHlvdXIgZW1haWwgYW5k"+
+"IHBhc3N3b3JkLicpOwogcmV0dXJuOwogfQogY29uc3QgYnRuID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ2J0bkxvZ2luJyk7CiBidG4uZGlzYWJsZWQg"+
+"PSB0cnVlOwogYnRuLmNsYXNzTGlzdC5hZGQoJ2xvYWRpbmcnKTsKIHRyeSB7CiBjb25zdCBoYXNoID0gYXdhaXQgc2hhMjU2KHBhc3N3b3JkKTsKIGNvbnN0"+
+"IHsgZGF0YTogdXNlciwgZXJyb3IgfSA9IGF3YWl0IGRiCiAuZnJvbSgncGxhbm5pbmdfYXBwX3VzZXJzJykKIC5zZWxlY3QoJ2lkLCBlbWFpbCwgZnVsbF9u"+
+"YW1lLCByb2xlLCBpc19hY3RpdmUnKQogLmVxKCdlbWFpbCcsIGVtYWlsKQogLmVxKCdwYXNzd29yZF9oYXNoJywgaGFzaCkKIC5tYXliZVNpbmdsZSgpOwog"+
+"aWYgKGVycm9yKSB0aHJvdyBlcnJvcjsKIGlmICghdXNlcikgewogc2hvd0Vycm9yKCdJbnZhbGlkIGVtYWlsIG9yIHBhc3N3b3JkLiBQbGVhc2UgdHJ5IGFn"+
+"YWluLicpOwogcmV0dXJuOwogfQogaWYgKCF1c2VyLmlzX2FjdGl2ZSkgewogc2hvd0Vycm9yKCdZb3VyIGFjY291bnQgaGFzIGJlZW4gZGVhY3RpdmF0ZWQu"+
+"IENvbnRhY3QgdGhlIGFkbWluaXN0cmF0b3IuJyk7CiByZXR1cm47CiB9CiBjb25zdCBpcCA9IGF3YWl0IGdldElQKCk7CiBjb25zdCBzZXNzaW9uID0gewog"+
+"aWQ6IHVzZXIuaWQsCiBlbWFpbDogdXNlci5lbWFpbCwKIG5hbWU6IHVzZXIuZnVsbF9uYW1lLAogcm9sZTogdXNlci5yb2xlLAogaXAsCiBsb2dpbkF0OiBu"+
+"ZXcgRGF0ZSgpLnRvSVNPU3RyaW5nKCksCiB9Owogc2Vzc2lvblN0b3JhZ2Uuc2V0SXRlbShTRVNTSU9OX0tFWSwgSlNPTi5zdHJpbmdpZnkoc2Vzc2lvbikp"+
+"OwogYXdhaXQgZGIuZnJvbSgncGxhbm5pbmdfYXVkaXRfbG9nJykuaW5zZXJ0KHsKIHVzZXJfaWQ6IHVzZXIuaWQsCiB1c2VyX2VtYWlsOiB1c2VyLmVtYWls"+
+"LAogdXNlcl9yb2xlOiB1c2VyLnJvbGUsCiBhY3Rpb246ICdMT0dJTicsCiB0YWJsZV9uYW1lOiBudWxsLAogcmVjb3JkX2lkOiBudWxsLAogZGF0YV9iZWZv"+
+"cmU6IG51bGwsCiBkYXRhX2FmdGVyOiBudWxsLAogaXBfYWRkcmVzczogaXAsCiB9KTsKIHdpbmRvdy5sb2NhdGlvbi5ocmVmID0gJ2luZGV4Lmh0bWwnOwog"+
+"fSBjYXRjaCAoZXJyKSB7CiBjb25zb2xlLmVycm9yKGVycik7CiBzaG93RXJyb3IoJ0Nvbm5lY3Rpb24gZXJyb3IuIFBsZWFzZSB0cnkgYWdhaW4uJyk7CiB9"+
+"IGZpbmFsbHkgewogYnRuLmRpc2FibGVkID0gZmFsc2U7CiBidG4uY2xhc3NMaXN0LnJlbW92ZSgnbG9hZGluZycpOwogfQogfQogZG9jdW1lbnQuZ2V0RWxl"+
+"bWVudEJ5SWQoJ2J0bkxvZ2luJykuYWRkRXZlbnRMaXN0ZW5lcignY2xpY2snLCBkb0xvZ2luKTsKIGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCdsb2dpblBh"+
+"c3N3b3JkJykuYWRkRXZlbnRMaXN0ZW5lcigna2V5ZG93bicsIGUgPT4gewogaWYgKGUua2V5ID09PSAnRW50ZXInKSBkb0xvZ2luKCk7CiB9KTsKIGRvY3Vt"+
+"ZW50LmdldEVsZW1lbnRCeUlkKCdsb2dpbkVtYWlsJykuYWRkRXZlbnRMaXN0ZW5lcigna2V5ZG93bicsIGUgPT4gewogaWYgKGUua2V5ID09PSAnRW50ZXIn"+
+"KSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgnbG9naW5QYXNzd29yZCcpLmZvY3VzKCk7CiB9KTsKIGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCdwd1RvZ2ds"+
+"ZScpLmFkZEV2ZW50TGlzdGVuZXIoJ2NsaWNrJywgKCkgPT4gewogY29uc3QgaW5wID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ2xvZ2luUGFzc3dvcmQn"+
+"KTsKIGlucC50eXBlID0gaW5wLnR5cGUgPT09ICdwYXNzd29yZCcgPyAndGV4dCcgOiAncGFzc3dvcmQnOwogfSk7CiB3aW5kb3cuYWRkRXZlbnRMaXN0ZW5l"+
+"cignbG9hZCcsICgpID0+IHsKIGNvbnN0IGVtID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ2xvZ2luRW1haWwnKTsKIGNvbnN0IHB3ID0gZG9jdW1lbnQu"+
+"Z2V0RWxlbWVudEJ5SWQoJ2xvZ2luUGFzc3dvcmQnKTsKIGlmIChlbSkgeyBlbS52YWx1ZSA9ICcnOyBlbS5zZXRBdHRyaWJ1dGUoJ3R5cGUnLCAndGV4dCcp"+
+"OyBzZXRUaW1lb3V0KCgpID0+IGVtLnNldEF0dHJpYnV0ZSgndHlwZScsICd0ZXh0JyksIDEwMCk7IH0KIGlmIChwdykgeyBwdy52YWx1ZSA9ICcnOyB9CiB9"+
+"KTsKIGlmIChzZXNzaW9uU3RvcmFnZS5nZXRJdGVtKFNFU1NJT05fS0VZKSkgewogd2luZG93LmxvY2F0aW9uLmhyZWYgPSAnaW5kZXguaHRtbCc7CiB9";
+new Function(atob(_ld))();
+})();
+</script>
 </body>
-
 </html>
