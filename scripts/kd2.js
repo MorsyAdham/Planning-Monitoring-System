@@ -84,6 +84,9 @@ window.PPMSModuleRuntime = (() => {
         timelinePlacementVehicle: 'K9',
         timelinePlacementStationCode: '',
         timelinePlacementQuery: '',
+        timelinePlacementBattalionId: null,
+        timelinePlacementUnitSerial: null,
+        timelinePlacementUnitLabel: '',
         templateRemovedStations: new Set(),
         templateLayouts: [],
         templateLayoutTableAvailable: true,
@@ -1929,6 +1932,29 @@ window.PPMSModuleRuntime = (() => {
         ) || null;
     }
 
+    function currentPlacementUnit() {
+        if (state.timelinePlacementBattalionId == null || state.timelinePlacementUnitSerial == null) return null;
+        return {
+            battalion_id: state.timelinePlacementBattalionId,
+            unit_serial: state.timelinePlacementUnitSerial,
+            unit_label: state.timelinePlacementUnitLabel || '',
+            vehicle_type: state.timelinePlacementVehicle,
+        };
+    }
+
+    function setTimelinePlacementUnit(battalionId, unitSerial, unitLabel, vehicle) {
+        state.timelinePlacementBattalionId = battalionId ?? null;
+        state.timelinePlacementUnitSerial = unitSerial ?? null;
+        state.timelinePlacementUnitLabel = unitLabel || '';
+        if (vehicle) state.timelinePlacementVehicle = vehicle;
+    }
+
+    function clearTimelinePlacementUnit() {
+        state.timelinePlacementBattalionId = null;
+        state.timelinePlacementUnitSerial = null;
+        state.timelinePlacementUnitLabel = '';
+    }
+
     function fallbackPlacementColor(name) {
         const key = String(name || '');
         let hash = 0;
@@ -2020,6 +2046,20 @@ window.PPMSModuleRuntime = (() => {
     }
 
     function syncTimelinePlacementGhost() {
+        if (isTimelineProcessView()) {
+            const unit = currentPlacementUnit();
+            if (!state.timelinePlacementActive || !unit) {
+                removePlacementGhost();
+                return;
+            }
+            const ghost = ensurePlacementGhost();
+            if (!ghost) return;
+            ghost.style.background = fallbackPlacementColor(`${unit.vehicle_type}||${unit.unit_serial}`);
+            ghost.style.visibility = 'visible';
+            ghost.querySelector('[data-kd2-placement-title]')?.replaceChildren(document.createTextNode(`${unit.vehicle_type || 'KD2'} · ${unit.unit_label || 'Selected unit'}`));
+            positionPlacementGhost();
+            return;
+        }
         const station = currentPlacementStation();
         if (!state.timelinePlacementActive || !station) {
             removePlacementGhost();
@@ -2086,6 +2126,77 @@ window.PPMSModuleRuntime = (() => {
         if (!container) return;
         const vehicle = state.timelinePlacementVehicle;
         const query = String(state.timelinePlacementQuery || '').trim().toLowerCase();
+
+        if (isTimelineProcessView()) {
+            const battalionMap = new Map();
+            (state.timelineRows || [])
+                .filter(r => (r.vehicle_type || r.vehicle) === vehicle && r.battalion_id != null && r.unit_serial != null)
+                .forEach(r => {
+                    const unitKey = `${r.battalion_id}||${r.unit_serial}`;
+                    if (!battalionMap.has(r.battalion_id)) {
+                        battalionMap.set(r.battalion_id, { battalion_id: r.battalion_id, battalion_code: r.battalion_code || String(r.battalion_id), units: new Map() });
+                    }
+                    const batGroup = battalionMap.get(r.battalion_id);
+                    if (!batGroup.units.has(unitKey)) {
+                        const label = r.unit_label || r.vehicle_no || `${vehicle}-${String(r.unit_serial).padStart(2, '0')}`;
+                        if (!query || label.toLowerCase().includes(query) || batGroup.battalion_code.toLowerCase().includes(query)) {
+                            batGroup.units.set(unitKey, { battalion_id: r.battalion_id, unit_serial: r.unit_serial, unit_label: label });
+                        }
+                    }
+                });
+            const batGroups = [...battalionMap.values()].filter(g => g.units.size > 0);
+            if (!batGroups.length) {
+                container.innerHTML = `<div class="empty-state"><p>${query ? 'No units match the current filter.' : 'No units available. Load plan data first.'}</p></div>`;
+                return;
+            }
+            container.innerHTML = batGroups.map(group => `
+                <div class="kd2-timeline-palette-group">
+                    <div class="kd2-timeline-palette-group-title">${escapeHtml(group.battalion_code)}</div>
+                    <div class="kd2-timeline-palette-items">
+                        ${[...group.units.values()]
+                            .sort((a, b) => String(a.unit_label).localeCompare(String(b.unit_label), undefined, { numeric: true }))
+                            .map(unit => {
+                                const isActive = state.timelinePlacementBattalionId === unit.battalion_id && state.timelinePlacementUnitSerial === unit.unit_serial;
+                                return `
+                                <button type="button"
+                                    class="kd2-timeline-palette-item${isActive ? ' kd2-timeline-palette-item-active' : ''}"
+                                    data-kd2-placement-battalion="${escapeHtml(unit.battalion_id)}"
+                                    data-kd2-placement-unit-serial="${escapeHtml(unit.unit_serial)}"
+                                    data-kd2-placement-unit-label="${escapeHtml(unit.unit_label)}"
+                                    data-kd2-placement-vehicle="${escapeHtml(vehicle)}">
+                                    <span class="kd2-placement-palette-bar">
+                                        <span class="gc-bar-text">${escapeHtml(`${vehicle} · ${unit.unit_label}`)}</span>
+                                    </span>
+                                    <span class="kd2-placement-palette-meta">${escapeHtml(group.battalion_code)}</span>
+                                </button>`;
+                            }).join('')}
+                    </div>
+                </div>`).join('');
+            container.querySelectorAll('[data-kd2-placement-battalion]').forEach(btn => {
+                const handleSelect = (event) => {
+                    if (event.type === 'click' && event.detail > 0) { event.preventDefault(); return; }
+                    if (event.type === 'pointerdown' && event.button !== undefined && event.button !== 0) return;
+                    const battalionId = parseInt(btn.dataset.kd2PlacementBattalion || '', 10);
+                    const unitSerial = parseInt(btn.dataset.kd2PlacementUnitSerial || '', 10);
+                    const unitLabel = btn.dataset.kd2PlacementUnitLabel || '';
+                    const vehicleCode = btn.dataset.kd2PlacementVehicle || vehicle;
+                    const isSameSelection = state.timelinePlacementBattalionId === battalionId && state.timelinePlacementUnitSerial === unitSerial;
+                    if (isSameSelection) {
+                        clearTimelinePlacementUnit();
+                        cancelTimelinePlacement({ keepMenuOpen: true, skipRender: !state.timelineEditMode });
+                        return;
+                    }
+                    setTimelinePlacementUnit(battalionId, unitSerial, unitLabel, vehicleCode);
+                    if (activateOnSelect) beginTimelinePlacement({ keepMenuState: !closeMenuOnSelect });
+                    if (closeMenuOnSelect) setTimelinePlacementMenuOpen(false);
+                    syncTimelinePlacementUi();
+                };
+                btn.addEventListener('pointerdown', handleSelect);
+                btn.addEventListener('click', handleSelect);
+            });
+            return;
+        }
+
         const groups = state.categories
             .filter(row => row.vehicle_type === vehicle)
             .sort((a, b) => (a.category_sequence || 9999) - (b.category_sequence || 9999))
@@ -2196,13 +2307,16 @@ window.PPMSModuleRuntime = (() => {
         if (ganttFilter && ganttFilter.value !== state.timelinePlacementQuery) ganttFilter.value = state.timelinePlacementQuery;
 
         const station = currentPlacementStation();
+        const unit = currentPlacementUnit();
         const summaryText = processView
-            ? 'Visual placement is only available in unit view.'
+            ? unit
+                ? `${unit.vehicle_type} · ${unit.unit_label} is active. Click a station row and date to place a block.`
+                : 'Select a unit, then click a station row and date to place a block.'
             : station
                 ? `${station.station_name} is active. Click once on a ${station.vehicle_type} lane and date to place it.`
                 : 'Select a station block, then place it on a matching lane.';
         const hintText = processView
-            ? 'Switch back to unit view to place a new KD2 station block on a unit lane.'
+            ? 'Friday and saved no-work days are normalized automatically when the new KD2 block is created.'
             : station
                 ? 'Friday and saved no-work days are normalized automatically when the new KD2 block is created.'
                 : 'The selected station stays active until you change it or cancel placement mode.';
@@ -2210,12 +2324,12 @@ window.PPMSModuleRuntime = (() => {
         if (hint) hint.textContent = hintText;
         if (ganttSummary) ganttSummary.textContent = summaryText;
         if (ganttHint) ganttHint.textContent = hintText;
-        if (bar) bar.style.display = state.timelinePlacementActive && !processView ? '' : 'none';
+        if (bar) bar.style.display = state.timelinePlacementActive ? '' : 'none';
         ['btnKd2VisualAdd', 'btnGanttVisualAdd'].forEach(id => {
             const btn = document.getElementById(id);
             if (!btn) return;
-            btn.disabled = processView;
-            btn.setAttribute('aria-pressed', state.timelinePlacementActive && !processView ? 'true' : 'false');
+            btn.disabled = false;
+            btn.setAttribute('aria-pressed', state.timelinePlacementActive ? 'true' : 'false');
         });
 
         renderPlacementPalette('kd2TimelineVisualPalette', { activateOnSelect: true, closeMenuOnSelect: true });
@@ -2467,6 +2581,7 @@ window.PPMSModuleRuntime = (() => {
             vehicle_type: track.dataset.vehicleType || '',
             unit_serial: Number.isFinite(unitSerial) ? unitSerial : null,
             unit_label: track.dataset.unitLabel || '',
+            station_code: track.dataset.stationCode || '',
         };
     }
 
@@ -2483,15 +2598,59 @@ window.PPMSModuleRuntime = (() => {
 
     async function placePlanBlockOnLane(lane, plannedStart) {
         if (!state.timelinePlacementActive) return false;
-        if (isTimelineProcessView()) {
-            toast('Switch to unit view before placing a KD2 block.', 'error');
-            return false;
-        }
         if (!canManageKD2()) {
             toast('Only planners and admins can add KD2 plan rows.', 'error');
             return false;
         }
+        if (!plannedStart) return false;
 
+        if (isTimelineProcessView()) {
+            const unit = currentPlacementUnit();
+            if (!unit) {
+                toast('Select a unit before placing a block.', 'error');
+                return false;
+            }
+            const vehicle = lane.vehicle_type || state.timelinePlacementVehicle;
+            // Resolve station: prefer explicit station_code on lane (timeline), fall back to name lookup (Gantt)
+            let station = lane.station_code
+                ? state.stations.find(s => s.vehicle_type === vehicle && s.station_code === lane.station_code)
+                : null;
+            if (!station && lane.key) {
+                station = state.stations
+                    .filter(s => s.vehicle_type === vehicle && s.station_name === lane.key)
+                    .sort((a, b) => (a.station_sequence_in_category || 9999) - (b.station_sequence_in_category || 9999))[0] || null;
+            }
+            if (!station) {
+                toast('Could not identify the station for this lane.', 'error');
+                return false;
+            }
+            try {
+                const duration = defaultDurationForStation(station.vehicle_type, station.category_code, station.station_code);
+                if (!duration) throw new Error(`Missing default duration for ${station.station_name}.`);
+                await createPlanBlock({
+                    battalionId: unit.battalion_id,
+                    vehicle: station.vehicle_type,
+                    unitSerial: unit.unit_serial,
+                    unitLabel: unit.unit_label,
+                    stationCode: station.station_code,
+                    startDate: plannedStart,
+                    duration,
+                    remark: null,
+                });
+                state.timelineLastDragAt = Date.now();
+                const hasReload = typeof helpers.reloadAll === 'function';
+                cancelTimelinePlacement({ skipRender: hasReload, keepMenuOpen: true });
+                toast(`KD2 block placed for ${unit.unit_label} at ${station.station_name}.`, 'success');
+                if (hasReload) await helpers.reloadAll();
+                else renderSchedule();
+                return true;
+            } catch (error) {
+                toast(`KD2 placement failed: ${error.message}`, 'error');
+                return false;
+            }
+        }
+
+        // Unit view: station from palette, unit from lane
         const station = currentPlacementStation();
         if (!station) {
             toast('Select a KD2 station before placing a block.', 'error');
@@ -2501,7 +2660,6 @@ window.PPMSModuleRuntime = (() => {
             toast('The selected lane is missing battalion or unit details.', 'error');
             return false;
         }
-        if (!plannedStart) return false;
         if (lane.vehicle_type !== station.vehicle_type) {
             toast(`Placement blocked: ${station.station_name} belongs to ${station.vehicle_type} and must be placed on a matching lane.`, 'error');
             return false;
@@ -2668,28 +2826,10 @@ window.PPMSModuleRuntime = (() => {
         document.querySelectorAll('.kd2-timeline-track[data-kd2-track]').forEach(track => {
             track.addEventListener('pointerup', async event => {
                 if (!state.timelinePlacementActive) return;
-                if (isTimelineProcessView()) return;
                 if (event.target.closest('.kd2-timeline-bar')) return;
-                if (!canManageKD2()) {
-                    toast('Only planners and admins can add KD2 plan rows.', 'error');
-                    return;
-                }
-                const station = currentPlacementStation();
-                const lane = timelineLaneFromTrack(track);
-                if (!station) {
-                    toast('Select a KD2 station before placing a block.', 'error');
-                    return;
-                }
-                if (!lane?.battalion_id || !lane?.unit_serial) {
-                    toast('The selected lane is missing battalion or unit details.', 'error');
-                    return;
-                }
-                if (lane.vehicle_type !== station.vehicle_type) {
-                    toast(`Placement blocked: ${station.station_name} belongs to ${station.vehicle_type} and must be placed on a matching lane.`, 'error');
-                    return;
-                }
                 const plannedStart = dateFromTrackPointer(track, event.clientX);
                 if (!plannedStart) return;
+                const lane = timelineLaneFromTrack(track);
                 await placePlanBlockOnLane(lane, plannedStart);
             });
         });
@@ -2992,7 +3132,7 @@ window.PPMSModuleRuntime = (() => {
                             ${state.timelineEditMode && state.timelineSelectLaneMode && canUseLaneTimelineOperations() ? `<button type="button" class="kd2-timeline-lane-action" data-kd2-lane-select="${escapeHtml(group.key)}">${laneSelected ? 'Clear lane' : 'Select lane'}</button>` : ''}
                         </div>
                         <div
-                            class="kd2-timeline-track${state.timelineEditMode ? ' kd2-timeline-edit-active' : ''}${state.timelinePlacementActive && !processView ? ' kd2-timeline-track-placement' : ''}"
+                            class="kd2-timeline-track${state.timelineEditMode ? ' kd2-timeline-edit-active' : ''}${state.timelinePlacementActive ? ' kd2-timeline-track-placement' : ''}"
                             style="grid-column: 2 / span ${totalDays};min-height:${rowHeight}px;"
                             data-total-days="${totalDays}"
                             data-view-start="${escapeHtml(viewStart)}"
@@ -3928,6 +4068,24 @@ window.PPMSModuleRuntime = (() => {
     }
 
     function beginTimelinePlacement({ keepMenuState = false } = {}) {
+        const processView = isTimelineProcessView();
+        if (processView) {
+            const unit = currentPlacementUnit();
+            if (!unit) {
+                setPlanCreateError('Select a unit before starting visual placement.');
+                return;
+            }
+            state.timelinePlacementActive = true;
+            if (!keepMenuState) setTimelinePlacementMenuOpen(false);
+            if (document.getElementById('kd2PlanCreateOverlay')?.style.display === 'flex') closePlanCreateModal();
+            if (!state.timelineEditMode) setTimelineEditMode(true);
+            else {
+                syncTimelinePlacementUi();
+                renderSchedule();
+            }
+            toast(`Placement mode active for ${unit.vehicle_type} · ${unit.unit_label}.`, 'info');
+            return;
+        }
         const station = currentPlacementStation();
         if (!station) {
             setPlanCreateError('Select a station block before starting visual placement.');
@@ -3954,11 +4112,6 @@ window.PPMSModuleRuntime = (() => {
     async function toggleTimelineVisualMenu(forceOpen = null) {
         const shouldOpen = forceOpen === null ? !state.timelinePlacementMenuOpen : !!forceOpen;
         if (!shouldOpen) {
-            setTimelinePlacementMenuOpen(false);
-            return;
-        }
-        if (isTimelineProcessView()) {
-            toast('Visual placement is only available in unit view.', 'error');
             setTimelinePlacementMenuOpen(false);
             return;
         }
