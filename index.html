@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Production Plan Monitoring System</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Inter:wght@300;400;500;600&display=swap"
+        rel="stylesheet" />
+    <link rel="shortcut icon" href="assets/favicon.png" type="image/x-icon">
+    <link rel="stylesheet" href="styles/base.css" />
+    <link rel="stylesheet" href="styles/theme.css" />
+    <link rel="stylesheet" href="styles/layout.css" />
+    <link rel="stylesheet" href="styles/components/buttons.css" />
+    <link rel="stylesheet" href="styles/components/forms.css" />
+    <link rel="stylesheet" href="styles/components/tables.css" />
+    <link rel="stylesheet" href="styles/components/modals.css" />
+    <link rel="stylesheet" href="styles/components/toasts.css" />
+    <link rel="stylesheet" href="styles/features/shell.css" />
+    <link rel="stylesheet" href="styles/features/filters.css" />
+    <link rel="stylesheet" href="styles/features/summary.css" />
+    <link rel="stylesheet" href="styles/features/charts.css" />
+    <link rel="stylesheet" href="styles/features/vpx.css" />
+    <link rel="stylesheet" href="styles/features/gantt.css" />
+    <link rel="stylesheet" href="styles/features/admin.css" />
+    <link rel="stylesheet" href="styles/features/kd2.css" />
+    <script>
+        (function () {
+            try {
+                if (localStorage.getItem('kd1_theme') === 'light') {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+            } catch (e) { }
+        })();
+    </script>
+    <script>
+        (function () {
+            try {
+                if (!sessionStorage.getItem('kd1_session')) {
+                    window.location.replace('login.html');
+                }
+            } catch (e) {
+                window.location.replace('login.html');
+            }
+        })();
+    </script>
+</head>
+<body>
+    <div id="pageRoot"></div>
+    <script type="module" src="scripts/pages/index-page.js"></script>
+</body>
+</html>

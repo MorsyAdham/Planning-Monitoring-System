@@ -1,0 +1,37 @@
+/* VPX ownership. */
+
+.vpx-fullscreen-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.vpx-fullscreen-btn[aria-pressed="true"] {
+    border-color: rgba(79, 142, 247, .46);
+    background: rgba(79, 142, 247, .12);
+    color: #93c5fd;
+}
+
+.vpx-card.is-fullscreen,
+.vpx-card:fullscreen {
+    display: flex;
+    flex-direction: column;
+    width: 100vw;
+    height: 100vh;
+    max-width: none;
+    border-radius: 0;
+    border: none;
+    background: color-mix(in srgb, var(--clr-surface) 94%, #020617 6%);
+}
+
+.vpx-card.is-fullscreen .vpx-card-header,
+.vpx-card:fullscreen .vpx-card-header {
+    padding: 20px 28px 16px;
+}
+
+.vpx-card.is-fullscreen .vpx-scroll-wrap,
+.vpx-card:fullscreen .vpx-scroll-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+}
