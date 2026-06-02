@@ -1213,7 +1213,7 @@ function refreshAllViews() {
         : currentData;
 
     const pos = saveScrollPos();
-    renderTable(displayData);
+    renderTable(applyTableSearchFilters(displayData));
     restoreScrollPos(pos);
 
     updateSummary(displayData);
@@ -1490,7 +1490,7 @@ async function loadData() {
                 ? currentData.filter(r => getModuleCategory(r.process_station, r) === category)
                 : currentData;
 
-            renderTable(displayData);
+            renderTable(applyTableSearchFilters(displayData));
             updateSummary(displayData);
             renderCharts(displayData);
             renderVPX(displayData);
@@ -5498,6 +5498,28 @@ function renderGantt(plans, startDate, endDate) {
         });
     }
 
+    // Build completion maps for KD2 (unit view: per battalion+vehicle+unit; process view: per station)
+    const _kd2UnitCompMap = {};
+    const _kd2StatCompMap = {};
+    if (isKD2Module()) {
+        data.forEach(r => {
+            const done = r.status === 'Completed' || r.status === 'Late Completion';
+            const unitKey = `${r.battalion_code || ''}||${r.vehicle || r.vehicle_type || ''}||${r.vehicle_no || ''}`;
+            if (!_kd2UnitCompMap[unitKey]) _kd2UnitCompMap[unitKey] = { done: 0, total: 0 };
+            _kd2UnitCompMap[unitKey].total++;
+            if (done) _kd2UnitCompMap[unitKey].done++;
+            const statKey = r.process_station || '';
+            if (statKey) {
+                if (!_kd2StatCompMap[statKey]) _kd2StatCompMap[statKey] = { done: 0, total: 0 };
+                _kd2StatCompMap[statKey].total++;
+                if (done) _kd2StatCompMap[statKey].done++;
+            }
+        });
+        const fin = v => { v.pct = v.total > 0 ? Math.round((v.done / v.total) * 100) : 0; };
+        Object.values(_kd2UnitCompMap).forEach(fin);
+        Object.values(_kd2StatCompMap).forEach(fin);
+    }
+
     if (!groupKeys.length) {
         clearGanttHoverGuide();
         inner.innerHTML = `
@@ -5800,6 +5822,14 @@ function renderGantt(plans, startDate, endDate) {
             const _f100PctHtml = _f100UnitComp
                 ? `<div class="gr-unit-pct-row"><div class="gr-unit-pct-bar-wrap"><div class="gr-unit-pct-bar-fill" style="width:${_f100UnitComp.pct}%"></div></div><span class="gr-unit-pct-text">${_f100UnitComp.done}/${_f100UnitComp.total} (${_f100UnitComp.pct}%)</span></div>`
                 : '';
+            const _kd2PctComp = isKD2Module()
+                ? (isKd2ProcessView
+                    ? _kd2StatCompMap[laneUnit] || null
+                    : _kd2UnitCompMap[`${groupKey}||${laneVehicle}||${laneUnit}`] || null)
+                : null;
+            const _kd2PctHtml = _kd2PctComp
+                ? `<div class="gr-unit-pct-row"><div class="gr-unit-pct-bar-wrap"><div class="gr-unit-pct-bar-fill" style="width:${_kd2PctComp.pct}%"></div></div><span class="gr-unit-pct-text">${_kd2PctComp.done}/${_kd2PctComp.total} (${_kd2PctComp.pct}%)</span></div>`
+                : '';
             bodyHtml += `
         <div class="gr${rowMenuOpen ? ' gc-row-menu-open' : ''}" style="height:${rowH}px">
           <div class="gr-label gr-unit-label" style="width:${GANTT_LABEL_W}px">
@@ -5808,6 +5838,7 @@ function renderGantt(plans, startDate, endDate) {
               <span class="gr-unit-name">${esc(isF100ProcessView ? laneUnit : isF100KD2Module() ? (() => { const t0 = tasks[0]; const uCode = t0?.unit_code || ''; const uName = t0?.unit_name || ''; return uCode && uName ? `${uCode} · ${uName}` : uCode || uName || `${laneVehicle} #${laneUnit}`; })() : isKd2ProcessView ? laneUnit : isKD2Module() ? `${laneVehicle} · ${unitLabel(laneVehicle, laneUnit)}` : unitLabel(laneVehicle, laneUnit))}</span>
               ${_stationWC ? `<span class="gr-unit-wc">${esc(_stationWC)}</span>` : ''}
               ${_f100PctHtml}
+              ${_kd2PctHtml}
             </div>
             ${(isKD2Module() || isF100KD2Module()) && _ganttEditMode && _ganttSelectLaneMode && anchorTask ? `<button type="button" class="gantt-lane-select-btn" data-gantt-lane-select="${anchorTask.id}" aria-pressed="${laneSelected ? 'true' : 'false'}">${laneSelected ? 'Clear lane' : 'Select lane'}</button>` : ''}
           </div>
