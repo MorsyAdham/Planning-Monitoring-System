@@ -5502,7 +5502,7 @@ function renderGantt(plans, startDate, endDate) {
     const _kd2UnitCompMap = {};
     const _kd2StatCompMap = {};
     if (isKD2Module()) {
-        data.forEach(r => {
+        plans.forEach(r => {
             const done = r.status === 'Completed' || r.status === 'Late Completion';
             const unitKey = `${r.battalion_code || ''}||${r.vehicle || r.vehicle_type || ''}||${r.vehicle_no || ''}`;
             if (!_kd2UnitCompMap[unitKey]) _kd2UnitCompMap[unitKey] = { done: 0, total: 0 };
