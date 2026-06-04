@@ -5171,9 +5171,9 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ──────────────────────────────────────────────────────────────────
    GANTT CONSTANTS
    ────────────────────────────────────────────────────────────────── */
-const GANTT_LABEL_W = 220;   // px — frozen left label column width
+const GANTT_LABEL_W = 268;   // px — frozen left label column width
 const GANTT_DAY_W = 36;    // px — width of each day column
-const GANTT_ROW_H = 40;    // px — unit row height
+const GANTT_ROW_H = 58;    // px — unit row height
 const GANTT_GRP_H = 30;    // px — vehicle group header row height
 
 
@@ -5503,7 +5503,7 @@ function renderGantt(plans, startDate, endDate) {
     const _kd2StatCompMap = {};
     if (isKD2Module()) {
         plans.forEach(r => {
-            const done = r.status === 'Completed' || r.status === 'Late Completion';
+            const done = !!r.progress?.completed;
             const unitKey = `${r.battalion_code || ''}||${r.vehicle || r.vehicle_type || ''}||${r.vehicle_no || ''}`;
             if (!_kd2UnitCompMap[unitKey]) _kd2UnitCompMap[unitKey] = { done: 0, total: 0 };
             _kd2UnitCompMap[unitKey].total++;
@@ -5833,10 +5833,11 @@ function renderGantt(plans, startDate, endDate) {
             bodyHtml += `
         <div class="gr${rowMenuOpen ? ' gc-row-menu-open' : ''}" style="height:${rowH}px">
           <div class="gr-label gr-unit-label" style="width:${GANTT_LABEL_W}px">
-            <span class="gr-unit-dot"></span>
             <div class="gr-unit-info">
-              <span class="gr-unit-name">${esc(isF100ProcessView ? laneUnit : isF100KD2Module() ? (() => { const t0 = tasks[0]; const uCode = t0?.unit_code || ''; const uName = t0?.unit_name || ''; return uCode && uName ? `${uCode} · ${uName}` : uCode || uName || `${laneVehicle} #${laneUnit}`; })() : isKd2ProcessView ? laneUnit : isKD2Module() ? `${laneVehicle} · ${unitLabel(laneVehicle, laneUnit)}` : unitLabel(laneVehicle, laneUnit))}</span>
-              ${_stationWC ? `<span class="gr-unit-wc">${esc(_stationWC)}</span>` : ''}
+              ${isKD2Module() && !isKd2ProcessView && groupKey ? `<span class="gr-unit-ctx">${esc(laneVehicle)} · ${esc(groupKey)}</span>` : ''}
+              ${isKd2ProcessView && _stationWC ? `<span class="gr-unit-ctx">${esc(_stationWC)}</span>` : ''}
+              <span class="gr-unit-name">${esc(isF100ProcessView ? laneUnit : isF100KD2Module() ? (() => { const t0 = tasks[0]; const uCode = t0?.unit_code || ''; const uName = t0?.unit_name || ''; return uCode && uName ? `${uCode} · ${uName}` : uCode || uName || `${laneVehicle} #${laneUnit}`; })() : isKd2ProcessView ? laneUnit : isKD2Module() ? unitLabel(laneVehicle, laneUnit) : unitLabel(laneVehicle, laneUnit))}</span>
+              ${(!isKd2ProcessView && _stationWC) ? `<span class="gr-unit-wc">${esc(_stationWC)}</span>` : ''}
               ${_f100PctHtml}
               ${_kd2PctHtml}
             </div>
