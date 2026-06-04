@@ -4024,15 +4024,13 @@ body {
 }
 
 .gr-unit-label {
-    font-size: .82rem;
+    padding: 0 10px 0 12px;
+    align-items: stretch;
+    gap: 0;
 }
 
 .gr-unit-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--clr-text-dim);
-    flex-shrink: 0;
+    display: none;
 }
 
 .gr-unit-code {
@@ -4045,23 +4043,41 @@ body {
     margin-top: 1px;
 }
 
+/* Dim one-line context above the primary name (battalion · vehicle or WC) */
+.gr-unit-ctx {
+    font-size: .63rem;
+    font-weight: 500;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--clr-text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.1;
+    margin-bottom: 2px;
+}
+
 .gr-unit-name {
     font-family: var(--ff-mono);
-    font-size: .78rem;
-    color: var(--clr-text-muted);
+    font-size: .9rem;
+    font-weight: 700;
+    color: var(--clr-text);
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+    line-height: 1.25;
 }
+
 .gr-unit-wc {
     font-family: var(--ff-mono);
-    font-size: .62rem;
+    font-size: .65rem;
+    font-weight: 600;
     color: var(--clr-accent);
-    opacity: .75;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     line-height: 1.2;
+    margin-top: 1px;
 }
 
 /* ─── Track (day grid + bars) ───────────────────────────────────── */
@@ -7743,35 +7759,41 @@ th.vpx-grp-processing:first-of-type {
     flex: 1;
     min-width: 0;
     overflow: hidden;
+    justify-content: center;
+    gap: 0;
 }
 
-/* ─── Gantt lane unit completion bar (F100 unit view) ─────────── */
+/* ─── Gantt lane unit completion bar ──────────────────────────── */
 .gr-unit-pct-row {
     display: flex;
     align-items: center;
-    gap: 5px;
-    margin-top: 3px;
+    gap: 6px;
+    margin-top: 5px;
     width: 100%;
 }
 .gr-unit-pct-bar-wrap {
     flex: 1;
-    height: 5px;
-    border-radius: 3px;
-    background: rgba(255,255,255,.12);
+    height: 7px;
+    border-radius: 4px;
+    background: rgba(255,255,255,.1);
     overflow: hidden;
-    min-width: 40px;
+    min-width: 36px;
+    border: 1px solid rgba(255,255,255,.06);
 }
 .gr-unit-pct-bar-fill {
     height: 100%;
-    border-radius: 3px;
+    border-radius: 4px;
     background: var(--clr-accent);
-    transition: width .3s;
+    transition: width .4s;
 }
 .gr-unit-pct-text {
-    font-size: .65rem;
+    font-size: .7rem;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
     color: var(--clr-text-muted);
     white-space: nowrap;
+    min-width: 44px;
+    text-align: right;
 }
 
 /* ─── VPX unit completion bar (F100 vehicle mode) ─────────────── */
@@ -7829,6 +7851,7 @@ th.vpx-grp-processing:first-of-type {
 
 [data-theme="light"] .gr-unit-pct-bar-wrap {
     background: rgba(0,0,0,.08);
+    border-color: rgba(0,0,0,.06);
 }
 
 /* ─── F100 Table view selector ─────────────────────────────────── */
