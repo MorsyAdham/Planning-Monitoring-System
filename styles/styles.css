@@ -3937,7 +3937,7 @@ body {
 .gr-group {
     position: sticky;
     top: 78px; /* below gantt-head (28+22+28 px) */
-    z-index: 60; /* above gr-label (50) so labels tuck behind battalion rows */
+    z-index: 70; /* above gr-label (66) so labels tuck behind on vertical scroll */
     background: var(--clr-surface-2);
     border-bottom: 1px solid var(--clr-border);
 }
@@ -3945,7 +3945,7 @@ body {
 .gr-subgroup {
     position: sticky;
     top: 108px; /* below gantt-head (78px) + group row (30px) */
-    z-index: 55; /* above gr-label (50), below gr-group (60) */
+    z-index: 68; /* above gr-label (66), below gr-group (70) */
     background: color-mix(in srgb, var(--clr-surface-2) 80%, var(--clr-accent) 20%);
     border-bottom: 1px solid var(--clr-border-soft);
 }
@@ -3954,7 +3954,7 @@ body {
 .gr-label {
     position: sticky;
     left: 0;
-    z-index: 50;
+    z-index: 66; /* above gc-zone (62) inside each row's track stacking context — covers zones that scroll into label area */
     flex-shrink: 0;
     display: flex;
     align-items: center;
@@ -3999,7 +3999,7 @@ body {
     border-bottom: 1px solid color-mix(in srgb, var(--clr-border) 50%, var(--clr-accent) 50%);
     position: sticky;
     top: 108px;
-    z-index: 45;
+    z-index: 66; /* matches gr-label — separator row label covers zones that scroll into label area */
 }
 
 .gr-process-cat-label {
@@ -4302,6 +4302,13 @@ body {
     color: var(--clr-accent);
     white-space: nowrap;
     opacity: .9;
+}
+
+/* Today line is injected into every row's track — suppress the text label there
+   so "TODAY" only appears once (in the first group header row's track). */
+.gr-subgroup .gc-today-line::before,
+.gr:not(.gr-group) .gc-today-line::before {
+    display: none;
 }
 
 /* ─── Empty state ───────────────────────────────────────────────── */
@@ -6180,7 +6187,7 @@ body {
 
 .gc-row-menu-open {
     position: relative;
-    z-index: 80; /* must beat .gr-group (60) and .gr-subgroup (55) */
+    z-index: 80; /* must beat .gr-group (70) and .gr-subgroup (68) */
 }
 
 .gc-row-menu-open .gr-track {

@@ -5587,7 +5587,10 @@ function renderGantt(plans, startDate, endDate) {
     ).join('');
 
     // ── 5. Special zone bands ──────────────────────────────────────
-    let zonesHtml = '';
+    // Zones are injected into every row's track div (left relative to track start,
+    // not gantt-body). This keeps them geometrically inside the track column so they
+    // can never bleed over the sticky label column on horizontal scroll.
+    let trackZonesHtml = '';
     specialZones.forEach(z => {
         // Clamp zone to visible range
         const s = z.start > startDate ? z.start : startDate;
@@ -5596,27 +5599,22 @@ function renderGantt(plans, startDate, endDate) {
         const ei = dayIndex[e] ?? resolveCol(e, null);
         if (si === null || ei === null || si > ei) return;
 
-        const left = GANTT_LABEL_W + si * GANTT_DAY_W;
+        const left = si * GANTT_DAY_W;
         const width = (ei - si + 1) * GANTT_DAY_W;
         const isHolidayZone = z.type === 'holiday' || z.type === 'holiday-inactive';
         const zoneTitle = isHolidayZone ? '' : ` title="${esc(z.label || z.type)}"`;
-        const zoneLabel = isHolidayZone ? '' : `<span class="gc-zone-label">${esc(z.label || z.type)}</span>`;
-        zonesHtml += `
-      <div class="gc-zone gc-zone-${esc(z.type)}"
-           style="left:${left}px;width:${width}px"${zoneTitle}>
-        ${zoneLabel}
-      </div>`;
+        trackZonesHtml += `<div class="gc-zone gc-zone-${esc(z.type)}" style="left:${left}px;width:${width}px"${zoneTitle}></div>`;
     });
 
     // Today marker
     const todayCol = dayIndex[today] ?? resolveCol(today, null);
     if (todayCol !== null) {
-        const todayLeft = GANTT_LABEL_W + todayCol * GANTT_DAY_W + Math.floor(GANTT_DAY_W / 2);
-        zonesHtml += `<div class="gc-today-line" style="left:${todayLeft}px"></div>`;
+        const todayLeft = todayCol * GANTT_DAY_W + Math.floor(GANTT_DAY_W / 2);
+        trackZonesHtml += `<div class="gc-today-line" style="left:${todayLeft}px"></div>`;
     }
 
     // ── 6. Body rows ───────────────────────────────────────────────
-    let bodyHtml = zonesHtml;
+    let bodyHtml = '';
 
     groupKeys.forEach(groupKey => {
         const unitKeys = Object.keys(groups[groupKey]).sort((a, b) => {
@@ -5646,7 +5644,7 @@ function renderGantt(plans, startDate, endDate) {
           </svg>
           ${esc(groupKey)}
         </div>
-        <div class="gr-track gr-track-group" style="width:${totalW}px">${bgCells}</div>
+        <div class="gr-track gr-track-group" style="width:${totalW}px">${trackZonesHtml}${bgCells}</div>
       </div>`;
 
         const vehicleSections = (!isKd2ProcessView && !isF100ProcessView && (isKD2Module() || isF100KD2Module()))
@@ -5670,7 +5668,7 @@ function renderGantt(plans, startDate, endDate) {
         <div class="gr-label gr-subgroup-label" style="width:${GANTT_LABEL_W}px">
           <span class="gr-subgroup-badge">${esc(section.vehicle)}</span>
         </div>
-        <div class="gr-track gr-track-subgroup" style="width:${totalW}px">${bgCells}</div>
+        <div class="gr-track gr-track-subgroup" style="width:${totalW}px">${trackZonesHtml}${bgCells}</div>
       </div>`;
             }
 
@@ -5684,14 +5682,14 @@ function renderGantt(plans, startDate, endDate) {
                     if (compLabel && compLabel !== _prevComponentLabel) {
                         _prevComponentLabel = compLabel;
                         bodyHtml += `
-      <div class="gr gr-process-cat-sep" style="height:22px">
-        <div class="gr-label gr-process-cat-label" style="width:${GANTT_LABEL_W}px">
+      <div class="gr gr-process-cat-sep" style="min-height:34px">
+        <div class="gr-label gr-process-cat-label" style="width:${GANTT_LABEL_W}px;align-items:center;flex-wrap:wrap;line-height:1.3">
           <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" style="width:10px;height:10px;flex-shrink:0;opacity:.7">
             <path d="M3 4h8M3 7h8M3 10h8" stroke-dasharray="2 1.5"/>
           </svg>
           ${esc(compLabel)}
         </div>
-        <div class="gr-track gr-process-cat-track" style="width:${totalW}px">${bgCells}</div>
+        <div class="gr-track gr-process-cat-track" style="width:${totalW}px">${trackZonesHtml}${bgCells}</div>
       </div>`;
                     }
                 }
@@ -5852,6 +5850,7 @@ function renderGantt(plans, startDate, endDate) {
             data-unit-serial="${esc(laneMeta.unit_serial ?? '')}"
             data-unit-label="${esc(laneMeta.unit_label || laneUnit || '')}"
             data-gantt-days="${esc(days.join(','))}">
+            ${trackZonesHtml}
             ${bgCells}
             ${bars}
           </div>
