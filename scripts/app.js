@@ -297,17 +297,37 @@ function syncReportCategoryOptions() {
         target.disabled = true;
         const wrap = target.closest('.form-group') || target.parentElement;
         if (wrap) wrap.style.opacity = '0.4';
-        return;
+    } else {
+        target.disabled = false;
+        const wrap = target.closest('.form-group') || target.parentElement;
+        if (wrap) wrap.style.opacity = '';
+        const source = document.getElementById('filterCategory');
+        if (source) {
+            const currentVal = target.value;
+            target.innerHTML = source.innerHTML;
+            if ([...target.options].some(opt => opt.value === currentVal)) target.value = currentVal;
+        }
     }
-    target.disabled = false;
-    const wrap = target.closest('.form-group') || target.parentElement;
-    if (wrap) wrap.style.opacity = '';
-    const source = document.getElementById('filterCategory');
-    if (!source) return;
-    const currentVal = target.value;
-    target.innerHTML = source.innerHTML;
-    if ([...target.options].some(opt => opt.value === currentVal)) {
-        target.value = currentVal;
+    // Show/hide KD2-only report type cards
+    const kd2 = isKD2Module();
+    ['kd2ReportCardBattalion', 'kd2ReportCardVtype', 'kd2ReportCardAnalytics'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.hidden = !kd2;
+    });
+    // Show/hide vehicle type filter
+    const vtypeGroup = document.getElementById('reportVtypeGroup');
+    if (vtypeGroup) vtypeGroup.style.display = kd2 ? '' : 'none';
+    if (!kd2) {
+        const vtypeSel = document.getElementById('reportVehicleType');
+        if (vtypeSel) vtypeSel.value = '';
+    }
+    // If a KD2-only type was checked but we're now in a non-KD2 module, reset to full
+    if (!kd2) {
+        const checked = document.querySelector('input[name="reportType"]:checked');
+        if (checked && ['battalion', 'vtype', 'analytics'].includes(checked.value)) {
+            const fullRadio = document.querySelector('input[name="reportType"][value="full"]');
+            if (fullRadio) { fullRadio.checked = true; }
+        }
     }
 }
 
@@ -6593,6 +6613,20 @@ const REPORT_TYPES = {
             return v ? r.vehicle === v : true;
         }
     },
+    // KD2-only types
+    battalion: {
+        label: 'By Battalion', filter: r => {
+            const b = getVal('filterBattalion');
+            return b ? r.battalion_code === b : true;
+        }
+    },
+    vtype: {
+        label: 'By Vehicle Type', filter: r => {
+            const v = getVal('filterVehicle');
+            return v ? r.vehicle === v : true;
+        }
+    },
+    analytics: { label: 'Station Analytics', filter: () => true },
 };
 
 /* ─── Build the row array for a report ─────────────────────────── */
@@ -6607,6 +6641,11 @@ function buildReportRows(typeKey, fromDate, toDate, category) {
     if (toDate)   rows = rows.filter(r => (r[startField] || r.start_date) <= toDate);
     // Category filter only applies to F200 modules (F100 has no station categories)
     if (category && !isF100KD2Module()) rows = rows.filter(r => getModuleCategory(r.process_station, r) === category);
+    // Vehicle type filter — KD2 only
+    if (isKD2Module()) {
+        const vtype = getVal('reportVehicleType');
+        if (vtype) rows = rows.filter(r => r.vehicle === vtype);
+    }
 
     return rows;
 }
@@ -6659,6 +6698,67 @@ const F100_REPORT_COLUMNS = [
     },
 ];
 
+/* ─── KD2 report column config ──────────────────────────────────── */
+const KD2_REPORT_COLUMNS = [
+    { header: '#',                 key: (r, i) => i + 1 },
+    { header: 'Battalion',         key: r => r.battalion_code || '—' },
+    { header: 'Vehicle Type',      key: r => r.vehicle || '—' },
+    { header: 'Unit',              key: r => r.vehicle_no || '—' },
+    { header: 'Category',          key: r => getModuleCategory(r.process_station, r) || '—' },
+    { header: 'Station / Process', key: r => r.process_station || '—' },
+    { header: 'Work Center',       key: r => getRowCode(r) || '—' },
+    { header: 'Week',              key: r => r.week || '—' },
+    { header: 'Planned Start',     key: r => formatDate(r.start_date) },
+    { header: 'Planned End',       key: r => formatDate(r.end_date) },
+    { header: 'Actual Start',      key: r => r.progress?.actual_start_date ? formatDate(r.progress.actual_start_date) : '—' },
+    { header: 'Completed On',      key: r => r.progress?.completion_date ? formatDate(r.progress.completion_date) : '—' },
+    { header: 'Status',            key: r => calculateStatus(r) },
+    { header: 'Delay (days)',      key: r => { const d = delayDays(r); return d > 0 ? `+${d}d` : calculateStatus(r) === 'Completed' ? 'On Time' : '—'; } },
+    { header: 'Remark',            key: r => r.remark || '' },
+];
+
+/* ─── KD2 station-level analytics aggregation ───────────────────── */
+function buildKD2AnalyticsRows(rows) {
+    const stationMap = new Map();
+    rows.forEach(r => {
+        const key = r.process_station || '(Unknown)';
+        if (!stationMap.has(key)) {
+            stationMap.set(key, { station: key, category: getModuleCategory(r.process_station, r) || '—', rows: [] });
+        }
+        stationMap.get(key).rows.push(r);
+    });
+    return [...stationMap.values()]
+        .sort((a, b) => {
+            const cc = String(a.category).localeCompare(String(b.category));
+            return cc !== 0 ? cc : String(a.station).localeCompare(String(b.station));
+        })
+        .map(({ station, category, rows: sr }) => {
+            const s = buildSummaryStats(sr);
+            const plannedDurations = sr.map(r => {
+                if (!r.start_date || !r.end_date) return null;
+                const d = Math.round((new Date(r.end_date) - new Date(r.start_date)) / 86400000);
+                return d >= 0 ? d : null;
+            }).filter(d => d !== null);
+            const avgPlanned = plannedDurations.length
+                ? Math.round(plannedDurations.reduce((a, b) => a + b, 0) / plannedDurations.length) : null;
+            const actualDurations = sr
+                .filter(r => r.progress?.completion_date)
+                .map(r => {
+                    const end = r.progress.completion_date;
+                    const start = r.progress?.actual_start_date || r.start_date;
+                    if (!start) return null;
+                    const d = Math.round((new Date(end) - new Date(start)) / 86400000);
+                    return d >= 0 ? d : null;
+                }).filter(d => d !== null);
+            const avgActual = actualDurations.length
+                ? Math.round(actualDurations.reduce((a, b) => a + b, 0) / actualDurations.length) : null;
+            const delays = sr.map(r => delayDays(r)).filter(d => d > 0);
+            const avgDelay = delays.length ? Math.round(delays.reduce((a, b) => a + b, 0) / delays.length) : 0;
+            const maxDelay = delays.length ? Math.max(...delays) : 0;
+            return { station, category, ...s, avgPlanned, avgActual, avgDelay, maxDelay };
+        });
+}
+
 /* ─── Status → colour map for PDF ──────────────────────────────── */
 const STATUS_COLORS = {
     'Completed': [34, 197, 94],
@@ -6684,6 +6784,9 @@ function buildSummaryStats(rows) {
    PDF EXPORT  — white / print-friendly theme
    ══════════════════════════════════════════════════════════════════ */
 function exportPDF(typeKey, fromDate, toDate, category) {
+    if (isKD2Module() && typeKey === 'analytics') {
+        return exportKD2AnalyticsPDF(fromDate, toDate, category);
+    }
     try {
     const def = REPORT_TYPES[typeKey];
     const rows = buildReportRows(typeKey, fromDate, toDate, category);
@@ -6807,9 +6910,9 @@ function exportPDF(typeKey, fromDate, toDate, category) {
 
     // ── Data table ────────────────────────────────────────────────────
     const tableTop = stats_y + 18;
-    const activeCols = isF100KD2Module() ? F100_REPORT_COLUMNS : REPORT_COLUMNS;
-    const statusColIdx = isF100KD2Module() ? 13 : 11;
-    const delayColIdx  = isF100KD2Module() ? 14 : 12;
+    const activeCols = isF100KD2Module() ? F100_REPORT_COLUMNS : isKD2Module() ? KD2_REPORT_COLUMNS : REPORT_COLUMNS;
+    const statusColIdx = isF100KD2Module() ? 13 : isKD2Module() ? 12 : 11;
+    const delayColIdx  = isF100KD2Module() ? 14 : isKD2Module() ? 13 : 12;
     const headers = activeCols.map(c => c.header);
     const body = rows.map((r, i) => activeCols.map(c => String(c.key(r, i) ?? '')));
 
@@ -6847,7 +6950,39 @@ function exportPDF(typeKey, fromDate, toDate, category) {
         alternateRowStyles: {
             fillColor: [248, 250, 252],      // slate-50
         },
-        columnStyles: {
+        columnStyles: isF100KD2Module() ? {
+            0: { halign: 'center', cellWidth: 5 },
+            1: { cellWidth: 18 },
+            2: { cellWidth: 28 },
+            3: { cellWidth: 14 },
+            4: { halign: 'center', cellWidth: 12 },
+            5: { cellWidth: 18 },
+            6: { cellWidth: 22 },
+            7: { halign: 'center', cellWidth: 10 },
+            8: { cellWidth: 28 },
+            9: { cellWidth: 20 },
+            10: { cellWidth: 20 },
+            11: { cellWidth: 20 },
+            12: { cellWidth: 20 },
+            13: { halign: 'center', cellWidth: 20 },
+            14: { halign: 'center', cellWidth: 13 },
+        } : isKD2Module() ? {
+            0: { halign: 'center', cellWidth: 5 },
+            1: { cellWidth: 20 },
+            2: { halign: 'center', cellWidth: 15 },
+            3: { halign: 'center', cellWidth: 12 },
+            4: { cellWidth: 18 },
+            5: { cellWidth: 40 },
+            6: { cellWidth: 16 },
+            7: { halign: 'center', cellWidth: 10 },
+            8: { cellWidth: 18 },
+            9: { cellWidth: 18 },
+            10: { cellWidth: 18 },
+            11: { cellWidth: 18 },
+            12: { halign: 'center', cellWidth: 18 },
+            13: { halign: 'center', cellWidth: 13 },
+            14: { cellWidth: 26, overflow: 'linebreak', valign: 'top' },
+        } : {
             0: { halign: 'center', cellWidth: 8 },
             1: { cellWidth: 16 },
             2: { cellWidth: 14 },
@@ -6944,6 +7079,9 @@ function exportPDF(typeKey, fromDate, toDate, category) {
    EXCEL EXPORT
    ══════════════════════════════════════════════════════════════════ */
 async function exportExcel(typeKey, fromDate, toDate, category) {
+    if (isKD2Module() && typeKey === 'analytics') {
+        return exportKD2AnalyticsExcel(fromDate, toDate, category);
+    }
     try {
     if (typeof ExcelJS === 'undefined') {
         showToast('ExcelJS not loaded — please wait and try again.', 'error'); return;
@@ -7026,7 +7164,7 @@ async function exportExcel(typeKey, fromDate, toDate, category) {
         views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }],
     });
 
-    // Column config — F100 or F200 depending on active module
+    // Column config — F100 / KD2 / KD1 depending on active module
     const COLS = isF100KD2Module() ? [
         { header: '#',            width: 5,  key: (r, i) => i + 1 },
         { header: 'Battalion',    width: 16, key: r => r.battalion_code || '—' },
@@ -7043,11 +7181,27 @@ async function exportExcel(typeKey, fromDate, toDate, category) {
         { header: 'Actual End',   width: 14, key: r => r.actual_end_date || '—' },
         { header: 'Status',       width: 18, key: r => r.status || 'Planned' },
         { header: 'Delay (days)', width: 13, key: r => { const d = delayDays(r); return d > 0 ? `+${d}d` : (r.status === 'Completed' || r.status === 'Late Completion') ? 'On Time' : '—'; } },
+    ] : isKD2Module() ? [
+        { header: '#',                 width: 5,  key: (r, i) => i + 1 },
+        { header: 'Battalion',         width: 18, key: r => r.battalion_code || '—' },
+        { header: 'Vehicle Type',      width: 14, key: r => r.vehicle || '—' },
+        { header: 'Unit',              width: 10, key: r => r.vehicle_no || '—' },
+        { header: 'Category',          width: 18, key: r => getModuleCategory(r.process_station, r) || '—' },
+        { header: 'Station / Process', width: 36, key: r => r.process_station || '—' },
+        { header: 'Work Center',       width: 16, key: r => getRowCode(r) || '—' },
+        { header: 'Week',              width: 10, key: r => r.week || '—' },
+        { header: 'Planned Start',     width: 14, key: r => r.start_date || '—' },
+        { header: 'Planned End',       width: 14, key: r => r.end_date || '—' },
+        { header: 'Actual Start',      width: 14, key: r => r.progress?.actual_start_date || '—' },
+        { header: 'Completed On',      width: 14, key: r => r.progress?.completion_date || '—' },
+        { header: 'Status',            width: 18, key: r => calculateStatus(r) },
+        { header: 'Delay (days)',      width: 13, key: r => { const d = delayDays(r); return d > 0 ? '+' + d + 'd' : calculateStatus(r) === 'Completed' ? 'On Time' : '—'; } },
+        { header: 'Remark',            width: 24, key: r => r.remark || '' },
     ] : [
         { header: '#', width: 5, key: (r, i) => i + 1 },
         { header: 'Vehicle', width: 10, key: r => r.vehicle },
         { header: 'Unit', width: 10, key: r => r.vehicle_no },
-        { header: isKD2Module() ? 'Battalion' : 'Unit Code', width: 16, key: r => isKD2Module() ? (r.battalion_code || '—') : (getUnitCode(r.vehicle, r.vehicle_no) || '—') },
+        { header: 'Unit Code', width: 16, key: r => getUnitCode(r.vehicle, r.vehicle_no) || '—' },
         { header: 'Station', width: 26, key: r => r.process_station },
         { header: 'Code / Work Center', width: 18, key: r => getRowCode(r) },
         { header: 'Category', width: 16, key: r => getModuleCategory(r.process_station, r) },
@@ -7291,6 +7445,314 @@ async function exportExcel(typeKey, fromDate, toDate, category) {
 }
 
 
+
+/* ================================================================
+   KD2 ANALYTICS EXPORT  (station-level aggregated report)
+   ================================================================ */
+function exportKD2AnalyticsPDF(fromDate, toDate, category) {
+    try {
+    if (!window.jspdf) { showToast('PDF library not loaded — please refresh.', 'error'); return; }
+    const baseRows = buildReportRows('full', fromDate, toDate, category);
+    if (!baseRows.length) { showToast('No data for analytics report.', 'error'); return; }
+    const aRows = buildKD2AnalyticsRows(baseRows);
+    if (!aRows.length) { showToast('No station data to analyse.', 'error'); return; }
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const PAGE_W = doc.internal.pageSize.getWidth();
+    const PAGE_H = doc.internal.pageSize.getHeight();
+    const MARGIN = 14;
+    const now = new Date().toLocaleString('en-GB');
+    const stats = buildSummaryStats(baseRows);
+    const moduleBadge = getModuleBadge();
+    const moduleTitle = getModuleReportTitle();
+
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
+
+    // Header band
+    doc.setFillColor(30, 58, 138);
+    doc.rect(0, 0, PAGE_W, 20, 'F');
+    doc.setFillColor(59, 130, 246);
+    doc.roundedRect(MARGIN, 4, 18, 12, 2, 2, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text(moduleBadge, MARGIN + 9, 11.5, { align: 'center' });
+    doc.setFontSize(13);
+    doc.text(moduleTitle, MARGIN + 22, 10);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(147, 197, 253);
+    doc.text('STATION ANALYTICS · PLAN VS ACTUAL TIMING · DELAY SUMMARY', MARGIN + 22, 16);
+    doc.setFontSize(7.5);
+    doc.setTextColor(186, 230, 253);
+    doc.text(`Generated: ${now}`, PAGE_W - MARGIN, 16, { align: 'right' });
+
+    // Filter chips
+    const chips = [];
+    const fBattalion = getVal('filterBattalion');
+    const fVehicle = getVal('filterVehicle');
+    if (fBattalion && fBattalion !== 'All') chips.push(`Battalion: ${fBattalion}`);
+    if (fVehicle && fVehicle !== 'All') chips.push(`Vehicle Type: ${fVehicle}`);
+    if (category) chips.push(`Category: ${category}`);
+    if (fromDate || toDate) chips.push(`Date: ${fromDate || '…'} → ${toDate || '…'}`);
+    let chipX = MARGIN;
+    chips.forEach(label => {
+        const w = doc.getTextWidth(label) + 6;
+        doc.setFillColor(239, 246, 255); doc.setDrawColor(147, 197, 253);
+        doc.roundedRect(chipX, 24, w, 6, 1, 1, 'FD');
+        doc.setTextColor(30, 64, 175); doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5);
+        doc.text(label, chipX + 3, 28.5);
+        chipX += w + 4;
+    });
+
+    // Summary stats
+    const stats_y = chips.length ? 34 : 26;
+    const boxes = [
+        { label: 'Total Tasks', value: stats.total, r: 30, g: 58, b: 138 },
+        { label: 'Completed', value: stats.completed, r: 22, g: 163, b: 74 },
+        { label: 'In Progress', value: stats.inProgress, r: 217, g: 119, b: 6 },
+        { label: 'Overdue', value: stats.overdue, r: 220, g: 38, b: 38 },
+        { label: 'Late Completion', value: stats.late, r: 59, g: 130, b: 246 },
+        { label: 'Stations', value: aRows.length, r: 15, g: 118, b: 110 },
+        { label: 'Completion %', value: `${stats.pct}%`, r: 79, g: 70, b: 229 },
+    ];
+    const boxW = (PAGE_W - MARGIN * 2) / boxes.length;
+    boxes.forEach((b, i) => {
+        const bx = MARGIN + i * boxW;
+        doc.setFillColor(248, 250, 252); doc.setDrawColor(b.r, b.g, b.b); doc.setLineWidth(0.4);
+        doc.roundedRect(bx, stats_y, boxW - 2, 14, 2, 2, 'FD');
+        doc.setFillColor(b.r, b.g, b.b); doc.rect(bx, stats_y, boxW - 2, 2, 'F');
+        doc.setTextColor(b.r, b.g, b.b); doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+        doc.text(String(b.value), bx + (boxW - 2) / 2, stats_y + 8, { align: 'center' });
+        doc.setTextColor(100, 116, 139); doc.setFont('helvetica', 'normal'); doc.setFontSize(5.5);
+        doc.text(b.label.toUpperCase(), bx + (boxW - 2) / 2, stats_y + 12.5, { align: 'center' });
+    });
+
+    // Analytics table
+    const headers = ['Station / Process', 'Category', 'Total', 'Done', 'In Prog', 'Overdue', 'Late', '% Done', 'Avg Plan (d)', 'Avg Actual (d)', 'Avg Delay', 'Max Delay'];
+    const body = aRows.map(ar => [
+        ar.station, ar.category,
+        ar.total, ar.completed, ar.inProgress, ar.overdue, ar.late,
+        `${ar.pct}%`,
+        ar.avgPlanned !== null ? `${ar.avgPlanned}d` : '—',
+        ar.avgActual  !== null ? `${ar.avgActual}d`  : '—',
+        ar.avgDelay > 0 ? `+${ar.avgDelay}d` : '—',
+        ar.maxDelay > 0 ? `+${ar.maxDelay}d` : '—',
+    ]);
+
+    doc.autoTable({
+        startY: stats_y + 18,
+        head: [headers], body,
+        margin: { left: MARGIN, right: MARGIN },
+        styles: { fontSize: 7.5, cellPadding: 2.5, font: 'helvetica', textColor: [30, 41, 59], fillColor: [255, 255, 255], lineColor: [226, 232, 240], lineWidth: 0.25, overflow: 'linebreak' },
+        headStyles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7, halign: 'center' },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        columnStyles: {
+            0: { cellWidth: 44 }, 1: { cellWidth: 22 },
+            2: { halign: 'center', cellWidth: 13 }, 3: { halign: 'center', cellWidth: 16 },
+            4: { halign: 'center', cellWidth: 14 }, 5: { halign: 'center', cellWidth: 16 },
+            6: { halign: 'center', cellWidth: 16 }, 7: { halign: 'center', cellWidth: 14 },
+            8: { halign: 'center', cellWidth: 22 }, 9: { halign: 'center', cellWidth: 22 },
+            10: { halign: 'center', cellWidth: 20 }, 11: { halign: 'center', cellWidth: 20 },
+        },
+        didDrawCell(data) {
+            if (data.section !== 'body') return;
+            const val = String(data.cell.raw ?? '');
+            const rowBg = data.row.index % 2 === 0 ? [255, 255, 255] : [248, 250, 252];
+            const redraw = (bg, fg, bold) => {
+                doc.setFillColor(...bg); doc.rect(data.cell.x + 0.2, data.cell.y + 0.2, data.cell.width - 0.4, data.cell.height - 0.4, 'F');
+                doc.setTextColor(...fg); doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(7);
+                doc.text(val, data.cell.x + data.cell.width / 2, data.cell.y + data.cell.height / 2, { align: 'center', baseline: 'middle' });
+            };
+            if (data.column.index === 7) {
+                const pct = parseInt(val);
+                if (pct >= 80) redraw([220, 252, 231], [21, 128, 61], true);
+                else if (pct >= 40) redraw([254, 243, 199], [146, 64, 14], true);
+                else if (!isNaN(pct)) redraw([254, 226, 226], [153, 27, 27], true);
+            }
+            if ((data.column.index === 10 || data.column.index === 11) && val.startsWith('+')) {
+                redraw(rowBg, [153, 27, 27], true);
+            }
+            if (data.column.index === 5 && parseInt(val) > 0) {
+                redraw(rowBg, [153, 27, 27], true);
+            }
+        },
+        didDrawPage(data) {
+            if (data.pageNumber > 1) {
+                doc.setFillColor(30, 58, 138); doc.rect(0, 0, PAGE_W, 6, 'F');
+                doc.setTextColor(186, 230, 253); doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5);
+                doc.text(`${moduleBadge} ${moduleTitle} — Station Analytics`, MARGIN, 4.5);
+            }
+            const pY = PAGE_H - 8;
+            doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.3); doc.line(MARGIN, pY, PAGE_W - MARGIN, pY);
+            doc.setFontSize(6.5); doc.setTextColor(148, 163, 184); doc.setFont('helvetica', 'normal');
+            doc.text(`${moduleBadge} ${moduleTitle} — Confidential`, MARGIN, pY + 3.5);
+            doc.text(`Page ${data.pageNumber} of ${doc.internal.getNumberOfPages()}`, PAGE_W - MARGIN, pY + 3.5, { align: 'right' });
+        },
+    });
+
+    doc.save(`${moduleBadge}_Station_Analytics_${new Date().toISOString().slice(0, 10)}.pdf`);
+    showToast(`Analytics PDF exported — ${aRows.length} stations`, 'success');
+    } catch (err) {
+        console.error('[exportKD2AnalyticsPDF]', err);
+        showToast('Analytics PDF export failed: ' + (err.message || err), 'error');
+    }
+}
+
+async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
+    try {
+    if (typeof ExcelJS === 'undefined') { showToast('ExcelJS not loaded.', 'error'); return; }
+    const baseRows = buildReportRows('full', fromDate, toDate, category);
+    if (!baseRows.length) { showToast('No data for analytics report.', 'error'); return; }
+    const aRows = buildKD2AnalyticsRows(baseRows);
+    if (!aRows.length) { showToast('No station data to analyse.', 'error'); return; }
+
+    const stats = buildSummaryStats(baseRows);
+    const moduleBadge = getModuleBadge();
+    const moduleTitle = getModuleReportTitle();
+
+    const NAV = 'FF1e293b', MUTE = 'FF64748b', WHITE = 'FFffffff', ALT = 'FFf9fafb';
+    const BORD = 'FFe2e8f0', BORD_MED = 'FF94a3b8';
+    const ST = {
+        'Completed':       { bg: 'FFdcfce7', fg: 'FF15803d' },
+        'In Progress':     { bg: 'FFfef9c3', fg: 'FF854d0e' },
+        'Late Completion': { bg: 'FFdbeafe', fg: 'FF1d4ed8' },
+        'Overdue':         { bg: 'FFfee2e2', fg: 'FF991b1b' },
+        'Planned':         { bg: 'FFf8fafc', fg: 'FF475569' },
+    };
+    function bdr(s = 'thin') { return { top:{style:s,color:{argb:BORD}}, bottom:{style:s,color:{argb:BORD}}, left:{style:s,color:{argb:BORD}}, right:{style:s,color:{argb:BORD}} }; }
+    function hbdr() { return { top:{style:'medium',color:{argb:BORD_MED}}, bottom:{style:'medium',color:{argb:BORD_MED}}, left:{style:'thin',color:{argb:BORD}}, right:{style:'thin',color:{argb:BORD}} }; }
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = `${moduleBadge} ${moduleTitle}`; wb.created = new Date();
+
+    const ws = wb.addWorksheet('Station Analytics', {
+        pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+        views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }],
+    });
+    const ACOLS = [
+        { h: 'Station / Process', w: 38 }, { h: 'Category', w: 20 },
+        { h: 'Total', w: 10 },             { h: 'Completed', w: 14 },
+        { h: 'In Progress', w: 14 },       { h: 'Overdue', w: 12 },
+        { h: 'Late Completion', w: 16 },   { h: '% Done', w: 10 },
+        { h: 'Avg Plan (days)', w: 16 },   { h: 'Avg Actual (days)', w: 18 },
+        { h: 'Avg Delay (days)', w: 16 },  { h: 'Max Delay (days)', w: 16 },
+    ];
+    ws.columns = ACOLS.map(c => ({ width: c.w }));
+
+    ws.addRow([`${moduleBadge} · Station Analytics`]);
+    ws.mergeCells(1, 1, 1, ACOLS.length);
+    Object.assign(ws.getCell(1,1), { font:{name:'Calibri',size:15,bold:true,color:{argb:NAV}}, fill:{type:'pattern',pattern:'solid',fgColor:{argb:WHITE}}, alignment:{vertical:'middle'} });
+    ws.getRow(1).height = 26;
+
+    const fBattalion = getVal('filterBattalion'), fVehicle = getVal('filterVehicle');
+    const fc = [...(fBattalion?[`Battalion: ${fBattalion}`]:[]), ...(fVehicle?[`Vehicle Type: ${fVehicle}`]:[]), ...(category?[`Category: ${category}`]:[]), ...((fromDate||toDate)?[`Dates: ${fromDate||'…'} → ${toDate||'…'}`]:[])];
+    ws.addRow(['Filters: ' + (fc.length ? fc.join('   |   ') : 'All data') + '     Generated: ' + new Date().toLocaleString('en-GB')]);
+    ws.mergeCells(2, 1, 2, ACOLS.length);
+    Object.assign(ws.getCell(2,1), { font:{name:'Calibri',size:8,italic:true,color:{argb:MUTE}}, fill:{type:'pattern',pattern:'solid',fgColor:{argb:WHITE}} });
+    ws.getRow(2).height = 14;
+    ws.addRow([]); ws.getRow(3).height = 5;
+
+    ws.addRow(ACOLS.map(c => c.h));
+    ws.getRow(4).height = 18;
+    ACOLS.forEach((_, ci) => {
+        const cell = ws.getCell(4, ci + 1);
+        cell.font = { name:'Calibri', size:9, bold:true, color:{argb:WHITE} };
+        cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAV} };
+        cell.alignment = { horizontal:'center', vertical:'middle' };
+        cell.border = hbdr();
+    });
+
+    aRows.forEach((ar, ri) => {
+        const rowBg = ri % 2 === 1 ? ALT : WHITE;
+        ws.addRow([ ar.station, ar.category, ar.total, ar.completed, ar.inProgress, ar.overdue, ar.late,
+            `${ar.pct}%`,
+            ar.avgPlanned !== null ? `${ar.avgPlanned}d` : '—',
+            ar.avgActual  !== null ? `${ar.avgActual}d`  : '—',
+            ar.avgDelay > 0 ? `+${ar.avgDelay}d` : '—',
+            ar.maxDelay > 0 ? `+${ar.maxDelay}d` : '—',
+        ]);
+        const row = ws.getRow(ri + 5); row.height = 16;
+        ACOLS.forEach((col, ci) => {
+            const cell = ws.getCell(ri + 5, ci + 1);
+            const val = String(cell.value ?? '');
+            let font = { name:'Calibri', size:9, color:{argb:NAV} };
+            let fill = { type:'pattern', pattern:'solid', fgColor:{argb:rowBg} };
+            let align = { horizontal: ci < 2 ? 'left' : 'center', vertical:'middle', indent: ci < 2 ? 1 : 0 };
+            if (ci === 0) { font = { ...font, bold:true }; }
+            else if (ci === 1) { font = { ...font, italic:true, color:{argb:MUTE} }; }
+            else if (ci === 7) {
+                const pct = parseInt(val);
+                const clr = pct >= 80 ? ST['Completed'] : pct >= 40 ? ST['In Progress'] : ST['Overdue'];
+                font = { name:'Calibri', size:8, bold:true, color:{argb:clr.fg} };
+                fill = { type:'pattern', pattern:'solid', fgColor:{argb:clr.bg} };
+            } else if (ci === 5 && parseInt(val) > 0) {
+                font = { name:'Calibri', size:8, bold:true, color:{argb:'FF991b1b'} };
+                fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FFfee2e2'} };
+            } else if (ci === 10 || ci === 11) {
+                const late = val.startsWith('+');
+                font = { name:'Calibri', size:8, bold:late, color:{argb: late ? 'FF991b1b' : 'FF475569'} };
+                fill = { type:'pattern', pattern:'solid', fgColor:{argb: late ? 'FFfee2e2' : rowBg} };
+            }
+            cell.font = font; cell.fill = fill; cell.alignment = align; cell.border = bdr();
+        });
+    });
+
+    // Summary sheet
+    const wsSumm = wb.addWorksheet('Summary');
+    wsSumm.columns = [{ width:24 }, { width:16 }, { width:14 }];
+    wsSumm.addRow([`${moduleBadge} · Station Analytics`]);
+    wsSumm.mergeCells(1, 1, 1, 3);
+    Object.assign(wsSumm.getCell(1,1), { font:{name:'Calibri',size:14,bold:true,color:{argb:NAV}}, alignment:{vertical:'middle'} });
+    wsSumm.getRow(1).height = 26;
+    wsSumm.addRow(['Generated: ' + new Date().toLocaleString('en-GB')]);
+    wsSumm.mergeCells(2,1,2,3);
+    wsSumm.getCell(2,1).font = { name:'Calibri', size:8, italic:true, color:{argb:MUTE} };
+    wsSumm.getRow(2).height = 14;
+    wsSumm.addRow([]); wsSumm.getRow(3).height = 8;
+    const shRow = wsSumm.addRow(['Metric', 'Count', '% of Total']); shRow.height = 17;
+    [1,2,3].forEach(c => {
+        const cell = wsSumm.getCell(shRow.number, c);
+        cell.font = { name:'Calibri', size:9, bold:true, color:{argb:WHITE} };
+        cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAV} };
+        cell.alignment = { horizontal:'center', vertical:'middle' }; cell.border = hbdr();
+    });
+    [
+        { label:'Total Tasks',      val:stats.total,      pct:'100%',                                                 bg:'FFf1f5f9', fg:NAV },
+        { label:'Completed',        val:stats.completed,  pct:Math.round(stats.completed/stats.total*100)+'%',        bg:ST['Completed'].bg,       fg:ST['Completed'].fg },
+        { label:'In Progress',      val:stats.inProgress, pct:Math.round(stats.inProgress/stats.total*100)+'%',       bg:ST['In Progress'].bg,     fg:ST['In Progress'].fg },
+        { label:'Planned',          val:stats.planned,    pct:Math.round(stats.planned/stats.total*100)+'%',          bg:ST['Planned'].bg,         fg:ST['Planned'].fg },
+        { label:'Overdue',          val:stats.overdue,    pct:Math.round(stats.overdue/stats.total*100)+'%',          bg:ST['Overdue'].bg,         fg:ST['Overdue'].fg },
+        { label:'Late Completion',  val:stats.late,       pct:Math.round(stats.late/stats.total*100)+'%',             bg:ST['Late Completion'].bg, fg:ST['Late Completion'].fg },
+        { label:'Stations Analysed',val:aRows.length,     pct:'',                                                     bg:'FFe0f2fe', fg:'FF0369a1' },
+        { label:'Overall Progress', val:stats.pct+'%',    pct:'',                                                     bg:'FFe0f2fe', fg:'FF0369a1' },
+    ].forEach(sr => {
+        const row = wsSumm.addRow([sr.label, sr.val, sr.pct]); row.height = 18;
+        [1,2,3].forEach(c => {
+            const cell = wsSumm.getCell(row.number, c);
+            cell.font = { name:'Calibri', size:9, bold:c===1, color:{argb:sr.fg} };
+            cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:sr.bg} };
+            cell.alignment = { horizontal:c===1?'left':'center', vertical:'middle', indent:c===1?1:0 }; cell.border = bdr();
+        });
+    });
+
+    showToast('Building Analytics Excel…', 'info');
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${moduleBadge}_Station_Analytics_${new Date().toISOString().slice(0,10)}.xlsx`;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+    showToast(`Analytics Excel exported — ${aRows.length} stations`, 'success');
+    } catch (err) {
+        console.error('[exportKD2AnalyticsExcel]', err);
+        showToast('Analytics Excel export failed: ' + (err.message || err), 'error');
+    }
+}
 
 /* ================================================================
    VPX — PDF EXPORT  (light mode, landscape A4)
@@ -8304,6 +8766,7 @@ function wireReportModal() {
     document.getElementById('reportDateFrom').addEventListener('change', updateReportPreview);
     document.getElementById('reportDateTo').addEventListener('change', updateReportPreview);
     document.getElementById('reportCategory').addEventListener('change', updateReportPreview);
+    document.getElementById('reportVehicleType')?.addEventListener('change', updateReportPreview);
 
     document.getElementById('btnExportPDF').addEventListener('click', () => {
         const type = document.querySelector('input[name="reportType"]:checked')?.value || 'full';
@@ -8321,11 +8784,20 @@ function updateReportPreview() {
     const from = getVal('reportDateFrom');
     const to = getVal('reportDateTo');
     const category = getVal('reportCategory');
-    const count = buildReportRows(type, from, to, category).length;
     const bar = document.getElementById('reportPreviewBar');
     const cnt = document.getElementById('reportPreviewCount');
     const hint = bar?.querySelector('.report-preview-hint');
 
+    if (isKD2Module() && type === 'analytics') {
+        const baseRows = buildReportRows('full', from, to, category);
+        const stationCount = new Set(baseRows.map(r => r.process_station)).size;
+        if (cnt) cnt.textContent = `${stationCount} station${stationCount !== 1 ? 's' : ''} will be analysed`;
+        if (hint) hint.textContent = stationCount ? 'Avg plan vs actual · delay per process — ready to export' : 'No stations found — adjust filters';
+        if (bar) bar.style.borderColor = stationCount ? 'rgba(79,142,247,.4)' : 'rgba(239,68,68,.4)';
+        return;
+    }
+
+    const count = buildReportRows(type, from, to, category).length;
     const catLabel = category ? ` · ${category}` : '';
     if (cnt) cnt.textContent = `${count} task${count !== 1 ? 's' : ''} match${catLabel}`;
     if (hint) hint.textContent = count ? 'Ready to export' : 'No tasks match — adjust filters or date range';
