@@ -29,13 +29,13 @@ export function initFeature() {
                         <canvas id="lineChart"></canvas>
                     </div>
                 </div>
-                <div class="chart-card chart-card--full" id="kd2BottleneckCard" style="display:none">
+                <div class="chart-card" id="kd2BottleneckCard" style="display:none">
                     <div class="chart-card-header">
                         <h3 class="chart-title">Station Bottleneck</h3>
                         <span class="chart-subtitle" id="kd2BottleneckSubtitle">Avg delay per station · worst first</span>
                         <button class="chart-expand-btn" onclick="toggleChartFullscreen(this)" aria-pressed="false" title="Expand chart">${_expandIcon}</button>
                     </div>
-                    <div class="chart-canvas-wrap" style="height:300px" id="kd2BottleneckWrap">
+                    <div class="chart-canvas-wrap">
                         <canvas id="kd2BottleneckChart"></canvas>
                     </div>
                 </div>

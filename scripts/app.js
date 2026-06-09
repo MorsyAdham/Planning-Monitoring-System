@@ -3565,7 +3565,6 @@ let _kd2BottleneckChartInst = null;
 function renderKD2BottleneckChart(data) {
     const card   = document.getElementById('kd2BottleneckCard');
     const canvas = document.getElementById('kd2BottleneckChart');
-    const wrap   = document.getElementById('kd2BottleneckWrap');
     if (!card || !canvas) return;
 
     if (_kd2BottleneckChartInst) { try { _kd2BottleneckChartInst.destroy(); } catch {} _kd2BottleneckChartInst = null; }
@@ -3588,10 +3587,6 @@ function renderKD2BottleneckChart(data) {
         .map(([name, s]) => ({ name, ...s, avgDelay: s.delayed ? Math.round(s.delaySum / s.delayed) : 0 }))
         .sort((a, b) => b.avgDelay - a.avgDelay || b.delayed - a.delayed)
         .slice(0, 20);
-
-    // Scale canvas height to number of stations so bars don't get squashed
-    const cardHeight = Math.max(260, stations.length * 28 + 60);
-    if (wrap) wrap.style.height = cardHeight + 'px';
 
     const c      = themeChartColors();
     const labels = stations.map(s => s.name);
