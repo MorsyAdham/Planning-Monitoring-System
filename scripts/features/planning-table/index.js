@@ -2,6 +2,10 @@ export function initFeature() {
     return `
         <!-- ═══════════════════════════════════════════════ TABLE -->
         <section class="table-section" id="tableSection" aria-label="Assembly Plan Table">
+            <div class="ppms-section-header">
+                <h3 class="ppms-section-heading">Plan Details</h3>
+                <span class="ppms-section-sub">Station-by-station schedule with live progress tracking</span>
+            </div>
             <div class="table-card">
                 <div class="table-card-header">
                     <h3 class="table-title" id="tableTitle">Assembly Plan Details</h3>
