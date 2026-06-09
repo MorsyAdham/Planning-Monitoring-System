@@ -9,6 +9,7 @@ export function initFeature() {
                         <span class="vpx-subtitle" id="vpxSubtitle">Station-by-station planned vs actual · hover for details</span>
                     </div>
                     <div class="vpx-header-right">
+                        <div id="vpxTypeTabs" class="vpx-type-tabs" hidden></div>
                         <button class="btn btn-outline btn-sm" id="btnVpxPdf" title="Export print-friendly PDF">
                             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
                                 style="width:14px;height:14px">

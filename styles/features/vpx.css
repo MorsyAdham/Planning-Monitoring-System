@@ -35,3 +35,56 @@
     min-height: 0;
     max-height: none;
 }
+
+/* ── Vehicle-type segmented selector ────────────────────────────── */
+.vpx-type-tabs {
+    display: flex;
+}
+
+.vpx-type-tab {
+    padding: 4px 13px;
+    border: 1px solid rgba(255,255,255,.14);
+    background: rgba(255,255,255,.03);
+    color: var(--clr-text-muted, #94a3b8);
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .07em;
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+    position: relative;
+    margin-left: -1px;
+}
+
+.vpx-type-tab:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.vpx-type-tab:last-child  { border-radius: 0 6px 6px 0; }
+.vpx-type-tab:only-child  { border-radius: 6px; }
+
+.vpx-type-tab:hover {
+    border-color: rgba(79,142,247,.45);
+    color: #93c5fd;
+    z-index: 1;
+}
+
+.vpx-type-tab.active {
+    background: rgba(79,142,247,.16);
+    border-color: rgba(79,142,247,.55);
+    color: #93c5fd;
+    z-index: 2;
+}
+
+[data-theme="light"] .vpx-type-tab {
+    border-color: #cbd5e1;
+    background: #f8fafc;
+    color: #64748b;
+}
+
+[data-theme="light"] .vpx-type-tab:hover {
+    border-color: #4f8ef7;
+    color: #4f8ef7;
+}
+
+[data-theme="light"] .vpx-type-tab.active {
+    background: rgba(79,142,247,.1);
+    border-color: #4f8ef7;
+    color: #2563eb;
+}
