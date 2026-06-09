@@ -10480,13 +10480,21 @@ wireGanttControls = function () {
         getModuleRuntime()?.setTimelineViewMode?.('unit', { skipRender: true });
         const gsEl = document.getElementById('ganttStart');
         const geEl = document.getElementById('ganttEnd');
-        if (gsEl?.value && geEl?.value) renderGantt(currentData, gsEl.value, geEl.value);
+        if (gsEl?.value && geEl?.value) {
+            const category = getVal('filterCategory');
+            const data = category ? currentData.filter(r => getModuleCategory(r.process_station, r) === category) : currentData;
+            renderGantt(data, gsEl.value, geEl.value);
+        }
     });
     document.getElementById('btnGanttViewProcess')?.addEventListener('click', () => {
         getModuleRuntime()?.setTimelineViewMode?.('process', { skipRender: true });
         const gsEl = document.getElementById('ganttStart');
         const geEl = document.getElementById('ganttEnd');
-        if (gsEl?.value && geEl?.value) renderGantt(currentData, gsEl.value, geEl.value);
+        if (gsEl?.value && geEl?.value) {
+            const category = getVal('filterCategory');
+            const data = category ? currentData.filter(r => getModuleCategory(r.process_station, r) === category) : currentData;
+            renderGantt(data, gsEl.value, geEl.value);
+        }
     });
 
     document.getElementById('btnGanttEdit')?.addEventListener('click', () => setGanttEditMode(true));
