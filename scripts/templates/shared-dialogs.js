@@ -103,6 +103,44 @@ export function renderSharedDialogs() {
                                     <span class="rtc-desc">Current vehicle filter only</span>
                                 </div>
                             </label>
+                            <!-- KD2-only report types — shown/hidden by syncReportCategoryOptions -->
+                            <label class="report-type-card" id="kd2ReportCardBattalion" hidden>
+                                <input type="radio" name="reportType" value="battalion" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <path d="M3 12l9-9 9 9M5 10v9a2 2 0 002 2h4v-5h4v5h4a2 2 0 002-2v-9" />
+                                    </svg>
+                                    <span class="rtc-label">By Battalion</span>
+                                    <span class="rtc-desc">Active battalion filter only</span>
+                                </div>
+                            </label>
+                            <label class="report-type-card" id="kd2ReportCardVtype" hidden>
+                                <input type="radio" name="reportType" value="vtype" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <rect x="2" y="8" width="20" height="13" rx="2" />
+                                        <path d="M8 8V6a2 2 0 014 0v2M9 13h6M9 17h3" />
+                                        <path d="M18 5l2-2M6 5L4 3" />
+                                    </svg>
+                                    <span class="rtc-label">By Vehicle Type</span>
+                                    <span class="rtc-desc">K9 / K10 / K11 breakdown</span>
+                                </div>
+                            </label>
+                            <label class="report-type-card" id="kd2ReportCardAnalytics" hidden>
+                                <input type="radio" name="reportType" value="analytics" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <path d="M3 3v18h18" />
+                                        <path d="M7 16l4-5 4 3 5-7" />
+                                        <circle cx="7" cy="16" r="1.2" fill="currentColor" />
+                                        <circle cx="11" cy="11" r="1.2" fill="currentColor" />
+                                        <circle cx="15" cy="14" r="1.2" fill="currentColor" />
+                                        <circle cx="20" cy="7" r="1.2" fill="currentColor" />
+                                    </svg>
+                                    <span class="rtc-label">Station Analytics</span>
+                                    <span class="rtc-desc">Avg plan vs actual · delay per process</span>
+                                </div>
+                            </label>
                         </div>
                     </div>
 
@@ -125,6 +163,15 @@ export function renderSharedDialogs() {
                                 <option value="Assembly">Assembly</option>
                                 <option value="Final Test">Final Test</option>
                                 <option value="Processing">Processing</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="reportVtypeGroup" style="min-width:140px; display:none">
+                            <label class="form-label">Vehicle Type</label>
+                            <select id="reportVehicleType" class="filter-control">
+                                <option value="">All Types</option>
+                                <option value="K9">K9</option>
+                                <option value="K10">K10</option>
+                                <option value="K11">K11</option>
                             </select>
                         </div>
                     </div>

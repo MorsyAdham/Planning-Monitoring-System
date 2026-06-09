@@ -152,6 +152,11 @@ window.PPMSModuleRuntime = (() => {
         return ['master_admin', 'admin', 'planner'].includes(role);
     }
 
+    function canUploadKD2Plan() {
+        const role = getCurrentUser()?.role;
+        return ['master_admin', 'planner'].includes(role);
+    }
+
     function stationCodeMatchesVehicle(vehicleType, stationCode) {
         return String(stationCode || '').toLowerCase().startsWith(`${String(vehicleType || '').toLowerCase()}_`);
     }
@@ -274,8 +279,8 @@ window.PPMSModuleRuntime = (() => {
 
         // Import buttons
         setDisplay('btnImport', !kd2 && !f100);
-        setDisplay('btnKd2DownloadTemplate', kd2);
-        setDisplay('btnKd2UploadPlan', kd2);
+        setDisplay('btnKd2DownloadTemplate', kd2 && canUploadKD2Plan());
+        setDisplay('btnKd2UploadPlan', kd2 && canUploadKD2Plan());
 
         // Hide F200 import panels when not relevant
         if (kd2 || f100) {
@@ -3651,8 +3656,8 @@ window.PPMSModuleRuntime = (() => {
 
     async function importKd2PlanFile() {
         if (!dbRef) return;
-        if (!canManageKD2()) {
-            toast('Only planners and admins can import KD2 plans.', 'error');
+        if (!canUploadKD2Plan()) {
+            toast('Only planners and master admins can import KD2 plans.', 'error');
             return;
         }
         const file = document.getElementById('kd2ImportFile')?.files?.[0];
