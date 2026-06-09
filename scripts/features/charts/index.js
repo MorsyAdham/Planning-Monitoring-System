@@ -32,7 +32,7 @@ export function initFeature() {
                 <div class="chart-card" id="kd2BottleneckCard" style="display:none">
                     <div class="chart-card-header">
                         <h3 class="chart-title">Station Bottleneck</h3>
-                        <span class="chart-subtitle" id="kd2BottleneckSubtitle">Avg delay per station · worst first</span>
+                        <span class="chart-subtitle" id="kd2BottleneckSubtitle">Avg delay per station · process order</span>
                         <button class="chart-expand-btn" onclick="toggleChartFullscreen(this)" aria-pressed="false" title="Expand chart">${_expandIcon}</button>
                     </div>
                     <div class="chart-canvas-wrap">
