@@ -2886,6 +2886,10 @@ body {
     gap: 20px;
 }
 
+.chart-card--full {
+    grid-column: 1 / -1;
+}
+
 .chart-card {
     background: var(--clr-surface);
     border: 1px solid var(--clr-border);
