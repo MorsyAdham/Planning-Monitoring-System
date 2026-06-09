@@ -2,6 +2,10 @@ export function initFeature() {
     return `
         <!-- ═══════════════════════════════════ VEHICLE PROGRESS MATRIX -->
         <section class="vpx-section" id="vpxSection" aria-label="Vehicle Production Progress">
+            <div class="ppms-section-header">
+                <h3 class="ppms-section-heading">Vehicle Production Progress</h3>
+                <span class="ppms-section-sub">Station-by-station planned vs actual · select vehicle type to view</span>
+            </div>
             <div class="vpx-card" id="vpxCard">
                 <div class="vpx-card-header">
                     <div class="vpx-title-wrap">

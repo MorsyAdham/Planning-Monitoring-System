@@ -2988,6 +2988,32 @@ body {
     height: 240px;
 }
 
+/* ─── Generic section header (reused across all module sections) ── */
+.ppms-section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--clr-border);
+}
+
+.ppms-section-heading {
+    font-family: var(--ff-display);
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: .05em;
+    color: var(--clr-text);
+    margin: 0;
+}
+
+.ppms-section-sub {
+    font-size: .72rem;
+    color: var(--clr-text-dim);
+    letter-spacing: .05em;
+    text-transform: uppercase;
+}
+
 /* ─── F100 Analytics Charts ─────────────────────────────────────── */
 .f100-charts-section {
     margin-top: 24px;

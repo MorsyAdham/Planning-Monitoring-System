@@ -4,6 +4,10 @@ export function initFeature() {
     return `
         <!-- ═══════════════════════════════════════════════ CHARTS -->
         <section class="charts-section" id="chartsSection" aria-label="Charts">
+            <div class="ppms-section-header">
+                <h3 class="ppms-section-heading">Manufacturing Analytics</h3>
+                <span class="ppms-section-sub">Status breakdown · Cumulative progress trend</span>
+            </div>
             <div class="charts-grid">
                 <div class="chart-card">
                     <div class="chart-card-header">
