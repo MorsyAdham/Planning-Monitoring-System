@@ -2834,6 +2834,39 @@ function updateSummary(data) {
 const _isK9 = v => /K9/i.test(String(v));
 const _isK10K11 = v => /K1[01]/i.test(String(v));
 
+let _vpxLastData = null;
+let _vpxVehicleTypeFilter = null;
+
+function _getVehicleType(vehicle) {
+    const v = String(vehicle || '');
+    if (/K11/i.test(v)) return 'K11';
+    if (/K10/i.test(v)) return 'K10';
+    if (/K9/i.test(v)) return 'K9';
+    return null;
+}
+
+function _detectVpxVehicleTypes(data) {
+    const seen = new Set();
+    data.forEach(t => { const vt = _getVehicleType(t.vehicle); if (vt) seen.add(vt); });
+    return ['K9', 'K10', 'K11'].filter(t => seen.has(t));
+}
+
+function _renderVpxTypeTabs(types) {
+    const el = document.getElementById('vpxTypeTabs');
+    if (!el) return;
+    if (!types.length) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    el.innerHTML = types.map(t =>
+        `<button class="vpx-type-tab${t === _vpxVehicleTypeFilter ? ' active' : ''}" data-vtype="${t}">${t}</button>`
+    ).join('');
+    el.querySelectorAll('.vpx-type-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+            _vpxVehicleTypeFilter = btn.dataset.vtype;
+            if (_vpxLastData) renderVPX(_vpxLastData);
+        });
+    });
+}
+
 const VPX_COLUMNS = [
     // ── Assembly ──────────────────────────────────────────────────────
     {
@@ -2997,19 +3030,23 @@ function buildVpxColumns(data) {
         cols.get(meta.key).vehicles.add(task.vehicle || '');
     });
 
-    // Override order from module runtime route data (task.route_sequence may be absent in the view)
+    // Override order from station definitions — use the active vehicle type when known
+    // (mirrors how the Gantt process view sorts via getStationRouteOrder per vehicle)
     const rt = getModuleRuntime?.();
     if (rt?.getStationRouteOrder) {
-        const mergedOrder = new Map();
-        ['K9', 'K10', 'K11'].forEach(v => {
-            rt.getStationRouteOrder(v).forEach((seq, stationName) => {
-                if (!mergedOrder.has(stationName) || seq < mergedOrder.get(stationName)) {
-                    mergedOrder.set(stationName, seq);
-                }
-            });
-        });
+        const routeOrder = _vpxVehicleTypeFilter
+            ? rt.getStationRouteOrder(_vpxVehicleTypeFilter)
+            : (() => {
+                const merged = new Map();
+                ['K9', 'K10', 'K11'].forEach(v => {
+                    rt.getStationRouteOrder(v).forEach((seq, name) => {
+                        if (!merged.has(name) || seq < merged.get(name)) merged.set(name, seq);
+                    });
+                });
+                return merged;
+            })();
         cols.forEach(col => {
-            if (mergedOrder.has(col.name)) col.order = mergedOrder.get(col.name);
+            if (routeOrder.has(col.name)) col.order = routeOrder.get(col.name);
         });
     }
 
@@ -3315,13 +3352,25 @@ function renderF100VPX(data) {
 function renderVPX(data) {
     if (isF100KD2Module()) { renderF100VPX(data); return; }
 
+    _vpxLastData = data;
+
     const container = document.getElementById('vpxMatrix');
     if (!container) return;
     const meta = getVpxDisplayMeta();
 
     if (!data?.length) {
         container.innerHTML = `<div class="vpx-empty">${meta.emptyMessage}</div>`;
+        _renderVpxTypeTabs([]);
         return;
+    }
+
+    if (isKD2Module()) {
+        const types = _detectVpxVehicleTypes(data);
+        if (!types.includes(_vpxVehicleTypeFilter)) _vpxVehicleTypeFilter = types[0] || null;
+        _renderVpxTypeTabs(types);
+        if (_vpxVehicleTypeFilter) {
+            data = data.filter(t => _getVehicleType(t.vehicle) === _vpxVehicleTypeFilter);
+        }
     }
 
     const rows = buildVpxRows(data);
