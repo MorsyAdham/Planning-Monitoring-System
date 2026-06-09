@@ -3583,7 +3583,17 @@ function renderKD2BottleneckChart(data) {
         if (d > 0) { s.delayed++; s.delaySum += d; }
     });
 
-    const routeOrder = getModuleRuntime()?.getStationRouteOrder?.() || new Map();
+    const rt = getModuleRuntime();
+    const routeOrder = (() => {
+        if (!rt?.getStationRouteOrder) return new Map();
+        const merged = new Map();
+        ['K9', 'K10', 'K11'].forEach(v => {
+            rt.getStationRouteOrder(v).forEach((seq, name) => {
+                if (!merged.has(name) || seq < merged.get(name)) merged.set(name, seq);
+            });
+        });
+        return merged;
+    })();
     const stations = [...stationMap.entries()]
         .map(([name, s]) => ({ name, ...s, avgDelay: s.delayed ? Math.round(s.delaySum / s.delayed) : 0 }))
         .sort((a, b) => {
