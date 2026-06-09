@@ -6647,6 +6647,23 @@ function buildReportRows(typeKey, fromDate, toDate, category) {
         if (vtype) rows = rows.filter(r => r.vehicle === vtype);
     }
 
+    // Sort: Battalion → Vehicle → Unit → Station (starting from the report's primary grouping field)
+    const cmp = (a, b) => String(a || '').localeCompare(String(b || ''), undefined, { numeric: true, sensitivity: 'base' });
+    if (isKD2Module()) {
+        const startFromBattalion = ['full', 'battalion'].includes(typeKey);
+        rows = [...rows].sort((a, b) => {
+            if (startFromBattalion) {
+                const bc = cmp(a.battalion_code, b.battalion_code);
+                if (bc !== 0) return bc;
+            }
+            return cmp(a.vehicle, b.vehicle) || cmp(a.vehicle_no, b.vehicle_no) || cmp(a.process_station, b.process_station);
+        });
+    } else if (!isF100KD2Module()) {
+        rows = [...rows].sort((a, b) =>
+            cmp(a.vehicle, b.vehicle) || cmp(a.vehicle_no, b.vehicle_no) || cmp(a.process_station, b.process_station)
+        );
+    }
+
     return rows;
 }
 
