@@ -259,8 +259,9 @@ window.PPMSModuleRuntime = (() => {
         setDisplay('filterCategoryGroup', !f100);
         setDisplay('filterWeekGroup', !f100);
         setDisplay('filterTimeFrameGroup', !f100);
-        setDisplay('customDateStart', !f100);
-        setDisplay('customDateEnd', !f100);
+        const _isCustomRange = !f100 && document.getElementById('filterTimeFrame')?.value === 'custom';
+        setDisplay('customDateStart', _isCustomRange);
+        setDisplay('customDateEnd', _isCustomRange);
 
         // F100 filter items — shown only when F100 is active
         setDisplay('f100BattalionGroup', f100);
