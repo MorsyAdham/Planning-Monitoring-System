@@ -3557,6 +3557,94 @@ function renderCharts(data) {
     renderBarChart(data);
     renderLineChart(data);
     renderF100ExtraCharts(data);
+    renderKD2BottleneckChart(data);
+}
+
+/* ── KD2 Station Bottleneck chart ───────────────────────────────── */
+let _kd2BottleneckChartInst = null;
+function renderKD2BottleneckChart(data) {
+    const card   = document.getElementById('kd2BottleneckCard');
+    const canvas = document.getElementById('kd2BottleneckChart');
+    const wrap   = document.getElementById('kd2BottleneckWrap');
+    if (!card || !canvas) return;
+
+    if (_kd2BottleneckChartInst) { try { _kd2BottleneckChartInst.destroy(); } catch {} _kd2BottleneckChartInst = null; }
+
+    if (!isKD2Module() || !data.length) { card.style.display = 'none'; return; }
+    card.style.display = '';
+
+    // Build per-station delay stats
+    const stationMap = new Map();
+    data.forEach(r => {
+        const key = r.process_station || '(Unknown)';
+        if (!stationMap.has(key)) stationMap.set(key, { total: 0, delayed: 0, delaySum: 0 });
+        const s = stationMap.get(key);
+        s.total++;
+        const d = delayDays(r);
+        if (d > 0) { s.delayed++; s.delaySum += d; }
+    });
+
+    const stations = [...stationMap.entries()]
+        .map(([name, s]) => ({ name, ...s, avgDelay: s.delayed ? Math.round(s.delaySum / s.delayed) : 0 }))
+        .sort((a, b) => b.avgDelay - a.avgDelay || b.delayed - a.delayed)
+        .slice(0, 20);
+
+    // Scale canvas height to number of stations so bars don't get squashed
+    const cardHeight = Math.max(260, stations.length * 28 + 60);
+    if (wrap) wrap.style.height = cardHeight + 'px';
+
+    const c      = themeChartColors();
+    const labels = stations.map(s => s.name);
+    const avgs   = stations.map(s => s.avgDelay);
+    const colors = avgs.map(v => v >= 14 ? 'rgba(239,68,68,.82)' : v >= 7 ? 'rgba(245,158,11,.82)' : v >= 1 ? 'rgba(59,130,246,.75)' : 'rgba(148,163,184,.38)');
+
+    const sub = document.getElementById('kd2BottleneckSubtitle');
+    const withDelays = stations.filter(s => s.delayed > 0).length;
+    if (sub) sub.textContent = `${withDelays} of ${stations.length} station${stations.length !== 1 ? 's' : ''} with delays · sorted worst first`;
+
+    _kd2BottleneckChartInst = new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Avg Delay (days)',
+                data: avgs,
+                backgroundColor: colors,
+                borderRadius: 4,
+                borderWidth: 0,
+            }],
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        title: ctx => ctx[0].label,
+                        label: ctx => {
+                            const s = stations[ctx.dataIndex];
+                            if (s.avgDelay === 0) return `  No delays  ·  ${s.total} task${s.total !== 1 ? 's' : ''}`;
+                            return `  Avg ${s.avgDelay}d delay  ·  ${s.delayed} delayed / ${s.total} total`;
+                        },
+                    },
+                },
+            },
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    ticks: { color: c.text, font: { family: 'Inter', size: 10 }, callback: v => v + 'd' },
+                    grid: { color: c.grid },
+                    title: { display: true, text: 'Average Delay (days, among delayed tasks)', color: c.text, font: { family: 'Inter', size: 10 } },
+                },
+                y: {
+                    ticks: { color: c.text, font: { family: 'Inter', size: 10 } },
+                    grid: { display: false },
+                },
+            },
+        },
+    });
 }
 
 /* Extra charts shown only in F100-KD2: status donut, process-step bar, vehicle-type bar */
