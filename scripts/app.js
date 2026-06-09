@@ -3583,9 +3583,14 @@ function renderKD2BottleneckChart(data) {
         if (d > 0) { s.delayed++; s.delaySum += d; }
     });
 
+    const routeOrder = getModuleRuntime()?.getStationRouteOrder?.() || new Map();
     const stations = [...stationMap.entries()]
         .map(([name, s]) => ({ name, ...s, avgDelay: s.delayed ? Math.round(s.delaySum / s.delayed) : 0 }))
-        .sort((a, b) => b.avgDelay - a.avgDelay || b.delayed - a.delayed)
+        .sort((a, b) => {
+            const sa = routeOrder.get(a.name) ?? 9999;
+            const sb = routeOrder.get(b.name) ?? 9999;
+            return sa - sb;
+        })
         .slice(0, 20);
 
     const c      = themeChartColors();
@@ -3595,7 +3600,7 @@ function renderKD2BottleneckChart(data) {
 
     const sub = document.getElementById('kd2BottleneckSubtitle');
     const withDelays = stations.filter(s => s.delayed > 0).length;
-    if (sub) sub.textContent = `${withDelays} of ${stations.length} station${stations.length !== 1 ? 's' : ''} with delays · sorted worst first`;
+    if (sub) sub.textContent = `${withDelays} of ${stations.length} station${stations.length !== 1 ? 's' : ''} with delays · in process order`;
 
     _kd2BottleneckChartInst = new Chart(canvas, {
         type: 'bar',
