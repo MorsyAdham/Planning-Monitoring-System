@@ -404,6 +404,30 @@ export function renderSharedDialogs() {
                             </div>
                     </div>
 
+                    <!-- ── Export Permissions section ──────────────────── -->
+                    <div class="um-export-perm-section" id="umExportPermSection">
+                        <div class="um-export-perm-header">
+                            <div>
+                                <span class="um-export-perm-title">Export Permissions</span>
+                                <span class="um-export-perm-sub">Users allowed to export Excel &amp; PDF reports (master admin always can)</span>
+                            </div>
+                        </div>
+                        <div class="um-export-perm-body">
+                            <ul class="exp-perm-list" id="exportPermList">
+                                <li class="exp-perm-empty">Loading…</li>
+                            </ul>
+                            <div class="exp-perm-add-row">
+                                <select id="exportPermUserSelect" class="filter-control" style="flex:1">
+                                    <option value="">— Select a user —</option>
+                                </select>
+                                <input type="text" id="exportPermNote" class="filter-control"
+                                    placeholder="Note (optional)" style="width:130px" autocomplete="off" />
+                                <button class="btn btn-primary btn-sm" id="btnExportPermAdd">Grant</button>
+                            </div>
+                            <div class="ab-error" id="exportPermError" style="display:none;margin-top:8px"></div>
+                        </div>
+                    </div>
+
                 </div>
             </div>
         </div>
@@ -415,7 +439,7 @@ export function renderSharedDialogs() {
                 <div class="modal-header">
                     <h4 class="modal-title" id="auditLogTitle">
                         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"
-                            style="width:18px;height:18px;vertical-align:-3px;margin-right:8px">
+                            style="width:18px;height:18px;vertical-align:-3px;margin-right:6px">
                             <path d="M4 4h12v2H4zM4 8h12v2H4zM4 12h8v2H4z" />
                             <circle cx="15" cy="13" r="3.5" />
                             <path d="M17 15l1.5 1.5" />
@@ -426,28 +450,56 @@ export function renderSharedDialogs() {
                 </div>
                 <div class="modal-body" style="padding:0">
 
-                    <!-- Filters -->
-                    <div class="al-toolbar">
-                        <div class="al-filters">
-                            <select id="alFilterAction" class="filter-control al-filter-sm">
-                                <option value="">All Actions</option>
-                                <option value="LOGIN">Login</option>
-                                <option value="LOGOUT">Logout</option>
-                                <option value="INSERT">Insert</option>
-                                <option value="UPDATE">Update</option>
-                                <option value="DELETE">Delete</option>
-                            </select>
-                            <select id="alFilterTable" class="filter-control al-filter-sm">
-                                <option value="">All Tables</option>
-                                <option value="assembly_plan">assembly_plan</option>
-                                <option value="assembly_progress">assembly_progress</option>
-                                <option value="planning_app_users">planning_app_users</option>
-                            </select>
-                            <input type="date" id="alFilterDate" class="filter-control al-filter-sm" />
-                            <button class="btn btn-primary btn-sm" id="btnAlApply">Apply</button>
-                            <button class="btn btn-ghost btn-sm" id="btnAlReset">Reset</button>
+                    <!-- Filter bar -->
+                    <div class="al-filter-bar">
+                        <div class="al-filter-row">
+                            <div class="al-filter-group">
+                                <label class="al-filter-label" for="alFilterAction">Action</label>
+                                <select id="alFilterAction" class="al-filter-input">
+                                    <option value="">All</option>
+                                    <option value="LOGIN">Login</option>
+                                    <option value="LOGOUT">Logout</option>
+                                    <option value="INSERT">Insert</option>
+                                    <option value="UPDATE">Update</option>
+                                    <option value="DELETE">Delete</option>
+                                    <option value="BOOTSTRAP">Bootstrap</option>
+                                </select>
+                            </div>
+                            <div class="al-filter-group">
+                                <label class="al-filter-label" for="alFilterTable">Module</label>
+                                <select id="alFilterTable" class="al-filter-input">
+                                    <option value="">All</option>
+                                    <option value="kd2_plan">KD2 Plan</option>
+                                    <option value="kd2_progress">KD2 Progress</option>
+                                    <option value="kd2_battalions">KD2 Battalions</option>
+                                    <option value="assembly_plan">F100 Plan</option>
+                                    <option value="assembly_progress">F100 Progress</option>
+                                    <option value="f100_plans">F100 Plans</option>
+                                    <option value="planning_app_users">Users</option>
+                                </select>
+                            </div>
+                            <div class="al-filter-group al-filter-group--grow">
+                                <label class="al-filter-label" for="alFilterUser">User</label>
+                                <select id="alFilterUser" class="al-filter-input">
+                                    <option value="">All Users</option>
+                                </select>
+                            </div>
+                            <div class="al-filter-group">
+                                <label class="al-filter-label" for="alFilterDateFrom">From</label>
+                                <input type="date" id="alFilterDateFrom" class="al-filter-input" />
+                            </div>
+                            <div class="al-filter-group">
+                                <label class="al-filter-label" for="alFilterDateTo">To</label>
+                                <input type="date" id="alFilterDateTo" class="al-filter-input" />
+                            </div>
+                            <div class="al-filter-actions">
+                                <button class="btn btn-primary btn-sm" id="btnAlApply">Apply</button>
+                                <button class="btn btn-ghost btn-sm" id="btnAlReset">Reset</button>
+                            </div>
                         </div>
-                        <span class="um-count" id="alEntryCount">—</span>
+                        <div class="al-filter-meta">
+                            <span class="al-entry-count" id="alEntryCount">—</span>
+                        </div>
                     </div>
 
                     <!-- Audit table -->
@@ -459,7 +511,7 @@ export function renderSharedDialogs() {
                                     <th>User</th>
                                     <th>Role</th>
                                     <th>Action</th>
-                                    <th>Table</th>
+                                    <th>Module</th>
                                     <th>Record</th>
                                     <th>IP Address</th>
                                     <th>Changes</th>
@@ -468,9 +520,7 @@ export function renderSharedDialogs() {
                             <tbody id="alTableBody">
                                 <tr>
                                     <td colspan="8" class="table-empty">
-                                        <div class="empty-state">
-                                            <p>Click to load audit log</p>
-                                        </div>
+                                        <div class="empty-state"><p>Click to load audit log</p></div>
                                     </td>
                                 </tr>
                             </tbody>
@@ -479,6 +529,16 @@ export function renderSharedDialogs() {
 
                     <div class="al-footer">
                         <button class="btn btn-ghost btn-sm" id="btnAlMore" style="display:none">Load more…</button>
+                        <div class="al-export-btns">
+                            <button class="btn btn-ghost btn-sm" id="btnAlExportExcel" onclick="exportAuditLogExcel()">
+                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="width:13px;height:13px;vertical-align:-2px;margin-right:4px"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M5 6l2 2-2 2M9 6l2 2-2 2" stroke-linecap="round"/></svg>
+                                Export Excel
+                            </button>
+                            <button class="btn btn-ghost btn-sm" id="btnAlExportPDF" onclick="exportAuditLogPDF()">
+                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="width:13px;height:13px;vertical-align:-2px;margin-right:4px"><path d="M3 2h7l3 3v9H3V2z" stroke-linecap="round"/><path d="M10 2v3h3" stroke-linecap="round"/><path d="M6 9h4M6 11h2" stroke-linecap="round"/></svg>
+                                Export PDF
+                            </button>
+                        </div>
                     </div>
 
                 </div>
@@ -1189,6 +1249,121 @@ export function renderSharedDialogs() {
                 <div class="modal-footer">
                     <button class="btn btn-primary" id="btnKd2ProcessSave">Save Process</button>
                     <button class="btn btn-ghost" id="btnKd2ProcessCancel">Done</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════ PRODUCTION ISSUE MODAL -->
+        <div class="modal-overlay" id="issueModalOverlay" style="display:none" role="dialog" aria-modal="true"
+            aria-labelledby="issueModalTitle">
+            <div class="modal issue-modal">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="issueModalTitle">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"
+                            style="width:18px;height:18px;vertical-align:-3px;margin-right:8px">
+                            <path d="M10 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                        </svg>
+                        <span id="issueModalTitleText">Report Issue</span>
+                    </h4>
+                    <button class="modal-close" id="issueModalClose" aria-label="Close">&#x2715;</button>
+                </div>
+                <div class="modal-body issue-modal-body">
+                    <!-- Read-only view panel (shown instead of form when view mode active) -->
+                    <div id="issueViewBody" class="issue-view-body" style="display:none"></div>
+
+                    <div class="issue-modal-grid">
+                        <!-- ── Section: Basic Info ─────────────────────── -->
+                        <div class="issue-form-section-label issue-form-full">Basic Information</div>
+
+                        <!-- Title (full width) -->
+                        <div class="form-group issue-form-full">
+                            <label class="form-label" for="issueTitle">Title <span class="form-required">*</span></label>
+                            <input type="text" id="issueTitle" class="filter-control" placeholder="Short description of the issue" />
+                        </div>
+
+                        <!-- Category / Priority / Status — 3 columns -->
+                        <div class="form-group">
+                            <label class="form-label" for="issueCategory">Category <span class="form-required">*</span></label>
+                            <select id="issueCategory" class="filter-control">
+                                <option value="">— Select —</option>
+                                <option value="cutting">Cutting</option>
+                                <option value="part_machining">Part Machining</option>
+                                <option value="welding">Welding</option>
+                                <option value="machining">Machining</option>
+                                <option value="accessories">Accessories</option>
+                                <option value="cables">Cables</option>
+                                <option value="material">Material</option>
+                                <option value="assembly">Assembly</option>
+                                <option value="quality">Quality</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="issuePriority">Priority</label>
+                            <select id="issuePriority" class="filter-control">
+                                <option value="low">Low</option>
+                                <option value="medium" selected>Medium</option>
+                                <option value="high">High</option>
+                                <option value="critical">Critical</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="issueStatus">Status</label>
+                            <select id="issueStatus" class="filter-control">
+                                <option value="open" selected>Open</option>
+                                <option value="in_progress">In Progress</option>
+                                <option value="resolved">Resolved</option>
+                                <option value="closed">Closed</option>
+                            </select>
+                        </div>
+
+                        <!-- ── Section: Reporter (read-only strip) ──────── -->
+                        <div class="issue-reporter-strip issue-form-full">
+                            <span class="issue-reporter-strip-label">Reported by</span>
+                            <span class="issue-reporter-strip-name" id="issueReporterName">—</span>
+                            <span class="issue-reporter-strip-sep">·</span>
+                            <span class="issue-reporter-strip-email" id="issueReporterEmail">—</span>
+                            <!-- hidden fields to carry values to save logic -->
+                            <input type="hidden" id="issueReporterNameHidden" />
+                            <input type="hidden" id="issueReporterEmailHidden" />
+                        </div>
+
+                        <!-- ── Section: Details ──────────────────────────── -->
+                        <div class="issue-form-section-label issue-form-full">Details</div>
+
+                        <!-- Description (full width) -->
+                        <div class="form-group issue-form-full">
+                            <label class="form-label" for="issueDescription">Description <span class="form-label-optional">(optional)</span></label>
+                            <textarea id="issueDescription" class="import-textarea" rows="3"
+                                placeholder="Detailed description of the issue…"></textarea>
+                        </div>
+
+                        <!-- Proposed Solution (full width) -->
+                        <div class="form-group issue-form-full">
+                            <label class="form-label" for="issueProposedSolution">Proposed Solution <span class="form-label-optional">(optional)</span></label>
+                            <textarea id="issueProposedSolution" class="import-textarea" rows="2"
+                                placeholder="Suggested fix or workaround…"></textarea>
+                        </div>
+
+                        <!-- Internal Notes (full width) -->
+                        <div class="form-group issue-form-full">
+                            <label class="form-label" for="issueNotes">Internal Notes <span class="form-label-optional">(optional)</span></label>
+                            <textarea id="issueNotes" class="import-textarea" rows="2"
+                                placeholder="Internal follow-up notes…"></textarea>
+                        </div>
+
+                    </div>
+                    <div class="ab-error" id="issueFormError" style="display:none"></div>
+                </div>
+                <div class="modal-footer" style="justify-content:space-between">
+                    <div>
+                        <button class="btn btn-ghost btn-kd2-danger" id="btnIssueDelete" style="display:none">Delete</button>
+                    </div>
+                    <div style="display:flex;gap:8px">
+                        <button class="btn btn-ghost btn-sm" id="btnIssueEdit" style="display:none">Edit Issue</button>
+                        <button class="btn btn-ghost" id="btnIssueCancel">Cancel</button>
+                        <button class="btn btn-primary" id="btnIssueSave">Save Issue</button>
+                    </div>
                 </div>
             </div>
         </div>

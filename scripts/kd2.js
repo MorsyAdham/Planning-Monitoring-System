@@ -9,8 +9,8 @@ window.PPMSModuleRuntime = (() => {
         kd1: {
             id: 'kd1',
             badge: 'F200 – KD1',
-            title: 'Production Planning & Monitoring Control',
-            subtitle: 'F200 Plan vs Actual Tracking System',
+            title: 'PPMS',
+            subtitle: 'Production Planning & Monitoring',
             tableTitle: 'F200 Assembly Plan Details',
             unitLabel: 'Unit',
             categories: ['Assembly', 'Final Test', 'Processing'],
@@ -18,8 +18,8 @@ window.PPMSModuleRuntime = (() => {
         kd2: {
             id: 'kd2',
             badge: 'F200 – KD2',
-            title: 'Production Planning & Monitoring Control',
-            subtitle: 'F200 Battalion Planning and Progress Control',
+            title: 'PPMS',
+            subtitle: 'Production Planning & Monitoring',
             tableTitle: 'F200 – KD2 Battalion Plan Details',
             unitLabel: 'Battalion / Unit',
             categories: [
@@ -34,8 +34,8 @@ window.PPMSModuleRuntime = (() => {
         f100kd2: {
             id: 'f100kd2',
             badge: 'F100 – KD2',
-            title: 'F100 Production Planning & Monitoring Control',
-            subtitle: 'F100 Part Manufacturing Progress Control',
+            title: 'PPMS',
+            subtitle: 'Production Planning & Monitoring',
             tableTitle: 'F100 – KD2 Part Plan Details',
             unitLabel: 'Battalion / Part',
             categories: [],   // F100 uses part-level grouping, not station categories
@@ -735,6 +735,7 @@ window.PPMSModuleRuntime = (() => {
     }
 
     async function loadData(db, filters) {
+        if (!state.stations.length) await loadWorkspaceData();
         let query = db.from('kd2_plan_live').select('*');
         if (filters.battalion) query = query.eq('battalion_code', filters.battalion);
         if (filters.vehicle) query = query.eq('vehicle', filters.vehicle);
@@ -743,17 +744,17 @@ window.PPMSModuleRuntime = (() => {
         query = applyTimeFrame(query, filters);
         let rows = await queryAll(query);
         
-        // Apply K9 component filter if K9 is selected
-        if (filters.vehicle === 'K9' && filters.k9Component) {
-            const componentLower = filters.k9Component.toLowerCase();
+        // Apply K9 component filter using component_group from station definitions
+        if (filters.k9Component) {
+            const compMap = new Map(
+                state.stations
+                    .filter(s => s.vehicle_type === (filters.vehicle || 'K9'))
+                    .map(s => [s.station_code, s.component_group || ''])
+            );
+            const wanted = filters.k9Component; // 'Hull' or 'Turret'
             rows = rows.filter(row => {
-                const haystack = [
-                    row.station_code,
-                    row.station_name,
-                    row.process_station,
-                    row.category_code,
-                ].map(v => (v || '').toLowerCase()).join(' ');
-                return haystack.includes(componentLower);
+                const grp = compMap.get(row.station_code) || '';
+                return grp === wanted || grp.startsWith(wanted + ' ');
             });
         }
         

@@ -5,7 +5,7 @@ export function initFeature() {
             <h3 class="ppms-section-heading">Production Schedule</h3>
             <span class="ppms-section-sub">Timeline-based plan vs actual · hover bars for task detail</span>
         </div>
-        <ppms-gantt-module></ppms-gantt-module>
+        <ppms-gantt-module id="ganttNavAnchor"></ppms-gantt-module>
 `.trim();
 }
 
