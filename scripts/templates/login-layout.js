@@ -222,6 +222,10 @@ export function renderLoginLayout() {
                     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 2l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V5l7-3z"/></svg>
                     Secured with SHA-256 encryption
                 </div>
+                <div class="lp-contact">
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="4" width="16" height="12" rx="2"/><path d="M2 7l8 5 8-5" stroke-linecap="round"/></svg>
+                    <span>Need an account? <a href="mailto:adahm.ahmed@hanwhaegypt.com?subject=PPMS Account Request" class="lp-contact-link">Contact us</a></span>
+                </div>
             </div>
         </div>
 
