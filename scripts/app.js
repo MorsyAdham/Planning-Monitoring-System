@@ -956,6 +956,26 @@ function startCommentNotifSync() {
     function handleCommentUpdate(moduleId, row) {
         const comments = row?.comments;
         if (!Array.isArray(comments)) return;
+
+        // Patch in-memory data so popovers opened afterwards show fresh comments
+        const dataIdx = currentData.findIndex(r => String(r.id) === String(row.id));
+        if (dataIdx >= 0) {
+            currentData[dataIdx] = { ...currentData[dataIdx], comments };
+            // Update comment count badge on the button
+            const commentBtn = document.querySelector(`.btn-f100-comment[data-plan-id="${row.id}"]`);
+            if (commentBtn) {
+                const countEl = commentBtn.querySelector('.f100-comment-count');
+                if (comments.length > 0) {
+                    if (countEl) countEl.textContent = comments.length;
+                    else commentBtn.insertAdjacentHTML('beforeend', `<span class="f100-comment-count">${comments.length}</span>`);
+                } else if (countEl) countEl.remove();
+                commentBtn.title = `${comments.length} comment${comments.length !== 1 ? 's' : ''}`;
+                // If the popover for this plan is currently open, refresh it
+                const openPopover = document.querySelector(`.f100-comments-popover[data-plan-id="${row.id}"]`);
+                if (openPopover) commentBtn.click();
+            }
+        }
+
         const snapKey = _notifSnapKey(moduleId);
         let snap;
         try { snap = JSON.parse(localStorage.getItem(snapKey) || '[]'); } catch { snap = []; }
@@ -2283,6 +2303,7 @@ function wireF100TableEvents(tbody) {
             const row = currentData.find(t => String(t.id) === String(planId));
             const popover = document.createElement('div');
             popover.className = 'f100-comments-popover';
+            popover.dataset.planId = planId;
 
             function formatCommentTime(iso) {
                 try {
@@ -2808,6 +2829,7 @@ function renderTable(data) {
             const row = currentData.find(t => String(t.id) === String(planId));
             const popover = document.createElement('div');
             popover.className = 'f100-comments-popover';
+            popover.dataset.planId = planId;
 
             function formatCommentTime(iso) {
                 try {
@@ -4895,8 +4917,12 @@ function openNotifDropdown() {
                     tr.classList.add('f100-row-highlight');
                     setTimeout(() => tr.classList.remove('f100-row-highlight'), 2000);
                 }
-                const commentBtn = document.querySelector(`.btn-f100-comment[data-plan-id="${planId}"]`);
-                if (commentBtn) commentBtn.click();
+                // Wait for the scroll animation to finish before clicking so the popover
+                // is positioned correctly relative to the button's final location
+                setTimeout(() => {
+                    const commentBtn = document.querySelector(`.btn-f100-comment[data-plan-id="${planId}"]`);
+                    if (commentBtn) commentBtn.click();
+                }, 550);
             }, 400);
         });
     });
@@ -4952,8 +4978,10 @@ function checkNotifJump() {
                 tr.classList.add('f100-row-highlight');
                 setTimeout(() => tr.classList.remove('f100-row-highlight'), 2000);
             }
-            const commentBtn = document.querySelector(`.btn-f100-comment[data-plan-id="${planId}"]`);
-            if (commentBtn) commentBtn.click();
+            setTimeout(() => {
+                const commentBtn = document.querySelector(`.btn-f100-comment[data-plan-id="${planId}"]`);
+                if (commentBtn) commentBtn.click();
+            }, 550);
         }, 500);
     }, 800);
 }
@@ -10344,7 +10372,9 @@ async function loadIssues(reset = false) {
 function resetIssueFilters() {
     ['issueSearch', 'issueFilterCategory', 'issueFilterStatus', 'issueFilterPriority', 'issueFilterReporter', 'issueFilterFrom', 'issueFilterTo'].forEach(id => {
         const el = document.getElementById(id);
-        if (el) el.value = '';
+        if (!el) return;
+        if (el.tagName === 'SELECT') el.selectedIndex = 0;
+        else el.value = '';
     });
     loadIssues(true);
 }
