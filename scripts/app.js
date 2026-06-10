@@ -4689,11 +4689,18 @@ function _issueNotifSnapKey(moduleId) {
 }
 
 function _storeIssueNotification(issueId, moduleId, title, category, reporter, createdAt, isUpdate) {
-    const key = `issue::${issueId}::${createdAt}`;
+    // Key is per-issue-per-event-type (no timestamp) so broadcast and poll don't create duplicates
+    const key = `issue::${issueId}::${isUpdate ? 'update' : 'new'}`;
     const snapKey = _issueNotifSnapKey(moduleId);
     let snap;
     try { snap = JSON.parse(localStorage.getItem(snapKey) || '[]'); } catch { snap = []; }
-    if (snap.some(n => n.key === key)) return;
+    const readSet = _getReadSet();
+    if (readSet.has(key)) {
+        // Already read before — evict so the new event re-notifies
+        snap = snap.filter(n => n.key !== key);
+    } else if (snap.some(n => n.key === key)) {
+        return; // Already pending/unread — don't duplicate
+    }
     snap.push({ key, issueId, type: 'issue', moduleId,
         issue: { title, category, reporter, created_at: createdAt, is_update: isUpdate } });
     try { localStorage.setItem(snapKey, JSON.stringify(snap)); } catch {}
