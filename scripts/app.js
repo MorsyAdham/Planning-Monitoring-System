@@ -28,6 +28,123 @@ function canWrite() { return isAdmin(); }      // admin data edits (start/comple
 function canEditPlan() { return isMasterAdmin() || getCurrentUser()?.role === 'planner'; }  // Gantt plan edits
 function getCachedIP() { return getCurrentUser()?.ip || 'unknown'; }
 
+/* ──────────────────────────────────────────────────────────────────
+   EXPORT PERMISSIONS — only master_admin or allowed users can export
+   ────────────────────────────────────────────────────────────────── */
+let _exportAllowedEmails = null;
+
+async function _loadExportPermissions() {
+    if (!db) return;
+    try {
+        const { data } = await db.from('ppms_export_permissions').select('email');
+        _exportAllowedEmails = (data || []).map(r => r.email.trim().toLowerCase());
+    } catch { _exportAllowedEmails = []; }
+}
+
+async function canExport() {
+    if (isMasterAdmin()) return true;
+    if (_exportAllowedEmails === null) await _loadExportPermissions();
+    const email = getCurrentUser()?.email?.trim().toLowerCase();
+    return !!(email && _exportAllowedEmails?.includes(email));
+}
+
+/* Export Permissions Modal */
+/* Export permissions are shown inside the User Management modal — no standalone modal needed */
+async function loadExportPermList() {
+    const list = document.getElementById('exportPermList');
+    if (!list) return;
+    list.innerHTML = '<li class="exp-perm-empty">Loading…</li>';
+    try {
+        const { data, error } = await db.from('ppms_export_permissions')
+            .select('id, email, note, granted_by, created_at')
+            .order('created_at', { ascending: true });
+        if (error) throw error;
+        if (!data || !data.length) {
+            list.innerHTML = '<li class="exp-perm-empty">No users granted export access yet.</li>';
+            return;
+        }
+        list.innerHTML = data.map(r => `
+            <li class="exp-perm-item">
+                <span class="exp-perm-email">${r.email}</span>
+                ${r.note ? `<span class="exp-perm-note">${r.note}</span>` : ''}
+                <button class="exp-perm-del" data-id="${r.id}" title="Remove">&#x2715;</button>
+            </li>`).join('');
+        list.querySelectorAll('.exp-perm-del').forEach(btn => {
+            btn.addEventListener('click', () => removeExportPerm(Number(btn.dataset.id)));
+        });
+    } catch (e) {
+        list.innerHTML = `<li class="exp-perm-empty" style="color:var(--clr-overdue)">Error: ${e.message}</li>`;
+    }
+}
+async function addExportPerm() {
+    const selectEl = document.getElementById('exportPermUserSelect');
+    const noteEl   = document.getElementById('exportPermNote');
+    const errEl    = document.getElementById('exportPermError');
+    const email    = selectEl?.value.trim().toLowerCase();
+    if (!email) { if (errEl) { errEl.style.display = 'block'; errEl.textContent = 'Please select a user.'; } return; }
+    if (errEl) errEl.style.display = 'none';
+    try {
+        const u = getCurrentUser();
+        const { error } = await db.from('ppms_export_permissions').insert({
+            email, note: noteEl?.value.trim() || null, granted_by: u?.email || null,
+        });
+        if (error) { if (error.code === '23505') throw new Error('This user already has export access.'); throw error; }
+        await auditLog('grant_export', 'ppms_export_permissions', null, null, { email });
+        _exportAllowedEmails = null;
+        if (selectEl) selectEl.value = '';
+        if (noteEl)   noteEl.value   = '';
+        await loadExportPermList();
+        _broadcastExportPermChange();
+        showToast(`Export access granted to ${email}.`, 'success');
+    } catch (e) {
+        if (errEl) { errEl.style.display = 'block'; errEl.textContent = e.message; }
+    }
+}
+async function removeExportPerm(id) {
+    if (!id) return;
+    try {
+        const { data: row } = await db.from('ppms_export_permissions').select('email').eq('id', id).single();
+        const { error } = await db.from('ppms_export_permissions').delete().eq('id', id);
+        if (error) throw error;
+        await auditLog('revoke_export', 'ppms_export_permissions', id, { email: row?.email }, null);
+        _exportAllowedEmails = null;
+        await loadExportPermList();
+        _broadcastExportPermChange();
+        showToast('Export access revoked.', 'success');
+    } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+}
+
+function _applyExportVisibility() {
+    canExport().then(allowed => {
+        const ids = ['btnVpxPdf', 'btnVpxExcel', 'btnExportIssuesExcel', 'btnExportIssuesPDF', 'btnReports'];
+        ids.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = allowed ? '' : 'none';
+        });
+    });
+}
+
+let _exportPermChannel = null;
+function startExportPermSync() {
+    if (!db) return;
+    if (_exportPermChannel) {
+        try { db.removeChannel(_exportPermChannel); } catch {}
+        _exportPermChannel = null;
+    }
+    // Broadcast (not postgres_changes) — works regardless of table replication settings
+    _exportPermChannel = db.channel('ppms-export-perms')
+        .on('broadcast', { event: 'perm_changed' }, async () => {
+            _exportAllowedEmails = null;
+            await _loadExportPermissions();
+            _applyExportVisibility();
+        })
+        .subscribe();
+}
+
+function _broadcastExportPermChange() {
+    _exportPermChannel?.send({ type: 'broadcast', event: 'perm_changed', payload: {} }).catch(() => {});
+}
+
 async function sha256(str) {
     const buf = new TextEncoder().encode(str);
     const hash = await crypto.subtle.digest('SHA-256', buf);
@@ -764,6 +881,7 @@ async function initializeApp() {
     }
 
     wireEvents();
+    _loadExportPermissions().then(() => _applyExportVisibility()).catch(() => {});
     getModuleRuntime()?.initialize?.(db, {
         reloadAll: async () => {
             await loadFilters();
@@ -778,6 +896,15 @@ async function initializeApp() {
     startRealtimeSync();
     startCommentNotifSync();
     startPresenceTracking();
+
+    // Issues section — explicit init after app is fully ready
+    if (typeof initIssuesSection === 'function') {
+        window._issuesSectionModule = getActiveModuleId();
+        initIssuesSection().catch(e => console.warn('initIssuesSection:', e));
+    }
+    startIssueNotifSync();
+    startIssuesPoll();
+    startExportPermSync();
 }
 
 let _realtimeChannel = null;
@@ -1662,6 +1789,17 @@ async function loadData() {
         saveNotifSnapshot();
         updateNotifBadge();
         checkNotifJump();
+
+        // Production Issues — reload when module switches
+        if (typeof loadIssues === 'function' && window._issuesSectionModule !== undefined) {
+            const _mod = getActiveModuleId();
+            if (window._issuesSectionModule !== _mod) {
+                window._issuesSectionModule = _mod;
+                const _repSel = document.getElementById('issueFilterReporter');
+                if (_repSel) { while (_repSel.options.length > 1) _repSel.remove(1); }
+                _populateIssueReporterFilter().catch(() => {}).finally(() => loadIssues(true).catch(() => {}));
+            }
+        }
 
     } catch (err) {
         showToast('Error loading data: ' + err.message, 'error');
@@ -4545,6 +4683,22 @@ function saveNotifSnapshot() {
     try { localStorage.setItem(_notifSnapKey(moduleId), JSON.stringify(snap)); } catch {}
 }
 
+function _issueNotifSnapKey(moduleId) {
+    const u = getCurrentUser();
+    return `ppms_issue_snap_${moduleId}_${u?.email || 'anon'}`;
+}
+
+function _storeIssueNotification(issueId, moduleId, title, category, reporter, createdAt, isUpdate) {
+    const key = `issue::${issueId}::${createdAt}`;
+    const snapKey = _issueNotifSnapKey(moduleId);
+    let snap;
+    try { snap = JSON.parse(localStorage.getItem(snapKey) || '[]'); } catch { snap = []; }
+    if (snap.some(n => n.key === key)) return;
+    snap.push({ key, issueId, type: 'issue', moduleId,
+        issue: { title, category, reporter, created_at: createdAt, is_update: isUpdate } });
+    try { localStorage.setItem(snapKey, JSON.stringify(snap)); } catch {}
+}
+
 function getUnreadNotifications() {
     const readSet = _getReadSet();
     const allSnap = [];
@@ -4553,18 +4707,25 @@ function getUnreadNotifications() {
             const raw = localStorage.getItem(_notifSnapKey(modId));
             if (raw) JSON.parse(raw).forEach(n => allSnap.push(n));
         } catch {}
+        try {
+            const raw = localStorage.getItem(_issueNotifSnapKey(modId));
+            if (raw) JSON.parse(raw).forEach(n => allSnap.push(n));
+        } catch {}
     });
     return allSnap.filter(n => !readSet.has(n.key));
 }
 
 function updateNotifBadge() {
-    const wrap = document.getElementById('f100NotifWrap');
+    const wrap  = document.getElementById('f100NotifWrap');
     const badge = document.getElementById('f100NotifBadge');
     if (!wrap || !badge) return;
+    const unread   = getUnreadNotifications();
     const activeId = getActiveModuleId();
-    if (activeId !== 'f100kd2' && activeId !== 'kd2') { wrap.style.display = 'none'; return; }
+    // Always show bell when there are unread notifications; otherwise only for kd2/f100kd2
+    if (unread.length === 0 && activeId !== 'f100kd2' && activeId !== 'kd2') {
+        wrap.style.display = 'none'; return;
+    }
     wrap.style.display = '';
-    const unread = getUnreadNotifications();
     if (unread.length > 0) {
         badge.textContent = unread.length > 99 ? '99+' : unread.length;
         badge.style.display = '';
@@ -4599,9 +4760,28 @@ function openNotifDropdown() {
         const items = unread.map(n => {
             const isCrossModule = n.moduleId && n.moduleId !== currentModuleId;
             const modLabel = _moduleLabel(n.moduleId || currentModuleId);
+
+            if (n.type === 'issue') {
+                const cat = ISSUE_CATEGORY_LABELS?.[n.issue?.category] || n.issue?.category || '';
+                const action = n.issue?.is_update ? 'Issue updated' : 'New issue';
+                return `
+                <div class="f100-notif-item f100-notif-item--issue${isCrossModule ? ' f100-notif-item-cross' : ''}"
+                    data-issue-id="${n.issueId}" data-key="${esc(n.key)}" data-module-id="${esc(n.moduleId || currentModuleId)}" data-type="issue">
+                    <div class="f100-notif-item-meta">
+                        <span class="f100-notif-issue-tag">${action}</span>
+                        <span class="f100-notif-module-badge">${esc(modLabel)}</span>
+                        <span class="f100-notif-item-time">${formatCommentTime(n.issue?.created_at)}</span>
+                    </div>
+                    <div class="f100-notif-item-context">${esc(cat)}</div>
+                    <div class="f100-notif-item-text">${esc(n.issue?.title || '—')}</div>
+                    <div class="f100-notif-item-context" style="margin-top:2px">By ${esc(n.issue?.reporter || '?')}</div>
+                    ${isCrossModule ? `<div class="f100-notif-item-switch">Click to switch to ${esc(modLabel)} →</div>` : ''}
+                </div>`;
+            }
+
             const ctx = [n.rowInfo?.vehicle, n.rowInfo?.unit, n.rowInfo?.process].filter(Boolean).join(' · ');
             return `
-            <div class="f100-notif-item${isCrossModule ? ' f100-notif-item-cross' : ''}" data-plan-id="${n.planId}" data-key="${esc(n.key)}" data-module-id="${esc(n.moduleId || currentModuleId)}">
+            <div class="f100-notif-item${isCrossModule ? ' f100-notif-item-cross' : ''}" data-plan-id="${n.planId}" data-key="${esc(n.key)}" data-module-id="${esc(n.moduleId || currentModuleId)}" data-type="comment">
                 <div class="f100-notif-item-meta">
                     <strong>${esc(n.comment.user || '?')}</strong>
                     <span class="f100-notif-module-badge">${esc(modLabel)}</span>
@@ -4641,7 +4821,7 @@ function openNotifDropdown() {
     // Click a notification: mark read, then navigate (same or cross module)
     dropdown.querySelectorAll('.f100-notif-item').forEach(item => {
         item.addEventListener('click', () => {
-            const planId = item.dataset.planId;
+            const notifType = item.dataset.type || 'comment';
             const key = item.dataset.key;
             const targetModuleId = item.dataset.moduleId || currentModuleId;
             const isCross = targetModuleId !== currentModuleId;
@@ -4651,6 +4831,37 @@ function openNotifDropdown() {
             _saveReadSet(readSet);
             dropdown.remove();
             updateNotifBadge();
+
+            if (notifType === 'issue') {
+                const issueId = item.dataset.issueId;
+                if (isCross) {
+                    const currentLabel = _moduleLabel(currentModuleId);
+                    const targetLabel  = _moduleLabel(targetModuleId);
+                    const confirmed = window.confirm(
+                        `You are currently in ${currentLabel}.\n\nThis issue is from ${targetLabel}.\n\nSwitch to ${targetLabel} to view it?`
+                    );
+                    if (!confirmed) return;
+                    try { sessionStorage.setItem('ppms_notif_issue_jump', issueId); } catch {}
+                    getModuleRuntime()?.setActiveModule?.(targetModuleId);
+                    window.location.reload();
+                    return;
+                }
+                // Same module: scroll to issues section, highlight row, open view modal
+                const issuesSection = document.getElementById('issuesSection');
+                if (issuesSection) issuesSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                setTimeout(() => {
+                    const tr = document.querySelector(`#issuesTableBody tr[data-issue-id="${issueId}"]`);
+                    if (tr) {
+                        tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        tr.classList.add('f100-row-highlight');
+                        setTimeout(() => tr.classList.remove('f100-row-highlight'), 2500);
+                    }
+                    if (typeof openIssueView === 'function') openIssueView(issueId);
+                }, 400);
+                return;
+            }
+
+            const planId = item.dataset.planId;
 
             if (isCross) {
                 // Cross-module: show confirmation dialog then switch
@@ -4691,8 +4902,32 @@ function openNotifDropdown() {
     }), 0);
 }
 
-// After a cross-module notification jump, open the target comment popover
+// After a cross-module notification jump, open the target comment popover or issue view
 function checkNotifJump() {
+    // Issue jump
+    let issueId;
+    try {
+        issueId = sessionStorage.getItem('ppms_notif_issue_jump');
+        if (issueId) sessionStorage.removeItem('ppms_notif_issue_jump');
+    } catch {}
+    if (issueId) {
+        setTimeout(() => {
+            const issuesSection = document.getElementById('issuesSection');
+            if (issuesSection) issuesSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            setTimeout(() => {
+                const tr = document.querySelector(`#issuesTableBody tr[data-issue-id="${issueId}"]`);
+                if (tr) {
+                    tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    tr.classList.add('f100-row-highlight');
+                    setTimeout(() => tr.classList.remove('f100-row-highlight'), 2500);
+                }
+                if (typeof openIssueView === 'function') openIssueView(issueId);
+            }, 500);
+        }, 800);
+        return;
+    }
+
+    // Comment jump
     let planId;
     try {
         planId = sessionStorage.getItem('ppms_notif_jump');
@@ -5010,6 +5245,102 @@ function wireEvents() {
 
     // Table fullscreen
     document.getElementById('btnTableFullscreen')?.addEventListener('click', toggleTableFullscreen);
+
+    // Production Issues
+    document.getElementById('btnAddIssue')?.addEventListener('click', () => openIssueModal());
+    document.getElementById('btnIssueEdit')?.addEventListener('click', function() {
+        const id = this.dataset.issueId;
+        if (id) { _closeIssueModal(); openIssueModal(Number(id)); }
+    });
+    document.getElementById('btnIssueSave')?.addEventListener('click', saveIssue);
+    document.getElementById('btnIssueCancel')?.addEventListener('click', () => _closeIssueModal());
+    document.getElementById('issueModalClose')?.addEventListener('click', () => _closeIssueModal());
+    document.getElementById('issueModalOverlay')?.addEventListener('click', function (e) {
+        if (e.target === this) _closeIssueModal();
+    });
+    document.getElementById('btnIssueDelete')?.addEventListener('click', () => {
+        const id = document.getElementById('issueModalOverlay')?.dataset?.editId;
+        if (id) deleteIssue(id);
+    });
+    document.getElementById('btnIssueApply')?.addEventListener('click', () => loadIssues(true));
+    document.getElementById('btnIssueReset')?.addEventListener('click', resetIssueFilters);
+    document.getElementById('issueSearch')?.addEventListener('keydown', e => {
+        if (e.key === 'Enter') loadIssues(true);
+    });
+    document.getElementById('btnExportIssuesExcel')?.addEventListener('click', exportIssuesExcel);
+    document.getElementById('btnExportIssuesPDF')?.addEventListener('click', exportIssuesPDF);
+
+    // ── More menu toggle ──────────────────────────────────────────────
+    const btnNavMore  = document.getElementById('btnNavMore');
+    const moreDropdown = document.getElementById('navMoreDropdown');
+    if (btnNavMore && moreDropdown) {
+        btnNavMore.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const open = moreDropdown.style.display !== 'none';
+            moreDropdown.style.display = open ? 'none' : 'block';
+            btnNavMore.setAttribute('aria-expanded', String(!open));
+        });
+        document.addEventListener('click', (e) => {
+            if (!moreDropdown.contains(e.target) && e.target !== btnNavMore) {
+                moreDropdown.style.display = 'none';
+                btnNavMore.setAttribute('aria-expanded', 'false');
+            }
+        });
+    }
+
+    // Close more menu when any item inside is clicked
+    moreDropdown?.addEventListener('click', () => {
+        moreDropdown.style.display = 'none';
+        btnNavMore?.setAttribute('aria-expanded', 'false');
+    });
+
+    // ── Export Permissions (inside User Management modal) ─────────────
+    document.getElementById('btnExportPermAdd')?.addEventListener('click', addExportPerm);
+    document.getElementById('exportPermEmail')?.addEventListener('keydown', e => {
+        if (e.key === 'Enter') addExportPerm();
+    });
+
+    // ── Section navigation ────────────────────────────────────────────
+    document.querySelectorAll('.section-nav-link').forEach(link => {
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            const targetId = link.dataset.target;
+            const el = document.getElementById(targetId);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    });
+
+    // Active section highlight on scroll
+    const _navLinks = Array.from(document.querySelectorAll('.section-nav-link'));
+    const _navSections = _navLinks.map(l => document.getElementById(l.dataset.target)).filter(Boolean);
+    if (_navSections.length) {
+        const _onScroll = () => {
+            const scrollY = window.scrollY + 100;
+            let active = _navSections[0];
+            for (const sec of _navSections) {
+                if (sec.getBoundingClientRect().top + window.scrollY <= scrollY) active = sec;
+            }
+            _navLinks.forEach(l => {
+                const isActive = l.dataset.target === active?.id;
+                l.classList.toggle('section-nav-link--active', isActive);
+            });
+        };
+        window.addEventListener('scroll', _onScroll, { passive: true });
+        _onScroll();
+    }
+
+    // ── Scroll-to-top ─────────────────────────────────────────────────
+    const scrollTopBtn = document.getElementById('scrollTopBtn');
+    if (scrollTopBtn) {
+        window.addEventListener('scroll', () => {
+            const show = window.scrollY > 320;
+            scrollTopBtn.style.display = show ? 'flex' : 'none';
+            scrollTopBtn.classList.toggle('visible', show);
+        }, { passive: true });
+        scrollTopBtn.addEventListener('click', () => {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+    }
 }
 
 function resetFilters() {
@@ -6727,6 +7058,19 @@ const REPORT_TYPES = {
     analytics: { label: 'Station Analytics', filter: () => true },
 };
 
+/* ─── Merged route-order map for reports (min seq across all vehicles) ─ */
+function getReportRouteOrder() {
+    const rt = getModuleRuntime();
+    if (!rt?.getStationRouteOrder) return new Map();
+    const merged = new Map();
+    ['K9', 'K10', 'K11'].forEach(v => {
+        rt.getStationRouteOrder(v).forEach((seq, name) => {
+            if (!merged.has(name) || seq < merged.get(name)) merged.set(name, seq);
+        });
+    });
+    return merged;
+}
+
 /* ─── Build the row array for a report ─────────────────────────── */
 function buildReportRows(typeKey, fromDate, toDate, category) {
     const def = REPORT_TYPES[typeKey];
@@ -6748,13 +7092,15 @@ function buildReportRows(typeKey, fromDate, toDate, category) {
     // Sort: Battalion → Vehicle → Unit → Station (starting from the report's primary grouping field)
     const cmp = (a, b) => String(a || '').localeCompare(String(b || ''), undefined, { numeric: true, sensitivity: 'base' });
     if (isKD2Module()) {
+        const routeOrder = getReportRouteOrder();
+        const stationCmp = (a, b) => (routeOrder.get(a.process_station) ?? 9999) - (routeOrder.get(b.process_station) ?? 9999) || cmp(a.process_station, b.process_station);
         const startFromBattalion = ['full', 'battalion'].includes(typeKey);
         rows = [...rows].sort((a, b) => {
             if (startFromBattalion) {
                 const bc = cmp(a.battalion_code, b.battalion_code);
                 if (bc !== 0) return bc;
             }
-            return cmp(a.vehicle, b.vehicle) || cmp(a.vehicle_no, b.vehicle_no) || cmp(a.process_station, b.process_station);
+            return cmp(a.vehicle, b.vehicle) || cmp(a.vehicle_no, b.vehicle_no) || stationCmp(a, b);
         });
     } else if (!isF100KD2Module()) {
         rows = [...rows].sort((a, b) =>
@@ -6842,10 +7188,12 @@ function buildKD2AnalyticsRows(rows) {
         }
         stationMap.get(key).rows.push(r);
     });
+    const routeOrder = getReportRouteOrder();
     return [...stationMap.values()]
         .sort((a, b) => {
-            const cc = String(a.category).localeCompare(String(b.category));
-            return cc !== 0 ? cc : String(a.station).localeCompare(String(b.station));
+            const ra = routeOrder.get(a.station) ?? 9999;
+            const rb = routeOrder.get(b.station) ?? 9999;
+            return ra - rb || String(a.category).localeCompare(String(b.category)) || String(a.station).localeCompare(String(b.station));
         })
         .map(({ station, category, rows: sr }) => {
             const s = buildSummaryStats(sr);
@@ -6898,7 +7246,8 @@ function buildSummaryStats(rows) {
 /* ══════════════════════════════════════════════════════════════════
    PDF EXPORT  — white / print-friendly theme
    ══════════════════════════════════════════════════════════════════ */
-function exportPDF(typeKey, fromDate, toDate, category) {
+async function exportPDF(typeKey, fromDate, toDate, category) {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (isKD2Module() && typeKey === 'analytics') {
         return exportKD2AnalyticsPDF(fromDate, toDate, category);
     }
@@ -6929,37 +7278,38 @@ function exportPDF(typeKey, fromDate, toDate, category) {
     const moduleTitle = getModuleReportTitle();
     const moduleSubtitle = getModuleReportSubtitle();
 
-    // ── White page background ─────────────────────────────────────────
-    doc.setFillColor(255, 255, 255);
-    doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
-
-    // ── Header band — navy blue accent bar ───────────────────────────
-    doc.setFillColor(30, 58, 138);      // navy
-    doc.rect(0, 0, PAGE_W, 20, 'F');
+    // ── White header with blue accent stripe ─────────────────────────
+    doc.setFillColor(248, 250, 252);
+    doc.rect(0, 0, PAGE_W, 22, 'F');
+    doc.setFillColor(37, 99, 235);
+    doc.rect(0, 0, 4, 22, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(0, 22, PAGE_W, 22);
 
     // Module badge box
-    doc.setFillColor(59, 130, 246);
-    doc.roundedRect(MARGIN, 4, 18, 12, 2, 2, 'F');
+    doc.setFillColor(37, 99, 235);
+    doc.roundedRect(MARGIN + 2, 4, 18, 12, 2, 2, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
-    doc.text(moduleBadge, MARGIN + 9, 11.5, { align: 'center' });
+    doc.text(moduleBadge, MARGIN + 11, 11.5, { align: 'center' });
 
     // Title
     doc.setFontSize(13);
-    doc.setTextColor(255, 255, 255);
-    doc.text(moduleTitle, MARGIN + 22, 10);
+    doc.setTextColor(15, 23, 42);
+    doc.text(moduleTitle, MARGIN + 24, 10);
 
     // Sub-title / report label
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
-    doc.setTextColor(147, 197, 253);   // light blue
-    doc.text(`${moduleSubtitle.toUpperCase()} · ${def.label.toUpperCase()}`, MARGIN + 22, 16);
+    doc.setTextColor(37, 99, 235);
+    doc.text(`${moduleSubtitle.toUpperCase()} · ${def.label.toUpperCase()}`, MARGIN + 24, 17);
 
     // Generated timestamp (right-aligned)
     doc.setFontSize(7.5);
-    doc.setTextColor(186, 230, 253);
-    doc.text(`Generated: ${now}`, PAGE_W - MARGIN, 16, { align: 'right' });
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Generated: ${now}`, PAGE_W - MARGIN, 17, { align: 'right' });
 
     // ── Active filter chips (vehicle / category / date) ───────────────
     let chipX = MARGIN;
@@ -7056,8 +7406,8 @@ function exportPDF(typeKey, fromDate, toDate, category) {
             overflow: 'linebreak',
         },
         headStyles: {
-            fillColor: [30, 58, 138],      // navy — matches header bar
-            textColor: [255, 255, 255],
+            fillColor: [30, 58, 138],
+            textColor: [241, 245, 249],
             fontStyle: 'bold',
             fontSize: 7,
             halign: 'center',
@@ -7194,6 +7544,7 @@ function exportPDF(typeKey, fromDate, toDate, category) {
    EXCEL EXPORT
    ══════════════════════════════════════════════════════════════════ */
 async function exportExcel(typeKey, fromDate, toDate, category) {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (isKD2Module() && typeKey === 'analytics') {
         return exportKD2AnalyticsExcel(fromDate, toDate, category);
     }
@@ -7582,27 +7933,31 @@ function exportKD2AnalyticsPDF(fromDate, toDate, category) {
     const moduleBadge = getModuleBadge();
     const moduleTitle = getModuleReportTitle();
 
-    doc.setFillColor(255, 255, 255);
-    doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
+    // ── White header with blue accent stripe ─────────────────────────
+    doc.setFillColor(248, 250, 252);
+    doc.rect(0, 0, PAGE_W, 22, 'F');
+    doc.setFillColor(37, 99, 235);
+    doc.rect(0, 0, 4, 22, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(0, 22, PAGE_W, 22);
 
-    // Header band
-    doc.setFillColor(30, 58, 138);
-    doc.rect(0, 0, PAGE_W, 20, 'F');
-    doc.setFillColor(59, 130, 246);
-    doc.roundedRect(MARGIN, 4, 18, 12, 2, 2, 'F');
+    doc.setFillColor(37, 99, 235);
+    doc.roundedRect(MARGIN + 2, 4, 18, 12, 2, 2, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
-    doc.text(moduleBadge, MARGIN + 9, 11.5, { align: 'center' });
+    doc.text(moduleBadge, MARGIN + 11, 11.5, { align: 'center' });
     doc.setFontSize(13);
-    doc.text(moduleTitle, MARGIN + 22, 10);
+    doc.setTextColor(15, 23, 42);
+    doc.text(moduleTitle, MARGIN + 24, 10);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
-    doc.setTextColor(147, 197, 253);
-    doc.text('STATION ANALYTICS · PLAN VS ACTUAL TIMING · DELAY SUMMARY', MARGIN + 22, 16);
+    doc.setTextColor(37, 99, 235);
+    doc.text('STATION ANALYTICS · PLAN VS ACTUAL TIMING · DELAY SUMMARY', MARGIN + 24, 17);
     doc.setFontSize(7.5);
-    doc.setTextColor(186, 230, 253);
-    doc.text(`Generated: ${now}`, PAGE_W - MARGIN, 16, { align: 'right' });
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Generated: ${now}`, PAGE_W - MARGIN, 17, { align: 'right' });
 
     // Filter chips
     const chips = [];
@@ -7662,7 +8017,7 @@ function exportKD2AnalyticsPDF(fromDate, toDate, category) {
         head: [headers], body,
         margin: { left: MARGIN, right: MARGIN },
         styles: { fontSize: 7.5, cellPadding: 2.5, font: 'helvetica', textColor: [30, 41, 59], fillColor: [255, 255, 255], lineColor: [226, 232, 240], lineWidth: 0.25, overflow: 'linebreak' },
-        headStyles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7, halign: 'center' },
+        headStyles: { fillColor: [30, 58, 138], textColor: [241, 245, 249], fontStyle: 'bold', fontSize: 7, halign: 'center' },
         alternateRowStyles: { fillColor: [248, 250, 252] },
         columnStyles: {
             0: { cellWidth: 44 }, 1: { cellWidth: 22 },
@@ -7743,6 +8098,7 @@ async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
     const wb = new ExcelJS.Workbook();
     wb.creator = `${moduleBadge} ${moduleTitle}`; wb.created = new Date();
 
+    // ── Sheet 1: Station Analytics ────────────────────────────────
     const ws = wb.addWorksheet('Station Analytics', {
         pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
         views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }],
@@ -7757,11 +8113,13 @@ async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
     ];
     ws.columns = ACOLS.map(c => ({ width: c.w }));
 
+    // Title
     ws.addRow([`${moduleBadge} · Station Analytics`]);
     ws.mergeCells(1, 1, 1, ACOLS.length);
     Object.assign(ws.getCell(1,1), { font:{name:'Calibri',size:15,bold:true,color:{argb:NAV}}, fill:{type:'pattern',pattern:'solid',fgColor:{argb:WHITE}}, alignment:{vertical:'middle'} });
     ws.getRow(1).height = 26;
 
+    // Filters row
     const fBattalion = getVal('filterBattalion'), fVehicle = getVal('filterVehicle');
     const fc = [...(fBattalion?[`Battalion: ${fBattalion}`]:[]), ...(fVehicle?[`Vehicle Type: ${fVehicle}`]:[]), ...(category?[`Category: ${category}`]:[]), ...((fromDate||toDate)?[`Dates: ${fromDate||'…'} → ${toDate||'…'}`]:[])];
     ws.addRow(['Filters: ' + (fc.length ? fc.join('   |   ') : 'All data') + '     Generated: ' + new Date().toLocaleString('en-GB')]);
@@ -7770,6 +8128,7 @@ async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
     ws.getRow(2).height = 14;
     ws.addRow([]); ws.getRow(3).height = 5;
 
+    // Headers
     ws.addRow(ACOLS.map(c => c.h));
     ws.getRow(4).height = 18;
     ACOLS.forEach((_, ci) => {
@@ -7780,6 +8139,7 @@ async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
         cell.border = hbdr();
     });
 
+    // Data rows
     aRows.forEach((ar, ri) => {
         const rowBg = ri % 2 === 1 ? ALT : WHITE;
         ws.addRow([ ar.station, ar.category, ar.total, ar.completed, ar.inProgress, ar.overdue, ar.late,
@@ -7798,15 +8158,15 @@ async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
             let align = { horizontal: ci < 2 ? 'left' : 'center', vertical:'middle', indent: ci < 2 ? 1 : 0 };
             if (ci === 0) { font = { ...font, bold:true }; }
             else if (ci === 1) { font = { ...font, italic:true, color:{argb:MUTE} }; }
-            else if (ci === 7) {
+            else if (ci === 7) { // % Done
                 const pct = parseInt(val);
                 const clr = pct >= 80 ? ST['Completed'] : pct >= 40 ? ST['In Progress'] : ST['Overdue'];
                 font = { name:'Calibri', size:8, bold:true, color:{argb:clr.fg} };
                 fill = { type:'pattern', pattern:'solid', fgColor:{argb:clr.bg} };
-            } else if (ci === 5 && parseInt(val) > 0) {
+            } else if (ci === 5 && parseInt(val) > 0) { // Overdue count
                 font = { name:'Calibri', size:8, bold:true, color:{argb:'FF991b1b'} };
                 fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FFfee2e2'} };
-            } else if (ci === 10 || ci === 11) {
+            } else if (ci === 10 || ci === 11) { // Avg/Max Delay
                 const late = val.startsWith('+');
                 font = { name:'Calibri', size:8, bold:late, color:{argb: late ? 'FF991b1b' : 'FF475569'} };
                 fill = { type:'pattern', pattern:'solid', fgColor:{argb: late ? 'FFfee2e2' : rowBg} };
@@ -7815,7 +8175,7 @@ async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
         });
     });
 
-    // Summary sheet
+    // ── Sheet 2: Overall Summary ──────────────────────────────────
     const wsSumm = wb.addWorksheet('Summary');
     wsSumm.columns = [{ width:24 }, { width:16 }, { width:14 }];
     wsSumm.addRow([`${moduleBadge} · Station Analytics`]);
@@ -7827,29 +8187,34 @@ async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
     wsSumm.getCell(2,1).font = { name:'Calibri', size:8, italic:true, color:{argb:MUTE} };
     wsSumm.getRow(2).height = 14;
     wsSumm.addRow([]); wsSumm.getRow(3).height = 8;
-    const shRow = wsSumm.addRow(['Metric', 'Count', '% of Total']); shRow.height = 17;
+
+    const shRow = wsSumm.addRow(['Metric', 'Count', '% of Total']);
+    shRow.height = 17;
     [1,2,3].forEach(c => {
         const cell = wsSumm.getCell(shRow.number, c);
         cell.font = { name:'Calibri', size:9, bold:true, color:{argb:WHITE} };
         cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAV} };
-        cell.alignment = { horizontal:'center', vertical:'middle' }; cell.border = hbdr();
+        cell.alignment = { horizontal:'center', vertical:'middle' };
+        cell.border = hbdr();
     });
+
     [
-        { label:'Total Tasks',      val:stats.total,      pct:'100%',                                                 bg:'FFf1f5f9', fg:NAV },
-        { label:'Completed',        val:stats.completed,  pct:Math.round(stats.completed/stats.total*100)+'%',        bg:ST['Completed'].bg,       fg:ST['Completed'].fg },
-        { label:'In Progress',      val:stats.inProgress, pct:Math.round(stats.inProgress/stats.total*100)+'%',       bg:ST['In Progress'].bg,     fg:ST['In Progress'].fg },
-        { label:'Planned',          val:stats.planned,    pct:Math.round(stats.planned/stats.total*100)+'%',          bg:ST['Planned'].bg,         fg:ST['Planned'].fg },
-        { label:'Overdue',          val:stats.overdue,    pct:Math.round(stats.overdue/stats.total*100)+'%',          bg:ST['Overdue'].bg,         fg:ST['Overdue'].fg },
-        { label:'Late Completion',  val:stats.late,       pct:Math.round(stats.late/stats.total*100)+'%',             bg:ST['Late Completion'].bg, fg:ST['Late Completion'].fg },
-        { label:'Stations Analysed',val:aRows.length,     pct:'',                                                     bg:'FFe0f2fe', fg:'FF0369a1' },
-        { label:'Overall Progress', val:stats.pct+'%',    pct:'',                                                     bg:'FFe0f2fe', fg:'FF0369a1' },
+        { label:'Total Tasks',      val:stats.total,      pct:'100%',                                                          bg:'FFf1f5f9', fg:NAV },
+        { label:'Completed',        val:stats.completed,  pct:Math.round(stats.completed/stats.total*100)+'%',                 bg:ST['Completed'].bg,       fg:ST['Completed'].fg },
+        { label:'In Progress',      val:stats.inProgress, pct:Math.round(stats.inProgress/stats.total*100)+'%',               bg:ST['In Progress'].bg,     fg:ST['In Progress'].fg },
+        { label:'Planned',          val:stats.planned,    pct:Math.round(stats.planned/stats.total*100)+'%',                  bg:ST['Planned'].bg,         fg:ST['Planned'].fg },
+        { label:'Overdue',          val:stats.overdue,    pct:Math.round(stats.overdue/stats.total*100)+'%',                  bg:ST['Overdue'].bg,         fg:ST['Overdue'].fg },
+        { label:'Late Completion',  val:stats.late,       pct:Math.round(stats.late/stats.total*100)+'%',                     bg:ST['Late Completion'].bg, fg:ST['Late Completion'].fg },
+        { label:'Stations Analysed',val:aRows.length,     pct:'',                                                             bg:'FFe0f2fe', fg:'FF0369a1' },
+        { label:'Overall Progress', val:stats.pct+'%',    pct:'',                                                             bg:'FFe0f2fe', fg:'FF0369a1' },
     ].forEach(sr => {
         const row = wsSumm.addRow([sr.label, sr.val, sr.pct]); row.height = 18;
         [1,2,3].forEach(c => {
             const cell = wsSumm.getCell(row.number, c);
             cell.font = { name:'Calibri', size:9, bold:c===1, color:{argb:sr.fg} };
             cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:sr.bg} };
-            cell.alignment = { horizontal:c===1?'left':'center', vertical:'middle', indent:c===1?1:0 }; cell.border = bdr();
+            cell.alignment = { horizontal:c===1?'left':'center', vertical:'middle', indent:c===1?1:0 };
+            cell.border = bdr();
         });
     });
 
@@ -8229,7 +8594,8 @@ async function exportF100VpxExcel() {
     }
 }
 
-function exportVpxPDF() {
+async function exportVpxPDF() {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (isF100KD2Module()) { exportF100VpxPDF(); return; }
     if (!currentData?.length) {
         showToast('No data to export.', 'error');
@@ -8475,6 +8841,7 @@ function exportVpxPDF() {
    VPX EXCEL EXPORT  (ExcelJS — full cell styling)
    ────────────────────────────────────────────────────────────────── */
 async function exportVpxExcel() {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (isF100KD2Module()) { await exportF100VpxExcel(); return; }
     if (!currentData?.length) { showToast('No data to export.', 'error'); return; }
     if (typeof ExcelJS === 'undefined') {
@@ -9338,6 +9705,23 @@ async function deleteUnitCode(id) {
 function openUserMgmt() {
     document.getElementById('userMgmtOverlay').style.display = 'flex';
     loadUserList();
+    loadExportPermList();
+    _populateExportPermUserSelect();
+}
+
+async function _populateExportPermUserSelect() {
+    const sel = document.getElementById('exportPermUserSelect');
+    if (!sel || !db) return;
+    try {
+        const { data } = await db.from('planning_app_users')
+            .select('email, full_name')
+            .eq('is_active', true)
+            .order('full_name', { ascending: true });
+        sel.innerHTML = '<option value="">— Select a user —</option>' +
+            (data || []).map(u =>
+                `<option value="${u.email}">${u.full_name ? `${u.full_name} (${u.email})` : u.email}</option>`
+            ).join('');
+    } catch { /* silently skip */ }
 }
 function closeUserMgmt() {
     document.getElementById('userMgmtOverlay').style.display = 'none';
@@ -9472,19 +9856,42 @@ async function deleteUser(userId, name) {
 let _auditTotal = 0;
 const _diffStore = {};
 
-function openAuditLog() {
+async function openAuditLog() {
     document.getElementById('auditLogOverlay').style.display = 'flex';
     _auditLogOffset = 0;
+    await populateAuditUserFilter();
     loadAuditLog(true);
+}
+
+async function populateAuditUserFilter() {
+    const sel = document.getElementById('alFilterUser');
+    if (!sel || sel.options.length > 1) return; // already populated
+    try {
+        const { data } = await db.from('planning_app_users').select('email, full_name').order('email');
+        (data || []).forEach(u => {
+            const opt = document.createElement('option');
+            opt.value = u.email;
+            opt.textContent = u.full_name ? `${u.full_name} (${u.email})` : u.email;
+            sel.appendChild(opt);
+        });
+    } catch (_) {}
 }
 function closeAuditLog() {
     document.getElementById('auditLogOverlay').style.display = 'none';
 }
 
+const AL_TABLE_LABELS = {
+    kd2_plan: 'KD2 Plan', kd2_progress: 'KD2 Progress', kd2_battalions: 'KD2 Battalions',
+    assembly_plan: 'F100 Plan', assembly_progress: 'F100 Progress', f100_plans: 'F100 Plans',
+    planning_app_users: 'Users',
+};
+
 function resetAuditFilters() {
     document.getElementById('alFilterAction').value = '';
     document.getElementById('alFilterTable').value = '';
-    document.getElementById('alFilterDate').value = '';
+    const alUser = document.getElementById('alFilterUser'); if (alUser) alUser.selectedIndex = 0;
+    document.getElementById('alFilterDateFrom').value = '';
+    document.getElementById('alFilterDateTo').value = '';
     _auditLogOffset = 0;
     loadAuditLog(true);
 }
@@ -9492,10 +9899,12 @@ function resetAuditFilters() {
 async function loadAuditLog(reset = false) {
     if (reset) _auditLogOffset = 0;
 
-    const action = document.getElementById('alFilterAction').value;
-    const table = document.getElementById('alFilterTable').value;
-    const date = document.getElementById('alFilterDate').value;
-    const tbody = document.getElementById('alTableBody');
+    const action   = document.getElementById('alFilterAction')?.value || '';
+    const table    = document.getElementById('alFilterTable')?.value || '';
+    const user     = document.getElementById('alFilterUser')?.value?.trim() || '';
+    const dateFrom = document.getElementById('alFilterDateFrom')?.value || '';
+    const dateTo   = document.getElementById('alFilterDateTo')?.value || '';
+    const tbody    = document.getElementById('alTableBody');
 
     if (reset) {
         tbody.innerHTML = `<tr><td colspan="8" class="table-empty"><div class="empty-state"><span class="spinner"></span><p>Loading…</p></div></td></tr>`;
@@ -9507,11 +9916,11 @@ async function loadAuditLog(reset = false) {
         .order('created_at', { ascending: false })
         .range(_auditLogOffset, _auditLogOffset + AUDIT_PAGE_SIZE - 1);
 
-    if (action) query = query.eq('action', action);
-    if (table) query = query.eq('table_name', table);
-    if (date) query = query
-        .gte('created_at', date + 'T00:00:00')
-        .lte('created_at', date + 'T23:59:59');
+    if (action)   query = query.eq('action', action);
+    if (table)    query = query.eq('table_name', table);
+    if (user)     query = query.eq('user_email', user);
+    if (dateFrom) query = query.gte('created_at', dateFrom + 'T00:00:00');
+    if (dateTo)   query = query.lte('created_at', dateTo   + 'T23:59:59');
 
     const { data, count, error } = await query;
 
@@ -9521,29 +9930,28 @@ async function loadAuditLog(reset = false) {
     }
 
     _auditTotal = count || 0;
-    document.getElementById('alEntryCount').textContent = `${_auditTotal} entries`;
+    const countEl = document.getElementById('alEntryCount');
+    if (countEl) countEl.textContent = `${_auditTotal.toLocaleString()} entr${_auditTotal === 1 ? 'y' : 'ies'}`;
 
     const rows = (data || []).map((entry, idx) => {
         const hasDiff = entry.data_before || entry.data_after;
         const dt = new Date(entry.created_at);
         const rowId = `al-row-${_auditLogOffset + idx}`;
         if (hasDiff) _diffStore[rowId] = { before: entry.data_before, after: entry.data_after };
+        const moduleLabel = AL_TABLE_LABELS[entry.table_name] || entry.table_name || '—';
+        const role = entry.user_role || 'viewer';
         return `
     <tr id="${rowId}">
-      <td class="mono" style="font-size:.75rem;white-space:nowrap">
-        ${dt.toLocaleDateString('en-GB')} ${dt.toLocaleTimeString('en-GB', { hour12: false })}
-      </td>
-      <td style="font-size:.8rem">${esc(entry.user_email)}</td>
-      <td><span class="role-pill ${entry.user_role}">${entry.user_role.replace('_', ' ')}</span></td>
+      <td class="mono al-cell-date">${dt.toLocaleDateString('en-GB')} <span class="al-time">${dt.toLocaleTimeString('en-GB', { hour12: false })}</span></td>
+      <td class="al-cell-user" title="${esc(entry.user_email || '')}">${esc(entry.user_email || '—')}</td>
+      <td><span class="role-pill ${role}">${role.replace(/_/g, ' ')}</span></td>
       <td><span class="al-action ${entry.action}">${entry.action}</span></td>
-      <td class="mono" style="font-size:.75rem;color:var(--clr-text-muted)">${esc(entry.table_name || '—')}</td>
-      <td class="mono" style="font-size:.75rem;color:var(--clr-text-muted)">${esc(entry.record_id || '—')}</td>
-      <td class="mono" style="font-size:.75rem;color:var(--clr-text-muted)">${esc(entry.ip_address || '—')}</td>
-      <td>
-        ${hasDiff
-                ? `<button class="al-diff-btn" onclick="toggleDiff(this,'${rowId}')">View diff</button>`
-                : '<span style="color:var(--clr-text-dim);font-size:.75rem">—</span>'}
-      </td>
+      <td class="al-cell-module">${esc(moduleLabel)}</td>
+      <td class="mono al-cell-record" title="${esc(entry.record_id || '')}">${esc(entry.record_id || '—')}</td>
+      <td class="mono al-cell-ip">${esc(entry.ip_address || '—')}</td>
+      <td>${hasDiff
+            ? `<button class="al-diff-btn" onclick="toggleDiff(this,'${rowId}')">View changes</button>`
+            : '<span class="al-no-diff">—</span>'}</td>
     </tr>`;
     });
 
@@ -9565,30 +9973,1126 @@ async function loadAuditLog(reset = false) {
 
 function toggleDiff(btn, rowId) {
     const existing = document.getElementById('diff-' + rowId);
-    if (existing) { existing.remove(); btn.textContent = 'View diff'; return; }
+    if (existing) { existing.remove(); btn.textContent = 'View changes'; return; }
 
-    btn.textContent = 'Hide diff';
+    btn.textContent = 'Hide changes';
     const { before, after } = _diffStore[rowId] || {};
     const tr = document.getElementById(rowId);
     const diffRow = document.createElement('tr');
     diffRow.id = 'diff-' + rowId;
     diffRow.className = 'al-diff-row';
+
+    const allKeys = [...new Set([...Object.keys(before || {}), ...Object.keys(after || {})])];
+    const changed = allKeys.filter(k => JSON.stringify((before || {})[k]) !== JSON.stringify((after || {})[k]));
+    const unchanged = allKeys.filter(k => !changed.includes(k));
+
+    const renderVal = v => v === null ? '<em class="al-diff-null">null</em>'
+        : v === undefined ? '<em class="al-diff-null">—</em>'
+        : `<span>${esc(typeof v === 'object' ? JSON.stringify(v) : String(v))}</span>`;
+
+    const fieldRows = [
+        ...changed.map(k => `
+            <tr class="al-diff-field al-diff-field--changed">
+                <td class="al-diff-key">${esc(k)}</td>
+                <td class="al-diff-old">${renderVal((before || {})[k])}</td>
+                <td class="al-diff-arrow">→</td>
+                <td class="al-diff-new">${renderVal((after || {})[k])}</td>
+            </tr>`),
+        ...unchanged.map(k => `
+            <tr class="al-diff-field">
+                <td class="al-diff-key al-diff-key--unchanged">${esc(k)}</td>
+                <td class="al-diff-unchanged" colspan="3">${renderVal((before || after || {})[k])}</td>
+            </tr>`),
+    ].join('');
+
     diffRow.innerHTML = `
-    <td colspan="8">
+    <td colspan="8" style="padding:0">
       <div class="al-diff-wrap">
-        <div class="al-diff-panel">
-          <h5>Before</h5>
-          <pre>${esc(before ? JSON.stringify(before, null, 2) : '(none)')}</pre>
+        <div class="al-diff-header">
+          <span class="al-diff-badge al-diff-badge--changed">${changed.length} field${changed.length !== 1 ? 's' : ''} changed</span>
+          ${unchanged.length ? `<span class="al-diff-badge al-diff-badge--same">${unchanged.length} unchanged</span>` : ''}
         </div>
-        <div class="al-diff-panel">
-          <h5>After</h5>
-          <pre>${esc(after ? JSON.stringify(after, null, 2) : '(none)')}</pre>
+        <div class="al-diff-table-wrap">
+          <table class="al-diff-table">
+            <thead><tr><th>Field</th><th>Before</th><th></th><th>After</th></tr></thead>
+            <tbody>${fieldRows || '<tr><td colspan="4" style="padding:8px;color:var(--clr-text-dim);font-style:italic">No field data recorded</td></tr>'}</tbody>
+          </table>
         </div>
       </div>
     </td>`;
     tr.insertAdjacentElement('afterend', diffRow);
 }
 
+/* ─── Audit log export helpers ──────────────────────────────────── */
+async function fetchAllAuditRows() {
+    const action   = document.getElementById('alFilterAction')?.value || '';
+    const table    = document.getElementById('alFilterTable')?.value || '';
+    const user     = document.getElementById('alFilterUser')?.value || '';
+    const dateFrom = document.getElementById('alFilterDateFrom')?.value || '';
+    const dateTo   = document.getElementById('alFilterDateTo')?.value || '';
+
+    let query = db.from('planning_audit_log').select('*').order('created_at', { ascending: false });
+    if (action)   query = query.eq('action', action);
+    if (table)    query = query.eq('table_name', table);
+    if (user)     query = query.eq('user_email', user);
+    if (dateFrom) query = query.gte('created_at', dateFrom + 'T00:00:00');
+    if (dateTo)   query = query.lte('created_at', dateTo   + 'T23:59:59');
+
+    const { data, error } = await query;
+    if (error) { showToast('Export failed: ' + error.message, 'error'); return null; }
+    return data || [];
+}
+
+async function exportAuditLogExcel() {
+    if (!window.XLSX) { showToast('Excel library not loaded — please refresh.', 'error'); return; }
+    showToast('Preparing Excel export…', 'info');
+    const rows = await fetchAllAuditRows();
+    if (!rows) return;
+
+    const wsData = [
+        ['Date / Time', 'User', 'Role', 'Action', 'Module', 'Record ID', 'IP Address', 'Fields Changed'],
+        ...rows.map(r => {
+            const dt = new Date(r.created_at);
+            const changed = (() => {
+                if (!r.data_before && !r.data_after) return '';
+                const b = r.data_before || {}, a = r.data_after || {};
+                const keys = [...new Set([...Object.keys(b), ...Object.keys(a)])];
+                return keys.filter(k => JSON.stringify(b[k]) !== JSON.stringify(a[k])).join(', ');
+            })();
+            return [
+                dt.toLocaleDateString('en-GB') + ' ' + dt.toLocaleTimeString('en-GB', { hour12: false }),
+                r.user_email || '—',
+                (r.user_role || '').replace(/_/g, ' '),
+                r.action || '—',
+                AL_TABLE_LABELS[r.table_name] || r.table_name || '—',
+                r.record_id || '—',
+                r.ip_address || '—',
+                changed,
+            ];
+        }),
+    ];
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws['!cols'] = [{ wch: 20 }, { wch: 30 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 40 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Audit Log');
+    const now = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `audit_log_${now}.xlsx`);
+    showToast('Excel exported.', 'success');
+}
+
+async function exportAuditLogPDF() {
+    if (!window.jspdf) { showToast('PDF library not loaded — please refresh.', 'error'); return; }
+    showToast('Preparing PDF export…', 'info');
+    const rows = await fetchAllAuditRows();
+    if (!rows) return;
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const PAGE_W = doc.internal.pageSize.getWidth();
+    const MARGIN = 14;
+    const now = new Date().toLocaleString('en-GB');
+
+    doc.setFillColor(30, 58, 138);
+    doc.rect(0, 0, PAGE_W, 20, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text('Audit Log', MARGIN, 12);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(186, 230, 253);
+    doc.text(`Generated: ${now}   ·   ${rows.length.toLocaleString()} entries`, PAGE_W - MARGIN, 16, { align: 'right' });
+
+    const headers = ['Date / Time', 'User', 'Role', 'Action', 'Module', 'Record', 'IP Address'];
+    const body = rows.map(r => {
+        const dt = new Date(r.created_at);
+        return [
+            dt.toLocaleDateString('en-GB') + '\n' + dt.toLocaleTimeString('en-GB', { hour12: false }),
+            r.user_email || '—',
+            (r.user_role || '').replace(/_/g, ' '),
+            r.action || '—',
+            AL_TABLE_LABELS[r.table_name] || r.table_name || '—',
+            r.record_id || '—',
+            r.ip_address || '—',
+        ];
+    });
+
+    const ACTION_COLORS = { LOGIN: [59,130,246], LOGOUT: [148,163,184], INSERT: [34,197,94], UPDATE: [245,158,11], DELETE: [239,68,68], BOOTSTRAP: [139,92,246] };
+
+    doc.autoTable({
+        startY: 24,
+        head: [headers], body,
+        margin: { left: MARGIN, right: MARGIN },
+        styles: { fontSize: 7, cellPadding: 2, font: 'helvetica', textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.2 },
+        headStyles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 6.5, halign: 'center' },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        columnStyles: {
+            0: { cellWidth: 26 }, 1: { cellWidth: 50 }, 2: { cellWidth: 20 },
+            3: { cellWidth: 18, halign: 'center' }, 4: { cellWidth: 22 },
+            5: { cellWidth: 22 }, 6: { cellWidth: 22 },
+        },
+        didDrawCell(data) {
+            if (data.section !== 'body' || data.column.index !== 3) return;
+            const action = String(data.cell.raw || '');
+            const [r, g, b] = ACTION_COLORS[action] || [100, 116, 139];
+            data.doc.setFillColor(r, g, b, 0.15);
+            data.doc.roundedRect(data.cell.x + 1, data.cell.y + 1, data.cell.width - 2, data.cell.height - 2, 1, 1, 'F');
+            data.doc.setTextColor(r, g, b);
+            data.doc.setFont('helvetica', 'bold');
+            data.doc.setFontSize(6.5);
+            data.doc.text(action, data.cell.x + data.cell.width / 2, data.cell.y + data.cell.height / 2 + 0.5, { align: 'center' });
+        },
+    });
+
+    const exportDate = new Date().toISOString().slice(0, 10);
+    doc.save(`audit_log_${exportDate}.pdf`);
+    showToast('PDF exported.', 'success');
+}
+
+/* ================================================================
+   PRODUCTION ISSUES
+   ================================================================ */
+
+let _issuesOffset = 0;
+const ISSUES_PAGE_SIZE = 50;
+let _issuesTotalCount = 0;
+
+const ISSUE_CATEGORY_LABELS = {
+    cutting: 'Cutting',
+    part_machining: 'Part Machining',
+    welding: 'Welding',
+    machining: 'Machining',
+    accessories: 'Accessories',
+    cables: 'Cables',
+    material: 'Material',
+    assembly: 'Assembly',
+    quality: 'Quality',
+    other: 'Other',
+};
+
+function formatIssueDate(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    return d.toLocaleDateString('en-GB') + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+}
+
+function renderIssueStatusBadge(status) {
+    const map = {
+        open: ['Open', 'issue-status--open'],
+        in_progress: ['In Progress', 'issue-status--in-progress'],
+        resolved: ['Resolved', 'issue-status--resolved'],
+        closed: ['Closed', 'issue-status--closed'],
+    };
+    const [label, cls] = map[status] || [status || '—', ''];
+    return `<span class="issue-status-badge ${cls}">${esc(label)}</span>`;
+}
+
+function renderIssuePriorityBadge(priority) {
+    const map = {
+        low: ['Low', 'issue-priority--low'],
+        medium: ['Medium', 'issue-priority--medium'],
+        high: ['High', 'issue-priority--high'],
+        critical: ['Critical', 'issue-priority--critical'],
+    };
+    const [label, cls] = map[priority] || [priority || '—', ''];
+    return `<span class="issue-priority-badge ${cls}">${esc(label)}</span>`;
+}
+
+function renderIssueCategoryBadge(category) {
+    const label = ISSUE_CATEGORY_LABELS[category] || category || '—';
+    return `<span class="issue-category-badge">${esc(label)}</span>`;
+}
+
+function renderIssueRow(issue, idx) {
+    const u = getCurrentUser();
+    // Only the original reporter may edit — no exceptions for admins
+    const canEdit = !!(issue.reporter_email && u?.email && issue.reporter_email === u.email);
+
+    return `
+    <tr data-issue-id="${issue.id}">
+        <td class="issues-col-idx" style="text-align:center;color:var(--clr-text-muted);font-size:.78rem">${idx + 1}</td>
+        <td class="issues-col-title">
+            <span class="issue-title-cell" title="${esc(issue.title || '')}" onclick="openIssueView(${issue.id})">${esc(issue.title || '—')}</span>
+        </td>
+        <td class="issues-col-cat">${renderIssueCategoryBadge(issue.category)}</td>
+        <td class="issues-col-pri" style="text-align:center">${renderIssuePriorityBadge(issue.priority)}</td>
+        <td class="issues-col-status" style="text-align:center">${renderIssueStatusBadge(issue.status)}</td>
+        <td class="issues-col-reporter">
+            <span class="issue-reporter-name">${esc(issue.reporter_name || '—')}</span>
+            <span class="issue-reporter-email" title="${esc(issue.reporter_email || '')}">${esc(issue.reporter_email || '')}</span>
+        </td>
+        <td class="issues-col-date mono" style="font-size:.78rem">${formatIssueDate(issue.created_at)}</td>
+        <td class="issues-col-date mono" style="font-size:.78rem">${formatIssueDate(issue.updated_at)}</td>
+        <td class="issues-col-actions">
+            <div style="display:flex;gap:4px;justify-content:center">
+                <button class="btn btn-ghost btn-sm" onclick="openIssueView(${issue.id})" style="font-size:.74rem;padding:3px 8px">View</button>
+                ${canEdit ? `<button class="btn btn-ghost btn-sm" onclick="openIssueModal(${issue.id})" style="font-size:.74rem;padding:3px 8px">Edit</button>` : ''}
+            </div>
+        </td>
+    </tr>`;
+}
+
+async function initIssuesSection() {
+    const addBtn = document.getElementById('btnAddIssue');
+    if (addBtn) addBtn.style.display = isPlanner() ? '' : 'none';
+
+    // Show unread badge before loading, then clear after table loads
+    await _issueNotifUpdateBadge();
+    await _populateIssueReporterFilter();
+    await loadIssues(true);
+    _issueNotifClearBadge();
+}
+
+async function _populateIssueReporterFilter() {
+    const sel = document.getElementById('issueFilterReporter');
+    if (!sel || sel.options.length > 1) return;
+    try {
+        const { data } = await db
+            .from('production_issues')
+            .select('reporter_email, reporter_name')
+            .eq('module', getActiveModuleId())
+            .order('reporter_email');
+        const seen = new Set();
+        (data || []).forEach(r => {
+            if (seen.has(r.reporter_email)) return;
+            seen.add(r.reporter_email);
+            const opt = document.createElement('option');
+            opt.value = r.reporter_email;
+            opt.textContent = r.reporter_name
+                ? `${r.reporter_name} (${r.reporter_email})`
+                : r.reporter_email;
+            sel.appendChild(opt);
+        });
+    } catch (_) {}
+}
+
+async function loadIssues(reset = false) {
+    if (reset) _issuesOffset = 0;
+
+    const search   = (document.getElementById('issueSearch')?.value || '').trim();
+    const category = document.getElementById('issueFilterCategory')?.value || '';
+    const status   = document.getElementById('issueFilterStatus')?.value || '';
+    const priority = document.getElementById('issueFilterPriority')?.value || '';
+    const reporter = document.getElementById('issueFilterReporter')?.value || '';
+    const from     = document.getElementById('issueFilterFrom')?.value || '';
+    const to       = document.getElementById('issueFilterTo')?.value || '';
+    const tbody    = document.getElementById('issuesTableBody');
+
+    if (reset && tbody) {
+        tbody.innerHTML = `<tr><td colspan="9" class="table-empty"><div class="empty-state"><span class="spinner"></span><p>Loading…</p></div></td></tr>`;
+    }
+
+    let query = db
+        .from('production_issues')
+        .select('*', { count: 'exact' })
+        .eq('module', getActiveModuleId())
+        .order('created_at', { ascending: true })
+        .range(_issuesOffset, _issuesOffset + ISSUES_PAGE_SIZE - 1);
+
+    if (search) {
+        query = query.or(`title.ilike.%${search}%,description.ilike.%${search}%`);
+    }
+    if (category) query = query.eq('category', category);
+    if (status)   query = query.eq('status', status);
+    if (priority) query = query.eq('priority', priority);
+    if (reporter) query = query.eq('reporter_email', reporter);
+    if (from)     query = query.gte('created_at', from + 'T00:00:00');
+    if (to)       query = query.lte('created_at', to + 'T23:59:59');
+
+    const { data, count, error } = await query;
+
+    if (error) {
+        if (tbody) tbody.innerHTML = `<tr><td colspan="9" class="table-empty"><div class="empty-state"><p>Error: ${esc(error.message)}</p></div></td></tr>`;
+        showToast('Failed to load issues: ' + error.message, 'error');
+        return;
+    }
+
+    _issuesTotalCount = count || 0;
+
+    const countEl = document.getElementById('issueCount');
+    if (countEl) countEl.textContent = `${_issuesTotalCount.toLocaleString()} issue${_issuesTotalCount !== 1 ? 's' : ''}`;
+
+    const startIdx = _issuesOffset;
+    const rows = (data || []).map((issue, i) => renderIssueRow(issue, startIdx + i));
+
+    if (reset) {
+        if (tbody) {
+            tbody.innerHTML = rows.join('') ||
+                `<tr><td colspan="9" class="table-empty"><div class="empty-state"><p>No issues match the current filters.</p></div></td></tr>`;
+        }
+    } else {
+        if (tbody) rows.forEach(r => tbody.insertAdjacentHTML('beforeend', r));
+    }
+
+    _issuesOffset += (data?.length || 0);
+
+    const moreBtn = document.getElementById('btnIssuesMore');
+    if (moreBtn) {
+        moreBtn.style.display = (_issuesOffset < _issuesTotalCount) ? '' : 'none';
+        moreBtn.onclick = () => loadIssues(false);
+    }
+}
+
+function resetIssueFilters() {
+    ['issueSearch', 'issueFilterCategory', 'issueFilterStatus', 'issueFilterPriority', 'issueFilterReporter', 'issueFilterFrom', 'issueFilterTo'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    loadIssues(true);
+}
+
+function _setIssueField(id, val) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if ('value' in el) el.value = val ?? '';
+    else el.textContent = val ?? '—';
+}
+
+async function openIssueModal(id = null) {
+    const overlay = document.getElementById('issueModalOverlay');
+    if (!overlay) { console.warn('issueModalOverlay not found'); return; }
+
+    const titleEl  = document.getElementById('issueModalTitleText');
+    const deleteBtn = document.getElementById('btnIssueDelete');
+    const errEl    = document.getElementById('issueFormError');
+
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+    if (id === null) {
+        overlay.dataset.editId = '';
+        if (titleEl) titleEl.textContent = 'Report Issue';
+        if (deleteBtn) deleteBtn.style.display = 'none';
+
+        const u = getCurrentUser();
+        _setIssueField('issueReporterName',  u?.name  || u?.full_name || '');
+        _setIssueField('issueReporterEmail', u?.email || '');
+        _setIssueField('issueTitle', '');
+        _setIssueField('issueCategory', '');
+        _setIssueField('issuePriority', 'medium');
+        _setIssueField('issueStatus', 'open');
+        _setIssueField('issueDescription', '');
+        _setIssueField('issueProposedSolution', '');
+        _setIssueField('issueNotes', '');
+    } else {
+        const { data, error } = await db.from('production_issues').select('*').eq('id', id).single();
+        if (error || !data) { showToast('Failed to load issue.', 'error'); return; }
+
+        // Permission check — only the original reporter may edit
+        const u = getCurrentUser();
+        const canEdit = !!(data.reporter_email && u?.email && data.reporter_email === u.email);
+        if (!canEdit) { showToast('You can only edit issues you reported.', 'error'); return; }
+
+        overlay.dataset.editId = id;
+        if (titleEl) titleEl.textContent = 'Edit Issue';
+
+        const canDel = ['master_admin', 'admin'].includes(u?.role);
+        if (deleteBtn) deleteBtn.style.display = canDel ? '' : 'none';
+
+        _setIssueField('issueTitle',           data.title || '');
+        _setIssueField('issueCategory',        data.category || '');
+        _setIssueField('issuePriority',        data.priority || 'medium');
+        _setIssueField('issueStatus',          data.status || 'open');
+        _setIssueField('issueDescription',     data.description || '');
+        _setIssueField('issueProposedSolution', data.proposed_solution || '');
+        _setIssueField('issueNotes',           data.notes || '');
+        _setIssueField('issueReporterName',    data.reporter_name || '');
+        _setIssueField('issueReporterEmail',   data.reporter_email || '');
+    }
+
+    overlay.style.display = 'flex';
+}
+
+async function saveIssue() {
+    const overlay  = document.getElementById('issueModalOverlay');
+    const editId   = overlay?.dataset?.editId || '';
+    const errEl    = document.getElementById('issueFormError');
+
+    const title    = document.getElementById('issueTitle')?.value?.trim() || '';
+    const category = document.getElementById('issueCategory')?.value || '';
+    const priority = document.getElementById('issuePriority')?.value || 'medium';
+    const status   = document.getElementById('issueStatus')?.value || 'open';
+    const description       = document.getElementById('issueDescription')?.value?.trim() || '';
+    const proposed_solution = document.getElementById('issueProposedSolution')?.value?.trim() || '';
+    const notes             = document.getElementById('issueNotes')?.value?.trim() || '';
+
+    // Validation
+    if (!title) {
+        if (errEl) { errEl.textContent = 'Title is required.'; errEl.style.display = ''; }
+        document.getElementById('issueTitle')?.focus();
+        return;
+    }
+    if (!category) {
+        if (errEl) { errEl.textContent = 'Category is required.'; errEl.style.display = ''; }
+        document.getElementById('issueCategory')?.focus();
+        return;
+    }
+    if (errEl) errEl.style.display = 'none';
+
+    const u = getCurrentUser();
+    const saveBtn = document.getElementById('btnIssueSave');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+
+    try {
+        if (editId) {
+            // Fetch before state for audit log
+            const { data: beforeData } = await db.from('production_issues').select('*').eq('id', editId).single();
+            const payload = {
+                title, category, priority, status,
+                description: description || null,
+                proposed_solution: proposed_solution || null,
+                notes: notes || null,
+                updated_by_name:  u?.name  || u?.full_name || null,
+                updated_by_email: u?.email || null,
+                resolved_at: status === 'resolved' ? new Date().toISOString() : null,
+            };
+            const { error } = await db.from('production_issues').update(payload).eq('id', editId);
+            if (error) throw error;
+            auditLog('UPDATE', 'production_issues', editId, beforeData, payload);
+            _broadcastIssueUpdated({ id: editId, title, category,
+                reporter_name: beforeData?.reporter_name, reporter_email: beforeData?.reporter_email });
+            showToast('Issue updated.', 'success');
+        } else {
+            const base = {
+                title, category, priority, status,
+                description: description || null,
+                proposed_solution: proposed_solution || null,
+                notes: notes || null,
+                reporter_name:  u?.name  || u?.full_name || null,
+                reporter_email: u?.email || 'unknown',
+                updated_by_name:  null,
+                updated_by_email: null,
+                resolved_at: status === 'resolved' ? new Date().toISOString() : null,
+            };
+
+            // Try with module column; fall back without if column doesn't exist yet
+            let insertError, insertedId;
+            const withMod = { ...base, module: getActiveModuleId() };
+            const r1 = await db.from('production_issues').insert(withMod).select('id').single();
+            if (r1.error) {
+                const msg = r1.error.message || '';
+                if (msg.includes('module') || msg.includes('42703') || msg.includes('column')) {
+                    const r2 = await db.from('production_issues').insert(base).select('id').single();
+                    insertError = r2.error;
+                    insertedId  = r2.data?.id;
+                } else {
+                    insertError = r1.error;
+                }
+            } else {
+                insertedId = r1.data?.id;
+            }
+            if (insertError) throw insertError;
+            auditLog('INSERT', 'production_issues', insertedId, null, { ...base, module: getActiveModuleId() });
+            await _broadcastIssueNew({ id: insertedId, title, category, module: getActiveModuleId() });
+            showToast('Issue reported.', 'success');
+        }
+
+        if (overlay) overlay.style.display = 'none';
+        const sel = document.getElementById('issueFilterReporter');
+        if (sel) { while (sel.options.length > 1) sel.remove(1); }
+        await _populateIssueReporterFilter();
+        await loadIssues(true);
+    } catch (err) {
+        console.error('saveIssue error:', err);
+        const msg = err?.message || String(err);
+        if (errEl) { errEl.textContent = 'Error: ' + msg; errEl.style.display = ''; }
+        showToast('Failed to save issue: ' + msg, 'error');
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Issue'; }
+    }
+}
+
+async function deleteIssue(id) {
+    if (!confirm('Delete this issue? This cannot be undone.')) return;
+    const overlay = document.getElementById('issueModalOverlay');
+    const { data: beforeData } = await db.from('production_issues').select('*').eq('id', id).single();
+    const { error } = await db.from('production_issues').delete().eq('id', id);
+    if (error) { showToast('Delete failed: ' + error.message, 'error'); return; }
+    auditLog('DELETE', 'production_issues', id, beforeData, null);
+    _broadcastIssueUpdated({ id, title: beforeData?.title, category: beforeData?.category,
+        reporter_name: beforeData?.reporter_name, reporter_email: beforeData?.reporter_email });
+    showToast('Issue deleted.', 'success');
+    if (overlay) overlay.style.display = 'none';
+    await loadIssues(true);
+}
+
+async function openIssueView(id) {
+    const overlay = document.getElementById('issueModalOverlay');
+    if (!overlay) { console.warn('issueModalOverlay not found'); return; }
+
+    const { data, error } = await db.from('production_issues').select('*').eq('id', id).single();
+    if (error || !data) { showToast('Failed to load issue.', 'error'); return; }
+
+    overlay.dataset.editId = '';
+    overlay.dataset.viewMode = '1';
+
+    // Header title
+    const titleEl = document.getElementById('issueModalTitleText');
+    if (titleEl) titleEl.textContent = 'Issue Details';
+
+    // Footer: hide Save/Delete, show Edit (if authorized) + rename Cancel → Close
+    document.getElementById('btnIssueDelete')?.style && (document.getElementById('btnIssueDelete').style.display = 'none');
+    document.getElementById('btnIssueSave')?.style && (document.getElementById('btnIssueSave').style.display = 'none');
+    const cancelBtn = document.getElementById('btnIssueCancel');
+    if (cancelBtn) cancelBtn.textContent = 'Close';
+    const editBtn = document.getElementById('btnIssueEdit');
+    if (editBtn) {
+        const u = getCurrentUser();
+        const canEdit = !!(data.reporter_email && u?.email && data.reporter_email === u.email);
+        editBtn.style.display = canEdit ? '' : 'none';
+        editBtn.dataset.issueId = id;
+    }
+
+    // Show view panel, hide form
+    document.getElementById('issueViewBody').style.display = '';
+    document.querySelector('#issueModalOverlay .issue-modal-grid').style.display = 'none';
+    document.getElementById('issueFormError').style.display = 'none';
+
+    // Build view HTML
+    const STATUS_LABELS   = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Closed' };
+    const PRIORITY_LABELS = { low: 'Low', medium: 'Medium', high: 'High', critical: 'Critical' };
+    const statusLabel   = STATUS_LABELS[data.status]   || data.status   || '';
+    const priorityLabel = PRIORITY_LABELS[data.priority] || data.priority || '';
+    const categoryLabel = ISSUE_CATEGORY_LABELS[data.category] || data.category || '';
+    const statusCls   = (data.status || 'open').replace('_', '-');
+    const priorityCls = data.priority || 'medium';
+
+    const infoItems = [
+        { label: 'Reported by',  value: esc(data.reporter_name  || '—'), sub: esc(data.reporter_email || '') },
+        { label: 'Reported on',  value: esc(formatIssueDate(data.created_at)) },
+        { label: 'Last updated', value: esc(formatIssueDate(data.updated_at)),
+          sub: data.updated_by_name ? `by ${esc(data.updated_by_name)}` : '' },
+    ];
+    if (data.resolved_at) infoItems.push({ label: 'Resolved on', value: esc(formatIssueDate(data.resolved_at)) });
+
+    const sections = [];
+    if (data.description)        sections.push({ label: 'Description',       text: esc(data.description),        cls: '' });
+    if (data.proposed_solution)  sections.push({ label: 'Proposed Solution', text: esc(data.proposed_solution),  cls: '' });
+    if (data.notes)              sections.push({ label: 'Internal Notes',     text: esc(data.notes),              cls: ' issue-view-section-text--notes' });
+
+    document.getElementById('issueViewBody').innerHTML = `
+        <div class="issue-view-meta-row">
+            <span class="issue-status-badge issue-status--${statusCls}">${statusLabel}</span>
+            <span class="issue-priority-badge issue-priority--${priorityCls}">${priorityLabel}</span>
+            ${categoryLabel ? `<span class="issue-category-badge">${categoryLabel}</span>` : ''}
+        </div>
+        <p class="issue-view-title">${esc(data.title || '—')}</p>
+        <div class="issue-view-info-row">
+            ${infoItems.map(it => `
+                <div class="issue-view-info-item">
+                    <span class="issue-view-info-label">${it.label}</span>
+                    <span class="issue-view-info-value">${it.value}</span>
+                    ${it.sub ? `<span class="issue-view-info-sub">${it.sub}</span>` : ''}
+                </div>`).join('')}
+        </div>
+        ${sections.length
+            ? sections.map(s => `
+                <div class="issue-view-section">
+                    <div class="issue-view-section-label">${s.label}</div>
+                    <div class="issue-view-section-text${s.cls}">${s.text}</div>
+                </div>`).join('')
+            : `<p class="issue-view-empty">No additional details provided.</p>`}
+    `;
+
+    overlay.style.display = 'flex';
+}
+
+function _closeIssueModal() {
+    const overlay = document.getElementById('issueModalOverlay');
+    if (!overlay) return;
+
+    if (overlay.dataset.viewMode === '1') {
+        // Restore form visibility
+        const grid = document.querySelector('#issueModalOverlay .issue-modal-grid');
+        if (grid) grid.style.display = '';
+        const viewBody = document.getElementById('issueViewBody');
+        if (viewBody) { viewBody.style.display = 'none'; viewBody.innerHTML = ''; }
+        // Restore footer buttons
+        const saveBtn   = document.getElementById('btnIssueSave');
+        const editBtn   = document.getElementById('btnIssueEdit');
+        const cancelBtn = document.getElementById('btnIssueCancel');
+        if (saveBtn)   saveBtn.style.display = '';
+        if (editBtn)   editBtn.style.display = 'none';
+        if (cancelBtn) cancelBtn.textContent = 'Cancel';
+    }
+    overlay.dataset.viewMode = '';
+    overlay.dataset.editId = '';
+    overlay.style.display = 'none';
+}
+
+async function _fetchAllIssuesForExport() {
+    const search   = (document.getElementById('issueSearch')?.value || '').trim();
+    const category = document.getElementById('issueFilterCategory')?.value || '';
+    const status   = document.getElementById('issueFilterStatus')?.value || '';
+    const priority = document.getElementById('issueFilterPriority')?.value || '';
+    const reporter = document.getElementById('issueFilterReporter')?.value || '';
+    const from     = document.getElementById('issueFilterFrom')?.value || '';
+    const to       = document.getElementById('issueFilterTo')?.value || '';
+
+    let query = db.from('production_issues').select('*').eq('module', getActiveModuleId()).order('created_at', { ascending: true });
+    if (search)   query = query.or(`title.ilike.%${search}%,description.ilike.%${search}%`);
+    if (category) query = query.eq('category', category);
+    if (status)   query = query.eq('status', status);
+    if (priority) query = query.eq('priority', priority);
+    if (reporter) query = query.eq('reporter_email', reporter);
+    if (from)     query = query.gte('created_at', from + 'T00:00:00');
+    if (to)       query = query.lte('created_at', to + 'T23:59:59');
+
+    const { data, error } = await query;
+    if (error) { showToast('Export failed: ' + error.message, 'error'); return null; }
+    return data || [];
+}
+
+async function exportIssuesExcel() {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
+    if (typeof ExcelJS === 'undefined') { showToast('Excel library not loaded — please refresh.', 'error'); return; }
+    showToast('Preparing Excel export…', 'info');
+    const rows = await _fetchAllIssuesForExport();
+    if (!rows) return;
+
+    const MODULE_LABELS_XL = { kd1: 'KD1', kd2: 'KD2', f100kd2: 'F100 KD2' };
+    const modLabel = MODULE_LABELS_XL[getActiveModuleId()] || getActiveModuleId();
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PPMS';
+    wb.created = new Date();
+
+    const ws = wb.addWorksheet(`Issues ${modLabel}`);
+
+    // ── Title row ────────────────────────────────────────────────────
+    ws.mergeCells(1, 1, 1, 14);
+    const titleCell = ws.getCell(1, 1);
+    titleCell.value = `Production Issues — ${modLabel}`;
+    titleCell.font  = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FF1e293b' } };
+    titleCell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf8fafc' } };
+    titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(1).height = 26;
+
+    ws.mergeCells(2, 1, 2, 14);
+    const subCell = ws.getCell(2, 1);
+    subCell.value = `Generated: ${new Date().toLocaleString('en-GB')}   ·   ${rows.length} issue${rows.length !== 1 ? 's' : ''}`;
+    subCell.font  = { name: 'Calibri', size: 8, italic: true, color: { argb: 'FF64748b' } };
+    subCell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf8fafc' } };
+    ws.getRow(2).height = 13;
+    ws.addRow([]); ws.getRow(3).height = 6;
+
+    // ── Header row ───────────────────────────────────────────────────
+    const HDR_BG   = 'FF1e3a5f';
+    const HDR_TEXT = 'FFe2e8f0';
+    const headers  = ['#', 'Title', 'Category', 'Priority', 'Status', 'Reporter Name', 'Reporter Email', 'Description', 'Proposed Solution', 'Notes', 'Updated By', 'Reported On', 'Updated At', 'Resolved At'];
+    const hdrRow   = ws.addRow(headers);
+    hdrRow.height  = 20;
+    hdrRow.eachCell(cell => {
+        cell.font      = { name: 'Calibri', size: 9, bold: true, color: { argb: HDR_TEXT } };
+        cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: HDR_BG } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border    = { bottom: { style: 'thin', color: { argb: 'FF2563eb' } } };
+    });
+
+    // Priority / Status colour maps (ARGB)
+    const PRI_COLORS = {
+        low:      { bg: 'FFf1f5f9', fg: 'FF475569' },
+        medium:   { bg: 'FFdbeafe', fg: 'FF1d4ed8' },
+        high:     { bg: 'FFfef3c7', fg: 'FFb45309' },
+        critical: { bg: 'FFfee2e2', fg: 'FFb91c1c' },
+    };
+    const STA_COLORS = {
+        open:        { bg: 'FFdbeafe', fg: 'FF1d4ed8' },
+        in_progress: { bg: 'FFfef3c7', fg: 'FFb45309' },
+        resolved:    { bg: 'FFdcfce7', fg: 'FF15803d' },
+        closed:      { bg: 'FFf1f5f9', fg: 'FF475569' },
+    };
+
+    const bord = () => ({
+        top:    { style: 'thin', color: { argb: 'FFe2e8f0' } },
+        bottom: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+        left:   { style: 'thin', color: { argb: 'FFe2e8f0' } },
+        right:  { style: 'thin', color: { argb: 'FFe2e8f0' } },
+    });
+
+    // ── Data rows ────────────────────────────────────────────────────
+    rows.forEach((r, i) => {
+        const odd      = i % 2 === 0;
+        const rowBg    = odd ? 'FFffffff' : 'FFf8fafc';
+        const dataRow  = ws.addRow([
+            i + 1,
+            r.title || '',
+            ISSUE_CATEGORY_LABELS[r.category] || r.category || '',
+            r.priority || '',
+            (r.status || '').replace(/_/g, ' '),
+            r.reporter_name || '',
+            r.reporter_email || '',
+            r.description || '',
+            r.proposed_solution || '',
+            r.notes || '',
+            r.updated_by_name ? `${r.updated_by_name} (${r.updated_by_email || ''})` : '',
+            formatIssueDate(r.created_at),
+            formatIssueDate(r.updated_at),
+            formatIssueDate(r.resolved_at),
+        ]);
+        dataRow.height = 16;
+
+        dataRow.eachCell({ includeEmpty: true }, (cell, colN) => {
+            cell.font      = { name: 'Calibri', size: 9, color: { argb: 'FF1e293b' } };
+            cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+            cell.border    = bord();
+            cell.alignment = { vertical: 'middle', wrapText: false };
+        });
+
+        // Priority badge (col 4)
+        const priKey = (r.priority || '').toLowerCase();
+        const priClr = PRI_COLORS[priKey];
+        if (priClr) {
+            const c = dataRow.getCell(4);
+            c.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: priClr.bg } };
+            c.font      = { name: 'Calibri', size: 8.5, bold: true, color: { argb: priClr.fg } };
+            c.alignment = { horizontal: 'center', vertical: 'middle' };
+        }
+
+        // Status badge (col 5)
+        const staKey = (r.status || '').toLowerCase();
+        const staClr = STA_COLORS[staKey];
+        if (staClr) {
+            const c = dataRow.getCell(5);
+            c.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: staClr.bg } };
+            c.font      = { name: 'Calibri', size: 8.5, bold: true, color: { argb: staClr.fg } };
+            c.alignment = { horizontal: 'center', vertical: 'middle' };
+        }
+
+        // Center: idx, priority, status, dates
+        [1, 4, 5, 12, 13, 14].forEach(n => {
+            dataRow.getCell(n).alignment = { horizontal: 'center', vertical: 'middle' };
+        });
+    });
+
+    // ── Column widths ────────────────────────────────────────────────
+    const colWidths = [5, 40, 18, 13, 14, 24, 34, 46, 46, 34, 32, 18, 18, 18];
+    colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+
+    // ── Freeze header row, auto-filter ───────────────────────────────
+    ws.views = [{ state: 'frozen', ySplit: 4, activeCell: 'A5' }];
+    ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: 14 } };
+
+    const now = new Date().toISOString().slice(0, 10);
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `production_issues_${modLabel.replace(/\s/g,'')}_${now}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showToast('Excel exported.', 'success');
+}
+
+async function exportIssuesPDF() {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
+    if (!window.jspdf) { showToast('PDF library not loaded — please refresh.', 'error'); return; }
+    showToast('Preparing PDF export…', 'info');
+    const rows = await _fetchAllIssuesForExport();
+    if (!rows) return;
+
+    const { jsPDF } = window.jspdf;
+    const doc    = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const PAGE_W = doc.internal.pageSize.getWidth();
+    const PAGE_H = doc.internal.pageSize.getHeight();
+    const MARGIN = 14;
+    const now    = new Date().toLocaleString('en-GB');
+    const MODULE_LABELS = { kd1: 'KD1', kd2: 'KD2', f100kd2: 'F100 KD2' };
+    const modLabel = MODULE_LABELS[getActiveModuleId()] || getActiveModuleId().toUpperCase();
+
+    // ── White header with blue accent stripe ─────────────────────────
+    doc.setFillColor(248, 250, 252);
+    doc.rect(0, 0, PAGE_W, 22, 'F');
+    doc.setFillColor(37, 99, 235);
+    doc.rect(0, 0, 4, 22, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(0, 22, PAGE_W, 22);
+
+    doc.setTextColor(15, 23, 42);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text('Production Issues Report', MARGIN + 2, 10);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Module: ${modLabel}`, MARGIN + 2, 17);
+    doc.text(`Generated: ${now}   ·   ${rows.length} issue${rows.length !== 1 ? 's' : ''}`, PAGE_W - MARGIN, 17, { align: 'right' });
+
+    // ── Status summary pills ─────────────────────────────────────────
+    const statusCounts = { open: 0, in_progress: 0, resolved: 0, closed: 0 };
+    rows.forEach(r => { if (statusCounts[r.status] !== undefined) statusCounts[r.status]++; });
+    const pills = [
+        { label: 'Open',        key: 'open',        color: [59, 130, 246] },
+        { label: 'In Progress', key: 'in_progress',  color: [245, 158, 11] },
+        { label: 'Resolved',    key: 'resolved',     color: [34, 197, 94]  },
+        { label: 'Closed',      key: 'closed',       color: [100, 116, 139]},
+    ];
+    let pillX = MARGIN;
+    const pillY = 26.5;
+    pills.forEach(p => {
+        const cnt   = statusCounts[p.key];
+        const label = `${p.label}: ${cnt}`;
+        doc.setFontSize(6.5);
+        const tw = doc.getTextWidth(label) + 8;
+        doc.setFillColor(...p.color);
+        doc.setGState && doc.setGState(new doc.GState({ opacity: 0.15 }));
+        doc.roundedRect(pillX, pillY - 3.5, tw, 5.5, 1, 1, 'F');
+        doc.setGState && doc.setGState(new doc.GState({ opacity: 1 }));
+        doc.setTextColor(...p.color);
+        doc.setFont('helvetica', 'bold');
+        doc.text(label, pillX + 4, pillY + 0.5);
+        pillX += tw + 4;
+    });
+
+    // ── Table ────────────────────────────────────────────────────────
+    const PRIORITY_COLORS = { low: [100,116,139], medium: [59,130,246], high: [245,158,11], critical: [239,68,68] };
+    const STATUS_COLORS   = { open: [59,130,246], in_progress: [245,158,11], resolved: [34,197,94], closed: [100,116,139] };
+
+    const headers = ['#', 'Title', 'Category', 'Priority', 'Status', 'Reporter', 'Description', 'Reported On', 'Updated'];
+    const body = rows.map((r, i) => [
+        i + 1,
+        (r.title || '').slice(0, 46),
+        ISSUE_CATEGORY_LABELS[r.category] || r.category || '—',
+        (r.priority || '—'),
+        (r.status || '—').replace(/_/g, ' '),
+        (r.reporter_name || r.reporter_email || '—').slice(0, 24),
+        (r.description || '—').slice(0, 55),
+        formatIssueDate(r.created_at),
+        formatIssueDate(r.updated_at),
+    ]);
+
+    doc.autoTable({
+        startY: 34,
+        head: [headers], body,
+        margin: { left: MARGIN, right: MARGIN },
+        styles: {
+            fontSize: 6.5, cellPadding: [2, 2.5], font: 'helvetica',
+            textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.18,
+        },
+        headStyles: {
+            fillColor: [30, 58, 138], textColor: [241, 245, 249],
+            fontStyle: 'bold', fontSize: 6.2, halign: 'center',
+            cellPadding: [3, 2.5],
+        },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        columnStyles: {
+            0: { cellWidth: 7,  halign: 'center' },
+            1: { cellWidth: 52 },
+            2: { cellWidth: 24, halign: 'center' },
+            3: { cellWidth: 18, halign: 'center' },
+            4: { cellWidth: 22, halign: 'center' },
+            5: { cellWidth: 34 },
+            6: { cellWidth: 58 },
+            7: { cellWidth: 22, halign: 'center' },
+            8: { cellWidth: 22, halign: 'center' },
+        },
+        didDrawCell(data) {
+            if (data.section !== 'body') return;
+            const drawBadge = (colorArr, text) => {
+                const [r, g, b] = colorArr;
+                const cx = data.cell.x, cy = data.cell.y, cw = data.cell.width, ch = data.cell.height;
+                data.doc.setFillColor(r, g, b);
+                try { data.doc.setGState(new data.doc.GState({ opacity: 0.14 })); } catch {}
+                data.doc.roundedRect(cx + 1.5, cy + 1.2, cw - 3, ch - 2.4, 1, 1, 'F');
+                try { data.doc.setGState(new data.doc.GState({ opacity: 1 })); } catch {}
+                data.doc.setTextColor(r, g, b);
+                data.doc.setFont('helvetica', 'bold');
+                data.doc.setFontSize(6);
+                data.doc.text(text, cx + cw / 2, cy + ch / 2 + 0.6, { align: 'center' });
+            };
+            if (data.column.index === 3) {
+                drawBadge(PRIORITY_COLORS[String(data.cell.raw).toLowerCase()] || [100,116,139], String(data.cell.raw));
+            }
+            if (data.column.index === 4) {
+                const statusKey = String(data.cell.raw).replace(/ /g, '_');
+                drawBadge(STATUS_COLORS[statusKey] || [100,116,139], String(data.cell.raw));
+            }
+        },
+        didDrawPage(data) {
+            // Footer on every page
+            const pageCount = doc.internal.getNumberOfPages();
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(6);
+            doc.setTextColor(148, 163, 184);
+            doc.text(`Production Issues — ${modLabel}`, MARGIN, PAGE_H - 5);
+            doc.text(`Page ${data.pageNumber} of ${pageCount}`, PAGE_W - MARGIN, PAGE_H - 5, { align: 'right' });
+            doc.setDrawColor(226, 232, 240);
+            doc.setLineWidth(0.2);
+            doc.line(MARGIN, PAGE_H - 7.5, PAGE_W - MARGIN, PAGE_H - 7.5);
+        },
+    });
+
+    const exportDate = new Date().toISOString().slice(0, 10);
+    doc.save(`production_issues_${modLabel}_${exportDate}.pdf`);
+    showToast('PDF exported.', 'success');
+}
+
+/* ── Issue notifications ────────────────────────────────────────── */
+let _issueNotifChannel = null;
+
+function _issueNotifSeenKey() {
+    const u = getCurrentUser();
+    return `ppms_issues_seen_${getActiveModuleId()}_${u?.email || 'anon'}`;
+}
+
+function _issueNotifGetSeen() {
+    try { return localStorage.getItem(_issueNotifSeenKey()) || '1970-01-01T00:00:00Z'; } catch { return '1970-01-01T00:00:00Z'; }
+}
+
+function _issueNotifMarkSeen() {
+    try { localStorage.setItem(_issueNotifSeenKey(), new Date().toISOString()); } catch {}
+}
+
+async function _issueNotifUpdateBadge() {
+    const badge = document.getElementById('issuesNewBadge');
+    if (!badge || !db) return;
+    try {
+        const since = _issueNotifGetSeen();
+        let q = db.from('production_issues').select('id', { count: 'exact', head: true }).gt('created_at', since);
+        // Try with module filter; ignore error if column doesn't exist
+        const r = await q.eq('module', getActiveModuleId());
+        const cnt = (r.error ? 0 : (r.count || 0));
+        if (cnt > 0) {
+            badge.textContent = cnt + ' new';
+            badge.style.display = '';
+        } else {
+            badge.style.display = 'none';
+        }
+    } catch { badge.style.display = 'none'; }
+}
+
+function _issueNotifClearBadge() {
+    const badge = document.getElementById('issuesNewBadge');
+    if (badge) badge.style.display = 'none';
+    _issueNotifMarkSeen();
+}
+
+function startIssueNotifSync() {
+    if (_issueNotifChannel) {
+        try { db.removeChannel(_issueNotifChannel); } catch {}
+        _issueNotifChannel = null;
+    }
+    const u = getCurrentUser();
+    if (!u || !db) return;
+
+    // Use Broadcast (not postgres_changes) — works without publication setup or RLS checks
+    _issueNotifChannel = db.channel('ppms-issues-broadcast')
+        .on('broadcast', { event: 'issue:new' }, ({ payload }) => {
+            const sameModule = !payload?.module || payload.module === getActiveModuleId();
+            if (!sameModule) return;
+            // Always reload the table
+            loadIssues(true).catch(() => {});
+            // Only store notification for changes by others
+            if (payload?.by === u.email) return;
+            const reporter = payload?.reporter || 'Someone';
+            if (payload?.issueId) {
+                _storeIssueNotification(payload.issueId, payload.module || getActiveModuleId(),
+                    payload.title, payload.category, reporter, payload.created_at || new Date().toISOString(), false);
+            }
+            _issueNotifUpdateBadge();
+            updateNotifBadge();
+        })
+        .on('broadcast', { event: 'issue:updated' }, ({ payload }) => {
+            const sameModule = !payload?.module || payload.module === getActiveModuleId();
+            if (!sameModule) return;
+            loadIssues(true).catch(() => {});
+            if (payload?.by !== u.email && payload?.issueId) {
+                _storeIssueNotification(payload.issueId, payload.module || getActiveModuleId(),
+                    payload.title || '', payload.category || '', payload.reporter || 'Someone',
+                    payload.updated_at || new Date().toISOString(), true);
+                updateNotifBadge();
+            }
+        })
+        .subscribe();
+}
+
+async function _broadcastIssueNew(issueData) {
+    if (!_issueNotifChannel) return;
+    const u = getCurrentUser();
+    try {
+        await _issueNotifChannel.send({
+            type: 'broadcast',
+            event: 'issue:new',
+            payload: {
+                issueId:    issueData.id || null,
+                module:     issueData.module || getActiveModuleId(),
+                title:      issueData.title || '',
+                category:   issueData.category || '',
+                reporter:   u?.name || u?.full_name || u?.email || 'Someone',
+                by:         u?.email || '',
+                created_at: new Date().toISOString(),
+            },
+        });
+    } catch(e) { console.warn('issue broadcast send error:', e); }
+}
+
+async function _broadcastIssueUpdated(issueData) {
+    if (!_issueNotifChannel) return;
+    const u = getCurrentUser();
+    try {
+        await _issueNotifChannel.send({
+            type: 'broadcast',
+            event: 'issue:updated',
+            payload: {
+                issueId:    issueData?.id || null,
+                module:     getActiveModuleId(),
+                title:      issueData?.title || '',
+                category:   issueData?.category || '',
+                reporter:   issueData?.reporter_name || issueData?.reporter_email || 'Someone',
+                by:         u?.email || '',
+                updated_at: new Date().toISOString(),
+            },
+        });
+    } catch {}
+}
+
+/* ── Polling fallback (30-second interval) ──────────────────────── */
+let _issuesPollTimer      = null;
+let _issuesPollLastCheck  = null;   // ISO string — updated each poll cycle
+
+async function _issuesPollCheck() {
+    if (!db) return;
+    const u = getCurrentUser();
+    if (!u) return;
+
+    const checkFrom = _issuesPollLastCheck;
+    _issuesPollLastCheck = new Date().toISOString();
+    if (!checkFrom) return; // first tick — just set the baseline timestamp
+
+    try {
+        let q = db.from('production_issues')
+            .select('id, title, category, reporter_name, reporter_email, created_at, updated_at')
+            .gt('updated_at', checkFrom)
+            .order('updated_at', { ascending: false })
+            .limit(5);
+        const { data, error } = await q.eq('module', getActiveModuleId());
+        if (error || !data?.length) return;
+
+        // Reload the table for the current user no matter what changed
+        loadIssues(true).catch(() => {});
+
+        // Notify only for changes by others
+        const byOthers = data.filter(r => r.reporter_email !== u.email);
+        if (!byOthers.length) return;
+
+        byOthers.slice(0, 5).forEach(issue => {
+            const isNew = Math.abs(new Date(issue.created_at) - new Date(issue.updated_at)) < 5000;
+            const rep   = issue.reporter_name || issue.reporter_email || 'Someone';
+            _storeIssueNotification(issue.id, getActiveModuleId(), issue.title, issue.category,
+                rep, isNew ? issue.created_at : issue.updated_at, !isNew);
+        });
+        _issueNotifUpdateBadge();
+        updateNotifBadge();
+    } catch {}  // fails gracefully if module column missing
+}
+
+function startIssuesPoll() {
+    if (_issuesPollTimer) clearInterval(_issuesPollTimer);
+    _issuesPollLastCheck = new Date().toISOString(); // baseline — don't notify about existing issues
+    _issuesPollTimer = setInterval(_issuesPollCheck, 30000);
+}
 
 /* ================================================================
    GANTT EDIT MODE — drag-to-reschedule with cascade + Friday skip

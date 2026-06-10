@@ -6,6 +6,7 @@ import { installToastGlobal } from '../core/notifications.js';
 import { applyTheme, applyStoredTheme, clearSession, toggleTheme } from '../core/session.js';
 import { initFeature as initFiltersFeature } from '../features/filters/index.js';
 import { initFeature as initPlanningTableFeature } from '../features/planning-table/index.js';
+import { initFeature as initIssuesFeature } from '../features/issues/index.js';
 import { initFeature as initSummaryFeature } from '../features/summary/index.js';
 import { initFeature as initChartsFeature } from '../features/charts/index.js';
 import { initFeature as initGanttFeature } from '../features/gantt/index.js';
@@ -25,6 +26,7 @@ function renderIndexPage() {
         initVpxFeature(),
         initChartsFeature(),
         initPlanningTableFeature(),
+        initIssuesFeature(),
         renderModalRegistry(),
         renderPageTail(),
     ].join('\n');

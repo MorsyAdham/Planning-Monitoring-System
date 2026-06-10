@@ -1,7 +1,7 @@
 export function initFeature() {
     return `
         <!-- ═══════════════════════════════════════════════ SUMMARY CARDS -->
-        <section class="summary-section" aria-label="Summary">
+        <section class="summary-section" id="summarySection" aria-label="Summary">
             <div class="ppms-section-header">
                 <h3 class="ppms-section-heading">Production Overview</h3>
                 <span class="ppms-section-sub">Total planned · Completed · In progress · Overdue</span>
