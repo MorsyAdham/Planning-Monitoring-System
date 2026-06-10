@@ -237,7 +237,7 @@ async function doLogout() {
         } catch (e) { /* non-fatal */ }
     }
     sessionStorage.removeItem(SESSION_KEY);
-    window.location.href = 'login.html';
+    window.location.href = window.location.pathname.replace(/\/[^/]*$/, '/') + 'login.html';
 }
 
 
@@ -852,7 +852,7 @@ let activePlanId = null;    // plan row being marked complete
    ────────────────────────────────────────────────────────────────── */
 async function initializeApp() {
     // ── Auth guard — redirect to login if no valid session ───────────
-    if (!getCurrentUser()) { window.location.replace('login.html'); return; }
+    if (!getCurrentUser()) { window.location.replace(window.location.pathname.replace(/\/[^/]*$/, '/') + 'login.html'); return; }
     populateNavbar();
 
     startClock();

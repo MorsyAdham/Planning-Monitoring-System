@@ -3,10 +3,14 @@ export const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdX
 export const SESSION_KEY = 'kd1_session';
 export const THEME_KEY = 'kd1_theme';
 
+// Compute paths relative to the current page's directory so redirects work
+// regardless of whether the app is served from / or a repo subdirectory.
+function _dir() { return window.location.pathname.replace(/\/[^/]*$/, '/'); }
+
 export const ROUTES = {
-    app: 'index.html',
-    login: 'login.html',
-    systemTest: 'system-test.html',
+    get app()        { return _dir() + 'index.html'; },
+    get login()      { return _dir() + 'login.html'; },
+    get systemTest() { return _dir() + 'system-test.html'; },
 };
 
 export const CDN_SCRIPTS = {
