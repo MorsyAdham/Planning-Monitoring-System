@@ -193,7 +193,8 @@ export function renderLoginLayout() {
                     <div class="form-field-wrap">
                         <svg class="form-field-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="4" width="16" height="12" rx="2"/><path d="M2 7l8 5 8-5" stroke-linecap="round"/></svg>
                         <input type="text" id="loginEmail" class="form-input" placeholder="you@example.com"
-                            autocomplete="off" data-lpignore="true" data-form-type="other" spellcheck="false"/>
+                            autocomplete="off" data-lpignore="true" data-form-type="other" spellcheck="false"
+                            readonly onfocus="this.removeAttribute('readonly')" onclick="this.removeAttribute('readonly')"/>
                     </div>
                 </div>
                 <div class="form-group">
@@ -201,7 +202,8 @@ export function renderLoginLayout() {
                     <div class="pw-wrap form-field-wrap">
                         <svg class="form-field-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="8" width="10" height="9" rx="2"/><path d="M7 8V6a3 3 0 0 1 6 0v2" stroke-linecap="round"/></svg>
                         <input type="password" id="loginPassword" class="form-input" placeholder="••••••••"
-                            autocomplete="new-password" data-lpignore="true" data-form-type="other"/>
+                            autocomplete="new-password" data-lpignore="true" data-form-type="other"
+                            readonly onfocus="this.removeAttribute('readonly')" onclick="this.removeAttribute('readonly')"/>
                         <button class="pw-toggle" id="pwToggle" type="button" aria-label="Toggle password visibility">
                             <svg id="eyeIcon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                                 <path d="M1 10s3.5-7 9-7 9 7 9 7-3.5 7-9 7-9-7-9-7z"/>
