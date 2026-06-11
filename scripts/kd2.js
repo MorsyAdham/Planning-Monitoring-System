@@ -182,11 +182,12 @@ window.PPMSModuleRuntime = (() => {
     function stationAllowedForVehicle(row) {
         if (!row || !stationCodeMatchesVehicle(row.vehicle_type, row.station_code)) return false;
         if (row.category_code !== 'assembly') return true;
+        // K9 filters by work center to separate hull-side from turret-side assembly tracks.
+        // K10/K11 have a single sequential assembly route — all stations pass regardless of work center.
+        if (row.vehicle_type !== 'K9') return true;
         const tokens = workCenterTokens(row.work_center);
         if (!tokens.length) return false;
-        const allowed = row.vehicle_type === 'K9'
-            ? new Set(['A01', 'A02', 'A03', 'A04', 'A05', 'A06', 'A07', 'A08', 'A09', 'A10', 'A11'])
-            : new Set(['A01', 'A02', 'A12', 'A13', 'A14', 'A15']);
+        const allowed = new Set(['A01', 'A02', 'A03', 'A04', 'A05', 'A06', 'A07', 'A08', 'A09', 'A10', 'A11']);
         return tokens.some(token => allowed.has(token));
     }
 
