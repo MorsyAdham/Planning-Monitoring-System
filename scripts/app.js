@@ -10546,6 +10546,7 @@ async function deleteIssue(id) {
     const { error } = await db.from('production_issues').delete().eq('id', id);
     if (error) { showToast('Delete failed: ' + error.message, 'error'); return; }
     auditLog('DELETE', 'production_issues', id, beforeData, null);
+    _broadcastIssueDeleted(beforeData?.module || getActiveModuleId());
     showToast('Issue deleted.', 'success');
     if (overlay) overlay.style.display = 'none';
     await loadIssues(true);
@@ -11040,6 +11041,12 @@ function startIssueNotifSync() {
                 updateNotifBadge();
             }
         })
+        .on('broadcast', { event: 'issue:deleted' }, ({ payload }) => {
+            const sameModule = !payload?.module || payload.module === getActiveModuleId();
+            if (!sameModule) return;
+            // Silent table refresh — no notification stored
+            loadIssues(true).catch(() => {});
+        })
         .subscribe();
 }
 
@@ -11079,6 +11086,17 @@ async function _broadcastIssueUpdated(issueData) {
                 by:         u?.email || '',
                 updated_at: new Date().toISOString(),
             },
+        });
+    } catch {}
+}
+
+async function _broadcastIssueDeleted(moduleId) {
+    if (!_issueNotifChannel) return;
+    try {
+        await _issueNotifChannel.send({
+            type: 'broadcast',
+            event: 'issue:deleted',
+            payload: { module: moduleId || getActiveModuleId() },
         });
     } catch {}
 }
