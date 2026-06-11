@@ -10546,8 +10546,6 @@ async function deleteIssue(id) {
     const { error } = await db.from('production_issues').delete().eq('id', id);
     if (error) { showToast('Delete failed: ' + error.message, 'error'); return; }
     auditLog('DELETE', 'production_issues', id, beforeData, null);
-    _broadcastIssueUpdated({ id, title: beforeData?.title, category: beforeData?.category,
-        reporter_name: beforeData?.reporter_name, reporter_email: beforeData?.reporter_email });
     showToast('Issue deleted.', 'success');
     if (overlay) overlay.style.display = 'none';
     await loadIssues(true);
