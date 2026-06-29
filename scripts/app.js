@@ -3048,6 +3048,151 @@ function _updateDeliveryCard(data) {
     } else {
         deltaEl.style.display = 'none';
     }
+
+    const card = document.querySelector('.card-delivery');
+    if (card) {
+        card.style.cursor = 'pointer';
+        card.title = 'Click to see delay breakdown';
+        card.onclick = () => _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, totalDelay);
+    }
+}
+
+function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, totalDelay) {
+    // Per-category breakdown
+    const catMap = new Map();
+    data.forEach(r => {
+        const d = Math.max(0, delayDays(r));
+        if (d === 0) return;
+        const cat = getModuleCategory(r.process_station, r) || 'Other';
+        if (!catMap.has(cat)) catMap.set(cat, { delayed: 0, totalDelay: 0 });
+        const c = catMap.get(cat);
+        c.delayed++;
+        c.totalDelay += d;
+    });
+    const catRows = [...catMap.entries()]
+        .sort((a, b) => b[1].totalDelay - a[1].totalDelay);
+
+    // Per-station breakdown (top 10)
+    const stMap = new Map();
+    data.forEach(r => {
+        const d = Math.max(0, delayDays(r));
+        if (d === 0) return;
+        const key = r.process_station || '(Unknown)';
+        const cat = getModuleCategory(r.process_station, r) || 'Other';
+        if (!stMap.has(key)) stMap.set(key, { cat, delayed: 0, totalDelay: 0 });
+        const s = stMap.get(key);
+        s.delayed++;
+        s.totalDelay += d;
+    });
+    const stRows = [...stMap.entries()]
+        .sort((a, b) => b[1].totalDelay - a[1].totalDelay)
+        .slice(0, 10);
+
+    const delayedCount = data.filter(r => delayDays(r) > 0).length;
+    const worstCat = catRows[0]?.[0] || '—';
+    const worstCatDelay = catRows[0]?.[1].totalDelay || 0;
+
+    const catTableRows = catRows.map(([cat, s], i) => {
+        const pct = totalDelay ? Math.round((s.totalDelay / totalDelay) * 100) : 0;
+        const barColor = i === 0 ? '#f87171' : i === 1 ? '#fb923c' : '#facc15';
+        return `<tr>
+            <td style="padding:7px 10px;font-weight:${i===0?'600':'400'}">${esc(cat)}</td>
+            <td style="padding:7px 10px;text-align:center">${s.delayed}</td>
+            <td style="padding:7px 10px">
+                <div style="display:flex;align-items:center;gap:8px">
+                    <div style="flex:1;height:6px;background:var(--clr-border);border-radius:3px;min-width:60px">
+                        <div style="width:${pct}%;height:100%;background:${barColor};border-radius:3px"></div>
+                    </div>
+                    <span style="white-space:nowrap;font-weight:600;color:${barColor}">${s.totalDelay} wd</span>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+
+    const stTableRows = stRows.map(([name, s], i) => `<tr>
+        <td style="padding:6px 10px;font-weight:${i===0?'600':'400'}">${esc(name)}</td>
+        <td style="padding:6px 10px;color:var(--clr-text-dim);font-size:.8rem">${esc(s.cat)}</td>
+        <td style="padding:6px 10px;text-align:center">${s.delayed}</td>
+        <td style="padding:6px 10px;text-align:right;font-weight:600;color:${i===0?'#f87171':'var(--clr-text)'}">+${s.totalDelay} wd</td>
+    </tr>`).join('');
+
+    const thStyle = 'padding:6px 10px;text-align:left;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-dim);border-bottom:1px solid var(--clr-border)';
+    const tableStyle = 'width:100%;border-collapse:collapse;font-size:.84rem';
+    const trEven = 'background:var(--clr-surface-2)';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.innerHTML = `
+        <div class="modal" style="max-width:600px;max-height:85vh;display:flex;flex-direction:column">
+            <div class="modal-header" style="flex-shrink:0">
+                <h4 class="modal-title">Delivery Delay Analysis</h4>
+                <button class="modal-close" type="button" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body" style="overflow-y:auto;flex:1;padding:18px 20px;display:flex;flex-direction:column;gap:18px">
+
+                <!-- Summary strip -->
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+                    <div style="background:var(--clr-surface-2);border:1px solid var(--clr-border);border-radius:8px;padding:12px 14px">
+                        <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--clr-text-dim);margin-bottom:4px">Planned End</div>
+                        <div style="font-size:.95rem;font-weight:600">${_fmtDeliveryDate(plannedDelivery)}</div>
+                    </div>
+                    <div style="background:var(--clr-surface-2);border:1px solid rgba(248,113,113,.3);border-radius:8px;padding:12px 14px">
+                        <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--clr-text-dim);margin-bottom:4px">Expected End</div>
+                        <div style="font-size:.95rem;font-weight:600;color:#f87171">${_fmtDeliveryDate(expectedDelivery)}</div>
+                    </div>
+                    <div style="background:var(--clr-surface-2);border:1px solid rgba(248,113,113,.3);border-radius:8px;padding:12px 14px">
+                        <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--clr-text-dim);margin-bottom:4px">Total Delay</div>
+                        <div style="font-size:.95rem;font-weight:700;color:#f87171">+${totalDelay} working days</div>
+                        <div style="font-size:.72rem;color:var(--clr-text-dim);margin-top:2px">${delayedCount} delayed task${delayedCount !== 1 ? 's' : ''}</div>
+                    </div>
+                </div>
+
+                ${totalDelay === 0 ? `<div style="text-align:center;padding:20px;color:var(--clr-text-dim)">No delays found — delivery is on track.</div>` : `
+                <!-- Category breakdown -->
+                <div>
+                    <div style="font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--clr-text-dim);margin-bottom:8px">
+                        Delay by Category &nbsp;·&nbsp; <span style="color:#f87171;font-weight:600">${esc(worstCat)}</span> is the biggest contributor (${worstCatDelay} wd)
+                    </div>
+                    <table style="${tableStyle}">
+                        <thead><tr>
+                            <th style="${thStyle}">Category</th>
+                            <th style="${thStyle};text-align:center">Delayed Tasks</th>
+                            <th style="${thStyle}">Delay Share</th>
+                        </tr></thead>
+                        <tbody>${catTableRows}</tbody>
+                    </table>
+                </div>
+
+                <!-- Station breakdown -->
+                ${stRows.length ? `<div>
+                    <div style="font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--clr-text-dim);margin-bottom:8px">Top Stations by Delay</div>
+                    <table style="${tableStyle}">
+                        <thead><tr>
+                            <th style="${thStyle}">Station</th>
+                            <th style="${thStyle}">Category</th>
+                            <th style="${thStyle};text-align:center">Delayed</th>
+                            <th style="${thStyle};text-align:right">Total Delay</th>
+                        </tr></thead>
+                        <tbody>${stTableRows}</tbody>
+                    </table>
+                </div>` : ''}
+                `}
+
+            </div>
+        </div>`;
+
+    document.body.appendChild(overlay);
+
+    function close() {
+        document.removeEventListener('keydown', onKey, true);
+        overlay.remove();
+    }
+    function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); close(); } }
+    overlay.querySelector('.modal-close').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', onKey, true);
 }
 
 /* ──────────────────────────────────────────────────────────────────
