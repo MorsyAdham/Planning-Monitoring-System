@@ -3945,49 +3945,48 @@ function renderKD2BottleneckChart(data) {
     if (!isKD2Module() || !data.length) { card.style.display = 'none'; return; }
     card.style.display = '';
 
-    // Build per-station delay stats, tracking which vehicle types are present
+    // Build per-(vehicle, station) delay stats — each vehicle's station is a separate entry
     const stationMap = new Map();
     data.forEach(r => {
-        const key = r.process_station || '(Unknown)';
-        if (!stationMap.has(key)) stationMap.set(key, { total: 0, delayed: 0, delaySum: 0, vehicles: new Set() });
+        const vtype = _getVehicleType(r.vehicle) || 'Unknown';
+        const name  = r.process_station || '(Unknown)';
+        const key   = `${vtype}||${name}`;
+        if (!stationMap.has(key)) stationMap.set(key, { name, vtype, total: 0, delayed: 0, delaySum: 0 });
         const s = stationMap.get(key);
         s.total++;
         const d = delayDays(r);
         if (d > 0) { s.delayed++; s.delaySum += d; }
-        if (r.vehicle) s.vehicles.add(r.vehicle);
     });
 
     const rt = getModuleRuntime();
-    // K9 component group (Hull / Turret) comes from the station category map
     const k9CatMap = rt?.getStationCategoryMap ? rt.getStationCategoryMap('K9') : new Map();
-    const routeOrder = (() => {
-        if (!rt?.getStationRouteOrder) return new Map();
-        const merged = new Map();
-        ['K9', 'K10', 'K11'].forEach(v => {
-            rt.getStationRouteOrder(v).forEach((seq, name) => {
-                if (!merged.has(name) || seq < merged.get(name)) merged.set(name, seq);
-            });
-        });
-        return merged;
-    })();
-    const stations = [...stationMap.entries()]
-        .map(([name, s]) => {
-            // Normalise vehicle strings → K9 / K10 / K11
-            const vtypes = [...new Set([...s.vehicles].map(v => _getVehicleType(v)).filter(Boolean))].sort();
-            const hasK9  = vtypes.includes('K9');
-            const component = hasK9 ? (k9CatMap.get(name)?.component_group || null) : null;
-            return { name, ...s, vtypes, component, avgDelay: s.delayed ? Math.round(s.delaySum / s.delayed) : 0 };
+    const vtypeRouteOrders = {};
+    ['K9', 'K10', 'K11'].forEach(v => {
+        vtypeRouteOrders[v] = rt?.getStationRouteOrder ? rt.getStationRouteOrder(v) : new Map();
+    });
+
+    const stations = [...stationMap.values()]
+        .map(s => {
+            const component = s.vtype === 'K9' ? (k9CatMap.get(s.name)?.component_group || null) : null;
+            return { ...s, component, avgDelay: s.delayed ? Math.round(s.delaySum / s.delayed) : 0 };
         })
         .sort((a, b) => {
-            const sa = routeOrder.get(a.name) ?? 9999;
-            const sb = routeOrder.get(b.name) ?? 9999;
+            // Sort by vehicle first, then by route order within vehicle
+            if (a.vtype !== b.vtype) return a.vtype.localeCompare(b.vtype);
+            const sa = (vtypeRouteOrders[a.vtype]?.get(a.name)) ?? 9999;
+            const sb = (vtypeRouteOrders[b.vtype]?.get(b.name)) ?? 9999;
             return sa - sb;
         })
         .slice(0, 20);
 
     const c      = themeChartColors();
-    // Append Hull/Turret component label for K9 stations
-    const labels = stations.map(s => s.component ? `${s.name}  (${s.component})` : s.name);
+    // Label: "StationName  (Component)  [Vtype]" — component only for K9
+    const labels = stations.map(s => {
+        let lbl = s.name;
+        if (s.component) lbl += `  (${s.component})`;
+        lbl += `  [${s.vtype}]`;
+        return lbl;
+    });
     const avgs   = stations.map(s => s.avgDelay);
     const colors = avgs.map(v => v >= 14 ? 'rgba(239,68,68,.82)' : v >= 7 ? 'rgba(245,158,11,.82)' : v >= 1 ? 'rgba(59,130,246,.75)' : 'rgba(148,163,184,.38)');
 
@@ -4024,8 +4023,8 @@ function renderKD2BottleneckChart(data) {
                             } else {
                                 lines.push(`  Avg ${s.avgDelay}d delay  ·  ${s.delayed} delayed / ${s.total} total`);
                             }
-                            if (s.vtypes.length)  lines.push(`  Vehicle: ${s.vtypes.join(', ')}`);
-                            if (s.component)      lines.push(`  Component: ${s.component}`);
+                            lines.push(`  Vehicle: ${s.vtype}`);
+                            if (s.component) lines.push(`  Component: ${s.component}`);
                             return lines;
                         },
                     },
