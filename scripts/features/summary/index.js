@@ -68,6 +68,30 @@ export function initFeature() {
                         <div class="progress-bar-fill" id="progressBarFill" style="width:0%"></div>
                     </div>
                 </div>
+
+                <div class="summary-card card-delivery">
+                    <div class="card-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <rect x="3" y="4" width="18" height="18" rx="2"/>
+                            <path d="M16 2v4M8 2v4M3 10h18"/>
+                            <path d="M8 15l2.5 2.5L16 13" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </div>
+                    <div class="card-body">
+                        <span class="card-label" style="margin-bottom:6px">Delivery Date</span>
+                        <div class="delivery-rows">
+                            <div class="delivery-row">
+                                <span class="delivery-lbl">Planned</span>
+                                <span class="delivery-date" id="sumDeliveryPlanned">—</span>
+                            </div>
+                            <div class="delivery-row">
+                                <span class="delivery-lbl">Expected</span>
+                                <span class="delivery-date" id="sumDeliveryExpected">—</span>
+                                <span class="delivery-delta" id="sumDeliveryDelta" style="display:none"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </section>
 

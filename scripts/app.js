@@ -2985,6 +2985,70 @@ function updateSummary(data) {
     animateCount('sumOverdue', overdue);
     document.getElementById('sumProgress').textContent = `${pct}%`;
     document.getElementById('progressBarFill').style.width = `${pct}%`;
+    _updateDeliveryCard(data);
+}
+
+function _fmtDeliveryDate(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function _updateDeliveryCard(data) {
+    const plannedEl  = document.getElementById('sumDeliveryPlanned');
+    const expectedEl = document.getElementById('sumDeliveryExpected');
+    const deltaEl    = document.getElementById('sumDeliveryDelta');
+    if (!plannedEl || !expectedEl || !deltaEl) return;
+
+    if (!data.length) {
+        plannedEl.textContent  = '—';
+        expectedEl.textContent = '—';
+        deltaEl.style.display  = 'none';
+        return;
+    }
+
+    const today = todayStr();
+    let plannedDelivery  = null;
+    let expectedDelivery = null;
+
+    data.forEach(r => {
+        const isF100row  = r.module === 'gun' || r.module === 'vehicle';
+        const plannedEnd = isF100row ? r.planned_end_date : r.end_date;
+        if (!plannedEnd) return;
+
+        if (!plannedDelivery || plannedEnd > plannedDelivery) plannedDelivery = plannedEnd;
+
+        const status = calculateStatus(r);
+        let expectedEnd;
+        if (status === 'Completed' || status === 'Late Completion') {
+            const actualEnd = isF100row ? r.actual_end_date : r.progress?.completion_date;
+            expectedEnd = (actualEnd && actualEnd > plannedEnd) ? actualEnd : plannedEnd;
+        } else if (status === 'Overdue') {
+            // Task is past due and still running — the earliest it finishes is today
+            expectedEnd = today;
+        } else {
+            // Planned / In Progress — assume it completes on schedule
+            expectedEnd = plannedEnd;
+        }
+
+        if (!expectedDelivery || expectedEnd > expectedDelivery) expectedDelivery = expectedEnd;
+    });
+
+    plannedEl.textContent  = _fmtDeliveryDate(plannedDelivery);
+    expectedEl.textContent = _fmtDeliveryDate(expectedDelivery || plannedDelivery);
+
+    const delta = daysBetween(plannedDelivery, expectedDelivery || plannedDelivery);
+    if (delta > 0) {
+        deltaEl.textContent = `+${delta} wd`;
+        deltaEl.className = 'delivery-delta delivery-delta--late';
+        deltaEl.style.display = '';
+    } else if (delta < 0) {
+        deltaEl.textContent = `${delta} wd`;
+        deltaEl.className = 'delivery-delta delivery-delta--early';
+        deltaEl.style.display = '';
+    } else {
+        deltaEl.style.display = 'none';
+    }
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -5555,9 +5619,17 @@ function unitLabel(vehicle, vehicle_no) {
 }
 
 function daysBetween(from, to) {
-    const a = new Date(from + 'T00:00:00');
-    const b = new Date(to + 'T00:00:00');
-    return Math.max(0, Math.round((b - a) / 86400000));
+    if (to <= from) return 0;
+    // Count working days (Mon–Thu + Sat–Sun = every day except Friday)
+    const end = new Date(to + 'T00:00:00');
+    const d   = new Date(from + 'T00:00:00');
+    let count = 0;
+    d.setDate(d.getDate() + 1); // start the day after "from"
+    while (d <= end) {
+        if (d.getDay() !== 5) count++; // exclude Fridays; Saturdays count
+        d.setDate(d.getDate() + 1);
+    }
+    return count;
 }
 
 function currentWeekRange() {
