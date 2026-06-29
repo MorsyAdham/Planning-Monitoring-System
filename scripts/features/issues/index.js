@@ -56,7 +56,7 @@ export function initFeature() {
                     <label class="issues-date-label">From<input type="date" id="issueFilterFrom" class="issues-filter-select" /></label>
                     <label class="issues-date-label">To<input type="date" id="issueFilterTo" class="issues-filter-select" /></label>
                     <button class="btn btn-primary btn-sm" id="btnIssueApply">Apply</button>
-                    <button class="btn btn-ghost btn-sm" id="btnIssueReset">Reset</button>
+                    <button class="btn btn-ghost btn-sm" id="btnIssueReset" onclick="resetIssueFilters()">Reset</button>
 
                     <div class="issues-toolbar-spacer"></div>
 

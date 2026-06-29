@@ -1278,13 +1278,13 @@ export function renderSharedDialogs() {
                         <!-- Title (full width) -->
                         <div class="form-group issue-form-full">
                             <label class="form-label" for="issueTitle">Title <span class="form-required">*</span></label>
-                            <input type="text" id="issueTitle" class="filter-control" placeholder="Short description of the issue" />
+                            <input type="text" id="issueTitle" class="issue-form-input" placeholder="Short description of the issue" />
                         </div>
 
                         <!-- Category / Priority / Status — 3 columns -->
                         <div class="form-group">
                             <label class="form-label" for="issueCategory">Category <span class="form-required">*</span></label>
-                            <select id="issueCategory" class="filter-control">
+                            <select id="issueCategory" class="issue-form-select">
                                 <option value="">— Select —</option>
                                 <option value="cutting">Cutting</option>
                                 <option value="part_machining">Part Machining</option>
@@ -1300,7 +1300,7 @@ export function renderSharedDialogs() {
                         </div>
                         <div class="form-group">
                             <label class="form-label" for="issuePriority">Priority</label>
-                            <select id="issuePriority" class="filter-control">
+                            <select id="issuePriority" class="issue-form-select">
                                 <option value="low">Low</option>
                                 <option value="medium" selected>Medium</option>
                                 <option value="high">High</option>
@@ -1309,7 +1309,7 @@ export function renderSharedDialogs() {
                         </div>
                         <div class="form-group">
                             <label class="form-label" for="issueStatus">Status</label>
-                            <select id="issueStatus" class="filter-control">
+                            <select id="issueStatus" class="issue-form-select">
                                 <option value="open" selected>Open</option>
                                 <option value="in_progress">In Progress</option>
                                 <option value="resolved">Resolved</option>
@@ -1334,21 +1334,21 @@ export function renderSharedDialogs() {
                         <!-- Description (full width) -->
                         <div class="form-group issue-form-full">
                             <label class="form-label" for="issueDescription">Description <span class="form-label-optional">(optional)</span></label>
-                            <textarea id="issueDescription" class="import-textarea" rows="3"
+                            <textarea id="issueDescription" class="issue-form-textarea" rows="3"
                                 placeholder="Detailed description of the issue…"></textarea>
                         </div>
 
                         <!-- Proposed Solution (full width) -->
                         <div class="form-group issue-form-full">
                             <label class="form-label" for="issueProposedSolution">Proposed Solution <span class="form-label-optional">(optional)</span></label>
-                            <textarea id="issueProposedSolution" class="import-textarea" rows="2"
+                            <textarea id="issueProposedSolution" class="issue-form-textarea" rows="2"
                                 placeholder="Suggested fix or workaround…"></textarea>
                         </div>
 
                         <!-- Internal Notes (full width) -->
                         <div class="form-group issue-form-full">
                             <label class="form-label" for="issueNotes">Internal Notes <span class="form-label-optional">(optional)</span></label>
-                            <textarea id="issueNotes" class="import-textarea" rows="2"
+                            <textarea id="issueNotes" class="issue-form-textarea" rows="2"
                                 placeholder="Internal follow-up notes…"></textarea>
                         </div>
 

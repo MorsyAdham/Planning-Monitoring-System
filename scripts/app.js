@@ -3732,18 +3732,21 @@ function renderKD2BottleneckChart(data) {
     if (!isKD2Module() || !data.length) { card.style.display = 'none'; return; }
     card.style.display = '';
 
-    // Build per-station delay stats
+    // Build per-station delay stats, tracking which vehicle types are present
     const stationMap = new Map();
     data.forEach(r => {
         const key = r.process_station || '(Unknown)';
-        if (!stationMap.has(key)) stationMap.set(key, { total: 0, delayed: 0, delaySum: 0 });
+        if (!stationMap.has(key)) stationMap.set(key, { total: 0, delayed: 0, delaySum: 0, vehicles: new Set() });
         const s = stationMap.get(key);
         s.total++;
         const d = delayDays(r);
         if (d > 0) { s.delayed++; s.delaySum += d; }
+        if (r.vehicle) s.vehicles.add(r.vehicle);
     });
 
     const rt = getModuleRuntime();
+    // K9 component group (Hull / Turret) comes from the station category map
+    const k9CatMap = rt?.getStationCategoryMap ? rt.getStationCategoryMap('K9') : new Map();
     const routeOrder = (() => {
         if (!rt?.getStationRouteOrder) return new Map();
         const merged = new Map();
@@ -3755,7 +3758,13 @@ function renderKD2BottleneckChart(data) {
         return merged;
     })();
     const stations = [...stationMap.entries()]
-        .map(([name, s]) => ({ name, ...s, avgDelay: s.delayed ? Math.round(s.delaySum / s.delayed) : 0 }))
+        .map(([name, s]) => {
+            // Normalise vehicle strings → K9 / K10 / K11
+            const vtypes = [...new Set([...s.vehicles].map(v => _getVehicleType(v)).filter(Boolean))].sort();
+            const hasK9  = vtypes.includes('K9');
+            const component = hasK9 ? (k9CatMap.get(name)?.component_group || null) : null;
+            return { name, ...s, vtypes, component, avgDelay: s.delayed ? Math.round(s.delaySum / s.delayed) : 0 };
+        })
         .sort((a, b) => {
             const sa = routeOrder.get(a.name) ?? 9999;
             const sb = routeOrder.get(b.name) ?? 9999;
@@ -3764,7 +3773,8 @@ function renderKD2BottleneckChart(data) {
         .slice(0, 20);
 
     const c      = themeChartColors();
-    const labels = stations.map(s => s.name);
+    // Append Hull/Turret component label for K9 stations
+    const labels = stations.map(s => s.component ? `${s.name}  (${s.component})` : s.name);
     const avgs   = stations.map(s => s.avgDelay);
     const colors = avgs.map(v => v >= 14 ? 'rgba(239,68,68,.82)' : v >= 7 ? 'rgba(245,158,11,.82)' : v >= 1 ? 'rgba(59,130,246,.75)' : 'rgba(148,163,184,.38)');
 
@@ -3795,8 +3805,15 @@ function renderKD2BottleneckChart(data) {
                         title: ctx => ctx[0].label,
                         label: ctx => {
                             const s = stations[ctx.dataIndex];
-                            if (s.avgDelay === 0) return `  No delays  ·  ${s.total} task${s.total !== 1 ? 's' : ''}`;
-                            return `  Avg ${s.avgDelay}d delay  ·  ${s.delayed} delayed / ${s.total} total`;
+                            const lines = [];
+                            if (s.avgDelay === 0) {
+                                lines.push(`  No delays  ·  ${s.total} task${s.total !== 1 ? 's' : ''}`);
+                            } else {
+                                lines.push(`  Avg ${s.avgDelay}d delay  ·  ${s.delayed} delayed / ${s.total} total`);
+                            }
+                            if (s.vtypes.length)  lines.push(`  Vehicle: ${s.vtypes.join(', ')}`);
+                            if (s.component)      lines.push(`  Component: ${s.component}`);
+                            return lines;
                         },
                     },
                 },
@@ -5298,7 +5315,6 @@ function wireEvents() {
         if (id) deleteIssue(id);
     });
     document.getElementById('btnIssueApply')?.addEventListener('click', () => loadIssues(true));
-    document.getElementById('btnIssueReset')?.addEventListener('click', resetIssueFilters);
     document.getElementById('issueSearch')?.addEventListener('keydown', e => {
         if (e.key === 'Enter') loadIssues(true);
     });
@@ -10886,15 +10902,16 @@ async function exportIssuesPDF() {
     const PRIORITY_COLORS = { low: [100,116,139], medium: [59,130,246], high: [245,158,11], critical: [239,68,68] };
     const STATUS_COLORS   = { open: [59,130,246], in_progress: [245,158,11], resolved: [34,197,94], closed: [100,116,139] };
 
-    const headers = ['#', 'Title', 'Category', 'Priority', 'Status', 'Reporter', 'Description', 'Reported On', 'Updated'];
+    const headers = ['#', 'Title', 'Category', 'Priority', 'Status', 'Reporter', 'Description', 'Solution', 'Reported On', 'Updated'];
     const body = rows.map((r, i) => [
         i + 1,
-        (r.title || '').slice(0, 46),
+        (r.title || '').slice(0, 42),
         ISSUE_CATEGORY_LABELS[r.category] || r.category || '—',
         (r.priority || '—'),
         (r.status || '—').replace(/_/g, ' '),
-        (r.reporter_name || r.reporter_email || '—').slice(0, 24),
-        (r.description || '—').slice(0, 55),
+        (r.reporter_name || r.reporter_email || '—').slice(0, 22),
+        (r.description || '—').slice(0, 48),
+        (r.proposed_solution || '—').slice(0, 48),
         formatIssueDate(r.created_at),
         formatIssueDate(r.updated_at),
     ]);
@@ -10915,14 +10932,15 @@ async function exportIssuesPDF() {
         alternateRowStyles: { fillColor: [248, 250, 252] },
         columnStyles: {
             0: { cellWidth: 7,  halign: 'center' },
-            1: { cellWidth: 52 },
-            2: { cellWidth: 24, halign: 'center' },
-            3: { cellWidth: 18, halign: 'center' },
-            4: { cellWidth: 22, halign: 'center' },
-            5: { cellWidth: 34 },
-            6: { cellWidth: 58 },
-            7: { cellWidth: 22, halign: 'center' },
-            8: { cellWidth: 22, halign: 'center' },
+            1: { cellWidth: 40 },
+            2: { cellWidth: 20, halign: 'center' },
+            3: { cellWidth: 16, halign: 'center' },
+            4: { cellWidth: 20, halign: 'center' },
+            5: { cellWidth: 28 },
+            6: { cellWidth: 44 },
+            7: { cellWidth: 44 },
+            8: { cellWidth: 20, halign: 'center' },
+            9: { cellWidth: 20, halign: 'center' },
         },
         didDrawCell(data) {
             if (data.section !== 'body') return;
