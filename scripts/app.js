@@ -3018,11 +3018,15 @@ function _updateDeliveryCard(data) {
         return;
     }
 
-    // Planned delivery = latest planned end date across all records (last process)
+    // Find the last record — the one with the latest planned end date (gates delivery)
     let plannedDelivery = null;
+    let lastRecord = null;
     data.forEach(r => {
         const plannedEnd = (r.module === 'gun' || r.module === 'vehicle') ? r.planned_end_date : r.end_date;
-        if (plannedEnd && (!plannedDelivery || plannedEnd > plannedDelivery)) plannedDelivery = plannedEnd;
+        if (plannedEnd && (!plannedDelivery || plannedEnd > plannedDelivery)) {
+            plannedDelivery = plannedEnd;
+            lastRecord = r;
+        }
     });
 
     if (!plannedDelivery) {
@@ -3032,10 +3036,10 @@ function _updateDeliveryCard(data) {
         return;
     }
 
-    // Total delay = sum of working-day delays across all records
-    const totalDelay = data.reduce((sum, r) => sum + Math.max(0, delayDays(r)), 0);
+    // Delivery delay = delay of the last process only (it gates when we can deliver)
+    const totalDelay = Math.max(0, delayDays(lastRecord));
 
-    // Expected delivery = planned end shifted by total delay in working days
+    // Expected delivery = planned end of last process + its delay in working days
     const expectedDelivery = _addWorkingDays(plannedDelivery, totalDelay);
 
     plannedEl.textContent  = _fmtDeliveryDate(plannedDelivery);
@@ -3071,6 +3075,7 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
     });
     const catRows = [...catMap.entries()]
         .sort((a, b) => b[1].totalDelay - a[1].totalDelay);
+    const allDelaysSum = catRows.reduce((s, [, v]) => s + v.totalDelay, 0);
 
     // Per-station breakdown (top 10)
     const stMap = new Map();
@@ -3093,7 +3098,7 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
     const worstCatDelay = catRows[0]?.[1].totalDelay || 0;
 
     const catTableRows = catRows.map(([cat, s], i) => {
-        const pct = totalDelay ? Math.round((s.totalDelay / totalDelay) * 100) : 0;
+        const pct = allDelaysSum ? Math.round((s.totalDelay / allDelaysSum) * 100) : 0;
         const barColor = i === 0 ? '#f87171' : i === 1 ? '#fb923c' : '#facc15';
         return `<tr>
             <td style="padding:7px 10px;font-weight:${i===0?'600':'400'}">${esc(cat)}</td>
