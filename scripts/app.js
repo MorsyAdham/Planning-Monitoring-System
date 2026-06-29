@@ -2994,6 +2994,17 @@ function _fmtDeliveryDate(iso) {
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function _addWorkingDays(dateStr, n) {
+    if (n <= 0) return dateStr;
+    const d = new Date(dateStr + 'T00:00:00');
+    let added = 0;
+    while (added < n) {
+        d.setDate(d.getDate() + 1);
+        if (d.getDay() !== 5) added++;
+    }
+    return d.toISOString().slice(0, 10);
+}
+
 function _updateDeliveryCard(data) {
     const plannedEl  = document.getElementById('sumDeliveryPlanned');
     const expectedEl = document.getElementById('sumDeliveryExpected');
@@ -3007,44 +3018,32 @@ function _updateDeliveryCard(data) {
         return;
     }
 
-    const today = todayStr();
-    let plannedDelivery  = null;
-    let expectedDelivery = null;
-
+    // Planned delivery = latest planned end date across all records (last process)
+    let plannedDelivery = null;
     data.forEach(r => {
-        const isF100row  = r.module === 'gun' || r.module === 'vehicle';
-        const plannedEnd = isF100row ? r.planned_end_date : r.end_date;
-        if (!plannedEnd) return;
-
-        if (!plannedDelivery || plannedEnd > plannedDelivery) plannedDelivery = plannedEnd;
-
-        const status = calculateStatus(r);
-        let expectedEnd;
-        if (status === 'Completed' || status === 'Late Completion') {
-            const actualEnd = isF100row ? r.actual_end_date : r.progress?.completion_date;
-            expectedEnd = (actualEnd && actualEnd > plannedEnd) ? actualEnd : plannedEnd;
-        } else if (status === 'Overdue') {
-            // Task is past due and still running — the earliest it finishes is today
-            expectedEnd = today;
-        } else {
-            // Planned / In Progress — assume it completes on schedule
-            expectedEnd = plannedEnd;
-        }
-
-        if (!expectedDelivery || expectedEnd > expectedDelivery) expectedDelivery = expectedEnd;
+        const plannedEnd = (r.module === 'gun' || r.module === 'vehicle') ? r.planned_end_date : r.end_date;
+        if (plannedEnd && (!plannedDelivery || plannedEnd > plannedDelivery)) plannedDelivery = plannedEnd;
     });
 
-    plannedEl.textContent  = _fmtDeliveryDate(plannedDelivery);
-    expectedEl.textContent = _fmtDeliveryDate(expectedDelivery || plannedDelivery);
+    if (!plannedDelivery) {
+        plannedEl.textContent  = '—';
+        expectedEl.textContent = '—';
+        deltaEl.style.display  = 'none';
+        return;
+    }
 
-    const delta = daysBetween(plannedDelivery, expectedDelivery || plannedDelivery);
-    if (delta > 0) {
-        deltaEl.textContent = `+${delta} wd`;
+    // Total delay = sum of working-day delays across all records
+    const totalDelay = data.reduce((sum, r) => sum + Math.max(0, delayDays(r)), 0);
+
+    // Expected delivery = planned end shifted by total delay in working days
+    const expectedDelivery = _addWorkingDays(plannedDelivery, totalDelay);
+
+    plannedEl.textContent  = _fmtDeliveryDate(plannedDelivery);
+    expectedEl.textContent = _fmtDeliveryDate(expectedDelivery);
+
+    if (totalDelay > 0) {
+        deltaEl.textContent = `+${totalDelay} wd`;
         deltaEl.className = 'delivery-delta delivery-delta--late';
-        deltaEl.style.display = '';
-    } else if (delta < 0) {
-        deltaEl.textContent = `${delta} wd`;
-        deltaEl.className = 'delivery-delta delivery-delta--early';
         deltaEl.style.display = '';
     } else {
         deltaEl.style.display = 'none';
