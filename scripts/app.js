@@ -2650,36 +2650,69 @@ function renderTable(data) {
     let sorted = data;
     if (isKD2Module()) {
         if (_kd2TableView === 'station') {
+            const _rt = getModuleRuntime();
+            const _routeCache = {};
+            const _routeSeq = (vehicle, station) => {
+                if (!_routeCache[vehicle]) {
+                    _routeCache[vehicle] = _rt?.getStationRouteOrder ? _rt.getStationRouteOrder(vehicle) : new Map();
+                }
+                return _routeCache[vehicle].get(station) ?? 9999;
+            };
             sorted = data.slice().sort((a, b) => {
-                const sc = String(a.process_station || '').localeCompare(String(b.process_station || ''));
-                if (sc !== 0) return sc;
                 const vc = vehicleSort(a.vehicle, b.vehicle);
                 if (vc !== 0) return vc;
+                const seqA = _routeSeq(a.vehicle, a.process_station);
+                const seqB = _routeSeq(b.vehicle, b.process_station);
+                if (seqA !== seqB) return seqA - seqB;
                 return naturalSort(a.vehicle_no, b.vehicle_no);
             });
         } else if (_kd2TableView === 'unit') {
+            const _rt2 = getModuleRuntime();
+            const _rc2 = {};
+            const _seq2 = (vehicle, station) => {
+                if (!_rc2[vehicle]) _rc2[vehicle] = _rt2?.getStationRouteOrder ? _rt2.getStationRouteOrder(vehicle) : new Map();
+                return _rc2[vehicle].get(station) ?? 9999;
+            };
             sorted = data.slice().sort((a, b) => {
                 const bc = String(a.battalion_code || '').localeCompare(String(b.battalion_code || ''), undefined, { numeric: true });
                 if (bc !== 0) return bc;
                 const vc = vehicleSort(a.vehicle, b.vehicle);
                 if (vc !== 0) return vc;
-                return naturalSort(a.vehicle_no, b.vehicle_no);
+                const nc = naturalSort(a.vehicle_no, b.vehicle_no);
+                if (nc !== 0) return nc;
+                return _seq2(a.vehicle, a.process_station) - _seq2(b.vehicle, b.process_station);
             });
         } else if (_kd2TableView === 'battalion') {
+            const _rt3 = getModuleRuntime();
+            const _rc3 = {};
+            const _seq3 = (vehicle, station) => {
+                if (!_rc3[vehicle]) _rc3[vehicle] = _rt3?.getStationRouteOrder ? _rt3.getStationRouteOrder(vehicle) : new Map();
+                return _rc3[vehicle].get(station) ?? 9999;
+            };
             sorted = data.slice().sort((a, b) => {
                 const bc = String(a.battalion_code || '').localeCompare(String(b.battalion_code || ''), undefined, { numeric: true });
                 if (bc !== 0) return bc;
                 const vc = vehicleSort(a.vehicle, b.vehicle);
                 if (vc !== 0) return vc;
-                return naturalSort(a.vehicle_no, b.vehicle_no);
+                const nc = naturalSort(a.vehicle_no, b.vehicle_no);
+                if (nc !== 0) return nc;
+                return _seq3(a.vehicle, a.process_station) - _seq3(b.vehicle, b.process_station);
             });
         } else {
+            const _rt4 = getModuleRuntime();
+            const _rc4 = {};
+            const _seq4 = (vehicle, station) => {
+                if (!_rc4[vehicle]) _rc4[vehicle] = _rt4?.getStationRouteOrder ? _rt4.getStationRouteOrder(vehicle) : new Map();
+                return _rc4[vehicle].get(station) ?? 9999;
+            };
             sorted = data.slice().sort((a, b) => {
                 const vc = vehicleSort(a.vehicle, b.vehicle);
                 if (vc !== 0) return vc;
                 const bc = String(a.battalion_code || '').localeCompare(String(b.battalion_code || ''), undefined, { numeric: true });
                 if (bc !== 0) return bc;
-                return naturalSort(a.vehicle_no, b.vehicle_no);
+                const nc = naturalSort(a.vehicle_no, b.vehicle_no);
+                if (nc !== 0) return nc;
+                return _seq4(a.vehicle, a.process_station) - _seq4(b.vehicle, b.process_station);
             });
         }
     }
