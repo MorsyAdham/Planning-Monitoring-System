@@ -3947,9 +3947,7 @@ function renderKD2BottleneckChart(data) {
 
     // Build per-(vehicle, station) delay stats — each vehicle's station is a separate entry
     const stationMap = new Map();
-    const _seenVehicleRaw = new Set();
     data.forEach(r => {
-        _seenVehicleRaw.add(r.vehicle);
         const vtype = _getVehicleType(r.vehicle) || 'Unknown';
         const name  = r.process_station || '(Unknown)';
         const key   = `${vtype}||${name}`;
@@ -3959,10 +3957,6 @@ function renderKD2BottleneckChart(data) {
         const d = delayDays(r);
         if (d > 0) { s.delayed++; s.delaySum += d; }
     });
-    console.debug('[PPMS bottleneck] raw vehicle values:', [..._seenVehicleRaw].slice(0, 30));
-    console.debug('[PPMS bottleneck] station keys:', [...stationMap.keys()]);
-    const _floorEntries = [...stationMap.entries()].filter(([k]) => k.toLowerCase().includes('floor'));
-    console.debug('[PPMS bottleneck] Floor entries:', _floorEntries.map(([k, v]) => `${k} → ${v.delayed}/${v.total}`));
 
     const rt = getModuleRuntime();
     const k9CatMap = rt?.getStationCategoryMap ? rt.getStationCategoryMap('K9') : new Map();
