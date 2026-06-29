@@ -6277,7 +6277,7 @@ function renderGantt(plans, startDate, endDate) {
             if (!_kd2UnitCompMap[unitKey]) _kd2UnitCompMap[unitKey] = { done: 0, total: 0 };
             _kd2UnitCompMap[unitKey].total++;
             if (done) _kd2UnitCompMap[unitKey].done++;
-            const statKey = r.process_station || '';
+            const statKey = r.process_station ? `${r.vehicle}||${r.process_station}` : '';
             if (statKey) {
                 if (!_kd2StatCompMap[statKey]) _kd2StatCompMap[statKey] = { done: 0, total: 0 };
                 _kd2StatCompMap[statKey].total++;
@@ -6591,7 +6591,7 @@ function renderGantt(plans, startDate, endDate) {
                 : '';
             const _kd2PctComp = isKD2Module()
                 ? (isKd2ProcessView
-                    ? _kd2StatCompMap[laneUnit] || null
+                    ? _kd2StatCompMap[`${laneVehicle}||${laneUnit}`] || null
                     : _kd2UnitCompMap[`${groupKey}||${laneVehicle}||${laneUnit}`] || null)
                 : null;
             const _kd2PctHtml = _kd2PctComp
