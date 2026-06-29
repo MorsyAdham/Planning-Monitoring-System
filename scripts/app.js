@@ -3961,6 +3961,8 @@ function renderKD2BottleneckChart(data) {
     });
     console.debug('[PPMS bottleneck] raw vehicle values:', [..._seenVehicleRaw].slice(0, 30));
     console.debug('[PPMS bottleneck] station keys:', [...stationMap.keys()]);
+    const _floorEntries = [...stationMap.entries()].filter(([k]) => k.toLowerCase().includes('floor'));
+    console.debug('[PPMS bottleneck] Floor entries:', _floorEntries.map(([k, v]) => `${k} → ${v.delayed}/${v.total}`));
 
     const rt = getModuleRuntime();
     const k9CatMap = rt?.getStationCategoryMap ? rt.getStationCategoryMap('K9') : new Map();
