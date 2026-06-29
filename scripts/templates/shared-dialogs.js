@@ -1345,11 +1345,13 @@ export function renderSharedDialogs() {
                                 placeholder="Suggested fix or workaround…"></textarea>
                         </div>
 
-                        <!-- Internal Notes (full width) -->
+                        <!-- Action Taken (full width) -->
                         <div class="form-group issue-form-full">
-                            <label class="form-label" for="issueNotes">Internal Notes <span class="form-label-optional">(optional)</span></label>
+                            <label class="form-label" for="issueNotes">
+                                Action Taken <span class="form-label-optional">(fill in once a resolution has been applied)</span>
+                            </label>
                             <textarea id="issueNotes" class="issue-form-textarea" rows="2"
-                                placeholder="Internal follow-up notes…"></textarea>
+                                placeholder="Describe what was actually done to resolve or mitigate this issue…"></textarea>
                         </div>
 
                     </div>

@@ -78,7 +78,16 @@ export function initFeature() {
                         </svg>
                     </div>
                     <div class="card-body">
-                        <span class="card-label" style="margin-bottom:6px">Delivery Date</span>
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                            <span class="card-label">Delivery Date</span>
+                            <span class="delivery-detail-hint" title="Click for delay breakdown">
+                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;opacity:.55">
+                                    <circle cx="8" cy="8" r="6.5"/>
+                                    <path d="M8 7v4M8 5.5v.5" stroke-linecap="round"/>
+                                </svg>
+                                <span style="font-size:.68rem;opacity:.6;letter-spacing:.02em">Details</span>
+                            </span>
+                        </div>
                         <div class="delivery-rows">
                             <div class="delivery-row">
                                 <span class="delivery-lbl">Planned</span>
