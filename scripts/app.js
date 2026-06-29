@@ -3036,10 +3036,10 @@ function _updateDeliveryCard(data) {
         return;
     }
 
-    // Delivery delay = delay of the last process only (it gates when we can deliver)
-    const totalDelay = Math.max(0, delayDays(lastRecord));
+    // Delivery delay = worst single-task delay (that bottleneck cascades to delivery)
+    const totalDelay = data.reduce((max, r) => Math.max(max, delayDays(r)), 0);
 
-    // Expected delivery = planned end of last process + its delay in working days
+    // Expected delivery = planned end shifted by the worst delay in working days
     const expectedDelivery = _addWorkingDays(plannedDelivery, totalDelay);
 
     plannedEl.textContent  = _fmtDeliveryDate(plannedDelivery);
