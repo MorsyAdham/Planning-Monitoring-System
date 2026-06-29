@@ -2637,7 +2637,7 @@ function renderTable(data) {
             const uk = `${r.vehicle}||${r.vehicle_no}`;
             if (!_unitComp[uk]) _unitComp[uk] = { done: 0, total: 0 };
             _unitComp[uk].total++; if (done) _unitComp[uk].done++;
-            const sk = r.process_station;
+            const sk = `${r.vehicle}||${r.process_station}`;
             if (!_statComp[sk]) _statComp[sk] = { done: 0, total: 0 };
             _statComp[sk].total++; if (done) _statComp[sk].done++;
             const bk = r.battalion_code || '—';
@@ -2724,10 +2724,10 @@ function renderTable(data) {
                     </td></tr>`;
                 }
             } else if (_kd2TableView === 'station') {
-                groupKey = row.process_station;
+                groupKey = `${row.vehicle}||${row.process_station}`;
                 if (groupKey !== prevGroupKey) {
                     groupHtml = `<tr class="f100-tbl-group-row f100-tbl-group-part"><td colspan="12">
-                        <strong>${esc(groupKey || '—')}</strong>${_mkPctBar(_statComp[groupKey])}
+                        <strong>${esc(row.process_station || '—')}</strong><span style="margin-left:6px;font-size:.75rem;opacity:.65;font-weight:600">[${esc(row.vehicle)}]</span>${_mkPctBar(_statComp[groupKey])}
                     </td></tr>`;
                 }
             }
