@@ -3062,43 +3062,43 @@ function _updateDeliveryCard(data) {
 }
 
 function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, totalDelay) {
-    // Per-category breakdown
+    // Per-category breakdown — track worst single delay per category
     const catMap = new Map();
     data.forEach(r => {
         const d = Math.max(0, delayDays(r));
         if (d === 0) return;
         const cat = getModuleCategory(r.process_station, r) || 'Other';
-        if (!catMap.has(cat)) catMap.set(cat, { delayed: 0, totalDelay: 0 });
+        if (!catMap.has(cat)) catMap.set(cat, { delayed: 0, maxDelay: 0 });
         const c = catMap.get(cat);
         c.delayed++;
-        c.totalDelay += d;
+        if (d > c.maxDelay) c.maxDelay = d;
     });
     const catRows = [...catMap.entries()]
-        .sort((a, b) => b[1].totalDelay - a[1].totalDelay);
-    const allDelaysSum = catRows.reduce((s, [, v]) => s + v.totalDelay, 0);
+        .sort((a, b) => b[1].maxDelay - a[1].maxDelay);
+    const overallMax = catRows[0]?.[1].maxDelay || 1;
 
-    // Per-station breakdown (top 10)
+    // Per-station breakdown (top 10) — worst single delay per station
     const stMap = new Map();
     data.forEach(r => {
         const d = Math.max(0, delayDays(r));
         if (d === 0) return;
         const key = r.process_station || '(Unknown)';
         const cat = getModuleCategory(r.process_station, r) || 'Other';
-        if (!stMap.has(key)) stMap.set(key, { cat, delayed: 0, totalDelay: 0 });
+        if (!stMap.has(key)) stMap.set(key, { cat, delayed: 0, maxDelay: 0 });
         const s = stMap.get(key);
         s.delayed++;
-        s.totalDelay += d;
+        if (d > s.maxDelay) s.maxDelay = d;
     });
     const stRows = [...stMap.entries()]
-        .sort((a, b) => b[1].totalDelay - a[1].totalDelay)
+        .sort((a, b) => b[1].maxDelay - a[1].maxDelay)
         .slice(0, 10);
 
     const delayedCount = data.filter(r => delayDays(r) > 0).length;
     const worstCat = catRows[0]?.[0] || '—';
-    const worstCatDelay = catRows[0]?.[1].totalDelay || 0;
+    const worstCatDelay = catRows[0]?.[1].maxDelay || 0;
 
     const catTableRows = catRows.map(([cat, s], i) => {
-        const pct = allDelaysSum ? Math.round((s.totalDelay / allDelaysSum) * 100) : 0;
+        const pct = Math.round((s.maxDelay / overallMax) * 100);
         const barColor = i === 0 ? '#f87171' : i === 1 ? '#fb923c' : '#facc15';
         return `<tr>
             <td style="padding:7px 10px;font-weight:${i===0?'600':'400'}">${esc(cat)}</td>
@@ -3108,7 +3108,7 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
                     <div style="flex:1;height:6px;background:var(--clr-border);border-radius:3px;min-width:60px">
                         <div style="width:${pct}%;height:100%;background:${barColor};border-radius:3px"></div>
                     </div>
-                    <span style="white-space:nowrap;font-weight:600;color:${barColor}">${s.totalDelay} wd</span>
+                    <span style="white-space:nowrap;font-weight:600;color:${barColor}">${s.maxDelay} wd</span>
                 </div>
             </td>
         </tr>`;
@@ -3118,7 +3118,7 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
         <td style="padding:6px 10px;font-weight:${i===0?'600':'400'}">${esc(name)}</td>
         <td style="padding:6px 10px;color:var(--clr-text-dim);font-size:.8rem">${esc(s.cat)}</td>
         <td style="padding:6px 10px;text-align:center">${s.delayed}</td>
-        <td style="padding:6px 10px;text-align:right;font-weight:600;color:${i===0?'#f87171':'var(--clr-text)'}">+${s.totalDelay} wd</td>
+        <td style="padding:6px 10px;text-align:right;font-weight:600;color:${i===0?'#f87171':'var(--clr-text)'}">+${s.maxDelay} wd</td>
     </tr>`).join('');
 
     const thStyle = 'padding:6px 10px;text-align:left;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-dim);border-bottom:1px solid var(--clr-border)';
@@ -3164,7 +3164,7 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
                         <thead><tr>
                             <th style="${thStyle}">Category</th>
                             <th style="${thStyle};text-align:center">Delayed Tasks</th>
-                            <th style="${thStyle}">Delay Share</th>
+                            <th style="${thStyle}">Worst Single Delay</th>
                         </tr></thead>
                         <tbody>${catTableRows}</tbody>
                     </table>
@@ -3178,7 +3178,7 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
                             <th style="${thStyle}">Station</th>
                             <th style="${thStyle}">Category</th>
                             <th style="${thStyle};text-align:center">Delayed</th>
-                            <th style="${thStyle};text-align:right">Total Delay</th>
+                            <th style="${thStyle};text-align:right">Worst Delay</th>
                         </tr></thead>
                         <tbody>${stTableRows}</tbody>
                     </table>
