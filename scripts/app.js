@@ -3062,82 +3062,99 @@ function _updateDeliveryCard(data) {
 }
 
 function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, totalDelay) {
-    // Per-category breakdown — track worst single delay per category
+    // Build: category → { maxDelay, delayed, vehicles: Map<vtype,maxDelay>, stations: Map<vtype||station, {name,vtype,delayed,maxDelay}> }
     const catMap = new Map();
     data.forEach(r => {
         const d = Math.max(0, delayDays(r));
         if (d === 0) return;
-        const cat = getModuleCategory(r.process_station, r) || 'Other';
-        if (!catMap.has(cat)) catMap.set(cat, { delayed: 0, maxDelay: 0 });
+        const cat   = getModuleCategory(r.process_station, r) || 'Other';
+        const vtype = _getVehicleType(r.vehicle) || 'Unknown';
+        const sname = r.process_station || '(Unknown)';
+        if (!catMap.has(cat)) catMap.set(cat, { maxDelay: 0, delayed: 0, vehicles: new Map(), stations: new Map() });
         const c = catMap.get(cat);
         c.delayed++;
         if (d > c.maxDelay) c.maxDelay = d;
-    });
-    const catRows = [...catMap.entries()]
-        .sort((a, b) => b[1].maxDelay - a[1].maxDelay);
-    const overallMax = catRows[0]?.[1].maxDelay || 1;
-
-    // Per-station breakdown (top 10) — worst single delay per station
-    const stMap = new Map();
-    data.forEach(r => {
-        const d = Math.max(0, delayDays(r));
-        if (d === 0) return;
-        const key = r.process_station || '(Unknown)';
-        const cat = getModuleCategory(r.process_station, r) || 'Other';
-        if (!stMap.has(key)) stMap.set(key, { cat, delayed: 0, maxDelay: 0 });
-        const s = stMap.get(key);
+        if (!c.vehicles.has(vtype) || d > c.vehicles.get(vtype)) c.vehicles.set(vtype, d);
+        const sk = `${vtype}||${sname}`;
+        if (!c.stations.has(sk)) c.stations.set(sk, { name: sname, vtype, delayed: 0, maxDelay: 0 });
+        const s = c.stations.get(sk);
         s.delayed++;
         if (d > s.maxDelay) s.maxDelay = d;
     });
-    const stRows = [...stMap.entries()]
-        .sort((a, b) => b[1].maxDelay - a[1].maxDelay)
-        .slice(0, 10);
 
+    const catRows = [...catMap.entries()].sort((a, b) => b[1].maxDelay - a[1].maxDelay);
+    const overallMax  = catRows[0]?.[1].maxDelay || 1;
     const delayedCount = data.filter(r => delayDays(r) > 0).length;
-    const worstCat = catRows[0]?.[0] || '—';
+    const worstCat    = catRows[0]?.[0] || '—';
     const worstCatDelay = catRows[0]?.[1].maxDelay || 0;
 
-    const catTableRows = catRows.map(([cat, s], i) => {
-        const pct = Math.round((s.maxDelay / overallMax) * 100);
+    const thSt = 'padding:5px 10px;text-align:left;font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-dim);border-bottom:1px solid var(--clr-border)';
+
+    const catListHtml = catRows.map(([cat, c], i) => {
+        const pct      = Math.round((c.maxDelay / overallMax) * 100);
         const barColor = i === 0 ? '#f87171' : i === 1 ? '#fb923c' : '#facc15';
-        return `<tr>
-            <td style="padding:7px 10px;font-weight:${i===0?'600':'400'}">${esc(cat)}</td>
-            <td style="padding:7px 10px;text-align:center">${s.delayed}</td>
-            <td style="padding:7px 10px">
-                <div style="display:flex;align-items:center;gap:8px">
-                    <div style="flex:1;height:6px;background:var(--clr-border);border-radius:3px;min-width:60px">
-                        <div style="width:${pct}%;height:100%;background:${barColor};border-radius:3px"></div>
+        const vtags    = [...c.vehicles.entries()].sort((a,b) => b[1]-a[1])
+            .map(([v, mx]) => `<span style="font-size:.68rem;font-weight:700;padding:1px 6px;border-radius:8px;background:var(--clr-surface-3,var(--clr-border));color:var(--clr-text-dim)">${esc(v)}</span>`)
+            .join(' ');
+        const stRows = [...c.stations.values()].sort((a,b) => b.maxDelay - a.maxDelay);
+        const stHtml = stRows.map(s => `
+            <tr style="border-top:1px solid var(--clr-border)">
+                <td style="padding:5px 10px 5px 28px;color:var(--clr-text-dim)">↳ ${esc(s.name)}</td>
+                <td style="padding:5px 10px;text-align:center">
+                    <span style="font-size:.72rem;font-weight:700;padding:1px 6px;border-radius:8px;background:var(--clr-surface-3,var(--clr-border));color:var(--clr-text-dim)">${esc(s.vtype)}</span>
+                </td>
+                <td style="padding:5px 10px;text-align:center;color:var(--clr-text-dim);font-size:.82rem">${s.delayed}</td>
+                <td style="padding:5px 10px;text-align:right;font-weight:600;font-size:.82rem;color:${s.maxDelay===c.maxDelay?barColor:'var(--clr-text)'}">+${s.maxDelay} wd</td>
+            </tr>`).join('');
+
+        return `
+        <tbody class="dda-cat-body" data-cat-idx="${i}">
+            <tr class="dda-cat-row" data-cat-idx="${i}" style="cursor:pointer;border-top:1px solid var(--clr-border)">
+                <td style="padding:8px 10px">
+                    <div style="display:flex;align-items:center;gap:7px">
+                        <svg class="dda-chevron" data-cat-idx="${i}" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px;flex-shrink:0;transition:transform .2s;transform:rotate(-90deg)"><path d="M3 4.5l3 3 3-3"/></svg>
+                        <span style="font-weight:${i===0?'700':'500'}">${esc(cat)}</span>
+                        <span style="margin-left:4px">${vtags}</span>
                     </div>
-                    <span style="white-space:nowrap;font-weight:600;color:${barColor}">${s.maxDelay} wd</span>
-                </div>
-            </td>
-        </tr>`;
+                </td>
+                <td style="padding:8px 10px;text-align:center">${c.delayed}</td>
+                <td style="padding:8px 10px">
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <div style="flex:1;height:6px;background:var(--clr-border);border-radius:3px;min-width:50px">
+                            <div style="width:${pct}%;height:100%;background:${barColor};border-radius:3px"></div>
+                        </div>
+                        <span style="white-space:nowrap;font-weight:700;color:${barColor}">${c.maxDelay} wd</span>
+                    </div>
+                </td>
+            </tr>
+            <tr class="dda-st-row" data-cat-idx="${i}" style="display:none">
+                <td colspan="3" style="padding:0">
+                    <table style="width:100%;border-collapse:collapse;font-size:.82rem">
+                        <thead><tr>
+                            <th style="${thSt}">Station</th>
+                            <th style="${thSt};text-align:center">Vehicle</th>
+                            <th style="${thSt};text-align:center">Delayed</th>
+                            <th style="${thSt};text-align:right">Worst Delay</th>
+                        </tr></thead>
+                        <tbody>${stHtml}</tbody>
+                    </table>
+                </td>
+            </tr>
+        </tbody>`;
     }).join('');
-
-    const stTableRows = stRows.map(([name, s], i) => `<tr>
-        <td style="padding:6px 10px;font-weight:${i===0?'600':'400'}">${esc(name)}</td>
-        <td style="padding:6px 10px;color:var(--clr-text-dim);font-size:.8rem">${esc(s.cat)}</td>
-        <td style="padding:6px 10px;text-align:center">${s.delayed}</td>
-        <td style="padding:6px 10px;text-align:right;font-weight:600;color:${i===0?'#f87171':'var(--clr-text)'}">+${s.maxDelay} wd</td>
-    </tr>`).join('');
-
-    const thStyle = 'padding:6px 10px;text-align:left;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-dim);border-bottom:1px solid var(--clr-border)';
-    const tableStyle = 'width:100%;border-collapse:collapse;font-size:.84rem';
-    const trEven = 'background:var(--clr-surface-2)';
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
     overlay.innerHTML = `
-        <div class="modal" style="max-width:600px;max-height:85vh;display:flex;flex-direction:column">
+        <div class="modal" style="max-width:620px;max-height:88vh;display:flex;flex-direction:column">
             <div class="modal-header" style="flex-shrink:0">
                 <h4 class="modal-title">Delivery Delay Analysis</h4>
                 <button class="modal-close" type="button" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body" style="overflow-y:auto;flex:1;padding:18px 20px;display:flex;flex-direction:column;gap:18px">
 
-                <!-- Summary strip -->
                 <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
                     <div style="background:var(--clr-surface-2);border:1px solid var(--clr-border);border-radius:8px;padding:12px 14px">
                         <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--clr-text-dim);margin-bottom:4px">Planned End</div>
@@ -3148,47 +3165,45 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
                         <div style="font-size:.95rem;font-weight:600;color:#f87171">${_fmtDeliveryDate(expectedDelivery)}</div>
                     </div>
                     <div style="background:var(--clr-surface-2);border:1px solid rgba(248,113,113,.3);border-radius:8px;padding:12px 14px">
-                        <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--clr-text-dim);margin-bottom:4px">Total Delay</div>
-                        <div style="font-size:.95rem;font-weight:700;color:#f87171">+${totalDelay} working days</div>
-                        <div style="font-size:.72rem;color:var(--clr-text-dim);margin-top:2px">${delayedCount} delayed task${delayedCount !== 1 ? 's' : ''}</div>
+                        <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--clr-text-dim);margin-bottom:4px">Worst Delay</div>
+                        <div style="font-size:.95rem;font-weight:700;color:#f87171">+${totalDelay} wd</div>
+                        <div style="font-size:.72rem;color:var(--clr-text-dim);margin-top:2px">${delayedCount} delayed task${delayedCount!==1?'s':''}</div>
                     </div>
                 </div>
 
-                ${totalDelay === 0 ? `<div style="text-align:center;padding:20px;color:var(--clr-text-dim)">No delays found — delivery is on track.</div>` : `
-                <!-- Category breakdown -->
-                <div>
-                    <div style="font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--clr-text-dim);margin-bottom:8px">
-                        Delay by Category &nbsp;·&nbsp; <span style="color:#f87171;font-weight:600">${esc(worstCat)}</span> is the biggest contributor (${worstCatDelay} wd)
-                    </div>
-                    <table style="${tableStyle}">
-                        <thead><tr>
-                            <th style="${thStyle}">Category</th>
-                            <th style="${thStyle};text-align:center">Delayed Tasks</th>
-                            <th style="${thStyle}">Worst Single Delay</th>
-                        </tr></thead>
-                        <tbody>${catTableRows}</tbody>
-                    </table>
-                </div>
-
-                <!-- Station breakdown -->
-                ${stRows.length ? `<div>
-                    <div style="font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--clr-text-dim);margin-bottom:8px">Top Stations by Delay</div>
-                    <table style="${tableStyle}">
-                        <thead><tr>
-                            <th style="${thStyle}">Station</th>
-                            <th style="${thStyle}">Category</th>
-                            <th style="${thStyle};text-align:center">Delayed</th>
-                            <th style="${thStyle};text-align:right">Worst Delay</th>
-                        </tr></thead>
-                        <tbody>${stTableRows}</tbody>
-                    </table>
-                </div>` : ''}
-                `}
-
+                ${totalDelay === 0
+                    ? `<div style="text-align:center;padding:20px;color:var(--clr-text-dim)">No delays — delivery is on track.</div>`
+                    : `<div>
+                        <div style="font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--clr-text-dim);margin-bottom:8px">
+                            Delay by Category &nbsp;·&nbsp; click a row to see stations
+                            &nbsp;·&nbsp; <span style="color:#f87171">${esc(worstCat)}</span> is worst (${worstCatDelay} wd)
+                        </div>
+                        <table style="width:100%;border-collapse:collapse;font-size:.84rem">
+                            <thead><tr style="border-bottom:2px solid var(--clr-border)">
+                                <th style="padding:6px 10px;text-align:left;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-dim)">Category &amp; Vehicles</th>
+                                <th style="padding:6px 10px;text-align:center;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-dim)">Delayed</th>
+                                <th style="padding:6px 10px;text-align:left;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-dim)">Worst Delay</th>
+                            </tr></thead>
+                            ${catListHtml}
+                        </table>
+                    </div>`
+                }
             </div>
         </div>`;
 
     document.body.appendChild(overlay);
+
+    // Toggle category rows
+    overlay.querySelectorAll('.dda-cat-row').forEach(row => {
+        row.addEventListener('click', () => {
+            const idx     = row.dataset.catIdx;
+            const stRow   = overlay.querySelector(`.dda-st-row[data-cat-idx="${idx}"]`);
+            const chevron = overlay.querySelector(`.dda-chevron[data-cat-idx="${idx}"]`);
+            const open    = stRow.style.display !== 'none';
+            stRow.style.display   = open ? 'none' : '';
+            chevron.style.transform = open ? 'rotate(-90deg)' : 'rotate(0deg)';
+        });
+    });
 
     function close() {
         document.removeEventListener('keydown', onKey, true);
@@ -10840,7 +10855,7 @@ async function openIssueView(id) {
     const sections = [];
     if (data.description)        sections.push({ label: 'Description',       text: esc(data.description),        cls: '' });
     if (data.proposed_solution)  sections.push({ label: 'Proposed Solution', text: esc(data.proposed_solution),  cls: '' });
-    if (data.notes)              sections.push({ label: 'Internal Notes',     text: esc(data.notes),              cls: ' issue-view-section-text--notes' });
+    if (data.notes)              sections.push({ label: 'Action Taken',       text: esc(data.notes),              cls: ' issue-view-section-text--notes' });
 
     document.getElementById('issueViewBody').innerHTML = `
         <div class="issue-view-meta-row">

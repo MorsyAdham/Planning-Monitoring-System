@@ -636,6 +636,10 @@ body {
 [data-theme="light"] .delivery-delta--late  { background: rgba(220,38,38,.08); color: #b91c1c; border-color: rgba(220,38,38,.2); }
 [data-theme="light"] .delivery-delta--early { background: rgba(22,163,74,.08); color: #15803d; border-color: rgba(22,163,74,.18); }
 [data-theme="light"] .card-delivery .card-icon { background: rgba(124,58,237,.1); color: #7c3aed; }
+.delivery-detail-hint { display:flex; align-items:center; gap:4px; color:var(--clr-text-dim); transition:opacity .15s; }
+.card-delivery:hover .delivery-detail-hint { opacity:.85; }
+.card-delivery { transition: box-shadow .15s, transform .1s; }
+.card-delivery:hover { box-shadow: 0 0 0 2px rgba(139,92,246,.35); transform: translateY(-1px); }
 
 .card-icon {
     width: 40px;
