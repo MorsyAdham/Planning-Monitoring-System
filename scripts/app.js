@@ -3999,11 +3999,11 @@ function renderKD2BottleneckChart(data) {
         const vtype = _getVehicleType(r.vehicle) || 'Unknown';
         const name  = r.process_station || '(Unknown)';
         const key   = `${vtype}||${name}`;
-        if (!stationMap.has(key)) stationMap.set(key, { name, vtype, total: 0, delayed: 0, delaySum: 0 });
+        if (!stationMap.has(key)) stationMap.set(key, { name, vtype, total: 0, delayed: 0, delaySum: 0, maxDelay: 0 });
         const s = stationMap.get(key);
         s.total++;
         const d = delayDays(r);
-        if (d > 0) { s.delayed++; s.delaySum += d; }
+        if (d > 0) { s.delayed++; s.delaySum += d; if (d > s.maxDelay) s.maxDelay = d; }
     });
 
     const rt = getModuleRuntime();
@@ -4016,7 +4016,7 @@ function renderKD2BottleneckChart(data) {
     const stations = [...stationMap.values()]
         .map(s => {
             const component = s.vtype === 'K9' ? (k9CatMap.get(s.name)?.component_group || null) : null;
-            return { ...s, component, avgDelay: s.delayed ? Math.round(s.delaySum / s.delayed) : 0 };
+            return { ...s, component };
         })
         .sort((a, b) => {
             // Sort by vehicle first, then by route order within vehicle
@@ -4035,8 +4035,8 @@ function renderKD2BottleneckChart(data) {
         lbl += `  [${s.vtype}]`;
         return lbl;
     });
-    const avgs   = stations.map(s => s.avgDelay);
-    const colors = avgs.map(v => v >= 14 ? 'rgba(239,68,68,.82)' : v >= 7 ? 'rgba(245,158,11,.82)' : v >= 1 ? 'rgba(59,130,246,.75)' : 'rgba(148,163,184,.38)');
+    const maxs   = stations.map(s => s.maxDelay);
+    const colors = maxs.map(v => v >= 14 ? 'rgba(239,68,68,.82)' : v >= 7 ? 'rgba(245,158,11,.82)' : v >= 1 ? 'rgba(59,130,246,.75)' : 'rgba(148,163,184,.38)');
 
     const sub = document.getElementById('kd2BottleneckSubtitle');
     const withDelays = stations.filter(s => s.delayed > 0).length;
@@ -4047,8 +4047,8 @@ function renderKD2BottleneckChart(data) {
         data: {
             labels,
             datasets: [{
-                label: 'Avg Delay (days)',
-                data: avgs,
+                label: 'Max Delay (days)',
+                data: maxs,
                 backgroundColor: colors,
                 borderRadius: 4,
                 borderWidth: 0,
@@ -4066,10 +4066,10 @@ function renderKD2BottleneckChart(data) {
                         label: ctx => {
                             const s = stations[ctx.dataIndex];
                             const lines = [];
-                            if (s.avgDelay === 0) {
+                            if (s.maxDelay === 0) {
                                 lines.push(`  No delays  ·  ${s.total} task${s.total !== 1 ? 's' : ''}`);
                             } else {
-                                lines.push(`  Avg ${s.avgDelay}d delay  ·  ${s.delayed} delayed / ${s.total} total`);
+                                lines.push(`  Max ${s.maxDelay}d delay  ·  ${s.delayed} delayed / ${s.total} total`);
                             }
                             lines.push(`  Vehicle: ${s.vtype}`);
                             if (s.component) lines.push(`  Component: ${s.component}`);
@@ -4083,7 +4083,7 @@ function renderKD2BottleneckChart(data) {
                     beginAtZero: true,
                     ticks: { color: c.text, font: { family: 'Inter', size: 10 }, callback: v => v + 'd' },
                     grid: { color: c.grid },
-                    title: { display: true, text: 'Average Delay (days, among delayed tasks)', color: c.text, font: { family: 'Inter', size: 10 } },
+                    title: { display: true, text: 'Max Delay (days, worst delayed task per station)', color: c.text, font: { family: 'Inter', size: 10 } },
                 },
                 y: {
                     ticks: { color: c.text, font: { family: 'Inter', size: 10 } },
