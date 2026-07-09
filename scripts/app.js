@@ -116,7 +116,7 @@ async function removeExportPerm(id) {
 
 function _applyExportVisibility() {
     canExport().then(allowed => {
-        const ids = ['btnVpxPdf', 'btnVpxExcel', 'btnExportIssuesExcel', 'btnExportIssuesPDF', 'btnReports'];
+        const ids = ['btnVpxPdf', 'btnVpxExcel', 'btnIssueReportModal', 'btnReports'];
         ids.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = allowed ? '' : 'none';
@@ -5579,9 +5579,6 @@ function wireEvents() {
     document.getElementById('issueSearch')?.addEventListener('keydown', e => {
         if (e.key === 'Enter') loadIssues(true);
     });
-    document.getElementById('btnExportIssuesExcel')?.addEventListener('click', exportIssuesExcel);
-    document.getElementById('btnExportIssuesPDF')?.addEventListener('click', exportIssuesPDF);
-
     // ── More menu toggle ──────────────────────────────────────────────
     const btnNavMore  = document.getElementById('btnNavMore');
     const moreDropdown = document.getElementById('navMoreDropdown');
@@ -11004,320 +11001,6 @@ function exportHtmlAsWord(filename, titleText, bodyHtml) {
     showToast('Word document exported.', 'success');
 }
 
-async function _fetchAllIssuesForExport() {
-    const search   = (document.getElementById('issueSearch')?.value || '').trim();
-    const category = document.getElementById('issueFilterCategory')?.value || '';
-    const status   = document.getElementById('issueFilterStatus')?.value || '';
-    const priority = document.getElementById('issueFilterPriority')?.value || '';
-    const reporter = document.getElementById('issueFilterReporter')?.value || '';
-    const from     = document.getElementById('issueFilterFrom')?.value || '';
-    const to       = document.getElementById('issueFilterTo')?.value || '';
-
-    let query = db.from('production_issues').select('*').eq('module', getActiveModuleId()).order('created_at', { ascending: true });
-    if (search)   query = query.or(`title.ilike.%${search}%,description.ilike.%${search}%`);
-    if (category) query = query.eq('category', category);
-    if (status)   query = query.eq('status', status);
-    if (priority) query = query.eq('priority', priority);
-    if (reporter) query = query.eq('reporter_email', reporter);
-    if (from)     query = query.gte('created_at', from + 'T00:00:00');
-    if (to)       query = query.lte('created_at', to + 'T23:59:59');
-
-    const { data, error } = await query;
-    if (error) { showToast('Export failed: ' + error.message, 'error'); return null; }
-    return data || [];
-}
-
-async function exportIssuesExcel() {
-    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
-    if (typeof ExcelJS === 'undefined') { showToast('Excel library not loaded — please refresh.', 'error'); return; }
-    showToast('Preparing Excel export…', 'info');
-    const rows = await _fetchAllIssuesForExport();
-    if (!rows) return;
-
-    const MODULE_LABELS_XL = { kd1: 'KD1', kd2: 'KD2', f100kd2: 'F100 KD2' };
-    const modLabel = MODULE_LABELS_XL[getActiveModuleId()] || getActiveModuleId();
-
-    const wb = new ExcelJS.Workbook();
-    wb.creator = 'PPMS';
-    wb.created = new Date();
-
-    const ws = wb.addWorksheet(`Issues ${modLabel}`);
-
-    // ── Title row ────────────────────────────────────────────────────
-    ws.mergeCells(1, 1, 1, 15);
-    const titleCell = ws.getCell(1, 1);
-    titleCell.value = `Production Issues — ${modLabel}`;
-    titleCell.font  = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FF1e293b' } };
-    titleCell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf8fafc' } };
-    titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-    ws.getRow(1).height = 26;
-
-    ws.mergeCells(2, 1, 2, 15);
-    const subCell = ws.getCell(2, 1);
-    subCell.value = `Generated: ${new Date().toLocaleString('en-GB')}   ·   ${rows.length} issue${rows.length !== 1 ? 's' : ''}`;
-    subCell.font  = { name: 'Calibri', size: 8, italic: true, color: { argb: 'FF64748b' } };
-    subCell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf8fafc' } };
-    ws.getRow(2).height = 13;
-    ws.addRow([]); ws.getRow(3).height = 6;
-
-    // ── Header row ───────────────────────────────────────────────────
-    const HDR_BG   = 'FF1e3a5f';
-    const HDR_TEXT = 'FFe2e8f0';
-    const headers  = ['#', 'Title', 'Category', 'Priority', 'Status', 'Reporter Name', 'Reporter Email', 'Description', 'Proposed Solution', 'Notes', 'Person in Charge', 'Updated By', 'Reported On', 'Updated At', 'Resolved At'];
-    const hdrRow   = ws.addRow(headers);
-    hdrRow.height  = 20;
-    hdrRow.eachCell(cell => {
-        cell.font      = { name: 'Calibri', size: 9, bold: true, color: { argb: HDR_TEXT } };
-        cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: HDR_BG } };
-        cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        cell.border    = { bottom: { style: 'thin', color: { argb: 'FF2563eb' } } };
-    });
-
-    // Priority / Status colour maps (ARGB)
-    const PRI_COLORS = {
-        low:      { bg: 'FFf1f5f9', fg: 'FF475569' },
-        medium:   { bg: 'FFdbeafe', fg: 'FF1d4ed8' },
-        high:     { bg: 'FFfef3c7', fg: 'FFb45309' },
-        critical: { bg: 'FFfee2e2', fg: 'FFb91c1c' },
-    };
-    const STA_COLORS = {
-        open:        { bg: 'FFdbeafe', fg: 'FF1d4ed8' },
-        in_progress: { bg: 'FFfef3c7', fg: 'FFb45309' },
-        resolved:    { bg: 'FFdcfce7', fg: 'FF15803d' },
-        closed:      { bg: 'FFf1f5f9', fg: 'FF475569' },
-    };
-
-    const bord = () => ({
-        top:    { style: 'thin', color: { argb: 'FFe2e8f0' } },
-        bottom: { style: 'thin', color: { argb: 'FFe2e8f0' } },
-        left:   { style: 'thin', color: { argb: 'FFe2e8f0' } },
-        right:  { style: 'thin', color: { argb: 'FFe2e8f0' } },
-    });
-
-    // ── Data rows ────────────────────────────────────────────────────
-    rows.forEach((r, i) => {
-        const odd      = i % 2 === 0;
-        const rowBg    = odd ? 'FFffffff' : 'FFf8fafc';
-        const dataRow  = ws.addRow([
-            i + 1,
-            r.title || '',
-            ISSUE_CATEGORY_LABELS[r.category] || r.category || '',
-            r.priority || '',
-            (r.status || '').replace(/_/g, ' '),
-            r.reporter_name || '',
-            r.reporter_email || '',
-            r.description || '',
-            r.proposed_solution || '',
-            r.notes || '',
-            r.person_in_charge || '',
-            r.updated_by_name ? `${r.updated_by_name} (${r.updated_by_email || ''})` : '',
-            formatIssueDate(r.created_at),
-            formatIssueDate(r.updated_at),
-            formatIssueDate(r.resolved_at),
-        ]);
-        dataRow.height = 16;
-
-        dataRow.eachCell({ includeEmpty: true }, (cell, colN) => {
-            cell.font      = { name: 'Calibri', size: 9, color: { argb: 'FF1e293b' } };
-            cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
-            cell.border    = bord();
-            cell.alignment = { vertical: 'middle', wrapText: false };
-        });
-
-        // Priority badge (col 4)
-        const priKey = (r.priority || '').toLowerCase();
-        const priClr = PRI_COLORS[priKey];
-        if (priClr) {
-            const c = dataRow.getCell(4);
-            c.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: priClr.bg } };
-            c.font      = { name: 'Calibri', size: 8.5, bold: true, color: { argb: priClr.fg } };
-            c.alignment = { horizontal: 'center', vertical: 'middle' };
-        }
-
-        // Status badge (col 5)
-        const staKey = (r.status || '').toLowerCase();
-        const staClr = STA_COLORS[staKey];
-        if (staClr) {
-            const c = dataRow.getCell(5);
-            c.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: staClr.bg } };
-            c.font      = { name: 'Calibri', size: 8.5, bold: true, color: { argb: staClr.fg } };
-            c.alignment = { horizontal: 'center', vertical: 'middle' };
-        }
-
-        // Center: idx, priority, status, dates
-        [1, 4, 5, 13, 14, 15].forEach(n => {
-            dataRow.getCell(n).alignment = { horizontal: 'center', vertical: 'middle' };
-        });
-    });
-
-    // ── Column widths ────────────────────────────────────────────────
-    const colWidths = [5, 40, 18, 13, 14, 24, 34, 46, 46, 34, 22, 32, 18, 18, 18];
-    colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
-
-    // ── Freeze header row, auto-filter ───────────────────────────────
-    ws.views = [{ state: 'frozen', ySplit: 4, activeCell: 'A5' }];
-    ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: 15 } };
-
-    const now = new Date().toISOString().slice(0, 10);
-    const buf = await wb.xlsx.writeBuffer();
-    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `production_issues_${modLabel.replace(/\s/g,'')}_${now}.xlsx`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    showToast('Excel exported.', 'success');
-}
-
-async function exportIssuesPDF() {
-    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
-    if (!window.jspdf) { showToast('PDF library not loaded — please refresh.', 'error'); return; }
-    showToast('Preparing PDF export…', 'info');
-    const rows = await _fetchAllIssuesForExport();
-    if (!rows) return;
-
-    const { jsPDF } = window.jspdf;
-    const doc    = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    const PAGE_W = doc.internal.pageSize.getWidth();
-    const PAGE_H = doc.internal.pageSize.getHeight();
-    const MARGIN = 14;
-    const now    = new Date().toLocaleString('en-GB');
-    const MODULE_LABELS = { kd1: 'KD1', kd2: 'KD2', f100kd2: 'F100 KD2' };
-    const modLabel = MODULE_LABELS[getActiveModuleId()] || getActiveModuleId().toUpperCase();
-
-    // ── White header with blue accent stripe ─────────────────────────
-    doc.setFillColor(248, 250, 252);
-    doc.rect(0, 0, PAGE_W, 22, 'F');
-    doc.setFillColor(37, 99, 235);
-    doc.rect(0, 0, 4, 22, 'F');
-    doc.setDrawColor(226, 232, 240);
-    doc.setLineWidth(0.3);
-    doc.line(0, 22, PAGE_W, 22);
-
-    doc.setTextColor(15, 23, 42);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(13);
-    doc.text('Production Issues Report', MARGIN + 2, 10);
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
-    doc.setTextColor(100, 116, 139);
-    doc.text(`Module: ${modLabel}`, MARGIN + 2, 17);
-    doc.text(`Generated: ${now}   ·   ${rows.length} issue${rows.length !== 1 ? 's' : ''}`, PAGE_W - MARGIN, 17, { align: 'right' });
-
-    // ── Status summary pills ─────────────────────────────────────────
-    const statusCounts = { open: 0, in_progress: 0, resolved: 0, closed: 0 };
-    rows.forEach(r => { if (statusCounts[r.status] !== undefined) statusCounts[r.status]++; });
-    const pills = [
-        { label: 'Open',        key: 'open',        color: [59, 130, 246] },
-        { label: 'In Progress', key: 'in_progress',  color: [245, 158, 11] },
-        { label: 'Resolved',    key: 'resolved',     color: [34, 197, 94]  },
-        { label: 'Closed',      key: 'closed',       color: [100, 116, 139]},
-    ];
-    let pillX = MARGIN;
-    const pillY = 26.5;
-    pills.forEach(p => {
-        const cnt   = statusCounts[p.key];
-        const label = `${p.label}: ${cnt}`;
-        doc.setFontSize(6.5);
-        const tw = doc.getTextWidth(label) + 8;
-        doc.setFillColor(...p.color);
-        doc.setGState && doc.setGState(new doc.GState({ opacity: 0.15 }));
-        doc.roundedRect(pillX, pillY - 3.5, tw, 5.5, 1, 1, 'F');
-        doc.setGState && doc.setGState(new doc.GState({ opacity: 1 }));
-        doc.setTextColor(...p.color);
-        doc.setFont('helvetica', 'bold');
-        doc.text(label, pillX + 4, pillY + 0.5);
-        pillX += tw + 4;
-    });
-
-    // ── Table ────────────────────────────────────────────────────────
-    const PRIORITY_COLORS = { low: [100,116,139], medium: [59,130,246], high: [245,158,11], critical: [239,68,68] };
-    const STATUS_COLORS   = { open: [59,130,246], in_progress: [245,158,11], resolved: [34,197,94], closed: [100,116,139] };
-
-    const headers = ['#', 'Title', 'Category', 'Priority', 'Status', 'Reporter', 'PIC', 'Description', 'Solution', 'Reported On', 'Updated'];
-    const body = rows.map((r, i) => [
-        i + 1,
-        (r.title || '').slice(0, 40),
-        ISSUE_CATEGORY_LABELS[r.category] || r.category || '—',
-        (r.priority || '—'),
-        (r.status || '—').replace(/_/g, ' '),
-        (r.reporter_name || r.reporter_email || '—').slice(0, 20),
-        (r.person_in_charge || '—').slice(0, 18),
-        (r.description || '—').slice(0, 42),
-        (r.proposed_solution || '—').slice(0, 42),
-        formatIssueDate(r.created_at),
-        formatIssueDate(r.updated_at),
-    ]);
-
-    doc.autoTable({
-        startY: 34,
-        head: [headers], body,
-        margin: { left: MARGIN, right: MARGIN },
-        styles: {
-            fontSize: 6.5, cellPadding: [2, 2.5], font: 'helvetica',
-            textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.18,
-        },
-        headStyles: {
-            fillColor: [30, 58, 138], textColor: [241, 245, 249],
-            fontStyle: 'bold', fontSize: 6.2, halign: 'center',
-            cellPadding: [3, 2.5],
-        },
-        alternateRowStyles: { fillColor: [248, 250, 252] },
-        columnStyles: {
-            0: { cellWidth: 7,  halign: 'center' },
-            1: { cellWidth: 38 },
-            2: { cellWidth: 19, halign: 'center' },
-            3: { cellWidth: 16, halign: 'center' },
-            4: { cellWidth: 19, halign: 'center' },
-            5: { cellWidth: 26 },
-            6: { cellWidth: 20 },
-            7: { cellWidth: 40 },
-            8: { cellWidth: 40 },
-            9: { cellWidth: 19, halign: 'center' },
-            10: { cellWidth: 19, halign: 'center' },
-        },
-        didDrawCell(data) {
-            if (data.section !== 'body') return;
-            const drawBadge = (colorArr, text) => {
-                const [r, g, b] = colorArr;
-                const cx = data.cell.x, cy = data.cell.y, cw = data.cell.width, ch = data.cell.height;
-                data.doc.setFillColor(r, g, b);
-                try { data.doc.setGState(new data.doc.GState({ opacity: 0.14 })); } catch {}
-                data.doc.roundedRect(cx + 1.5, cy + 1.2, cw - 3, ch - 2.4, 1, 1, 'F');
-                try { data.doc.setGState(new data.doc.GState({ opacity: 1 })); } catch {}
-                data.doc.setTextColor(r, g, b);
-                data.doc.setFont('helvetica', 'bold');
-                data.doc.setFontSize(6);
-                data.doc.text(text, cx + cw / 2, cy + ch / 2 + 0.6, { align: 'center' });
-            };
-            if (data.column.index === 3) {
-                drawBadge(PRIORITY_COLORS[String(data.cell.raw).toLowerCase()] || [100,116,139], String(data.cell.raw));
-            }
-            if (data.column.index === 4) {
-                const statusKey = String(data.cell.raw).replace(/ /g, '_');
-                drawBadge(STATUS_COLORS[statusKey] || [100,116,139], String(data.cell.raw));
-            }
-        },
-        didDrawPage(data) {
-            // Footer on every page
-            const pageCount = doc.internal.getNumberOfPages();
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(6);
-            doc.setTextColor(148, 163, 184);
-            doc.text(`Production Issues — ${modLabel}`, MARGIN, PAGE_H - 5);
-            doc.text(`Page ${data.pageNumber} of ${pageCount}`, PAGE_W - MARGIN, PAGE_H - 5, { align: 'right' });
-            doc.setDrawColor(226, 232, 240);
-            doc.setLineWidth(0.2);
-            doc.line(MARGIN, PAGE_H - 7.5, PAGE_W - MARGIN, PAGE_H - 7.5);
-        },
-    });
-
-    const exportDate = new Date().toISOString().slice(0, 10);
-    doc.save(`production_issues_${modLabel}_${exportDate}.pdf`);
-    showToast('PDF exported.', 'success');
-}
-
 /* ================================================================
    ISSUES — GENERATE REPORT POPUP (multi-type, Excel/PDF/Word)
    ================================================================ */
@@ -11328,10 +11011,13 @@ const ISSUE_REPORT_TYPE_LABELS = {
     by_category: 'Issues by Category', status_report: 'Status Report',
 };
 const ISSUE_REPORT_MODULE_LABELS = { kd1: 'KD1', kd2: 'F200-KD2', f100kd2: 'F100-KD2' };
-const ISSUE_REPORT_PERIOD_LABELS = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' };
+const ISSUE_REPORT_PERIOD_LABELS = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', all_time: 'All Time' };
 
 function _issueReportPeriodWindow(period) {
     const now = new Date();
+    if (period === 'all_time') {
+        return { from: new Date(0), to: new Date(8640000000000000) };
+    }
     if (period === 'weekly') {
         return { from: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000), to: now };
     }

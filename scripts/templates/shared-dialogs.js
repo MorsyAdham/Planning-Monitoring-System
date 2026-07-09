@@ -1475,6 +1475,7 @@ export function renderSharedDialogs() {
                             <button type="button" class="kd2-create-mode-btn active" data-period="daily">Daily</button>
                             <button type="button" class="kd2-create-mode-btn" data-period="weekly">Weekly</button>
                             <button type="button" class="kd2-create-mode-btn" data-period="monthly">Monthly</button>
+                            <button type="button" class="kd2-create-mode-btn" data-period="all_time">All Time</button>
                         </div>
                     </div>
 

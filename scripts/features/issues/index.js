@@ -109,21 +109,6 @@ export function initFeature() {
                     <div class="issues-toolbar-spacer"></div>
 
                     <span class="issues-count" id="issueCount">— issues</span>
-                    <button class="btn btn-ghost btn-sm" id="btnExportIssuesExcel">
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="width:13px;height:13px;vertical-align:-2px;margin-right:4px">
-                            <rect x="2" y="2" width="12" height="12" rx="1.5"/>
-                            <path d="M5 6l2 2-2 2M9 6l2 2-2 2" stroke-linecap="round"/>
-                        </svg>
-                        Excel
-                    </button>
-                    <button class="btn btn-ghost btn-sm" id="btnExportIssuesPDF">
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="width:13px;height:13px;vertical-align:-2px;margin-right:4px">
-                            <path d="M3 2h7l3 3v9H3V2z" stroke-linecap="round"/>
-                            <path d="M10 2v3h3" stroke-linecap="round"/>
-                            <path d="M6 9h4M6 11h2" stroke-linecap="round"/>
-                        </svg>
-                        PDF
-                    </button>
                     <button class="btn btn-ghost btn-sm" id="btnIssueReportModal" onclick="openIssueReportModal()">
                         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="width:13px;height:13px;vertical-align:-2px;margin-right:4px">
                             <rect x="3" y="2" width="10" height="12" rx="1.5"/>
