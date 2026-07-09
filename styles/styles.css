@@ -4660,6 +4660,92 @@ body {
     width: 100%;
 }
 
+.issue-report-modal {
+    max-width: 800px;
+}
+
+/* ─── Issue report modal: sectioned layout ─────────────────────── */
+.issue-report-section {
+    padding: 14px 16px;
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius);
+    background: var(--clr-surface-2);
+    margin-bottom: 14px;
+}
+.issue-report-section:last-of-type {
+    margin-bottom: 0;
+}
+
+.issue-report-section-title {
+    font-family: var(--ff-display);
+    font-size: .74rem;
+    font-weight: 700;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--clr-text-muted);
+    margin-bottom: 12px;
+}
+
+.issue-report-section .form-group {
+    margin-bottom: 0;
+}
+.issue-report-section .form-group + .form-group {
+    margin-top: 14px;
+}
+
+/* ─── Checklist pills (status / category) ──────────────────────── */
+.issue-report-checklist-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.issue-report-checklist-actions {
+    display: flex;
+    gap: 4px;
+}
+.issue-report-checklist-actions .btn {
+    padding: 2px 9px;
+    font-size: .7rem;
+}
+
+.issue-report-checklist {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+.issue-report-check-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border: 1px solid var(--clr-border);
+    border-radius: 20px;
+    background: var(--clr-surface);
+    font-size: .78rem;
+    color: var(--clr-text-muted);
+    cursor: pointer;
+    transition: border-color .15s, background .15s, color .15s;
+    user-select: none;
+}
+.issue-report-check-pill input {
+    accent-color: var(--clr-accent);
+    width: 13px;
+    height: 13px;
+    cursor: pointer;
+}
+.issue-report-check-pill:hover {
+    border-color: var(--clr-accent);
+}
+.issue-report-check-pill.is-checked {
+    border-color: var(--clr-accent);
+    background: var(--clr-accent-dim);
+    color: var(--clr-text);
+    font-weight: 600;
+}
+
 /* ─── Report type grid ──────────────────────────────────────────── */
 .report-type-grid {
     display: grid;

@@ -1379,16 +1379,16 @@ export function renderSharedDialogs() {
         <!-- ════════════════════════════════════════ ISSUES REPORT MODAL -->
         <div class="modal-overlay" id="issueReportModalOverlay" style="display:none;" role="dialog" aria-modal="true"
             aria-labelledby="issueReportModalTitle">
-            <div class="modal report-modal">
+            <div class="modal report-modal issue-report-modal">
                 <div class="modal-header">
                     <h4 class="modal-title" id="issueReportModalTitle">Generate Issues Report</h4>
                     <button class="modal-close" id="issueReportModalClose" aria-label="Close">&#x2715;</button>
                 </div>
                 <div class="modal-body">
 
-                    <!-- Report type selector -->
-                    <div class="form-group">
-                        <label class="form-label">Report Type</label>
+                    <!-- ── Section 1: Report Type ─────────────────────── -->
+                    <div class="issue-report-section">
+                        <div class="issue-report-section-title">1. Report Type</div>
                         <div class="report-type-grid">
                             <label class="report-type-card">
                                 <input type="radio" name="issueReportType" value="all" checked />
@@ -1462,35 +1462,37 @@ export function renderSharedDialogs() {
                                         <path d="M16 2v4M8 2v4M3 10h18M8 15h8" />
                                     </svg>
                                     <span class="rtc-label">Status Report</span>
-                                    <span class="rtc-desc">Ongoing + resolved, by category — Daily/Weekly/Monthly</span>
+                                    <span class="rtc-desc">All statuses by default, by category — Daily/Weekly/Monthly/All Time</span>
                                 </div>
                             </label>
                         </div>
                     </div>
 
-                    <!-- Period control — only shown for Status Report -->
-                    <div class="form-group" id="issueReportPeriodGroup" style="display:none">
-                        <label class="form-label">Period</label>
-                        <div class="kd2-create-mode-toggle" id="issueReportPeriodToggle">
-                            <button type="button" class="kd2-create-mode-btn active" data-period="daily">Daily</button>
-                            <button type="button" class="kd2-create-mode-btn" data-period="weekly">Weekly</button>
-                            <button type="button" class="kd2-create-mode-btn" data-period="monthly">Monthly</button>
-                            <button type="button" class="kd2-create-mode-btn" data-period="all_time">All Time</button>
-                        </div>
-                    </div>
+                    <!-- ── Section 2: Scope & Timing ──────────────────── -->
+                    <div class="issue-report-section">
+                        <div class="issue-report-section-title">2. Scope &amp; Timing</div>
 
-                    <!-- Module scope — applies to every report type -->
-                    <div class="form-group">
-                        <label class="form-label">Module Scope</label>
-                        <div class="kd2-create-mode-toggle" id="issueReportModuleToggle">
-                            <button type="button" class="kd2-create-mode-btn active" data-scope="current">Current Module</button>
-                            <button type="button" class="kd2-create-mode-btn" data-scope="all">All Modules (F200-KD2 + F100-KD2)</button>
+                        <div class="form-group">
+                            <label class="form-label">Module Scope</label>
+                            <div class="kd2-create-mode-toggle" id="issueReportModuleToggle">
+                                <button type="button" class="kd2-create-mode-btn active" data-scope="current">Current Module</button>
+                                <button type="button" class="kd2-create-mode-btn" data-scope="all">All Modules (F200-KD2 + F100-KD2)</button>
+                            </div>
                         </div>
-                    </div>
 
-                    <!-- Date range + Category filter row -->
-                    <div class="report-filter-row" id="issueReportFilterRow">
-                        <div class="form-group" style="flex:1">
+                        <!-- Period control — only shown for Status Report -->
+                        <div class="form-group" id="issueReportPeriodGroup" style="display:none;margin-top:14px">
+                            <label class="form-label">Period <span class="form-label-optional">(controls the Resolved-date window only — Open/In Progress/Closed are always included)</span></label>
+                            <div class="kd2-create-mode-toggle" id="issueReportPeriodToggle">
+                                <button type="button" class="kd2-create-mode-btn" data-period="daily">Daily</button>
+                                <button type="button" class="kd2-create-mode-btn" data-period="weekly">Weekly</button>
+                                <button type="button" class="kd2-create-mode-btn" data-period="monthly">Monthly</button>
+                                <button type="button" class="kd2-create-mode-btn active" data-period="all_time">All Time</button>
+                            </div>
+                        </div>
+
+                        <!-- Date range — hidden for Status Report -->
+                        <div class="form-group" id="issueReportDateGroup" style="margin-top:14px">
                             <label class="form-label">Date Range <span class="form-label-optional">(optional — filters
                                     by reported date)</span></label>
                             <div class="report-date-row">
@@ -1499,10 +1501,17 @@ export function renderSharedDialogs() {
                                 <input type="date" id="issueReportDateTo" class="filter-control" placeholder="To" />
                             </div>
                         </div>
-                        <div class="form-group" style="min-width:180px">
+                    </div>
+
+                    <!-- ── Section 3: Filters ─────────────────────────── -->
+                    <div class="issue-report-section">
+                        <div class="issue-report-section-title">3. Filters</div>
+
+                        <!-- Simple category dropdown — used by every type except Status Report -->
+                        <div class="form-group" id="issueReportCategorySimpleGroup">
                             <label class="form-label">Category <span
                                     class="form-label-optional">(optional)</span></label>
-                            <select id="issueReportCategory" class="filter-control">
+                            <select id="issueReportCategory" class="filter-control" style="max-width:260px">
                                 <option value="">All Categories</option>
                                 <option value="cutting">Cutting</option>
                                 <option value="part_machining">Part Machining</option>
@@ -1515,6 +1524,45 @@ export function renderSharedDialogs() {
                                 <option value="quality">Quality</option>
                                 <option value="other">Other</option>
                             </select>
+                        </div>
+
+                        <!-- Status Report checklists — statuses + categories, all checked by default -->
+                        <div class="form-group" id="issueReportStatusChecklistGroup" style="display:none">
+                            <div class="issue-report-checklist-head">
+                                <label class="form-label">Include Statuses</label>
+                                <div class="issue-report-checklist-actions">
+                                    <button type="button" class="btn btn-ghost btn-sm" id="btnIssueReportStatusAll">All</button>
+                                    <button type="button" class="btn btn-ghost btn-sm" id="btnIssueReportStatusNone">None</button>
+                                </div>
+                            </div>
+                            <div class="issue-report-checklist" id="issueReportStatusChecklist">
+                                <label class="issue-report-check-pill"><input type="checkbox" value="open" checked /> Open</label>
+                                <label class="issue-report-check-pill"><input type="checkbox" value="in_progress" checked /> In Progress</label>
+                                <label class="issue-report-check-pill"><input type="checkbox" value="resolved" checked /> Resolved</label>
+                                <label class="issue-report-check-pill"><input type="checkbox" value="closed" checked /> Closed</label>
+                            </div>
+                        </div>
+
+                        <div class="form-group" id="issueReportCategoryChecklistGroup" style="display:none">
+                            <div class="issue-report-checklist-head">
+                                <label class="form-label">Include Categories</label>
+                                <div class="issue-report-checklist-actions">
+                                    <button type="button" class="btn btn-ghost btn-sm" id="btnIssueReportCategoryAll">All</button>
+                                    <button type="button" class="btn btn-ghost btn-sm" id="btnIssueReportCategoryNone">None</button>
+                                </div>
+                            </div>
+                            <div class="issue-report-checklist" id="issueReportCategoryChecklist">
+                                <label class="issue-report-check-pill"><input type="checkbox" value="cutting" checked /> Cutting</label>
+                                <label class="issue-report-check-pill"><input type="checkbox" value="part_machining" checked /> Part Machining</label>
+                                <label class="issue-report-check-pill"><input type="checkbox" value="welding" checked /> Welding</label>
+                                <label class="issue-report-check-pill"><input type="checkbox" value="machining" checked /> Machining</label>
+                                <label class="issue-report-check-pill"><input type="checkbox" value="accessories" checked /> Accessories</label>
+                                <label class="issue-report-check-pill"><input type="checkbox" value="cables" checked /> Cables</label>
+                                <label class="issue-report-check-pill"><input type="checkbox" value="material" checked /> Material</label>
+                                <label class="issue-report-check-pill"><input type="checkbox" value="assembly" checked /> Assembly</label>
+                                <label class="issue-report-check-pill"><input type="checkbox" value="quality" checked /> Quality</label>
+                                <label class="issue-report-check-pill"><input type="checkbox" value="other" checked /> Other</label>
+                            </div>
                         </div>
                     </div>
 

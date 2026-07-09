@@ -11035,32 +11035,42 @@ function _issueReportCategorySort(a, b) {
     return new Date(a.created_at) - new Date(b.created_at);
 }
 
+const ISSUE_REPORT_ALL_STATUSES = ['open', 'in_progress', 'resolved', 'closed'];
+const ISSUE_REPORT_ALL_CATEGORIES = Object.keys(ISSUE_CATEGORY_LABELS);
+
 /** Fetch + filter issues for the report popup. Shared by preview + every export format. */
 async function buildIssueReportRows(type, opts = {}) {
-    const { from = '', to = '', category = '', moduleScope = 'current', period = 'daily' } = opts;
+    const { from = '', to = '', category = '', moduleScope = 'current', period = 'daily', statuses = null, categories = null } = opts;
 
     let query = db.from('production_issues').select('*');
     query = (moduleScope === 'all')
         ? query.in('module', ['kd2', 'f100kd2'])
         : query.eq('module', getActiveModuleId());
-    if (category) query = query.eq('category', category);
 
     if (type === 'status_report') {
-        query = query.in('status', ['in_progress', 'resolved']);
+        const statusSet = (statuses && statuses.length) ? statuses : ISSUE_REPORT_ALL_STATUSES;
+        query = query.in('status', statusSet);
+        const categorySet = (categories && categories.length) ? categories : null;
+        if (categorySet && categorySet.length < ISSUE_REPORT_ALL_CATEGORIES.length) {
+            query = query.in('category', categorySet);
+        }
         const { data, error } = await query.order('created_at', { ascending: true });
         if (error) { showToast('Report failed: ' + error.message, 'error'); return []; }
         const win = _issueReportPeriodWindow(period);
         const rows = (data || []).filter(r => {
-            if (r.status === 'in_progress') return true;
-            if (r.status === 'resolved' && r.resolved_at) {
-                const t = new Date(r.resolved_at);
-                return t >= win.from && t <= win.to;
-            }
-            return false;
+            // Only "resolved" is date-gated by the period — every other included
+            // status reflects current state, not a point-in-time event, so it's
+            // always shown once its checkbox is checked.
+            if (r.status !== 'resolved') return true;
+            if (period === 'all_time') return true;
+            if (!r.resolved_at) return false;
+            const t = new Date(r.resolved_at);
+            return t >= win.from && t <= win.to;
         });
         return rows.sort(_issueReportCategorySort);
     }
 
+    if (category) query = query.eq('category', category);
     if (type !== 'all' && type !== 'by_category') query = query.eq('status', type);
     if (from) query = query.gte('created_at', from + 'T00:00:00');
     if (to)   query = query.lte('created_at', to + 'T23:59:59');
@@ -11083,12 +11093,14 @@ function _categoryCounts(rows) {
 
 function _getIssueReportOpts() {
     const type       = document.querySelector('input[name="issueReportType"]:checked')?.value || 'all';
-    const period     = document.querySelector('#issueReportPeriodToggle .kd2-create-mode-btn.active')?.dataset.period || 'daily';
+    const period     = document.querySelector('#issueReportPeriodToggle .kd2-create-mode-btn.active')?.dataset.period || 'all_time';
     const moduleScope = document.querySelector('#issueReportModuleToggle .kd2-create-mode-btn.active')?.dataset.scope || 'current';
     const from     = document.getElementById('issueReportDateFrom')?.value || '';
     const to       = document.getElementById('issueReportDateTo')?.value || '';
     const category = document.getElementById('issueReportCategory')?.value || '';
-    return { type, period, moduleScope, from, to, category };
+    const statuses   = Array.from(document.querySelectorAll('#issueReportStatusChecklist input:checked')).map(el => el.value);
+    const categories = Array.from(document.querySelectorAll('#issueReportCategoryChecklist input:checked')).map(el => el.value);
+    return { type, period, moduleScope, from, to, category, statuses, categories };
 }
 
 function _issueReportTitle(opts) {
@@ -11123,10 +11135,11 @@ function wireIssueReportModal() {
     overlay.querySelectorAll('input[name="issueReportType"]').forEach(radio => {
         radio.addEventListener('change', () => {
             const isStatusReport = document.querySelector('input[name="issueReportType"]:checked')?.value === 'status_report';
-            const periodGroup = document.getElementById('issueReportPeriodGroup');
-            const filterRow   = document.getElementById('issueReportFilterRow');
-            if (periodGroup) periodGroup.style.display = isStatusReport ? '' : 'none';
-            if (filterRow)   filterRow.style.display   = isStatusReport ? 'none' : '';
+            document.getElementById('issueReportPeriodGroup').style.display            = isStatusReport ? '' : 'none';
+            document.getElementById('issueReportStatusChecklistGroup').style.display   = isStatusReport ? '' : 'none';
+            document.getElementById('issueReportCategoryChecklistGroup').style.display = isStatusReport ? '' : 'none';
+            document.getElementById('issueReportDateGroup').style.display           = isStatusReport ? 'none' : '';
+            document.getElementById('issueReportCategorySimpleGroup').style.display = isStatusReport ? 'none' : '';
             updateIssueReportPreview();
         });
     });
@@ -11146,6 +11159,32 @@ function wireIssueReportModal() {
         btn.classList.add('active');
         updateIssueReportPreview();
     });
+
+    // Checklist pills — reflect checked state visually + refresh preview
+    const wireChecklist = (id) => {
+        const list = document.getElementById(id);
+        if (!list) return;
+        const sync = () => list.querySelectorAll('.issue-report-check-pill').forEach(pill => {
+            pill.classList.toggle('is-checked', pill.querySelector('input')?.checked);
+        });
+        sync();
+        list.addEventListener('change', () => { sync(); updateIssueReportPreview(); });
+    };
+    wireChecklist('issueReportStatusChecklist');
+    wireChecklist('issueReportCategoryChecklist');
+
+    const wireSelectButtons = (allBtnId, noneBtnId, listId) => {
+        document.getElementById(allBtnId)?.addEventListener('click', () => {
+            document.querySelectorAll(`#${listId} input`).forEach(el => { el.checked = true; });
+            document.getElementById(listId)?.dispatchEvent(new Event('change'));
+        });
+        document.getElementById(noneBtnId)?.addEventListener('click', () => {
+            document.querySelectorAll(`#${listId} input`).forEach(el => { el.checked = false; });
+            document.getElementById(listId)?.dispatchEvent(new Event('change'));
+        });
+    };
+    wireSelectButtons('btnIssueReportStatusAll', 'btnIssueReportStatusNone', 'issueReportStatusChecklist');
+    wireSelectButtons('btnIssueReportCategoryAll', 'btnIssueReportCategoryNone', 'issueReportCategoryChecklist');
 
     document.getElementById('issueReportDateFrom')?.addEventListener('change', updateIssueReportPreview);
     document.getElementById('issueReportDateTo')?.addEventListener('change', updateIssueReportPreview);
