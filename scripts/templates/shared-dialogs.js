@@ -1328,6 +1328,12 @@ export function renderSharedDialogs() {
                             <input type="hidden" id="issueReporterEmailHidden" />
                         </div>
 
+                        <!-- Person In Charge (optional, full width) -->
+                        <div class="form-group issue-form-full">
+                            <label class="form-label" for="issuePIC">Person In Charge <span class="form-label-optional">(optional)</span></label>
+                            <input type="text" id="issuePIC" class="issue-form-input" placeholder="Who is responsible for following up on this issue…" />
+                        </div>
+
                         <!-- ── Section: Details ──────────────────────────── -->
                         <div class="issue-form-section-label issue-form-full">Details</div>
 
@@ -1366,6 +1372,182 @@ export function renderSharedDialogs() {
                         <button class="btn btn-ghost" id="btnIssueCancel">Cancel</button>
                         <button class="btn btn-primary" id="btnIssueSave">Save Issue</button>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════ ISSUES REPORT MODAL -->
+        <div class="modal-overlay" id="issueReportModalOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="issueReportModalTitle">
+            <div class="modal report-modal">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="issueReportModalTitle">Generate Issues Report</h4>
+                    <button class="modal-close" id="issueReportModalClose" aria-label="Close">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+
+                    <!-- Report type selector -->
+                    <div class="form-group">
+                        <label class="form-label">Report Type</label>
+                        <div class="report-type-grid">
+                            <label class="report-type-card">
+                                <input type="radio" name="issueReportType" value="all" checked />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <rect x="3" y="3" width="18" height="18" rx="2" />
+                                        <path d="M7 8h10M7 12h10M7 16h6" />
+                                    </svg>
+                                    <span class="rtc-label">All Issues</span>
+                                    <span class="rtc-desc">Every issue matching the filters below</span>
+                                </div>
+                            </label>
+                            <label class="report-type-card">
+                                <input type="radio" name="issueReportType" value="open" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                                    </svg>
+                                    <span class="rtc-label">Open</span>
+                                    <span class="rtc-desc">Newly reported, not yet started</span>
+                                </div>
+                            </label>
+                            <label class="report-type-card">
+                                <input type="radio" name="issueReportType" value="in_progress" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <circle cx="12" cy="12" r="9" />
+                                        <path d="M12 7v5l3 3" />
+                                    </svg>
+                                    <span class="rtc-label">In Progress</span>
+                                    <span class="rtc-desc">Currently being worked on</span>
+                                </div>
+                            </label>
+                            <label class="report-type-card">
+                                <input type="radio" name="issueReportType" value="resolved" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <path d="M20 6L9 17l-5-5" />
+                                    </svg>
+                                    <span class="rtc-label">Resolved</span>
+                                    <span class="rtc-desc">Fixed issues</span>
+                                </div>
+                            </label>
+                            <label class="report-type-card">
+                                <input type="radio" name="issueReportType" value="closed" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <circle cx="12" cy="12" r="9" />
+                                        <path d="M9 9l6 6M15 9l-6 6" />
+                                    </svg>
+                                    <span class="rtc-label">Closed</span>
+                                    <span class="rtc-desc">Closed issues</span>
+                                </div>
+                            </label>
+                            <label class="report-type-card">
+                                <input type="radio" name="issueReportType" value="by_category" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+                                        <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+                                    </svg>
+                                    <span class="rtc-label">By Category</span>
+                                    <span class="rtc-desc">All issues, grouped &amp; counted by category</span>
+                                </div>
+                            </label>
+                            <label class="report-type-card">
+                                <input type="radio" name="issueReportType" value="status_report" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <rect x="3" y="4" width="18" height="18" rx="2" />
+                                        <path d="M16 2v4M8 2v4M3 10h18M8 15h8" />
+                                    </svg>
+                                    <span class="rtc-label">Status Report</span>
+                                    <span class="rtc-desc">Ongoing + resolved, by category — Daily/Weekly/Monthly</span>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Period control — only shown for Status Report -->
+                    <div class="form-group" id="issueReportPeriodGroup" style="display:none">
+                        <label class="form-label">Period</label>
+                        <div class="kd2-create-mode-toggle" id="issueReportPeriodToggle">
+                            <button type="button" class="kd2-create-mode-btn active" data-period="daily">Daily</button>
+                            <button type="button" class="kd2-create-mode-btn" data-period="weekly">Weekly</button>
+                            <button type="button" class="kd2-create-mode-btn" data-period="monthly">Monthly</button>
+                        </div>
+                    </div>
+
+                    <!-- Module scope — applies to every report type -->
+                    <div class="form-group">
+                        <label class="form-label">Module Scope</label>
+                        <div class="kd2-create-mode-toggle" id="issueReportModuleToggle">
+                            <button type="button" class="kd2-create-mode-btn active" data-scope="current">Current Module</button>
+                            <button type="button" class="kd2-create-mode-btn" data-scope="all">All Modules (F200-KD2 + F100-KD2)</button>
+                        </div>
+                    </div>
+
+                    <!-- Date range + Category filter row -->
+                    <div class="report-filter-row" id="issueReportFilterRow">
+                        <div class="form-group" style="flex:1">
+                            <label class="form-label">Date Range <span class="form-label-optional">(optional — filters
+                                    by reported date)</span></label>
+                            <div class="report-date-row">
+                                <input type="date" id="issueReportDateFrom" class="filter-control" placeholder="From" />
+                                <span class="report-date-sep">→</span>
+                                <input type="date" id="issueReportDateTo" class="filter-control" placeholder="To" />
+                            </div>
+                        </div>
+                        <div class="form-group" style="min-width:180px">
+                            <label class="form-label">Category <span
+                                    class="form-label-optional">(optional)</span></label>
+                            <select id="issueReportCategory" class="filter-control">
+                                <option value="">All Categories</option>
+                                <option value="cutting">Cutting</option>
+                                <option value="part_machining">Part Machining</option>
+                                <option value="welding">Welding</option>
+                                <option value="machining">Machining</option>
+                                <option value="accessories">Accessories</option>
+                                <option value="cables">Cables</option>
+                                <option value="material">Material</option>
+                                <option value="assembly">Assembly</option>
+                                <option value="quality">Quality</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Preview badge -->
+                    <div class="report-preview-bar" id="issueReportPreviewBar">
+                        <span class="report-preview-count" id="issueReportPreviewCount">— issues match</span>
+                        <span class="report-preview-hint">Select a type to preview count</span>
+                    </div>
+
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-report-pdf" id="btnIssueReportPDF">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 4h8l4 4v10H4V4z" />
+                            <path d="M12 4v4h4" />
+                            <path d="M7 13h6M7 10h3" />
+                        </svg>
+                        Export PDF
+                    </button>
+                    <button class="btn btn-report-excel" id="btnIssueReportExcel">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="3" width="16" height="14" rx="2" />
+                            <path d="M6 7l3 3-3 3M11 13h4" />
+                        </svg>
+                        Export Excel
+                    </button>
+                    <button class="btn btn-ghost" id="btnIssueReportWord">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;vertical-align:-3px;margin-right:5px">
+                            <rect x="2" y="3" width="16" height="14" rx="2" />
+                            <path d="M5 8l1.3 6L8 10l1.7 4L11 8" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        Export Word
+                    </button>
+                    <button class="btn btn-ghost" id="issueReportModalCancel">Cancel</button>
                 </div>
             </div>
         </div>

@@ -5504,6 +5504,7 @@ function wireEvents() {
 
     // Report modal
     wireReportModal();
+    wireIssueReportModal();
 
     // Notification bell (F100-KD2 and F200-KD2)
     wireNotifBell();
@@ -10563,6 +10564,32 @@ async function initIssuesSection() {
     _issueNotifClearBadge();
 }
 
+async function loadIssuesOverview() {
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    try {
+        const { data, error } = await db
+            .from('production_issues')
+            .select('status, priority')
+            .eq('module', getActiveModuleId());
+        if (error) throw error;
+
+        let open = 0, inProgress = 0, resolved = 0, critical = 0;
+        (data || []).forEach(r => {
+            if (r.status === 'open') open++;
+            else if (r.status === 'in_progress') inProgress++;
+            else if (r.status === 'resolved') resolved++;
+            if ((r.status === 'open' || r.status === 'in_progress') && (r.priority === 'high' || r.priority === 'critical')) critical++;
+        });
+
+        setVal('issueOvOpen', open);
+        setVal('issueOvInProgress', inProgress);
+        setVal('issueOvResolved', resolved);
+        setVal('issueOvCritical', critical);
+    } catch (_) {
+        // Overview is a soft-fail summary — leave existing values on error
+    }
+}
+
 async function _populateIssueReporterFilter() {
     const sel = document.getElementById('issueFilterReporter');
     if (!sel || sel.options.length > 1) return;
@@ -10587,7 +10614,7 @@ async function _populateIssueReporterFilter() {
 }
 
 async function loadIssues(reset = false) {
-    if (reset) _issuesOffset = 0;
+    if (reset) { _issuesOffset = 0; loadIssuesOverview().catch(() => {}); }
 
     const search   = (document.getElementById('issueSearch')?.value || '').trim();
     const category = document.getElementById('issueFilterCategory')?.value || '';
@@ -10695,6 +10722,7 @@ async function openIssueModal(id = null) {
         _setIssueField('issueDescription', '');
         _setIssueField('issueProposedSolution', '');
         _setIssueField('issueNotes', '');
+        _setIssueField('issuePIC', '');
     } else {
         const { data, error } = await db.from('production_issues').select('*').eq('id', id).single();
         if (error || !data) { showToast('Failed to load issue.', 'error'); return; }
@@ -10717,6 +10745,7 @@ async function openIssueModal(id = null) {
         _setIssueField('issueDescription',     data.description || '');
         _setIssueField('issueProposedSolution', data.proposed_solution || '');
         _setIssueField('issueNotes',           data.notes || '');
+        _setIssueField('issuePIC',             data.person_in_charge || '');
         _setIssueField('issueReporterName',    data.reporter_name || '');
         _setIssueField('issueReporterEmail',   data.reporter_email || '');
     }
@@ -10736,6 +10765,7 @@ async function saveIssue() {
     const description       = document.getElementById('issueDescription')?.value?.trim() || '';
     const proposed_solution = document.getElementById('issueProposedSolution')?.value?.trim() || '';
     const notes             = document.getElementById('issueNotes')?.value?.trim() || '';
+    const person_in_charge  = document.getElementById('issuePIC')?.value?.trim() || '';
 
     // Validation
     if (!title) {
@@ -10763,11 +10793,16 @@ async function saveIssue() {
                 description: description || null,
                 proposed_solution: proposed_solution || null,
                 notes: notes || null,
+                person_in_charge: person_in_charge || null,
                 updated_by_name:  u?.name  || u?.full_name || null,
                 updated_by_email: u?.email || null,
                 resolved_at: status === 'resolved' ? new Date().toISOString() : null,
             };
-            const { error } = await db.from('production_issues').update(payload).eq('id', editId);
+            let { error } = await db.from('production_issues').update(payload).eq('id', editId);
+            if (error && /person_in_charge|42703|column/.test(error.message || '')) {
+                const { person_in_charge: _drop, ...withoutPIC } = payload;
+                ({ error } = await db.from('production_issues').update(withoutPIC).eq('id', editId));
+            }
             if (error) throw error;
             auditLog('UPDATE', 'production_issues', editId, beforeData, payload);
             _broadcastIssueUpdated({ id: editId, title, category,
@@ -10779,6 +10814,7 @@ async function saveIssue() {
                 description: description || null,
                 proposed_solution: proposed_solution || null,
                 notes: notes || null,
+                person_in_charge: person_in_charge || null,
                 reporter_name:  u?.name  || u?.full_name || null,
                 reporter_email: u?.email || 'unknown',
                 updated_by_name:  null,
@@ -10786,21 +10822,20 @@ async function saveIssue() {
                 resolved_at: status === 'resolved' ? new Date().toISOString() : null,
             };
 
-            // Try with module column; fall back without if column doesn't exist yet
+            // Try with module + PIC columns; progressively drop columns that don't exist yet
             let insertError, insertedId;
-            const withMod = { ...base, module: getActiveModuleId() };
-            const r1 = await db.from('production_issues').insert(withMod).select('id').single();
-            if (r1.error) {
-                const msg = r1.error.message || '';
-                if (msg.includes('module') || msg.includes('42703') || msg.includes('column')) {
-                    const r2 = await db.from('production_issues').insert(base).select('id').single();
-                    insertError = r2.error;
-                    insertedId  = r2.data?.id;
-                } else {
-                    insertError = r1.error;
-                }
-            } else {
-                insertedId = r1.data?.id;
+            const attempts = [
+                { ...base, module: getActiveModuleId() },
+                (() => { const { person_in_charge: _p, ...rest } = base; return { ...rest, module: getActiveModuleId() }; })(),
+                base,
+                (() => { const { person_in_charge: _p, ...rest } = base; return rest; })(),
+            ];
+            for (const payload of attempts) {
+                const r = await db.from('production_issues').insert(payload).select('id').single();
+                if (!r.error) { insertedId = r.data?.id; insertError = null; break; }
+                insertError = r.error;
+                const msg = r.error.message || '';
+                if (!(msg.includes('module') || msg.includes('person_in_charge') || msg.includes('42703') || msg.includes('column'))) break;
             }
             if (insertError) throw insertError;
             auditLog('INSERT', 'production_issues', insertedId, null, { ...base, module: getActiveModuleId() });
@@ -10884,6 +10919,7 @@ async function openIssueView(id) {
           sub: data.updated_by_name ? `by ${esc(data.updated_by_name)}` : '' },
     ];
     if (data.resolved_at) infoItems.push({ label: 'Resolved on', value: esc(formatIssueDate(data.resolved_at)) });
+    if (data.person_in_charge) infoItems.push({ label: 'Person in Charge', value: esc(data.person_in_charge) });
 
     const sections = [];
     if (data.description)        sections.push({ label: 'Description',       text: esc(data.description),        cls: '' });
@@ -10940,6 +10976,34 @@ function _closeIssueModal() {
     overlay.style.display = 'none';
 }
 
+/* ── Generic Word (.doc) export ──────────────────────────────────
+   Wraps HTML in Word-recognised namespaces and saves it with the
+   application/msword MIME type — Word/Google Docs open this natively,
+   no docx-generation library required. */
+function exportHtmlAsWord(filename, titleText, bodyHtml) {
+    const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+<head><meta charset="utf-8"><title>${esc(titleText)}</title>
+<style>
+    body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #1e293b; }
+    h1 { font-size: 16pt; margin: 0 0 4px; }
+    .doc-sub { font-size: 9pt; color: #64748b; margin: 0 0 16px; }
+    h2 { font-size: 12pt; margin: 18px 0 6px; border-bottom: 1px solid #cbd5e1; padding-bottom: 3px; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
+    th, td { border: 1px solid #cbd5e1; padding: 5px 7px; font-size: 9pt; text-align: left; vertical-align: top; }
+    th { background: #1e3a5f; color: #e2e8f0; }
+    tr:nth-child(even) td { background: #f8fafc; }
+    .doc-summary-table th, .doc-summary-table td { font-size: 9.5pt; }
+</style>
+</head><body>${bodyHtml}</body></html>`;
+    const blob = new Blob(['﻿', html], { type: 'application/msword' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showToast('Word document exported.', 'success');
+}
+
 async function _fetchAllIssuesForExport() {
     const search   = (document.getElementById('issueSearch')?.value || '').trim();
     const category = document.getElementById('issueFilterCategory')?.value || '';
@@ -10980,7 +11044,7 @@ async function exportIssuesExcel() {
     const ws = wb.addWorksheet(`Issues ${modLabel}`);
 
     // ── Title row ────────────────────────────────────────────────────
-    ws.mergeCells(1, 1, 1, 14);
+    ws.mergeCells(1, 1, 1, 15);
     const titleCell = ws.getCell(1, 1);
     titleCell.value = `Production Issues — ${modLabel}`;
     titleCell.font  = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FF1e293b' } };
@@ -10988,7 +11052,7 @@ async function exportIssuesExcel() {
     titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
     ws.getRow(1).height = 26;
 
-    ws.mergeCells(2, 1, 2, 14);
+    ws.mergeCells(2, 1, 2, 15);
     const subCell = ws.getCell(2, 1);
     subCell.value = `Generated: ${new Date().toLocaleString('en-GB')}   ·   ${rows.length} issue${rows.length !== 1 ? 's' : ''}`;
     subCell.font  = { name: 'Calibri', size: 8, italic: true, color: { argb: 'FF64748b' } };
@@ -10999,7 +11063,7 @@ async function exportIssuesExcel() {
     // ── Header row ───────────────────────────────────────────────────
     const HDR_BG   = 'FF1e3a5f';
     const HDR_TEXT = 'FFe2e8f0';
-    const headers  = ['#', 'Title', 'Category', 'Priority', 'Status', 'Reporter Name', 'Reporter Email', 'Description', 'Proposed Solution', 'Notes', 'Updated By', 'Reported On', 'Updated At', 'Resolved At'];
+    const headers  = ['#', 'Title', 'Category', 'Priority', 'Status', 'Reporter Name', 'Reporter Email', 'Description', 'Proposed Solution', 'Notes', 'Person in Charge', 'Updated By', 'Reported On', 'Updated At', 'Resolved At'];
     const hdrRow   = ws.addRow(headers);
     hdrRow.height  = 20;
     hdrRow.eachCell(cell => {
@@ -11045,6 +11109,7 @@ async function exportIssuesExcel() {
             r.description || '',
             r.proposed_solution || '',
             r.notes || '',
+            r.person_in_charge || '',
             r.updated_by_name ? `${r.updated_by_name} (${r.updated_by_email || ''})` : '',
             formatIssueDate(r.created_at),
             formatIssueDate(r.updated_at),
@@ -11080,18 +11145,18 @@ async function exportIssuesExcel() {
         }
 
         // Center: idx, priority, status, dates
-        [1, 4, 5, 12, 13, 14].forEach(n => {
+        [1, 4, 5, 13, 14, 15].forEach(n => {
             dataRow.getCell(n).alignment = { horizontal: 'center', vertical: 'middle' };
         });
     });
 
     // ── Column widths ────────────────────────────────────────────────
-    const colWidths = [5, 40, 18, 13, 14, 24, 34, 46, 46, 34, 32, 18, 18, 18];
+    const colWidths = [5, 40, 18, 13, 14, 24, 34, 46, 46, 34, 22, 32, 18, 18, 18];
     colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
 
     // ── Freeze header row, auto-filter ───────────────────────────────
     ws.views = [{ state: 'frozen', ySplit: 4, activeCell: 'A5' }];
-    ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: 14 } };
+    ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: 15 } };
 
     const now = new Date().toISOString().slice(0, 10);
     const buf = await wb.xlsx.writeBuffer();
@@ -11170,16 +11235,17 @@ async function exportIssuesPDF() {
     const PRIORITY_COLORS = { low: [100,116,139], medium: [59,130,246], high: [245,158,11], critical: [239,68,68] };
     const STATUS_COLORS   = { open: [59,130,246], in_progress: [245,158,11], resolved: [34,197,94], closed: [100,116,139] };
 
-    const headers = ['#', 'Title', 'Category', 'Priority', 'Status', 'Reporter', 'Description', 'Solution', 'Reported On', 'Updated'];
+    const headers = ['#', 'Title', 'Category', 'Priority', 'Status', 'Reporter', 'PIC', 'Description', 'Solution', 'Reported On', 'Updated'];
     const body = rows.map((r, i) => [
         i + 1,
-        (r.title || '').slice(0, 42),
+        (r.title || '').slice(0, 40),
         ISSUE_CATEGORY_LABELS[r.category] || r.category || '—',
         (r.priority || '—'),
         (r.status || '—').replace(/_/g, ' '),
-        (r.reporter_name || r.reporter_email || '—').slice(0, 22),
-        (r.description || '—').slice(0, 48),
-        (r.proposed_solution || '—').slice(0, 48),
+        (r.reporter_name || r.reporter_email || '—').slice(0, 20),
+        (r.person_in_charge || '—').slice(0, 18),
+        (r.description || '—').slice(0, 42),
+        (r.proposed_solution || '—').slice(0, 42),
         formatIssueDate(r.created_at),
         formatIssueDate(r.updated_at),
     ]);
@@ -11200,15 +11266,16 @@ async function exportIssuesPDF() {
         alternateRowStyles: { fillColor: [248, 250, 252] },
         columnStyles: {
             0: { cellWidth: 7,  halign: 'center' },
-            1: { cellWidth: 40 },
-            2: { cellWidth: 20, halign: 'center' },
+            1: { cellWidth: 38 },
+            2: { cellWidth: 19, halign: 'center' },
             3: { cellWidth: 16, halign: 'center' },
-            4: { cellWidth: 20, halign: 'center' },
-            5: { cellWidth: 28 },
-            6: { cellWidth: 44 },
-            7: { cellWidth: 44 },
-            8: { cellWidth: 20, halign: 'center' },
-            9: { cellWidth: 20, halign: 'center' },
+            4: { cellWidth: 19, halign: 'center' },
+            5: { cellWidth: 26 },
+            6: { cellWidth: 20 },
+            7: { cellWidth: 40 },
+            8: { cellWidth: 40 },
+            9: { cellWidth: 19, halign: 'center' },
+            10: { cellWidth: 19, halign: 'center' },
         },
         didDrawCell(data) {
             if (data.section !== 'body') return;
@@ -11249,6 +11316,452 @@ async function exportIssuesPDF() {
     const exportDate = new Date().toISOString().slice(0, 10);
     doc.save(`production_issues_${modLabel}_${exportDate}.pdf`);
     showToast('PDF exported.', 'success');
+}
+
+/* ================================================================
+   ISSUES — GENERATE REPORT POPUP (multi-type, Excel/PDF/Word)
+   ================================================================ */
+
+const ISSUE_REPORT_TYPE_LABELS = {
+    all: 'All Issues', open: 'Open Issues', in_progress: 'In-Progress Issues',
+    resolved: 'Resolved Issues', closed: 'Closed Issues',
+    by_category: 'Issues by Category', status_report: 'Status Report',
+};
+const ISSUE_REPORT_MODULE_LABELS = { kd1: 'KD1', kd2: 'F200-KD2', f100kd2: 'F100-KD2' };
+const ISSUE_REPORT_PERIOD_LABELS = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' };
+
+function _issueReportPeriodWindow(period) {
+    const now = new Date();
+    if (period === 'weekly') {
+        return { from: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000), to: now };
+    }
+    if (period === 'monthly') {
+        return { from: new Date(now.getFullYear(), now.getMonth(), 1), to: now };
+    }
+    const start = new Date(now); start.setHours(0, 0, 0, 0);
+    return { from: start, to: now };
+}
+
+function _issueReportCategorySort(a, b) {
+    const catA = ISSUE_CATEGORY_LABELS[a.category] || a.category || '';
+    const catB = ISSUE_CATEGORY_LABELS[b.category] || b.category || '';
+    if (catA !== catB) return catA.localeCompare(catB);
+    return new Date(a.created_at) - new Date(b.created_at);
+}
+
+/** Fetch + filter issues for the report popup. Shared by preview + every export format. */
+async function buildIssueReportRows(type, opts = {}) {
+    const { from = '', to = '', category = '', moduleScope = 'current', period = 'daily' } = opts;
+
+    let query = db.from('production_issues').select('*');
+    query = (moduleScope === 'all')
+        ? query.in('module', ['kd2', 'f100kd2'])
+        : query.eq('module', getActiveModuleId());
+    if (category) query = query.eq('category', category);
+
+    if (type === 'status_report') {
+        query = query.in('status', ['in_progress', 'resolved']);
+        const { data, error } = await query.order('created_at', { ascending: true });
+        if (error) { showToast('Report failed: ' + error.message, 'error'); return []; }
+        const win = _issueReportPeriodWindow(period);
+        const rows = (data || []).filter(r => {
+            if (r.status === 'in_progress') return true;
+            if (r.status === 'resolved' && r.resolved_at) {
+                const t = new Date(r.resolved_at);
+                return t >= win.from && t <= win.to;
+            }
+            return false;
+        });
+        return rows.sort(_issueReportCategorySort);
+    }
+
+    if (type !== 'all' && type !== 'by_category') query = query.eq('status', type);
+    if (from) query = query.gte('created_at', from + 'T00:00:00');
+    if (to)   query = query.lte('created_at', to + 'T23:59:59');
+
+    const { data, error } = await query.order('created_at', { ascending: true });
+    if (error) { showToast('Report failed: ' + error.message, 'error'); return []; }
+    let rows = data || [];
+    if (type === 'by_category') rows = rows.slice().sort(_issueReportCategorySort);
+    return rows;
+}
+
+function _categoryCounts(rows) {
+    const counts = {};
+    rows.forEach(r => {
+        const label = ISSUE_CATEGORY_LABELS[r.category] || r.category || 'Other';
+        counts[label] = (counts[label] || 0) + 1;
+    });
+    return Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+function _getIssueReportOpts() {
+    const type       = document.querySelector('input[name="issueReportType"]:checked')?.value || 'all';
+    const period     = document.querySelector('#issueReportPeriodToggle .kd2-create-mode-btn.active')?.dataset.period || 'daily';
+    const moduleScope = document.querySelector('#issueReportModuleToggle .kd2-create-mode-btn.active')?.dataset.scope || 'current';
+    const from     = document.getElementById('issueReportDateFrom')?.value || '';
+    const to       = document.getElementById('issueReportDateTo')?.value || '';
+    const category = document.getElementById('issueReportCategory')?.value || '';
+    return { type, period, moduleScope, from, to, category };
+}
+
+function _issueReportTitle(opts) {
+    const base = ISSUE_REPORT_TYPE_LABELS[opts.type] || 'Issues Report';
+    return opts.type === 'status_report'
+        ? `${base} — ${ISSUE_REPORT_PERIOD_LABELS[opts.period] || ''}`
+        : base;
+}
+
+function _issueReportModuleLabel(opts) {
+    return opts.moduleScope === 'all'
+        ? 'All Modules (F200-KD2 + F100-KD2)'
+        : (ISSUE_REPORT_MODULE_LABELS[getActiveModuleId()] || getActiveModuleId());
+}
+
+function openIssueReportModal() {
+    const overlay = document.getElementById('issueReportModalOverlay');
+    if (!overlay) { console.warn('issueReportModalOverlay not found'); return; }
+    overlay.style.display = 'flex';
+    updateIssueReportPreview();
+}
+
+function wireIssueReportModal() {
+    const overlay = document.getElementById('issueReportModalOverlay');
+    if (!overlay) return;
+    const close = () => { overlay.style.display = 'none'; };
+
+    document.getElementById('issueReportModalClose')?.addEventListener('click', close);
+    document.getElementById('issueReportModalCancel')?.addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+    overlay.querySelectorAll('input[name="issueReportType"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            const isStatusReport = document.querySelector('input[name="issueReportType"]:checked')?.value === 'status_report';
+            const periodGroup = document.getElementById('issueReportPeriodGroup');
+            const filterRow   = document.getElementById('issueReportFilterRow');
+            if (periodGroup) periodGroup.style.display = isStatusReport ? '' : 'none';
+            if (filterRow)   filterRow.style.display   = isStatusReport ? 'none' : '';
+            updateIssueReportPreview();
+        });
+    });
+
+    document.getElementById('issueReportPeriodToggle')?.addEventListener('click', e => {
+        const btn = e.target.closest('.kd2-create-mode-btn');
+        if (!btn) return;
+        document.querySelectorAll('#issueReportPeriodToggle .kd2-create-mode-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        updateIssueReportPreview();
+    });
+
+    document.getElementById('issueReportModuleToggle')?.addEventListener('click', e => {
+        const btn = e.target.closest('.kd2-create-mode-btn');
+        if (!btn) return;
+        document.querySelectorAll('#issueReportModuleToggle .kd2-create-mode-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        updateIssueReportPreview();
+    });
+
+    document.getElementById('issueReportDateFrom')?.addEventListener('change', updateIssueReportPreview);
+    document.getElementById('issueReportDateTo')?.addEventListener('change', updateIssueReportPreview);
+    document.getElementById('issueReportCategory')?.addEventListener('change', updateIssueReportPreview);
+
+    document.getElementById('btnIssueReportPDF')?.addEventListener('click', () => exportIssueReportPDF(_getIssueReportOpts()));
+    document.getElementById('btnIssueReportExcel')?.addEventListener('click', () => exportIssueReportExcel(_getIssueReportOpts()));
+    document.getElementById('btnIssueReportWord')?.addEventListener('click', () => exportIssueReportWord(_getIssueReportOpts()));
+}
+
+async function updateIssueReportPreview() {
+    const opts = _getIssueReportOpts();
+    const bar  = document.getElementById('issueReportPreviewBar');
+    const cnt  = document.getElementById('issueReportPreviewCount');
+    const hint = bar?.querySelector('.report-preview-hint');
+    const rows = await buildIssueReportRows(opts.type, opts);
+    if (cnt)  cnt.textContent = `${rows.length} issue${rows.length !== 1 ? 's' : ''} match`;
+    if (hint) hint.textContent = rows.length ? 'Ready to export' : 'No issues match — adjust filters';
+    if (bar)  bar.style.borderColor = rows.length ? 'rgba(79,142,247,.4)' : 'rgba(239,68,68,.4)';
+}
+
+/* ── Excel export (general list + status report) ─────────────────── */
+async function exportIssueReportExcel(opts) {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
+    if (typeof ExcelJS === 'undefined') { showToast('Excel library not loaded — please refresh.', 'error'); return; }
+    showToast('Preparing Excel export…', 'info');
+    const rows = await buildIssueReportRows(opts.type, opts);
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PPMS';
+    wb.created = new Date();
+    const title = _issueReportTitle(opts);
+    const modLabel = _issueReportModuleLabel(opts);
+    const ws = wb.addWorksheet(title.slice(0, 31));
+
+    const isStatusReport = opts.type === 'status_report';
+    const isByCategory    = opts.type === 'by_category';
+    let cursorRow = 1;
+
+    const writeHeaderBlock = (colCount) => {
+        ws.mergeCells(cursorRow, 1, cursorRow, colCount);
+        const t = ws.getCell(cursorRow, 1);
+        t.value = `${title} — ${modLabel}`;
+        t.font  = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FF1e293b' } };
+        t.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf8fafc' } };
+        t.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        ws.getRow(cursorRow).height = 26;
+        cursorRow++;
+
+        ws.mergeCells(cursorRow, 1, cursorRow, colCount);
+        const s = ws.getCell(cursorRow, 1);
+        s.value = `Generated: ${new Date().toLocaleString('en-GB')}   ·   ${rows.length} issue${rows.length !== 1 ? 's' : ''}`;
+        s.font  = { name: 'Calibri', size: 8, italic: true, color: { argb: 'FF64748b' } };
+        s.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf8fafc' } };
+        ws.getRow(cursorRow).height = 13;
+        cursorRow++;
+        ws.addRow([]); cursorRow++;
+    };
+
+    if (isByCategory || isStatusReport) {
+        writeHeaderBlock(8);
+        // Summary-by-category mini table
+        const sumHdr = ws.addRow(['Category', 'Count']);
+        sumHdr.eachCell(c => {
+            c.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FFe2e8f0' } };
+            c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1e3a5f' } };
+        });
+        cursorRow++;
+        _categoryCounts(rows).forEach(([label, count]) => {
+            ws.addRow([label, count]);
+            cursorRow++;
+        });
+        ws.addRow([]); cursorRow++;
+    } else {
+        writeHeaderBlock(11);
+    }
+
+    const HDR_BG = 'FF1e3a5f', HDR_TEXT = 'FFe2e8f0';
+    const headers = isStatusReport
+        ? ['Category', 'Title', 'Issue/Problem', 'Proposed Solution', 'Action Taken', 'Date of Reporting', 'Date Resolved', 'Person In Charge']
+        : ['#', 'Title', 'Category', 'Priority', 'Status', 'Reporter', 'Person In Charge', 'Description', 'Proposed Solution', 'Reported On', 'Resolved At'];
+    const hdrRow = ws.addRow(headers);
+    hdrRow.height = 20;
+    hdrRow.eachCell(cell => {
+        cell.font   = { name: 'Calibri', size: 9, bold: true, color: { argb: HDR_TEXT } };
+        cell.fill   = { type: 'pattern', pattern: 'solid', fgColor: { argb: HDR_BG } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = { bottom: { style: 'thin', color: { argb: 'FF2563eb' } } };
+    });
+
+    const bord = () => ({
+        top: { style: 'thin', color: { argb: 'FFe2e8f0' } }, bottom: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+        left: { style: 'thin', color: { argb: 'FFe2e8f0' } }, right: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+    });
+
+    rows.forEach((r, i) => {
+        const rowBg = i % 2 === 0 ? 'FFffffff' : 'FFf8fafc';
+        const values = isStatusReport
+            ? [
+                ISSUE_CATEGORY_LABELS[r.category] || r.category || '',
+                r.title || '',
+                r.description || '',
+                r.proposed_solution || '',
+                r.notes || '',
+                formatIssueDate(r.created_at),
+                r.resolved_at ? formatIssueDate(r.resolved_at) : '',
+                r.person_in_charge || '',
+              ]
+            : [
+                i + 1, r.title || '', ISSUE_CATEGORY_LABELS[r.category] || r.category || '',
+                r.priority || '', (r.status || '').replace(/_/g, ' '),
+                r.reporter_name || r.reporter_email || '', r.person_in_charge || '',
+                r.description || '', r.proposed_solution || '',
+                formatIssueDate(r.created_at), r.resolved_at ? formatIssueDate(r.resolved_at) : '',
+              ];
+        const dataRow = ws.addRow(values);
+        dataRow.height = 16;
+        dataRow.eachCell({ includeEmpty: true }, cell => {
+            cell.font   = { name: 'Calibri', size: 9, color: { argb: 'FF1e293b' } };
+            cell.fill   = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+            cell.border = bord();
+            cell.alignment = { vertical: 'middle', wrapText: false };
+        });
+    });
+
+    const colWidths = isStatusReport
+        ? [18, 34, 42, 42, 42, 16, 16, 22]
+        : [5, 34, 18, 12, 14, 24, 22, 40, 40, 16, 16];
+    colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+
+    const now = new Date().toISOString().slice(0, 10);
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `issues_report_${opts.type}_${now}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showToast('Excel exported.', 'success');
+}
+
+/* ── PDF export (general list + status report) ───────────────────── */
+async function exportIssueReportPDF(opts) {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
+    if (!window.jspdf) { showToast('PDF library not loaded — please refresh.', 'error'); return; }
+    showToast('Preparing PDF export…', 'info');
+    const rows = await buildIssueReportRows(opts.type, opts);
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const PAGE_W = doc.internal.pageSize.getWidth();
+    const PAGE_H = doc.internal.pageSize.getHeight();
+    const MARGIN = 14;
+    const title = _issueReportTitle(opts);
+    const modLabel = _issueReportModuleLabel(opts);
+    const isStatusReport = opts.type === 'status_report';
+    const isByCategory    = opts.type === 'by_category';
+
+    doc.setFillColor(248, 250, 252);
+    doc.rect(0, 0, PAGE_W, 22, 'F');
+    doc.setFillColor(37, 99, 235);
+    doc.rect(0, 0, 4, 22, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(0, 22, PAGE_W, 22);
+
+    doc.setTextColor(15, 23, 42);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text(title, MARGIN + 2, 10);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Module: ${modLabel}`, MARGIN + 2, 17);
+    doc.text(`Generated: ${new Date().toLocaleString('en-GB')}   ·   ${rows.length} issue${rows.length !== 1 ? 's' : ''}`, PAGE_W - MARGIN, 17, { align: 'right' });
+
+    let startY = 28;
+    if (isByCategory || isStatusReport) {
+        const counts = _categoryCounts(rows);
+        let pillX = MARGIN;
+        const pillY = 26.5;
+        counts.forEach(([label, count]) => {
+            const text = `${label}: ${count}`;
+            doc.setFontSize(6.5);
+            const tw = doc.getTextWidth(text) + 8;
+            doc.setFillColor(37, 99, 235);
+            try { doc.setGState(new doc.GState({ opacity: 0.15 })); } catch {}
+            doc.roundedRect(pillX, pillY - 3.5, tw, 5.5, 1, 1, 'F');
+            try { doc.setGState(new doc.GState({ opacity: 1 })); } catch {}
+            doc.setTextColor(37, 99, 235);
+            doc.setFont('helvetica', 'bold');
+            doc.text(text, pillX + 4, pillY + 0.5);
+            pillX += tw + 4;
+        });
+        startY = 33;
+    }
+
+    const headers = isStatusReport
+        ? ['Category', 'Title', 'Issue/Problem', 'Proposed Solution', 'Action Taken', 'Reported', 'Resolved', 'PIC']
+        : ['#', 'Title', 'Category', 'Priority', 'Status', 'Reporter', 'PIC', 'Description', 'Reported On', 'Resolved'];
+    const body = isStatusReport
+        ? rows.map(r => [
+            ISSUE_CATEGORY_LABELS[r.category] || r.category || '—',
+            (r.title || '').slice(0, 36),
+            (r.description || '—').slice(0, 44),
+            (r.proposed_solution || '—').slice(0, 44),
+            (r.notes || '—').slice(0, 44),
+            formatIssueDate(r.created_at),
+            r.resolved_at ? formatIssueDate(r.resolved_at) : '—',
+            (r.person_in_charge || '—').slice(0, 18),
+          ])
+        : rows.map((r, i) => [
+            i + 1, (r.title || '').slice(0, 36), ISSUE_CATEGORY_LABELS[r.category] || r.category || '—',
+            r.priority || '—', (r.status || '—').replace(/_/g, ' '),
+            (r.reporter_name || r.reporter_email || '—').slice(0, 20), (r.person_in_charge || '—').slice(0, 18),
+            (r.description || '—').slice(0, 44), formatIssueDate(r.created_at),
+            r.resolved_at ? formatIssueDate(r.resolved_at) : '—',
+          ]);
+
+    doc.autoTable({
+        startY,
+        head: [headers], body,
+        margin: { left: MARGIN, right: MARGIN },
+        styles: { fontSize: 6.5, cellPadding: [2, 2.5], font: 'helvetica', textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.18 },
+        headStyles: { fillColor: [30, 58, 138], textColor: [241, 245, 249], fontStyle: 'bold', fontSize: 6.2, halign: 'center', cellPadding: [3, 2.5] },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        didDrawPage(data) {
+            const pageCount = doc.internal.getNumberOfPages();
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(6);
+            doc.setTextColor(148, 163, 184);
+            doc.text(title, MARGIN, PAGE_H - 5);
+            doc.text(`Page ${data.pageNumber} of ${pageCount}`, PAGE_W - MARGIN, PAGE_H - 5, { align: 'right' });
+            doc.setDrawColor(226, 232, 240);
+            doc.setLineWidth(0.2);
+            doc.line(MARGIN, PAGE_H - 7.5, PAGE_W - MARGIN, PAGE_H - 7.5);
+        },
+    });
+
+    const exportDate = new Date().toISOString().slice(0, 10);
+    doc.save(`issues_report_${opts.type}_${exportDate}.pdf`);
+    showToast('PDF exported.', 'success');
+}
+
+/* ── Word export (general list + status report) ──────────────────── */
+async function exportIssueReportWord(opts) {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
+    showToast('Preparing Word export…', 'info');
+    const rows = await buildIssueReportRows(opts.type, opts);
+    const title = _issueReportTitle(opts);
+    const modLabel = _issueReportModuleLabel(opts);
+    const isStatusReport = opts.type === 'status_report';
+    const isByCategory    = opts.type === 'by_category';
+
+    let body = `<h1>${esc(title)}</h1><p class="doc-sub">Module: ${esc(modLabel)} &middot; Generated: ${esc(new Date().toLocaleString('en-GB'))} &middot; ${rows.length} issue${rows.length !== 1 ? 's' : ''}</p>`;
+
+    if (isByCategory || isStatusReport) {
+        body += `<h2>Summary by Category</h2><table class="doc-summary-table"><tr><th>Category</th><th>Count</th></tr>`;
+        _categoryCounts(rows).forEach(([label, count]) => {
+            body += `<tr><td>${esc(label)}</td><td>${count}</td></tr>`;
+        });
+        body += `</table>`;
+    }
+
+    body += `<h2>Issues</h2><table>`;
+    if (isStatusReport) {
+        body += `<tr><th>Category</th><th>Title</th><th>Issue/Problem</th><th>Proposed Solution</th><th>Action Taken</th><th>Date of Reporting</th><th>Date Resolved</th><th>Person In Charge</th></tr>`;
+        rows.forEach(r => {
+            body += `<tr>
+                <td>${esc(ISSUE_CATEGORY_LABELS[r.category] || r.category || '')}</td>
+                <td>${esc(r.title || '')}</td>
+                <td>${esc(r.description || '')}</td>
+                <td>${esc(r.proposed_solution || '')}</td>
+                <td>${esc(r.notes || '')}</td>
+                <td>${esc(formatIssueDate(r.created_at))}</td>
+                <td>${r.resolved_at ? esc(formatIssueDate(r.resolved_at)) : ''}</td>
+                <td>${esc(r.person_in_charge || '')}</td>
+            </tr>`;
+        });
+    } else {
+        body += `<tr><th>#</th><th>Title</th><th>Category</th><th>Priority</th><th>Status</th><th>Reporter</th><th>Person In Charge</th><th>Description</th><th>Proposed Solution</th><th>Reported On</th><th>Resolved At</th></tr>`;
+        rows.forEach((r, i) => {
+            body += `<tr>
+                <td>${i + 1}</td>
+                <td>${esc(r.title || '')}</td>
+                <td>${esc(ISSUE_CATEGORY_LABELS[r.category] || r.category || '')}</td>
+                <td>${esc(r.priority || '')}</td>
+                <td>${esc((r.status || '').replace(/_/g, ' '))}</td>
+                <td>${esc(r.reporter_name || r.reporter_email || '')}</td>
+                <td>${esc(r.person_in_charge || '')}</td>
+                <td>${esc(r.description || '')}</td>
+                <td>${esc(r.proposed_solution || '')}</td>
+                <td>${esc(formatIssueDate(r.created_at))}</td>
+                <td>${r.resolved_at ? esc(formatIssueDate(r.resolved_at)) : ''}</td>
+            </tr>`;
+        });
+    }
+    body += `</table>`;
+
+    const now = new Date().toISOString().slice(0, 10);
+    exportHtmlAsWord(`issues_report_${opts.type}_${now}.doc`, title, body);
 }
 
 /* ── Issue notifications ────────────────────────────────────────── */

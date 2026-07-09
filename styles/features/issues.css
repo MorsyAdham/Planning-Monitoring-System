@@ -32,6 +32,83 @@
     border-color: rgba(220, 38, 38, .25);
 }
 
+/* ── Overview cards ─────────────────────────────────────────────── */
+.issues-overview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.issue-overview-card {
+    background: var(--clr-surface);
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    box-shadow: var(--shadow-card);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    position: relative;
+    overflow: hidden;
+    transition: transform .2s;
+}
+
+.issue-overview-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 3px;
+    height: 100%;
+}
+
+.issue-overview-card:hover {
+    transform: translateY(-2px);
+}
+
+.issue-overview-card--open::before      { background: #3b82f6; }
+.issue-overview-card--progress::before  { background: var(--clr-late, #f97316); }
+.issue-overview-card--resolved::before  { background: var(--clr-completed, #22c55e); }
+.issue-overview-card--critical::before  { background: var(--clr-overdue, #ef4444); }
+
+.issue-overview-icon {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    flex-shrink: 0;
+}
+.issue-overview-icon svg { width: 18px; height: 18px; }
+
+.issue-overview-card--open .issue-overview-icon      { background: rgba(59, 130, 246, .12); color: #3b82f6; }
+.issue-overview-card--progress .issue-overview-icon  { background: rgba(249, 115, 22, .12); color: var(--clr-late, #f97316); }
+.issue-overview-card--resolved .issue-overview-icon  { background: rgba(34, 197, 94, .12); color: var(--clr-completed, #22c55e); }
+.issue-overview-card--critical .issue-overview-icon  { background: rgba(239, 68, 68, .12); color: var(--clr-overdue, #ef4444); }
+
+.issue-overview-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.issue-overview-value {
+    font-family: var(--ff-display);
+    font-size: 1.5rem;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--clr-text);
+}
+
+.issue-overview-label {
+    font-size: .68rem;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--clr-text-muted);
+}
+
 /* ── Card ───────────────────────────────────────────────────────── */
 .issues-card {
     background: var(--clr-surface);

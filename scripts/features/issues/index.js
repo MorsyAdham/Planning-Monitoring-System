@@ -10,6 +10,54 @@ export function initFeature() {
                 <span class="ppms-section-sub">Track, monitor and resolve production problems</span>
             </div>
 
+            <div class="issues-overview-grid">
+                <div class="issue-overview-card issue-overview-card--open">
+                    <div class="issue-overview-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                        </svg>
+                    </div>
+                    <div class="issue-overview-body">
+                        <span class="issue-overview-value" id="issueOvOpen">0</span>
+                        <span class="issue-overview-label">Open</span>
+                    </div>
+                </div>
+                <div class="issue-overview-card issue-overview-card--progress">
+                    <div class="issue-overview-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <circle cx="12" cy="12" r="9"/>
+                            <path d="M12 7v5l3 3"/>
+                        </svg>
+                    </div>
+                    <div class="issue-overview-body">
+                        <span class="issue-overview-value" id="issueOvInProgress">0</span>
+                        <span class="issue-overview-label">In Progress</span>
+                    </div>
+                </div>
+                <div class="issue-overview-card issue-overview-card--resolved">
+                    <div class="issue-overview-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M20 6L9 17l-5-5"/>
+                        </svg>
+                    </div>
+                    <div class="issue-overview-body">
+                        <span class="issue-overview-value" id="issueOvResolved">0</span>
+                        <span class="issue-overview-label">Resolved</span>
+                    </div>
+                </div>
+                <div class="issue-overview-card issue-overview-card--critical">
+                    <div class="issue-overview-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                        </svg>
+                    </div>
+                    <div class="issue-overview-body">
+                        <span class="issue-overview-value" id="issueOvCritical">0</span>
+                        <span class="issue-overview-label">Critical / High (open)</span>
+                    </div>
+                </div>
+            </div>
+
             <div class="issues-card">
                 <!-- Toolbar: single row — search, filters, actions -->
                 <div class="issues-toolbar">
@@ -75,6 +123,13 @@ export function initFeature() {
                             <path d="M6 9h4M6 11h2" stroke-linecap="round"/>
                         </svg>
                         PDF
+                    </button>
+                    <button class="btn btn-ghost btn-sm" id="btnIssueReportModal" onclick="openIssueReportModal()">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="width:13px;height:13px;vertical-align:-2px;margin-right:4px">
+                            <rect x="3" y="2" width="10" height="12" rx="1.5"/>
+                            <path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3"/>
+                        </svg>
+                        Generate Report
                     </button>
                     <button class="btn btn-primary btn-sm" id="btnAddIssue" onclick="openIssueModal()">
                         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;vertical-align:-1px;margin-right:4px">
