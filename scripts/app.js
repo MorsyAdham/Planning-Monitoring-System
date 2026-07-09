@@ -1372,7 +1372,10 @@ function onVehicleFilterChange() {
 
 /** Save current table scroll position and return it */
 function saveScrollPos() {
-    const wrap = document.getElementById('tableWrap') || document.querySelector('.table-scroll-wrap');
+    // The scrollable element is `.table-responsive` (overflow-y:auto) — this
+    // used to look for #tableWrap/.table-scroll-wrap, neither of which exists
+    // in the actual markup, so this silently did nothing.
+    const wrap = document.querySelector('.table-responsive');
     return { top: wrap?.scrollTop || 0, left: wrap?.scrollLeft || 0, el: wrap };
 }
 /** Restore scroll position (deferred to after DOM paint) */
