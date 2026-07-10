@@ -2016,6 +2016,71 @@ function updateF100TableRowInPlace(planId) {
     return true;
 }
 
+/** Surgical row patch for the general (KD2 / standard) table — mirrors
+ *  updateF100TableRowInPlace so single-field edits (actual start /
+ *  completion date) don't force a full tbody rebuild + scroll reset.
+ *  Like the F100 version, this only patches the row itself — group
+ *  progress bars, summary cards, charts and Gantt stay as-is until the
+ *  next full refresh (module switch, filter change, realtime reload). */
+function updateTableRowInPlace(planId) {
+    const row = currentData.find(t => String(t.id) === String(planId));
+    if (!row) return false;
+    const tr = document.querySelector(`#mainTable tbody tr[data-plan-id="${planId}"]`);
+    if (!tr) return false;
+
+    const cells = tr.querySelectorAll('td');
+    // Column order: Vehicle(0), Unit(1), Station(2), Code(3), Week(4),
+    //               Planned Start(5), Planned End(6), Actual Start(7),
+    //               Completed On(8), Status(9), Delay(10), Comments(11)
+
+    const status = calculateStatus(row);
+    const badgeCls = `badge badge-${status.toLowerCase().replace(' ', '-').replace('late-completion', 'late')}`;
+    if (cells[9]) cells[9].innerHTML = `<span class="${badgeCls}">${status}</span>`;
+
+    const delay = delayDays(row);
+    let delayHtml;
+    if (delay > 0 && (status === 'Late Completion' || status === 'Overdue')) {
+        delayHtml = `<span class="delay-positive">+${delay}d</span>`;
+    } else if (delay > 0 && status === 'In Progress') {
+        delayHtml = `<span class="delay-positive" title="Started ${delay}d late">+${delay}d start</span>`;
+    } else if (status === 'Completed' || status === 'Late Completion') {
+        delayHtml = delay === 0 ? `<span class="delay-zero">On Time</span>` : `<span class="delay-positive">+${delay}d</span>`;
+    } else {
+        delayHtml = `<span class="delay-none">—</span>`;
+    }
+    if (cells[10]) cells[10].innerHTML = delayHtml;
+
+    const actualStart = row.progress?.actual_start_date || '';
+    if (cells[7]) {
+        cells[7].innerHTML = `<div class="inline-date-wrap">
+            <input type="date" class="inline-date-input" data-plan-id="${row.id}" value="${actualStart}" title="Actual start date" />
+            ${actualStart ? `<button class="inline-icon-btn inline-start-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
+        </div>`;
+        cells[7].querySelector('.inline-date-input')?.addEventListener('change', function () {
+            saveActualStart(this.dataset.planId, this.value);
+        });
+        cells[7].querySelector('.inline-start-clear')?.addEventListener('click', function () {
+            saveActualStart(this.dataset.planId, '');
+        });
+    }
+
+    const compDate = row.progress?.completion_date || null;
+    if (cells[8]) {
+        cells[8].innerHTML = `<div class="inline-date-wrap">
+            <input type="date" class="inline-end-input" data-plan-id="${row.id}" value="${compDate || ''}" title="Completion date" />
+            ${compDate ? `<button class="inline-icon-btn inline-end-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
+        </div>`;
+        cells[8].querySelector('.inline-end-input')?.addEventListener('change', function () {
+            saveCompletionDate(this.dataset.planId, this.value);
+        });
+        cells[8].querySelector('.inline-end-clear')?.addEventListener('click', function () {
+            saveCompletionDate(this.dataset.planId, '');
+        });
+    }
+
+    return true;
+}
+
 function renderF100Table(data) {
     document.getElementById('kd2TableViewBar')?.remove();
     const tbl = document.getElementById('mainTable');
@@ -4786,11 +4851,13 @@ async function saveActualStart(planId, dateValue) {
         markLocalSave();
         showToast(valueToSave ? 'Start date saved.' : 'Start date cleared.', 'success');
         // In-place update: patch currentData and re-render without scroll reset
-        const row = currentData.find(t => t.id === planId);
+        // (planId is always a string from dataset.planId, row.id is a number —
+        // must coerce both sides or this lookup silently never matches)
+        const row = currentData.find(t => String(t.id) === String(planId));
         if (row) {
             row.progress = snapAfter || row.progress || {};
             row.progress.actual_start_date = valueToSave;
-            refreshAllViews();
+            if (!updateTableRowInPlace(planId)) refreshAllViews();
         } else {
             const pos = saveScrollPos();
             await loadData();
@@ -4814,7 +4881,7 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
     if (isF100KD2Module()) {
         markLocalSave();
         try {
-            const row = currentData.find(t => t.id === planId);
+            const row = currentData.find(t => String(t.id) === String(planId));
             const newStatus = valueToSave ? 'Completed' : (row?.actual_start_date ? 'In Progress' : 'Planned');
             const { error } = await db
                 .from('f100_plans')
@@ -4876,12 +4943,12 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
 
         markLocalSave();
         showToast(valueToSave ? 'Completion date saved.' : 'Completion date cleared.', 'success');
-        const row2 = currentData.find(t => t.id === planId);
+        const row2 = currentData.find(t => String(t.id) === String(planId));
         if (row2) {
             row2.progress = snapAfter || row2.progress || {};
             row2.progress.completed = !!valueToSave;
             row2.progress.completion_date = valueToSave;
-            refreshAllViews();
+            if (!updateTableRowInPlace(planId)) refreshAllViews();
         } else {
             const pos = saveScrollPos();
             await loadData();
@@ -5443,16 +5510,19 @@ async function markComplete() {
             progressTable, planId, snapBefore || null, snapAfter || null
         );
 
+        markLocalSave();
         showToast('Progress saved successfully.', 'success');
-        const mRow = currentData.find(t => t.id === planId);
+        const mRow = currentData.find(t => String(t.id) === String(planId));
         if (mRow) {
             mRow.progress = snapAfter || mRow.progress || {};
             mRow.progress.completed = true;
             mRow.progress.completion_date = compDate;
             mRow.progress.notes = notes || null;
-            refreshAllViews();
+            if (!updateTableRowInPlace(planId)) refreshAllViews();
         } else {
+            const pos = saveScrollPos();
             await loadData();
+            restoreScrollPos(pos);
         }
 
     } catch (err) {
