@@ -1526,6 +1526,30 @@ export function renderSharedDialogs() {
                             </select>
                         </div>
 
+                        <!-- Priority / Reporter / Search — used by every type except Status Report -->
+                        <div class="form-group" id="issueReportMoreFiltersGroup" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:14px">
+                            <div style="min-width:160px">
+                                <label class="form-label">Priority <span class="form-label-optional">(optional)</span></label>
+                                <select id="issueReportPriority" class="filter-control">
+                                    <option value="">All Priorities</option>
+                                    <option value="low">Low</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="high">High</option>
+                                    <option value="critical">Critical</option>
+                                </select>
+                            </div>
+                            <div style="min-width:200px">
+                                <label class="form-label">Reporter <span class="form-label-optional">(optional)</span></label>
+                                <select id="issueReportReporter" class="filter-control">
+                                    <option value="">All Reporters</option>
+                                </select>
+                            </div>
+                            <div style="flex:1;min-width:200px">
+                                <label class="form-label">Search <span class="form-label-optional">(title / description)</span></label>
+                                <input type="text" id="issueReportSearch" class="filter-control" placeholder="Search…" autocomplete="off" />
+                            </div>
+                        </div>
+
                         <!-- Status Report checklists — statuses + categories, all checked by default -->
                         <div class="form-group" id="issueReportStatusChecklistGroup" style="display:none">
                             <div class="issue-report-checklist-head">

@@ -4485,8 +4485,15 @@ function getChartGrouping(data) {
 }
 
 /* ── Chart card expand (centered modal overlay) ─────────────────── */
+let _resizeAllChartsTimer = null;
 function _resizeAllCharts() {
-    setTimeout(() => {
+    // Debounced — renderCharts() runs on every filter change/reload and the
+    // ResizeObserver can fire many times in a burst (window drag, layout
+    // settling); without this a rapid sequence stacks up redundant resize
+    // passes over the same chart instances.
+    if (_resizeAllChartsTimer) clearTimeout(_resizeAllChartsTimer);
+    _resizeAllChartsTimer = setTimeout(() => {
+        _resizeAllChartsTimer = null;
         [barChartInst, lineChartInst, _f100ChartStatus, _f100ChartStep, _f100ChartVtype, _kd2BottleneckChartInst]
             .forEach(c => { try { c?.resize(); } catch {} });
     }, 60);
@@ -10718,8 +10725,8 @@ async function loadIssuesOverview() {
     }
 }
 
-async function _populateIssueReporterFilter() {
-    const sel = document.getElementById('issueFilterReporter');
+async function _populateReporterSelect(selectId) {
+    const sel = document.getElementById(selectId);
     if (!sel || sel.options.length > 1) return;
     try {
         const { data } = await db
@@ -10740,6 +10747,9 @@ async function _populateIssueReporterFilter() {
             sel.appendChild(opt);
         });
     } catch (_) {}
+}
+async function _populateIssueReporterFilter() {
+    return _populateReporterSelect('issueFilterReporter');
 }
 
 async function loadIssues(reset = false) {
@@ -10885,6 +10895,20 @@ async function openIssueModal(id = null) {
     overlay.style.display = 'flex';
 }
 
+/** If `error` is Postgres 42703 (undefined column) and names a column present
+ *  in `payload`, return payload with that column stripped so the caller can
+ *  retry against a not-yet-migrated table. Returns null for any other error
+ *  (including errors that merely mention "column" in unrelated messages, e.g.
+ *  constraint violations) so those aren't silently swallowed. */
+function _stripUndefinedColumn(payload, error) {
+    if (error?.code !== '42703') return null;
+    const col = /column "([^"]+)"/.exec(error.message || '')?.[1];
+    if (!col || !(col in payload)) return null;
+    const rest = { ...payload };
+    delete rest[col];
+    return rest;
+}
+
 async function saveIssue() {
     const overlay  = document.getElementById('issueModalOverlay');
     const editId   = overlay?.dataset?.editId || '';
@@ -10931,9 +10955,9 @@ async function saveIssue() {
                 resolved_at: status === 'resolved' ? new Date().toISOString() : null,
             };
             let { error } = await db.from('production_issues').update(payload).eq('id', editId);
-            if (error && /person_in_charge|42703|column/.test(error.message || '')) {
-                const { person_in_charge: _drop, ...withoutPIC } = payload;
-                ({ error } = await db.from('production_issues').update(withoutPIC).eq('id', editId));
+            if (error) {
+                const retryPayload = _stripUndefinedColumn(payload, error);
+                if (retryPayload) ({ error } = await db.from('production_issues').update(retryPayload).eq('id', editId));
             }
             if (error) throw error;
             auditLog('UPDATE', 'production_issues', editId, beforeData, payload);
@@ -10954,20 +10978,18 @@ async function saveIssue() {
                 resolved_at: status === 'resolved' ? new Date().toISOString() : null,
             };
 
-            // Try with module + PIC columns; progressively drop columns that don't exist yet
+            // Try with module + PIC columns; drop whichever column the DB
+            // reports as undefined (42703) and retry, up to a few rounds —
+            // generalizes to any not-yet-migrated optional column.
             let insertError, insertedId;
-            const attempts = [
-                { ...base, module: getActiveModuleId() },
-                (() => { const { person_in_charge: _p, ...rest } = base; return { ...rest, module: getActiveModuleId() }; })(),
-                base,
-                (() => { const { person_in_charge: _p, ...rest } = base; return rest; })(),
-            ];
-            for (const payload of attempts) {
+            let payload = { ...base, module: getActiveModuleId() };
+            for (let attempt = 0; attempt < 3; attempt++) {
                 const r = await db.from('production_issues').insert(payload).select('id').single();
                 if (!r.error) { insertedId = r.data?.id; insertError = null; break; }
                 insertError = r.error;
-                const msg = r.error.message || '';
-                if (!(msg.includes('module') || msg.includes('person_in_charge') || msg.includes('42703') || msg.includes('column'))) break;
+                const retryPayload = _stripUndefinedColumn(payload, r.error);
+                if (!retryPayload) break;
+                payload = retryPayload;
             }
             if (insertError) throw insertError;
             auditLog('INSERT', 'production_issues', insertedId, null, { ...base, module: getActiveModuleId() });
@@ -11174,22 +11196,45 @@ const ISSUE_REPORT_ALL_STATUSES = ['open', 'in_progress', 'resolved', 'closed'];
 const ISSUE_REPORT_ALL_CATEGORIES = Object.keys(ISSUE_CATEGORY_LABELS);
 
 /** Fetch + filter issues for the report popup. Shared by preview + every export format. */
-async function buildIssueReportRows(type, opts = {}) {
-    const { from = '', to = '', category = '', moduleScope = 'current', period = 'daily', statuses = null, categories = null } = opts;
+const ISSUE_REPORT_PAGE_SIZE = 1000;
 
-    let query = db.from('production_issues').select('*');
-    query = (moduleScope === 'all')
-        ? query.in('module', ['kd2', 'f100kd2'])
-        : query.eq('module', getActiveModuleId());
+/** Pages through `buildQuery()` (a factory returning a fresh, unranged query
+ *  each call) via .range() until a page returns fewer than a full page, so
+ *  report exports aren't silently capped by PostgREST's default row limit. */
+async function _fetchAllReportRows(buildQuery) {
+    const rows = [];
+    let offset = 0;
+    for (;;) {
+        const { data, error } = await buildQuery().range(offset, offset + ISSUE_REPORT_PAGE_SIZE - 1);
+        if (error) return { data: null, error };
+        rows.push(...(data || []));
+        if (!data || data.length < ISSUE_REPORT_PAGE_SIZE) break;
+        offset += ISSUE_REPORT_PAGE_SIZE;
+    }
+    return { data: rows, error: null };
+}
+
+async function buildIssueReportRows(type, opts = {}) {
+    const { from = '', to = '', category = '', priority = '', reporter = '', search = '',
+        moduleScope = 'current', period = 'daily', statuses = null, categories = null } = opts;
+
+    const buildBase = () => {
+        let q = db.from('production_issues').select('*');
+        return (moduleScope === 'all')
+            ? q.in('module', ['kd2', 'f100kd2'])
+            : q.eq('module', getActiveModuleId());
+    };
 
     if (type === 'status_report') {
         const statusSet = (statuses && statuses.length) ? statuses : ISSUE_REPORT_ALL_STATUSES;
-        query = query.in('status', statusSet);
         const categorySet = (categories && categories.length) ? categories : null;
-        if (categorySet && categorySet.length < ISSUE_REPORT_ALL_CATEGORIES.length) {
-            query = query.in('category', categorySet);
-        }
-        const { data, error } = await query.order('created_at', { ascending: true });
+        const { data, error } = await _fetchAllReportRows(() => {
+            let q = buildBase().in('status', statusSet);
+            if (categorySet && categorySet.length < ISSUE_REPORT_ALL_CATEGORIES.length) {
+                q = q.in('category', categorySet);
+            }
+            return q.order('created_at', { ascending: true });
+        });
         if (error) { showToast('Report failed: ' + error.message, 'error'); return []; }
         const win = _issueReportPeriodWindow(period);
         const rows = (data || []).filter(r => {
@@ -11205,12 +11250,17 @@ async function buildIssueReportRows(type, opts = {}) {
         return rows.sort(_issueReportCategorySort);
     }
 
-    if (category) query = query.eq('category', category);
-    if (type !== 'all' && type !== 'by_category') query = query.eq('status', type);
-    if (from) query = query.gte('created_at', from + 'T00:00:00');
-    if (to)   query = query.lte('created_at', to + 'T23:59:59');
-
-    const { data, error } = await query.order('created_at', { ascending: true });
+    const { data, error } = await _fetchAllReportRows(() => {
+        let q = buildBase();
+        if (category) q = q.eq('category', category);
+        if (priority) q = q.eq('priority', priority);
+        if (reporter) q = q.eq('reporter_email', reporter);
+        if (search)   q = q.or(`title.ilike.%${search}%,description.ilike.%${search}%`);
+        if (type !== 'all' && type !== 'by_category') q = q.eq('status', type);
+        if (from) q = q.gte('created_at', from + 'T00:00:00');
+        if (to)   q = q.lte('created_at', to + 'T23:59:59');
+        return q.order('created_at', { ascending: true });
+    });
     if (error) { showToast('Report failed: ' + error.message, 'error'); return []; }
     let rows = data || [];
     if (type === 'by_category') rows = rows.slice().sort(_issueReportCategorySort);
@@ -11233,9 +11283,12 @@ function _getIssueReportOpts() {
     const from     = document.getElementById('issueReportDateFrom')?.value || '';
     const to       = document.getElementById('issueReportDateTo')?.value || '';
     const category = document.getElementById('issueReportCategory')?.value || '';
+    const priority = document.getElementById('issueReportPriority')?.value || '';
+    const reporter = document.getElementById('issueReportReporter')?.value || '';
+    const search   = document.getElementById('issueReportSearch')?.value?.trim() || '';
     const statuses   = Array.from(document.querySelectorAll('#issueReportStatusChecklist input:checked')).map(el => el.value);
     const categories = Array.from(document.querySelectorAll('#issueReportCategoryChecklist input:checked')).map(el => el.value);
-    return { type, period, moduleScope, from, to, category, statuses, categories };
+    return { type, period, moduleScope, from, to, category, priority, reporter, search, statuses, categories };
 }
 
 function _issueReportTitle(opts) {
@@ -11255,6 +11308,7 @@ function openIssueReportModal() {
     const overlay = document.getElementById('issueReportModalOverlay');
     if (!overlay) { console.warn('issueReportModalOverlay not found'); return; }
     overlay.style.display = 'flex';
+    _populateReporterSelect('issueReportReporter').catch(() => {});
     updateIssueReportPreview();
 }
 
@@ -11275,6 +11329,7 @@ function wireIssueReportModal() {
             document.getElementById('issueReportCategoryChecklistGroup').style.display = isStatusReport ? '' : 'none';
             document.getElementById('issueReportDateGroup').style.display           = isStatusReport ? 'none' : '';
             document.getElementById('issueReportCategorySimpleGroup').style.display = isStatusReport ? 'none' : '';
+            document.getElementById('issueReportMoreFiltersGroup').style.display    = isStatusReport ? 'none' : 'flex';
             updateIssueReportPreview();
         });
     });
@@ -11324,6 +11379,9 @@ function wireIssueReportModal() {
     document.getElementById('issueReportDateFrom')?.addEventListener('change', updateIssueReportPreview);
     document.getElementById('issueReportDateTo')?.addEventListener('change', updateIssueReportPreview);
     document.getElementById('issueReportCategory')?.addEventListener('change', updateIssueReportPreview);
+    document.getElementById('issueReportPriority')?.addEventListener('change', updateIssueReportPreview);
+    document.getElementById('issueReportReporter')?.addEventListener('change', updateIssueReportPreview);
+    document.getElementById('issueReportSearch')?.addEventListener('input', updateIssueReportPreview);
 
     document.getElementById('btnIssueReportPDF')?.addEventListener('click', () => exportIssueReportPDF(_getIssueReportOpts()));
     document.getElementById('btnIssueReportExcel')?.addEventListener('click', () => exportIssueReportExcel(_getIssueReportOpts()));
@@ -11380,7 +11438,10 @@ async function exportIssueReportExcel(opts) {
     };
 
     if (isByCategory || isStatusReport) {
-        writeHeaderBlock(8);
+        // Title/subtitle merge width must match this type's actual data
+        // table below (8 cols for status_report, 11 for by_category) —
+        // not a flat 8 for both.
+        writeHeaderBlock(isStatusReport ? 8 : 11);
         // Summary-by-category mini table
         const sumHdr = ws.addRow(['Category', 'Count']);
         sumHdr.eachCell(c => {
