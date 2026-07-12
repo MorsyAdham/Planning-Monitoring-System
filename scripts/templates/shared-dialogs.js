@@ -1268,6 +1268,7 @@ export function renderSharedDialogs() {
                             <path d="M10 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
                         </svg>
                         <span id="issueModalTitleText">Report Issue</span>
+                        <span class="issue-draft-status" id="issueDraftStatus" style="display:none"></span>
                     </h4>
                     <button class="modal-close" id="issueModalClose" aria-label="Close">&#x2715;</button>
                 </div>
@@ -1376,6 +1377,25 @@ export function renderSharedDialogs() {
                         <button class="btn btn-ghost" id="btnIssueCancel">Cancel</button>
                         <button class="btn btn-primary" id="btnIssueSave">Save Issue</button>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════ ISSUE DRAFTS MODAL -->
+        <div class="modal-overlay" id="issueDraftsModalOverlay" style="display:none" role="dialog" aria-modal="true"
+            aria-labelledby="issueDraftsModalTitle">
+            <div class="modal issue-drafts-modal">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="issueDraftsModalTitle">Saved Drafts</h4>
+                    <button class="modal-close" id="issueDraftsModalClose" aria-label="Close">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="issue-drafts-hint">Drafts are saved automatically on this device as you type, even if
+                        you close the tab by mistake. They aren't visible to anyone else until you report them.</p>
+                    <div id="issueDraftsList" class="issue-drafts-list"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-ghost" id="issueDraftsModalCancel">Close</button>
                 </div>
             </div>
         </div>

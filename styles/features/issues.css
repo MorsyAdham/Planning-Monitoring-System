@@ -32,6 +32,90 @@
     border-color: rgba(220, 38, 38, .25);
 }
 
+/* ── Drafts badge (toolbar button) ──────────────────────────────── */
+.issue-drafts-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 6px;
+    padding: 0 6px;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 20px;
+    font-size: .68rem;
+    font-weight: 700;
+    background: rgba(79, 142, 247, .18);
+    color: #93c5fd;
+    border: 1px solid rgba(79, 142, 247, .35);
+}
+[data-theme="light"] .issue-drafts-badge {
+    background: rgba(37, 99, 235, .12);
+    color: #1d4ed8;
+    border-color: rgba(37, 99, 235, .3);
+}
+
+/* ── "Draft saved" indicator in the issue modal header ──────────── */
+.issue-draft-status {
+    margin-left: 10px;
+    font-size: .7rem;
+    font-weight: 600;
+    color: #4ade80;
+    letter-spacing: .02em;
+    opacity: 0;
+    transition: opacity .3s ease;
+}
+.issue-draft-status.is-visible { opacity: 1; }
+
+/* ── Drafts list modal ───────────────────────────────────────────── */
+.issue-drafts-modal { width: min(560px, 92vw); }
+.issue-drafts-hint {
+    font-size: .8rem;
+    color: var(--clr-text-muted);
+    margin: 0 0 14px;
+    line-height: 1.5;
+}
+.issue-drafts-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 50vh;
+    overflow-y: auto;
+}
+.issue-drafts-empty {
+    text-align: center;
+    color: var(--clr-text-muted);
+    font-size: .85rem;
+    padding: 24px 0;
+}
+.issue-draft-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-sm);
+    background: var(--clr-surface-2);
+}
+.issue-draft-row-body { flex: 1 1 auto; min-width: 0; }
+.issue-draft-row-title {
+    font-weight: 700;
+    font-size: .9rem;
+    color: var(--clr-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.issue-draft-row-meta {
+    font-size: .74rem;
+    color: var(--clr-text-muted);
+    margin-top: 2px;
+}
+.issue-draft-row-actions {
+    display: flex;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+
 /* ── Overview cards ─────────────────────────────────────────────── */
 .issues-overview-grid {
     display: grid;

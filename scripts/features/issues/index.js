@@ -116,6 +116,15 @@ export function initFeature() {
                         </svg>
                         Generate Report
                     </button>
+                    <button class="btn btn-ghost btn-sm" id="btnIssueDrafts" onclick="openIssueDraftsList()">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="width:13px;height:13px;vertical-align:-2px;margin-right:4px">
+                            <path d="M4 2h6l3 3v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z"/>
+                            <path d="M9.5 2v3h3"/>
+                            <path d="M5 8.5h6M5 11h4"/>
+                        </svg>
+                        Drafts
+                        <span class="issue-drafts-badge" id="issueDraftsBadge" style="display:none">0</span>
+                    </button>
                     <button class="btn btn-primary btn-sm" id="btnAddIssue" onclick="openIssueModal()">
                         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;vertical-align:-1px;margin-right:4px">
                             <path d="M8 3v10M3 8h10" stroke-linecap="round"/>

@@ -5774,6 +5774,15 @@ function wireEvents() {
         const id = document.getElementById('issueModalOverlay')?.dataset?.editId;
         if (id) deleteIssue(id);
     });
+    ISSUE_DRAFT_FIELD_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        el?.addEventListener('input', _autoSaveIssueDraft);
+        el?.addEventListener('change', _autoSaveIssueDraft);
+    });
+    window.addEventListener('beforeunload', _flushIssueDraft);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) _flushIssueDraft(); });
+    wireIssueDraftsModal();
+    _updateIssueDraftsBadge();
     document.getElementById('btnIssueApply')?.addEventListener('click', () => loadIssues(true));
     document.getElementById('issueSearch')?.addEventListener('keydown', e => {
         if (e.key === 'Enter') loadIssues(true);
@@ -11542,7 +11551,145 @@ function _setIssueField(id, val) {
     else el.textContent = val ?? '—';
 }
 
-async function openIssueModal(id = null) {
+/* ── Issue drafts — local-only autosave so a new issue survives an
+   accidental tab close before it's reported. Multiple drafts supported,
+   per user + module, stored in localStorage (same convention as
+   _issueNotifSeenKey/_issueNotifSnapKey). Drafts never touch the server —
+   they only become visible to other users once actually reported. ── */
+const ISSUE_DRAFT_FIELD_IDS = ['issueTitle', 'issueCategory', 'issuePriority', 'issueStatus',
+    'issuePIC', 'issueDescription', 'issueProposedSolution', 'issueNotes'];
+let _currentIssueDraftId = null;
+let _issueDraftAutosaveTimer = null;
+
+function _issueDraftsKey() {
+    const u = getCurrentUser();
+    return `ppms_issue_drafts_${getActiveModuleId()}_${u?.email || 'anon'}`;
+}
+
+function _loadIssueDrafts() {
+    try { return JSON.parse(localStorage.getItem(_issueDraftsKey()) || '[]'); } catch { return []; }
+}
+
+function _saveIssueDraftsList(list) {
+    try { localStorage.setItem(_issueDraftsKey(), JSON.stringify(list)); } catch {}
+}
+
+function _readIssueDraftFromForm() {
+    const draft = { id: _currentIssueDraftId, updated_at: new Date().toISOString() };
+    ISSUE_DRAFT_FIELD_IDS.forEach(id => { draft[id] = document.getElementById(id)?.value || ''; });
+    return draft;
+}
+
+function _isIssueDraftEmpty(draft) {
+    return !draft.issueTitle?.trim() && !draft.issueCategory && !draft.issueDescription?.trim()
+        && !draft.issueProposedSolution?.trim() && !draft.issueNotes?.trim() && !draft.issuePIC?.trim();
+}
+
+function _deleteIssueDraft(draftId) {
+    if (!draftId) return;
+    _saveIssueDraftsList(_loadIssueDrafts().filter(d => d.id !== draftId));
+    _updateIssueDraftsBadge();
+}
+
+/** Immediate (non-debounced) save of the currently-open new-issue form
+ *  into its draft slot — used by the debounced autosave and as a safety
+ *  flush on tab close / visibility change. */
+function _flushIssueDraft() {
+    if (!_currentIssueDraftId) return;
+    const overlay = document.getElementById('issueModalOverlay');
+    if (!overlay || overlay.style.display === 'none' || overlay.dataset.editId || overlay.dataset.viewMode === '1') return;
+
+    const draft = _readIssueDraftFromForm();
+    const list = _loadIssueDrafts();
+    const idx = list.findIndex(d => d.id === _currentIssueDraftId);
+
+    if (_isIssueDraftEmpty(draft)) {
+        if (idx !== -1) { list.splice(idx, 1); _saveIssueDraftsList(list); _updateIssueDraftsBadge(); }
+        return;
+    }
+    if (idx !== -1) list[idx] = draft; else list.push(draft);
+    _saveIssueDraftsList(list);
+    _updateIssueDraftsBadge();
+
+    const statusEl = document.getElementById('issueDraftStatus');
+    if (statusEl) {
+        statusEl.textContent = 'Draft saved';
+        statusEl.classList.add('is-visible');
+        clearTimeout(statusEl._hideTimer);
+        statusEl._hideTimer = setTimeout(() => statusEl.classList.remove('is-visible'), 1800);
+        statusEl.style.display = '';
+    }
+}
+
+function _autoSaveIssueDraft() {
+    clearTimeout(_issueDraftAutosaveTimer);
+    _issueDraftAutosaveTimer = setTimeout(_flushIssueDraft, 600);
+}
+
+function _updateIssueDraftsBadge() {
+    const badge = document.getElementById('issueDraftsBadge');
+    if (!badge) return;
+    const count = _loadIssueDrafts().length;
+    badge.textContent = String(count);
+    badge.style.display = count > 0 ? '' : 'none';
+}
+
+function _newIssueDraftId() {
+    return (crypto?.randomUUID ? crypto.randomUUID() : `draft_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+}
+
+function openIssueDraftsList() {
+    const overlay = document.getElementById('issueDraftsModalOverlay');
+    const listEl = document.getElementById('issueDraftsList');
+    if (!overlay || !listEl) return;
+
+    const drafts = _loadIssueDrafts().sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
+    listEl.innerHTML = drafts.length
+        ? drafts.map(d => `
+            <div class="issue-draft-row" data-draft-id="${esc(d.id)}">
+                <div class="issue-draft-row-body">
+                    <div class="issue-draft-row-title">${esc(d.issueTitle?.trim() || 'Untitled draft')}</div>
+                    <div class="issue-draft-row-meta">${esc(ISSUE_CATEGORY_LABELS[d.issueCategory] || d.issueCategory || 'No category')} &middot; Saved ${esc(formatIssueDate(d.updated_at))}</div>
+                </div>
+                <div class="issue-draft-row-actions">
+                    <button class="btn btn-primary btn-sm" data-draft-action="resume">Resume</button>
+                    <button class="btn btn-ghost btn-sm btn-kd2-danger" data-draft-action="delete">Delete</button>
+                </div>
+            </div>`).join('')
+        : `<div class="issue-drafts-empty">No saved drafts.</div>`;
+
+    overlay.style.display = 'flex';
+}
+
+function wireIssueDraftsModal() {
+    const overlay = document.getElementById('issueDraftsModalOverlay');
+    if (!overlay) return;
+    const close = () => { overlay.style.display = 'none'; };
+    document.getElementById('issueDraftsModalClose')?.addEventListener('click', close);
+    document.getElementById('issueDraftsModalCancel')?.addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+    document.getElementById('issueDraftsList')?.addEventListener('click', e => {
+        const btn = e.target.closest('[data-draft-action]');
+        if (!btn) return;
+        const row = btn.closest('.issue-draft-row');
+        const draftId = row?.dataset.draftId;
+        if (!draftId) return;
+
+        if (btn.dataset.draftAction === 'delete') {
+            _deleteIssueDraft(draftId);
+            row.remove();
+            if (!document.querySelector('.issue-draft-row')) {
+                document.getElementById('issueDraftsList').innerHTML = `<div class="issue-drafts-empty">No saved drafts.</div>`;
+            }
+        } else if (btn.dataset.draftAction === 'resume') {
+            const draft = _loadIssueDrafts().find(d => d.id === draftId);
+            if (draft) { close(); openIssueModal(null, draft); }
+        }
+    });
+}
+
+async function openIssueModal(id = null, resumeDraft = null) {
     const overlay = document.getElementById('issueModalOverlay');
     if (!overlay) { console.warn('issueModalOverlay not found'); return; }
 
@@ -11554,21 +11701,26 @@ async function openIssueModal(id = null) {
 
     if (id === null) {
         overlay.dataset.editId = '';
-        if (titleEl) titleEl.textContent = 'Report Issue';
+        if (titleEl) titleEl.textContent = resumeDraft ? 'Report Issue (Draft)' : 'Report Issue';
         if (deleteBtn) deleteBtn.style.display = 'none';
 
         const u = getCurrentUser();
         _setIssueField('issueReporterName',  u?.name  || u?.full_name || '');
         _setIssueField('issueReporterEmail', u?.email || '');
-        _setIssueField('issueTitle', '');
-        _setIssueField('issueCategory', '');
-        _setIssueField('issuePriority', 'medium');
-        _setIssueField('issueStatus', 'open');
-        _setIssueField('issueDescription', '');
-        _setIssueField('issueProposedSolution', '');
-        _setIssueField('issueNotes', '');
-        _setIssueField('issuePIC', '');
+        _setIssueField('issueTitle',            resumeDraft?.issueTitle || '');
+        _setIssueField('issueCategory',         resumeDraft?.issueCategory || '');
+        _setIssueField('issuePriority',         resumeDraft?.issuePriority || 'medium');
+        _setIssueField('issueStatus',           resumeDraft?.issueStatus || 'open');
+        _setIssueField('issueDescription',      resumeDraft?.issueDescription || '');
+        _setIssueField('issueProposedSolution', resumeDraft?.issueProposedSolution || '');
+        _setIssueField('issueNotes',            resumeDraft?.issueNotes || '');
+        _setIssueField('issuePIC',              resumeDraft?.issuePIC || '');
+
+        _currentIssueDraftId = resumeDraft?.id || _newIssueDraftId();
+        const statusEl = document.getElementById('issueDraftStatus');
+        if (statusEl) { statusEl.classList.remove('is-visible'); statusEl.style.display = 'none'; }
     } else {
+        _currentIssueDraftId = null;
         const { data, error } = await db.from('production_issues').select('*').eq('id', id).single();
         if (error || !data) { showToast('Failed to load issue.', 'error'); return; }
 
@@ -11598,14 +11750,22 @@ async function openIssueModal(id = null) {
     overlay.style.display = 'flex';
 }
 
-/** If `error` is Postgres 42703 (undefined column) and names a column present
- *  in `payload`, return payload with that column stripped so the caller can
- *  retry against a not-yet-migrated table. Returns null for any other error
- *  (including errors that merely mention "column" in unrelated messages, e.g.
- *  constraint violations) so those aren't silently swallowed. */
+/** If `error` names a column present in `payload` via either (a) Postgres
+ *  42703 "undefined column", or (b) PostgREST's PGRST204 "Could not find the
+ *  X column of Y in the schema cache" (raised when the column was added to
+ *  app.js but the migration hasn't been run against this database yet),
+ *  return payload with that column stripped so the caller can retry.
+ *  Returns null for any other error (including errors that merely mention
+ *  "column" in unrelated messages, e.g. constraint violations) so those
+ *  aren't silently swallowed. */
 function _stripUndefinedColumn(payload, error) {
-    if (error?.code !== '42703') return null;
-    const col = /column "([^"]+)"/.exec(error.message || '')?.[1];
+    const msg = error?.message || '';
+    let col = null;
+    if (error?.code === '42703') {
+        col = /column "([^"]+)"/.exec(msg)?.[1] || null;
+    } else if (error?.code === 'PGRST204') {
+        col = /Could not find the '([^']+)' column/.exec(msg)?.[1] || null;
+    }
     if (!col || !(col in payload)) return null;
     const rest = { ...payload };
     delete rest[col];
@@ -11698,6 +11858,10 @@ async function saveIssue() {
             auditLog('INSERT', 'production_issues', insertedId, null, { ...base, module: getActiveModuleId() });
             await _broadcastIssueNew({ id: insertedId, title, category, module: getActiveModuleId() });
             showToast('Issue reported.', 'success');
+            // Now visible to everyone in the system — its local draft is done.
+            clearTimeout(_issueDraftAutosaveTimer);
+            _deleteIssueDraft(_currentIssueDraftId);
+            _currentIssueDraftId = null;
         }
 
         if (overlay) overlay.style.display = 'none';
@@ -11828,6 +11992,9 @@ function _closeIssueModal() {
         if (editBtn)   editBtn.style.display = 'none';
         if (cancelBtn) cancelBtn.textContent = 'Cancel';
     }
+    clearTimeout(_issueDraftAutosaveTimer);
+    _flushIssueDraft(); // capture any edit made since the last debounced save
+    _currentIssueDraftId = null;
     overlay.dataset.viewMode = '';
     overlay.dataset.editId = '';
     overlay.style.display = 'none';
