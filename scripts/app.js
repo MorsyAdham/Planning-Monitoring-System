@@ -11847,15 +11847,15 @@ const WORD_DOC_STYLE = `
     th { background: #1e3a5f; color: #e2e8f0; }
     tr:nth-child(even) td { background: #f8fafc; }
     .doc-summary-table th, .doc-summary-table td { font-size: 9.5pt; }
-    .issue-report-card { border: 1px solid #e2e8f0; border-left: 4px solid #1e3a8a; padding: 8px 12px; margin: 0 0 12px; }
-    .issue-report-title { font-size: 11.5pt; font-weight: bold; margin: 0 0 2px; color: #0f172a; }
-    .issue-report-byline { font-size: 8.5pt; font-style: italic; color: #64748b; margin: 0 0 6px; }
-    .issue-report-sec { font-size: 9.5pt; margin: 0 0 4px; color: #334155; }
-    .issue-report-sec-label { font-weight: bold; }
+    .issue-report-card { border: 1px solid #e2e8f0; border-left: 4px solid #1e3a8a; padding: 10px 16px; margin: 0 0 16px; }
+    .issue-report-title { font-size: 15pt; font-weight: bold; margin: 0 0 3px; color: #0f172a; }
+    .issue-report-byline { font-size: 11pt; font-style: italic; color: #64748b; margin: 0 0 8px; }
+    .issue-report-sec { font-size: 12pt; margin: 0 0 6px; color: #334155; }
+    .issue-report-sec-label { font-weight: bold; display: block; margin-bottom: 1px; }
     .issue-report-sec-issue { color: #0f172a; }
     .issue-report-sec-solution { color: #155e75; }
     .issue-report-sec-action { color: #15803d; }
-    .issue-report-meta { font-size: 8pt; color: #64748b; margin: 6px 0 0; border-top: 1px solid #e2e8f0; padding-top: 4px; }
+    .issue-report-meta { font-size: 10.5pt; color: #64748b; margin: 8px 0 0; border-top: 1px solid #e2e8f0; padding-top: 5px; }
     .issue-report-pic { color: #b45309; font-weight: bold; }
 `;
 
@@ -12285,53 +12285,54 @@ function _renderIssueStatusOnePageReportPDF(doc, rows, title, modLabel) {
     let y = MARGIN;
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(15);
+    doc.setFontSize(20);
     doc.setTextColor(15, 23, 42);
     doc.text(title, MARGIN, y);
-    y += 6;
+    y += 8;
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
+    doc.setFontSize(10.5);
     doc.setTextColor(100, 116, 139);
     doc.text(`Module: ${modLabel}   ·   Generated: ${new Date().toLocaleString('en-GB')}   ·   ${rows.length} issue${rows.length !== 1 ? 's' : ''}`, MARGIN, y);
-    y += 6;
+    y += 7.5;
 
     const counts = _categoryCounts(rows);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8.5);
+    doc.setFontSize(11);
     doc.setTextColor(37, 99, 235);
     const summaryLines = doc.splitTextToSize(counts.map(([label, count]) => `${label}: ${count}`).join('   ·   '), usableW);
     doc.text(summaryLines, MARGIN, y);
-    y += summaryLines.length * 4 + 4;
+    y += summaryLines.length * 5 + 5;
 
     doc.setDrawColor(203, 213, 225);
     doc.setLineWidth(0.3);
     doc.line(MARGIN, y, PAGE_W - MARGIN, y);
-    y += 5;
+    y += 7;
 
     const ensureRoom = needed => { if (y + needed > PAGE_H - MARGIN) { doc.addPage(); y = MARGIN; } };
 
     _issueStatusReportGroups(rows).forEach(({ label: catLabel, rows: catRows }) => {
-        ensureRoom(10);
+        ensureRoom(14);
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(10.5);
+        doc.setFontSize(14);
         doc.setTextColor(30, 58, 138);
         doc.text(`${catLabel} (${catRows.length})`, MARGIN, y);
-        y += 5;
+        y += 7;
 
         catRows.forEach(r => {
-            ensureRoom(16);
+            ensureRoom(22);
             doc.setFont('helvetica', 'bold');
-            doc.setFontSize(8.4);
+            doc.setFontSize(12.5);
             doc.setTextColor(15, 23, 42);
-            doc.text(`•  ${r.title || 'Untitled'}`, MARGIN + 2, y);
-            y += 3.4;
+            const titleWrapped = doc.splitTextToSize(`•  ${r.title || 'Untitled'}`, usableW - 2);
+            doc.text(titleWrapped, MARGIN + 2, y);
+            y += titleWrapped.length * 5;
 
             const reporter = r.reporter_name || r.reporter_email || 'Unknown';
             doc.setFont('helvetica', 'italic');
-            doc.setFontSize(6.8);
+            doc.setFontSize(9.5);
             doc.setTextColor(100, 116, 139);
             doc.text(`Reported by: ${reporter}`, MARGIN + 6, y);
-            y += 3.4;
+            y += 6;
 
             const sections = [
                 { label: 'Issue', value: r.description, color: [15, 23, 42] },
@@ -12340,37 +12341,40 @@ function _renderIssueStatusOnePageReportPDF(doc, rows, title, modLabel) {
             ];
             sections.forEach(sec => {
                 if (!sec.value) return;
-                ensureRoom(6);
+                ensureRoom(10);
                 doc.setFont('helvetica', 'bold');
-                doc.setFontSize(6.8);
+                doc.setFontSize(10.5);
                 doc.setTextColor(sec.color[0], sec.color[1], sec.color[2]);
                 doc.text(`${sec.label}:`, MARGIN + 6, y);
+                y += 5;
                 doc.setFont('helvetica', 'normal');
-                doc.setTextColor(71, 85, 105);
-                const wrapped = doc.splitTextToSize(sec.value, usableW - 6 - 34);
-                doc.text(wrapped, MARGIN + 34, y);
-                y += Math.max(3.4, wrapped.length * 3.4);
+                doc.setFontSize(10);
+                doc.setTextColor(51, 65, 85);
+                const wrapped = doc.splitTextToSize(sec.value, usableW - 10);
+                ensureRoom(wrapped.length * 4.6);
+                doc.text(wrapped, MARGIN + 10, y);
+                y += wrapped.length * 4.6 + 2;
             });
 
             const meta = [`Reported: ${formatIssueDate(r.created_at)}`];
             if (r.resolved_at) meta.push(`Resolved: ${formatIssueDate(r.resolved_at)}`);
             doc.setFont('helvetica', 'bold');
-            doc.setFontSize(6.8);
+            doc.setFontSize(9.5);
             doc.setTextColor(100, 116, 139);
-            ensureRoom(4);
+            ensureRoom(6);
             doc.text(meta.join('   ·   '), MARGIN + 6, y);
             if (r.person_in_charge) {
                 doc.setTextColor(180, 83, 9);
-                doc.text(`PIC: ${r.person_in_charge}`, MARGIN + 6 + doc.getTextWidth(meta.join('   ·   ')) + 4, y);
+                doc.text(`PIC: ${r.person_in_charge}`, MARGIN + 6 + doc.getTextWidth(meta.join('   ·   ')) + 5, y);
             }
-            y += 3.4;
+            y += 5;
 
             doc.setDrawColor(226, 232, 240);
             doc.setLineWidth(0.15);
             doc.line(MARGIN + 2, y, PAGE_W - MARGIN, y);
-            y += 3;
+            y += 5;
         });
-        y += 2;
+        y += 3;
     });
 
     const pageCount = doc.internal.getNumberOfPages();
