@@ -4889,42 +4889,93 @@ body {
 }
 
 .report-preview-modal {
-    width: min(94vw, 1100px);
-    max-height: 90vh;
+    width: min(97vw, 1680px);
+    max-width: none;
+    height: 94vh;
+    max-height: 94vh;
     display: flex;
     flex-direction: column;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, .5);
+}
+
+.report-preview-tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 20px 0;
+    border-bottom: 1px solid var(--clr-border);
+    flex: 0 0 auto;
+    overflow-x: auto;
+}
+
+.report-preview-tab {
+    appearance: none;
+    border: 1px solid transparent;
+    border-bottom: none;
+    background: transparent;
+    color: var(--clr-text-muted);
+    font-size: .82rem;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: 8px 8px 0 0;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .15s, color .15s;
+}
+
+.report-preview-tab:hover {
+    background: var(--clr-surface-2);
+    color: var(--clr-text);
+}
+
+.report-preview-tab.active {
+    background: #fff;
+    color: #1e293b;
+    border-color: var(--clr-border);
+    position: relative;
+    top: 1px;
 }
 
 .report-preview-modal-body {
     flex: 1 1 auto;
     min-height: 0;
+    max-height: none;
     display: flex;
     padding: 0;
+    gap: 0;
+    background: #525659;
 }
 
 .report-preview-frame {
     flex: 1 1 auto;
     width: 100%;
-    min-height: 65vh;
+    height: 100%;
     border: none;
+    background: #fff;
 }
 
 .report-preview-html {
     flex: 1 1 auto;
     overflow: auto;
-    padding: 20px 24px;
+    padding: 32px 40px;
     background: #fff;
     color: #1e293b;
-    max-height: 70vh;
+    height: 100%;
 }
 
 .report-preview-html table {
     border-collapse: collapse;
+    margin: 0 auto;
+    box-shadow: 0 2px 18px rgba(0, 0, 0, .12);
 }
 
 .report-preview-html td, .report-preview-html th {
     border: 1px solid #e2e8f0;
-    font-size: .78rem;
+    font-size: .82rem;
+}
+
+[data-theme="light"] .report-preview-tab.active {
+    background: #fff;
 }
 
 /* ─── Export buttons ────────────────────────────────────────────── */

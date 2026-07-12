@@ -1718,6 +1718,7 @@ export function renderSharedDialogs() {
                     <h4 class="modal-title" id="genericPreviewModalTitle">Preview</h4>
                     <button class="modal-close" id="genericPreviewModalClose" aria-label="Close">&#x2715;</button>
                 </div>
+                <div class="report-preview-tabs" id="genericPreviewTabs" hidden></div>
                 <div class="modal-body report-preview-modal-body">
                     <iframe id="genericPreviewFrame" class="report-preview-frame" hidden></iframe>
                     <div id="genericPreviewHtml" class="report-preview-html" hidden></div>
