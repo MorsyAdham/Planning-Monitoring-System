@@ -11841,22 +11841,21 @@ const WORD_DOC_STYLE = `
     body { font-family: Calibri, Arial, sans-serif; font-size: 12pt; color: #1e293b; }
     h1 { font-size: 22pt; margin: 0 0 5px; color: #0f172a; }
     .doc-sub { font-size: 11pt; color: #64748b; margin: 0 0 18px; }
-    h2 { font-size: 15pt; margin: 22px 0 10px; background: #1e3a8a; color: #ffffff; padding: 8px 12px; border-radius: 3px; }
-    h2:first-of-type { margin-top: 4px; }
+    h2 { font-size: 16.5pt; margin: 22px 0 8px; color: #1e3a8a; border-bottom: 2px solid #1e3a8a; padding-bottom: 4px; }
     table { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
     th, td { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 10pt; text-align: left; vertical-align: top; }
     th { background: #1e3a5f; color: #e2e8f0; }
     tr:nth-child(even) td { background: #f8fafc; }
     .doc-summary-table th, .doc-summary-table td { font-size: 10.5pt; }
-    .issue-report-card { border: 1px solid #e2e8f0; border-left: 5px solid #2563eb; background: #f8fafc; border-radius: 4px; padding: 14px 18px; margin: 0 0 20px; }
+    .issue-report-card { border: 1px solid #e2e8f0; border-left: 4px solid #1e3a8a; padding: 12px 18px; margin: 0 0 18px; }
     .issue-report-title { font-size: 16pt; font-weight: bold; margin: 0 0 4px; color: #0f172a; }
-    .issue-report-byline { font-size: 11.5pt; font-style: italic; color: #64748b; margin: 0 0 12px; }
-    .issue-report-sec { font-size: 12.5pt; margin: 0 0 10px; color: #334155; line-height: 1.4; }
+    .issue-report-byline { font-size: 11.5pt; font-style: italic; color: #64748b; margin: 0 0 10px; }
+    .issue-report-sec { font-size: 12.5pt; margin: 0 0 8px; color: #334155; line-height: 1.4; }
     .issue-report-sec-label { font-weight: bold; display: block; margin-bottom: 2px; }
     .issue-report-sec-issue { color: #0f172a; }
     .issue-report-sec-solution { color: #155e75; }
     .issue-report-sec-action { color: #15803d; }
-    .issue-report-meta { font-size: 11pt; color: #64748b; margin: 12px 0 0; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+    .issue-report-meta { font-size: 11pt; color: #64748b; margin: 10px 0 0; border-top: 1px solid #e2e8f0; padding-top: 6px; }
     .issue-report-pic { color: #b45309; font-weight: bold; }
 `;
 
@@ -12311,103 +12310,73 @@ function _renderIssueStatusOnePageReportPDF(doc, rows, title, modLabel) {
 
     const ensureRoom = needed => { if (y + needed > PAGE_H - MARGIN) { doc.addPage(); y = MARGIN; } };
 
-    const BAR_W = 3.2;
-    const PAD_X = 7;
-    const PAD_TOP = 6;
-    const PAD_BOTTOM = 5;
-    const tx = MARGIN + BAR_W + PAD_X;
-    const textW = usableW - BAR_W - PAD_X * 2;
-
     _issueStatusReportGroups(rows).forEach(({ label: catLabel, rows: catRows }) => {
         ensureRoom(18);
-        // Category band — a solid header bar so each group is unmistakably separated.
-        doc.setFillColor(30, 58, 138);
-        doc.roundedRect(MARGIN, y - 6.5, usableW, 10.5, 1.6, 1.6, 'F');
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(14.5);
-        doc.setTextColor(255, 255, 255);
-        doc.text(`${catLabel}  ·  ${catRows.length} issue${catRows.length !== 1 ? 's' : ''}`, MARGIN + 5, y + 1);
-        y += 12;
+        doc.setFontSize(16.5);
+        doc.setTextColor(30, 58, 138);
+        doc.text(`${catLabel}  (${catRows.length})`, MARGIN, y);
+        y += 2.5;
+        doc.setDrawColor(30, 58, 138);
+        doc.setLineWidth(0.6);
+        doc.line(MARGIN, y, PAGE_W - MARGIN, y);
+        y += 9;
 
         catRows.forEach(r => {
-            // ── measure pass — compute the card's full height before drawing anything ──
+            ensureRoom(26);
             doc.setFont('helvetica', 'bold');
             doc.setFontSize(15);
-            const titleLines = doc.splitTextToSize(r.title || 'Untitled', textW);
+            doc.setTextColor(15, 23, 42);
+            const titleWrapped = doc.splitTextToSize(`•  ${r.title || 'Untitled'}`, usableW - 2);
+            doc.text(titleWrapped, MARGIN + 2, y);
+            y += titleWrapped.length * 6.2;
 
             const reporter = r.reporter_name || r.reporter_email || 'Unknown';
+            doc.setFont('helvetica', 'italic');
+            doc.setFontSize(11);
+            doc.setTextColor(100, 116, 139);
+            doc.text(`Reported by: ${reporter}`, MARGIN + 6, y);
+            y += 7.5;
 
             const sections = [
                 { label: 'Issue', value: r.description, color: [15, 23, 42] },
                 { label: 'Proposed Solution', value: r.proposed_solution, color: [21, 94, 117] },
                 { label: 'Action Taken', value: r.notes, color: [21, 128, 61] },
-            ].filter(s => s.value);
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(11.5);
-            const sectionData = sections.map(sec => ({ ...sec, wrapped: doc.splitTextToSize(sec.value, textW) }));
-
-            const meta = [`Reported: ${formatIssueDate(r.created_at)}`];
-            if (r.resolved_at) meta.push(`Resolved: ${formatIssueDate(r.resolved_at)}`);
-
-            const titleH = titleLines.length * 6.4;
-            const bylineH = 6.5;
-            const sectionsH = sectionData.reduce((sum, sec) => sum + 6 + sec.wrapped.length * 5.4 + 2.5, 0);
-            const dividerGap = 5;
-            const metaH = 6;
-            const cardH = PAD_TOP + titleH + bylineH + sectionsH + dividerGap + metaH + PAD_BOTTOM;
-
-            ensureRoom(cardH + 7);
-
-            const cardTop = y;
-            doc.setFillColor(248, 250, 252);
-            doc.setDrawColor(226, 232, 240);
-            doc.setLineWidth(0.35);
-            doc.roundedRect(MARGIN, cardTop, usableW, cardH, 2.2, 2.2, 'FD');
-            doc.setFillColor(37, 99, 235);
-            doc.rect(MARGIN, cardTop, BAR_W, cardH, 'F');
-
-            let cy = cardTop + PAD_TOP + 4;
-
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(15);
-            doc.setTextColor(15, 23, 42);
-            doc.text(titleLines, tx, cy);
-            cy += titleH;
-
-            doc.setFont('helvetica', 'italic');
-            doc.setFontSize(10.5);
-            doc.setTextColor(100, 116, 139);
-            doc.text(`Reported by: ${reporter}`, tx, cy);
-            cy += bylineH;
-
-            sectionData.forEach(sec => {
+            ];
+            sections.forEach(sec => {
+                if (!sec.value) return;
+                ensureRoom(12);
                 doc.setFont('helvetica', 'bold');
-                doc.setFontSize(11.5);
+                doc.setFontSize(12);
                 doc.setTextColor(sec.color[0], sec.color[1], sec.color[2]);
-                doc.text(`${sec.label}:`, tx, cy);
-                cy += 6;
+                doc.text(`${sec.label}:`, MARGIN + 6, y);
+                y += 6;
                 doc.setFont('helvetica', 'normal');
                 doc.setFontSize(11.5);
                 doc.setTextColor(51, 65, 85);
-                doc.text(sec.wrapped, tx, cy);
-                cy += sec.wrapped.length * 5.4 + 2.5;
+                const wrapped = doc.splitTextToSize(sec.value, usableW - 12);
+                ensureRoom(wrapped.length * 5.6);
+                doc.text(wrapped, MARGIN + 12, y);
+                y += wrapped.length * 5.6 + 3;
             });
 
-            doc.setDrawColor(226, 232, 240);
-            doc.setLineWidth(0.25);
-            doc.line(tx, cy, MARGIN + usableW - PAD_X, cy);
-            cy += 5.5;
-
+            const meta = [`Reported: ${formatIssueDate(r.created_at)}`];
+            if (r.resolved_at) meta.push(`Resolved: ${formatIssueDate(r.resolved_at)}`);
             doc.setFont('helvetica', 'bold');
             doc.setFontSize(10.5);
             doc.setTextColor(100, 116, 139);
-            doc.text(meta.join('   ·   '), tx, cy);
+            ensureRoom(7);
+            doc.text(meta.join('   ·   '), MARGIN + 6, y);
             if (r.person_in_charge) {
                 doc.setTextColor(180, 83, 9);
-                doc.text(`PIC: ${r.person_in_charge}`, tx + doc.getTextWidth(meta.join('   ·   ')) + 6, cy);
+                doc.text(`PIC: ${r.person_in_charge}`, MARGIN + 6 + doc.getTextWidth(meta.join('   ·   ')) + 6, y);
             }
+            y += 6.5;
 
-            y = cardTop + cardH + 7;
+            doc.setDrawColor(226, 232, 240);
+            doc.setLineWidth(0.2);
+            doc.line(MARGIN + 2, y, PAGE_W - MARGIN, y);
+            y += 6.5;
         });
         y += 4;
     });
