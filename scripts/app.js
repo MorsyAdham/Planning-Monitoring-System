@@ -11848,18 +11848,15 @@ const WORD_DOC_STYLE = `
     tr:nth-child(even) td { background: #f8fafc; }
     .doc-summary-table th, .doc-summary-table td { font-size: 10.5pt; }
     .issue-report-card { border: 1px solid #e2e8f0; border-left: 4px solid #1e3a8a; padding: 12px 18px; margin: 0 0 18px; }
-    .issue-report-title { font-size: 16pt; font-weight: bold; margin: 0 0 4px; color: #0f172a; }
+    .issue-report-title { font-size: 15pt; font-weight: bold; margin: 0 0 4px; color: #0f172a; }
     .issue-report-byline { font-size: 11.5pt; font-style: italic; color: #64748b; margin: 0 0 10px; }
-    .issue-report-sec { font-size: 12.5pt; margin: 0 0 8px; color: #334155; line-height: 1.4; }
-    .issue-report-sec-label { font-weight: bold; }
+    .issue-report-sec-label { font-size: 12.5pt; font-weight: bold; margin: 0 0 2px; }
+    .issue-report-sec-text { font-size: 12pt; margin: 0 0 10px; color: #334155; line-height: 1.4; }
     .issue-report-sec-issue { color: #0f172a; }
     .issue-report-sec-solution { color: #155e75; }
     .issue-report-sec-action { color: #15803d; }
     .issue-report-meta { font-size: 11pt; color: #64748b; margin: 10px 0 0; border-top: 1px solid #e2e8f0; padding-top: 6px; }
     .issue-report-pic { color: #b45309; font-weight: bold; }
-    .doc-toc { border: 1px solid #cbd5e1; background: #f8fafc; border-radius: 4px; padding: 10px 16px; margin: 0 0 20px; }
-    .doc-toc-title { font-size: 13pt; font-weight: bold; margin: 0 0 6px; color: #0f172a; }
-    .doc-toc a { display: block; font-size: 11.5pt; font-weight: bold; color: #2563eb; text-decoration: none; padding: 3px 0; }
 `;
 
 function exportHtmlAsWord(filename, titleText, bodyHtml, preview) {
@@ -12313,47 +12310,22 @@ function _renderIssueStatusOnePageReportPDF(doc, rows, title, modLabel) {
 
     const ensureRoom = needed => { if (y + needed > PAGE_H - MARGIN) { doc.addPage(); y = MARGIN; } };
 
-    /** Draws "Label: value" as one hanging-indent block — the label acts as
-     *  an inline sub-header, the wrapped value starts on the same line and
-     *  every continuation line lines up under it (not under the label). */
-    const drawLabeledParagraph = (label, value, color, x, labelSize, textSize) => {
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(labelSize);
-        const lw = doc.getTextWidth(label + ':  ');
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(textSize);
-        const wrapped = doc.splitTextToSize(value, usableW - (x - MARGIN) - lw);
-        const lineH = textSize * 0.47;
-        ensureRoom(wrapped.length * lineH + 3);
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(labelSize);
-        doc.setTextColor(color[0], color[1], color[2]);
-        doc.text(`${label}:`, x, y);
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(textSize);
-        doc.setTextColor(51, 65, 85);
-        doc.text(wrapped, x + lw, y);
-        y += wrapped.length * lineH + 3;
-    };
+    // jsPDF's outline plugin builds real PDF bookmarks — these show up in
+    // the viewer's own navigation/bookmarks panel (Acrobat, Chrome, etc.):
+    // report title as the root, one entry per category, issue titles nested
+    // underneath their category.
+    const hasOutline = !!doc.outline?.add;
+    let titleNode = null;
+    if (hasOutline) {
+        try { titleNode = doc.outline.add(null, title, { pageNumber: 1 }); } catch {}
+    }
 
-    // ── Contents — reserve a block on this page now, fill it in with
-    // clickable links once every category's actual page/y is known. ──
-    const groups = _issueStatusReportGroups(rows);
-    const TOC_ROW_H = 7.2;
-    const tocHeight = 9 + groups.length * TOC_ROW_H + 6;
-    ensureRoom(tocHeight);
-    const tocPage = doc.internal.getCurrentPageInfo().pageNumber;
-    const tocTop = y;
-    y += tocHeight;
-    doc.setDrawColor(203, 213, 225);
-    doc.setLineWidth(0.3);
-    doc.line(MARGIN, y, PAGE_W - MARGIN, y);
-    y += 9;
-    const tocEntries = [];
-
-    groups.forEach(({ label: catLabel, rows: catRows }) => {
+    _issueStatusReportGroups(rows).forEach(({ label: catLabel, rows: catRows }) => {
         ensureRoom(18);
-        tocEntries.push({ label: catLabel, count: catRows.length, pageNumber: doc.internal.getCurrentPageInfo().pageNumber, top: y });
+        let catNode = null;
+        if (hasOutline) {
+            try { catNode = doc.outline.add(titleNode, `${catLabel} (${catRows.length})`, { pageNumber: doc.internal.getCurrentPageInfo().pageNumber }); } catch {}
+        }
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(16.5);
         doc.setTextColor(30, 58, 138);
@@ -12366,6 +12338,9 @@ function _renderIssueStatusOnePageReportPDF(doc, rows, title, modLabel) {
 
         catRows.forEach(r => {
             ensureRoom(26);
+            if (hasOutline) {
+                try { doc.outline.add(catNode, r.title || 'Untitled', { pageNumber: doc.internal.getCurrentPageInfo().pageNumber }); } catch {}
+            }
             doc.setFont('helvetica', 'bold');
             doc.setFontSize(15);
             doc.setTextColor(15, 23, 42);
@@ -12387,7 +12362,19 @@ function _renderIssueStatusOnePageReportPDF(doc, rows, title, modLabel) {
             ];
             sections.forEach(sec => {
                 if (!sec.value) return;
-                drawLabeledParagraph(sec.label, sec.value, sec.color, MARGIN + 6, 12, 11.5);
+                ensureRoom(11);
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(12.5);
+                doc.setTextColor(sec.color[0], sec.color[1], sec.color[2]);
+                doc.text(`${sec.label}:`, MARGIN + 6, y);
+                y += 6.5;
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(11.5);
+                doc.setTextColor(51, 65, 85);
+                const wrapped = doc.splitTextToSize(sec.value, usableW - 6);
+                ensureRoom(wrapped.length * 5.6);
+                doc.text(wrapped, MARGIN + 6, y);
+                y += wrapped.length * 5.6 + 5;
             });
 
             const meta = [`Reported: ${formatIssueDate(r.created_at)}`];
@@ -12409,23 +12396,6 @@ function _renderIssueStatusOnePageReportPDF(doc, rows, title, modLabel) {
             y += 6.5;
         });
         y += 4;
-    });
-
-    // ── Back-fill the Contents block reserved earlier, now that every
-    // category's page/position is known — each entry is a clickable jump. ──
-    doc.setPage(tocPage);
-    let ty = tocTop;
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(13.5);
-    doc.setTextColor(15, 23, 42);
-    doc.text('Contents', MARGIN, ty);
-    ty += 8;
-    tocEntries.forEach(entry => {
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(11.5);
-        doc.setTextColor(37, 99, 235);
-        doc.textWithLink(`${entry.label}  (${entry.count})`, MARGIN + 2, ty, { pageNumber: entry.pageNumber, top: Math.max(entry.top - 12, MARGIN) });
-        ty += TOC_ROW_H;
     });
 
     const pageCount = doc.internal.getNumberOfPages();
@@ -12571,26 +12541,24 @@ async function exportIssueReportWord(opts) {
     const now = new Date().toISOString().slice(0, 10);
 
     if (isStatusReport && opts.layout === 'report') {
+        // Real headings (h1/h2/h3) so Word's own Navigation Pane lists the
+        // report title, every category, and every issue title — no manual
+        // contents list needed.
         let reportBody = `<h1>${esc(title)}</h1><p class="doc-sub">Module: ${esc(modLabel)} &middot; Generated: ${esc(new Date().toLocaleString('en-GB'))} &middot; ${rows.length} issue${rows.length !== 1 ? 's' : ''}</p>`;
         reportBody += `<p style="font-size:13pt;font-weight:bold;color:#2563eb;margin:0 0 10px">${_categoryCounts(rows).map(([label, count]) => `${esc(label)}: ${count}`).join(' &middot; ')}</p>`;
 
-        const groups = _issueStatusReportGroups(rows);
-        reportBody += `<div class="doc-toc"><p class="doc-toc-title">Contents</p>`
-            + groups.map((g, i) => `<a href="#cat-${i}">${esc(g.label)} (${g.rows.length})</a>`).join('')
-            + `</div>`;
-
-        groups.forEach(({ label: catLabel, rows: catRows }, catIdx) => {
-            reportBody += `<h2 id="cat-${catIdx}">${esc(catLabel)} (${catRows.length})</h2>`;
+        _issueStatusReportGroups(rows).forEach(({ label: catLabel, rows: catRows }) => {
+            reportBody += `<h2>${esc(catLabel)} (${catRows.length})</h2>`;
             catRows.forEach(r => {
                 const reporter = r.reporter_name || r.reporter_email || 'Unknown';
                 const meta = [`Reported: ${esc(formatIssueDate(r.created_at))}`];
                 if (r.resolved_at) meta.push(`Resolved: ${esc(formatIssueDate(r.resolved_at))}`);
                 reportBody += `<div class="issue-report-card">`;
-                reportBody += `<p class="issue-report-title">${esc(r.title || 'Untitled')}</p>`;
+                reportBody += `<h3 class="issue-report-title">${esc(r.title || 'Untitled')}</h3>`;
                 reportBody += `<p class="issue-report-byline">Reported by: ${esc(reporter)}</p>`;
-                if (r.description) reportBody += `<p class="issue-report-sec"><span class="issue-report-sec-label issue-report-sec-issue">Issue:</span> ${esc(r.description)}</p>`;
-                if (r.proposed_solution) reportBody += `<p class="issue-report-sec"><span class="issue-report-sec-label issue-report-sec-solution">Proposed Solution:</span> ${esc(r.proposed_solution)}</p>`;
-                if (r.notes) reportBody += `<p class="issue-report-sec"><span class="issue-report-sec-label issue-report-sec-action">Action Taken:</span> ${esc(r.notes)}</p>`;
+                if (r.description) reportBody += `<p class="issue-report-sec-label issue-report-sec-issue">Issue:</p><p class="issue-report-sec-text">${esc(r.description)}</p>`;
+                if (r.proposed_solution) reportBody += `<p class="issue-report-sec-label issue-report-sec-solution">Proposed Solution:</p><p class="issue-report-sec-text">${esc(r.proposed_solution)}</p>`;
+                if (r.notes) reportBody += `<p class="issue-report-sec-label issue-report-sec-action">Action Taken:</p><p class="issue-report-sec-text">${esc(r.notes)}</p>`;
                 reportBody += `<p class="issue-report-meta">${meta.join(' &middot; ')}`
                     + (r.person_in_charge ? ` <span class="issue-report-pic">&middot; PIC: ${esc(r.person_in_charge)}</span>` : '')
                     + `</p>`;
