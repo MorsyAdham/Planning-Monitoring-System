@@ -184,6 +184,10 @@ export function renderSharedDialogs() {
 
                 </div>
                 <div class="modal-footer">
+                    <label class="report-preview-toggle">
+                        <input type="checkbox" id="reportPreviewToggle" />
+                        View before exporting
+                    </label>
                     <button class="btn btn-report-pdf" id="btnExportPDF">
                         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M4 4h8l4 4v10H4V4z" />
@@ -1608,6 +1612,10 @@ export function renderSharedDialogs() {
 
                 </div>
                 <div class="modal-footer">
+                    <label class="report-preview-toggle">
+                        <input type="checkbox" id="issueReportPreviewToggle" />
+                        View before exporting
+                    </label>
                     <button class="btn btn-report-pdf" id="btnIssueReportPDF">
                         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M4 4h8l4 4v10H4V4z" />
@@ -1631,6 +1639,92 @@ export function renderSharedDialogs() {
                         Export Word
                     </button>
                     <button class="btn btn-ghost" id="issueReportModalCancel">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════════════════════════════ VPX GENERATE REPORT MODAL -->
+        <div class="modal-overlay" id="vpxReportModalOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="vpxReportModalTitle">
+            <div class="modal report-modal">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="vpxReportModalTitle">Generate VPX Report</h4>
+                    <button class="modal-close" id="vpxReportModalClose" aria-label="Close">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="issue-report-section">
+                        <div class="issue-report-section-title">1. Report Type</div>
+                        <div class="report-type-grid">
+                            <label class="report-type-card">
+                                <input type="radio" name="vpxReportType" value="matrix" checked />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <rect x="3" y="3" width="18" height="18" rx="2" />
+                                        <path d="M3 9h18M9 21V9" />
+                                    </svg>
+                                    <span class="rtc-label">Progress Matrix</span>
+                                    <span class="rtc-desc">The on-screen matrix, exactly as currently filtered</span>
+                                </div>
+                            </label>
+                            <label class="report-type-card">
+                                <input type="radio" name="vpxReportType" value="station" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <rect x="3" y="4" width="18" height="18" rx="2" />
+                                        <path d="M16 2v4M8 2v4M3 10h18M8 15h8" />
+                                    </svg>
+                                    <span class="rtc-label">Station Report</span>
+                                    <span class="rtc-desc">Plan/Actual per station, with Delay &amp; projected completion</span>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="report-preview-bar" id="vpxReportPreviewBar">
+                        <span class="report-preview-count">Scope: current vehicle-type &amp; category tab</span>
+                        <span class="report-preview-hint" id="vpxReportScopeHint"></span>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <label class="report-preview-toggle">
+                        <input type="checkbox" id="vpxReportPreviewToggle" />
+                        View before exporting
+                    </label>
+                    <button class="btn btn-report-pdf" id="btnVpxReportPDF">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 4h8l4 4v10H4V4z" />
+                            <path d="M12 4v4h4" />
+                            <path d="M7 13h6M7 10h3" />
+                        </svg>
+                        Export PDF
+                    </button>
+                    <button class="btn btn-report-excel" id="btnVpxReportExcel">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="3" width="16" height="14" rx="2" />
+                            <path d="M6 7l3 3-3 3M11 13h4" />
+                        </svg>
+                        Export Excel
+                    </button>
+                    <button class="btn btn-ghost" id="vpxReportModalCancel">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════════════════════════════ GENERIC REPORT PREVIEW MODAL -->
+        <div class="modal-overlay" id="genericPreviewModalOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="genericPreviewModalTitle">
+            <div class="modal report-preview-modal">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="genericPreviewModalTitle">Preview</h4>
+                    <button class="modal-close" id="genericPreviewModalClose" aria-label="Close">&#x2715;</button>
+                </div>
+                <div class="modal-body report-preview-modal-body">
+                    <iframe id="genericPreviewFrame" class="report-preview-frame" hidden></iframe>
+                    <div id="genericPreviewHtml" class="report-preview-html" hidden></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" id="genericPreviewDownload">Download</button>
+                    <button class="btn btn-ghost" id="genericPreviewCancel">Close</button>
                 </div>
             </div>
         </div>

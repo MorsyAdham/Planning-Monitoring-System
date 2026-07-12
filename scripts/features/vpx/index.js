@@ -15,39 +15,13 @@ export function initFeature() {
                     <div class="vpx-header-right">
                         <div id="vpxTypeTabs" class="vpx-type-tabs" hidden></div>
                         <div id="vpxCategoryTabs" class="vpx-type-tabs vpx-category-tabs" hidden></div>
-                        <button class="btn btn-outline btn-sm" id="btnVpxStationReportExcel" title="Sequenced Plan/Actual station report (Excel) with delay-projected dates">
+                        <button class="btn btn-outline btn-sm" id="btnVpxReportModal" title="Generate a VPX report">
                             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
                                 style="width:14px;height:14px">
                                 <rect x="3" y="3" width="14" height="14" rx="2" />
                                 <path d="M6.5 7.5h7M6.5 10.5h7M6.5 13.5h4" />
                             </svg>
-                            Station Report
-                        </button>
-                        <button class="btn btn-outline btn-sm" id="btnVpxStationReportPdf" title="Sequenced Plan/Actual station report (PDF) with delay-projected dates">
-                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
-                                style="width:14px;height:14px">
-                                <rect x="3" y="3" width="14" height="14" rx="2" />
-                                <path d="M6.5 7.5h7M6.5 10.5h7M6.5 13.5h4" />
-                            </svg>
-                            Station Report (PDF)
-                        </button>
-                        <button class="btn btn-outline btn-sm" id="btnVpxPdf" title="Export print-friendly PDF">
-                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
-                                style="width:14px;height:14px">
-                                <path d="M4 4h8l4 4v10H4V4z" />
-                                <path d="M12 4v4h4" />
-                                <path d="M7 12h6M7 15h4" />
-                            </svg>
-                            Export PDF
-                        </button>
-                        <button class="btn btn-outline btn-sm" id="btnVpxExcel" title="Export as Excel">
-                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
-                                style="width:14px;height:14px">
-                                <path d="M4 4h8l4 4v10H4V4z" />
-                                <path d="M12 4v4h4" />
-                                <path d="M6 8l3 4m0-4l-3 4M13 8h2M13 12h2" />
-                            </svg>
-                            Export Excel
+                            Generate Report
                         </button>
                         <button class="btn btn-outline btn-sm vpx-fullscreen-btn" id="btnVpxFullscreen" aria-pressed="false" title="Full Screen">
                             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"

@@ -116,7 +116,7 @@ async function removeExportPerm(id) {
 
 function _applyExportVisibility() {
     canExport().then(allowed => {
-        const ids = ['btnVpxPdf', 'btnVpxExcel', 'btnVpxStationReportExcel', 'btnVpxStationReportPdf', 'btnIssueReportModal', 'btnReports'];
+        const ids = ['btnVpxReportModal', 'btnIssueReportModal', 'btnReports'];
         ids.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = allowed ? '' : 'none';
@@ -5706,6 +5706,7 @@ function wireEvents() {
     // Report modal
     wireReportModal();
     wireIssueReportModal();
+    wireVpxReportModal();
 
     // Notification bell (F100-KD2 and F200-KD2)
     wireNotifBell();
@@ -5753,11 +5754,6 @@ function wireEvents() {
     document.getElementById('btnAlReset')?.addEventListener('click', resetAuditFilters);
 
 
-    // VPX PDF export
-    document.getElementById('btnVpxPdf')?.addEventListener('click', exportVpxPDF);
-    document.getElementById('btnVpxExcel')?.addEventListener('click', exportVpxExcel);
-    document.getElementById('btnVpxStationReportExcel')?.addEventListener('click', exportVpxStationReportExcel);
-    document.getElementById('btnVpxStationReportPdf')?.addEventListener('click', exportVpxStationReportPDF);
 
     // Table fullscreen
     document.getElementById('btnTableFullscreen')?.addEventListener('click', toggleTableFullscreen);
@@ -7766,7 +7762,7 @@ function buildSummaryStats(rows) {
 /* ══════════════════════════════════════════════════════════════════
    PDF EXPORT  — white / print-friendly theme
    ══════════════════════════════════════════════════════════════════ */
-async function exportPDF(typeKey, fromDate, toDate, category) {
+async function exportPDF(typeKey, fromDate, toDate, category, preview) {
     if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (isKD2Module() && typeKey === 'analytics') {
         return exportKD2AnalyticsPDF(fromDate, toDate, category);
@@ -8052,8 +8048,15 @@ async function exportPDF(typeKey, fromDate, toDate, category) {
     // ── Save ─────────────────────────────────────────────────────────
     const catSuffix = category ? `_${category.replace(/\s+/g, '_')}` : '';
     const dateSuffix = new Date().toISOString().slice(0, 10);
-    doc.save(`${moduleBadge}_${def.label.replace(/\s+/g, '_')}${catSuffix}_${dateSuffix}.pdf`);
-    showToast(`PDF exported — ${rows.length} rows`, 'success');
+    const doDownload = () => {
+        doc.save(`${moduleBadge}_${def.label.replace(/\s+/g, '_')}${catSuffix}_${dateSuffix}.pdf`);
+        showToast(`PDF exported — ${rows.length} rows`, 'success');
+    };
+    if (preview) {
+        _showGenericPreview({ title: def.label, kind: 'pdf', src: doc.output('bloburl'), onDownload: doDownload });
+    } else {
+        doDownload();
+    }
     } catch (err) {
         console.error('[exportPDF]', err);
         showToast('PDF export failed: ' + (err.message || err), 'error');
@@ -8063,7 +8066,7 @@ async function exportPDF(typeKey, fromDate, toDate, category) {
 /* ══════════════════════════════════════════════════════════════════
    EXCEL EXPORT
    ══════════════════════════════════════════════════════════════════ */
-async function exportExcel(typeKey, fromDate, toDate, category) {
+async function exportExcel(typeKey, fromDate, toDate, category, preview) {
     if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (isKD2Module() && typeKey === 'analytics') {
         return exportKD2AnalyticsExcel(fromDate, toDate, category);
@@ -8415,15 +8418,22 @@ async function exportExcel(typeKey, fromDate, toDate, category) {
     });
 
     // ── Save ───────────────────────────────────────────────────────
-    showToast('Building Excel…', 'info');
-    const buffer = await wb.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = moduleBadge + '_' + def.label.replace(/\s+/g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.xlsx';
-    document.body.appendChild(a); a.click();
-    document.body.removeChild(a); URL.revokeObjectURL(url);
-    showToast(`Excel exported — ${rows.length} rows`, 'success');
+    const doDownload = async () => {
+        showToast('Building Excel…', 'info');
+        const buffer = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = moduleBadge + '_' + def.label.replace(/\s+/g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a); URL.revokeObjectURL(url);
+        showToast(`Excel exported — ${rows.length} rows`, 'success');
+    };
+    if (preview) {
+        _showGenericPreview({ title: def.label, kind: 'html', html: _worksheetToHtml(ws), onDownload: doDownload });
+    } else {
+        await doDownload();
+    }
     } catch (err) {
         console.error('[exportExcel]', err);
         showToast('Excel export failed: ' + (err.message || err), 'error');
@@ -9114,7 +9124,7 @@ async function exportF100VpxExcel() {
     }
 }
 
-async function exportVpxPDF() {
+async function exportVpxPDF(preview) {
     if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (isF100KD2Module()) { exportF100VpxPDF(); return; }
     if (!currentData?.length) {
@@ -9355,17 +9365,21 @@ async function exportVpxPDF() {
     doc.text(`Page 1 of ${doc.internal.getNumberOfPages()}`, PAGE_W - MARGIN, fY, { align: 'right' });
 
     const ds = new Date().toISOString().slice(0, 10);
-    doc.save(meta.filenamePrefix + '_' + ds + '.pdf');
-    showToast('PDF exported successfully.', 'success');
+    const doDownload = () => { doc.save(meta.filenamePrefix + '_' + ds + '.pdf'); showToast('PDF exported successfully.', 'success'); };
+    if (preview) {
+        _showGenericPreview({ title: _mainTitle, kind: 'pdf', src: doc.output('bloburl'), onDownload: doDownload });
+    } else {
+        doDownload();
+    }
 }
 
 
 /* ──────────────────────────────────────────────────────────────────
    VPX EXCEL EXPORT  (ExcelJS — full cell styling)
    ────────────────────────────────────────────────────────────────── */
-async function exportVpxExcel() {
+async function exportVpxExcel(preview) {
     if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
-    if (isF100KD2Module()) { await exportF100VpxExcel(); return; }
+    if (isF100KD2Module()) { await exportF100VpxExcel(preview); return; }
     if (!currentData?.length) { showToast('No data to export.', 'error'); return; }
     if (typeof ExcelJS === 'undefined') {
         showToast('ExcelJS not loaded yet — please wait a moment and try again.', 'error'); return;
@@ -9736,18 +9750,25 @@ async function exportVpxExcel() {
     });
 
     // ── Save ───────────────────────────────────────────────────────
-    showToast('Building Excel…', 'info');
-    const buffer = await wb.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = meta.filenamePrefix + '_' + new Date().toISOString().slice(0, 10) + '.xlsx';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast('Excel exported successfully.', 'success');
+    const doDownload = async () => {
+        showToast('Building Excel…', 'info');
+        const buffer = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = meta.filenamePrefix + '_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('Excel exported successfully.', 'success');
+    };
+    if (preview) {
+        _showGenericPreview({ title: getVpxTitleParts().join(' '), kind: 'html', html: _worksheetToHtml(ws), onDownload: doDownload });
+    } else {
+        await doDownload();
+    }
 }
 
 
@@ -9760,6 +9781,90 @@ async function exportVpxExcel() {
    _getVpxFilteredData), same as the plain PDF/Excel export buttons.
    ────────────────────────────────────────────────────────────────── */
 
+/* ──────────────────────────────────────────────────────────────────
+   GENERIC "VIEW BEFORE EXPORTING" PREVIEW — shared by every report
+   modal (VPX, plan table, Issues) across PDF/Excel/Word.
+   ────────────────────────────────────────────────────────────────── */
+
+/** Renders an ExcelJS worksheet as an HTML table (values + basic
+ *  styling + merges) so it can be shown in-app before download. */
+function _worksheetToHtml(ws) {
+    const spans = {};
+    const skip = new Set();
+    (ws.model?.merges || []).forEach(range => {
+        const [a, b] = range.split(':');
+        const parse = addr => {
+            const m = addr.match(/^([A-Z]+)(\d+)$/);
+            const col = m[1].split('').reduce((n, c) => n * 26 + (c.charCodeAt(0) - 64), 0);
+            return { row: +m[2], col };
+        };
+        const start = parse(a), end = parse(b || a);
+        spans[`${start.row},${start.col}`] = { rowspan: end.row - start.row + 1, colspan: end.col - start.col + 1 };
+        for (let r = start.row; r <= end.row; r++) {
+            for (let c = start.col; c <= end.col; c++) {
+                if (r === start.row && c === start.col) continue;
+                skip.add(`${r},${c}`);
+            }
+        }
+    });
+
+    const colCount = ws.columnCount || 1;
+    let html = '<table>';
+    for (let r = 1; r <= ws.rowCount; r++) {
+        html += '<tr>';
+        for (let c = 1; c <= colCount; c++) {
+            if (skip.has(`${r},${c}`)) continue;
+            const cell = ws.getCell(r, c);
+            const span = spans[`${r},${c}`];
+            const font = cell.font || {};
+            const bg = cell.fill?.fgColor?.argb ? '#' + cell.fill.fgColor.argb.slice(2) : 'transparent';
+            const color = font.color?.argb ? '#' + font.color.argb.slice(2) : 'inherit';
+            const align = cell.alignment?.horizontal || 'left';
+            const style = `background:${bg};color:${color};font-weight:${font.bold ? 'bold' : 'normal'};`
+                + `font-style:${font.italic ? 'italic' : 'normal'};font-size:${(font.size || 10)}px;`
+                + `text-align:${align};padding:3px 6px;white-space:pre-wrap`;
+            const val = cell.value == null ? '' : String(cell.value);
+            html += `<td${span ? ` rowspan="${span.rowspan}" colspan="${span.colspan}"` : ''} style="${style}">${esc(val)}</td>`;
+        }
+        html += '</tr>';
+    }
+    html += '</table>';
+    return html;
+}
+
+/** Opens the shared preview modal. kind: 'pdf' (iframe src) or 'html'
+ *  (innerHTML). onDownload runs the real export when the user confirms. */
+function _showGenericPreview({ title, kind, src, html, onDownload }) {
+    const overlay = document.getElementById('genericPreviewModalOverlay');
+    if (!overlay) { onDownload?.(); return; }
+
+    const titleEl = document.getElementById('genericPreviewModalTitle');
+    if (titleEl) titleEl.textContent = title || 'Preview';
+    const frame = document.getElementById('genericPreviewFrame');
+    const htmlDiv = document.getElementById('genericPreviewHtml');
+    if (kind === 'pdf') {
+        frame.hidden = false; htmlDiv.hidden = true;
+        frame.src = src;
+    } else {
+        frame.hidden = true; htmlDiv.hidden = false;
+        htmlDiv.innerHTML = html || '';
+    }
+    overlay.style.display = 'flex';
+
+    const close = () => { overlay.style.display = 'none'; frame.src = ''; };
+
+    // Clone-and-replace to avoid stacking listeners across repeated previews.
+    const downloadBtn = document.getElementById('genericPreviewDownload');
+    const cancelBtn = document.getElementById('genericPreviewCancel');
+    const closeBtn = document.getElementById('genericPreviewModalClose');
+    const newDownloadBtn = downloadBtn.cloneNode(true); downloadBtn.replaceWith(newDownloadBtn);
+    const newCancelBtn = cancelBtn.cloneNode(true); cancelBtn.replaceWith(newCancelBtn);
+    const newCloseBtn = closeBtn.cloneNode(true); closeBtn.replaceWith(newCloseBtn);
+    newDownloadBtn.addEventListener('click', async () => { await onDownload?.(); close(); });
+    newCancelBtn.addEventListener('click', close);
+    newCloseBtn.addEventListener('click', close);
+}
+
 /** Walks one vehicle's stations in route order, carrying its most recent
  *  known delay forward onto every not-yet-finished station's projected
  *  date. Returns per-station cells plus the row's final Delay value. */
@@ -9768,17 +9873,18 @@ function _vpxProjectRow(vehicleRow, orderedCols) {
     const cells = orderedCols.map(col => {
         const key = col.resolve(vehicleRow.vehicle);
         const task = key ? vehicleRow.stations[key] : null;
-        if (!task) return { planned: null, actual: null, projected: false };
+        if (!task) return { planned: null, actual: null, projected: false, late: false };
 
         const plannedEnd = task.end_date || null;
         const actualEnd = task.progress?.completion_date || null;
 
         if (actualEnd) {
-            carriedDelay = plannedEnd ? daysBetween(plannedEnd, actualEnd) : 0;
-            return { planned: plannedEnd, actual: actualEnd, projected: false };
+            const delay = plannedEnd ? daysBetween(plannedEnd, actualEnd) : 0;
+            carriedDelay = delay;
+            return { planned: plannedEnd, actual: actualEnd, projected: false, late: delay > 0 };
         }
         const projectedDate = (plannedEnd && carriedDelay > 0) ? _addWorkingDays(plannedEnd, carriedDelay) : plannedEnd;
-        return { planned: plannedEnd, actual: projectedDate, projected: !!plannedEnd };
+        return { planned: plannedEnd, actual: projectedDate, projected: !!plannedEnd, late: false };
     });
     return { cells, finalDelay: carriedDelay };
 }
@@ -9815,7 +9921,7 @@ const VPX_REPORT_GRP_COLOR = {
     'Final Test': { bg: 'FF334155', fg: 'FFffffff' },
 };
 
-async function exportVpxStationReportExcel() {
+async function exportVpxStationReportExcel(preview) {
     if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (isF100KD2Module()) { showToast('Station report is only available for the F200-KD2 module.', 'error'); return; }
     if (!currentData?.length) { showToast('No data to export.', 'error'); return; }
@@ -9908,59 +10014,152 @@ async function exportVpxStationReportExcel() {
         right: { style: 'thin', color: { argb: 'FFe2e8f0' } },
     });
 
+    const thickBord = side => ({ style: 'medium', color: { argb: 'FF475569' } });
+
     let excelRowIdx = 6;
     rows.forEach(row => {
         const { cells, finalDelay } = _vpxProjectRow(row, activeCols);
-        const label = `${row.vehicle} ${row.vehicle_no || ''}`.trim();
+        const code = getUnitCode(row.vehicle, row.vehicle_no);
+        const label = `${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
+        const planRowN = excelRowIdx;
+        const actualRowN = excelRowIdx + 1;
 
         // Plan row
-        ws.addRow([label + ' — Plan', ...cells.map(c => c.planned ? formatDateShort(c.planned) : ''), '']);
-        ws.getRow(excelRowIdx).eachCell({ includeEmpty: true }, (cell, colN) => {
+        ws.addRow(['', ...cells.map(c => c.planned ? formatDateShort(c.planned) : ''), '']);
+        ws.getRow(planRowN).eachCell({ includeEmpty: true }, (cell, colN) => {
             cell.font = { name: 'Calibri', size: 8, color: { argb: 'FF475569' } };
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf8fafc' } };
             cell.border = bord();
             cell.alignment = { horizontal: colN === 1 ? 'left' : 'center', vertical: 'middle' };
         });
+        ws.getCell(planRowN, totalCols).value = 'Plan';
+        ws.getCell(planRowN, totalCols).font = { name: 'Calibri', size: 7, italic: true, color: { argb: 'FF94a3b8' } };
         excelRowIdx++;
 
-        // Actual row — projected (not-yet-finished) cells are italic/amber
+        // Actual row — real completions are red (late) / green (on-time);
+        // not-yet-finished (projected) cells are light-grey text, no fill.
         const actualVals = cells.map(c => c.actual ? formatDateShort(c.actual) : (c.planned ? '' : '—'));
-        ws.addRow([label + ' — Actual', ...actualVals, finalDelay > 0 ? `+${finalDelay}d` : '0d']);
-        ws.getRow(excelRowIdx).eachCell({ includeEmpty: true }, (cell, colN) => {
+        ws.addRow(['', ...actualVals, finalDelay > 0 ? `+${finalDelay}d` : '0d']);
+        ws.getRow(actualRowN).eachCell({ includeEmpty: true }, (cell, colN) => {
             const isDelayCol = colN === totalCols;
-            const isProjected = colN > 1 && !isDelayCol && cells[colN - 2]?.projected;
+            const c = colN > 1 && !isDelayCol ? cells[colN - 2] : null;
+            const isProjected = !!c?.projected;
+            const isLate = !!c?.late;
+            const isReal = c && !c.projected && c.actual;
             cell.font = {
                 name: 'Calibri', size: 8,
-                italic: !!isProjected,
-                bold: colN === 1 || isDelayCol,
-                color: { argb: isProjected ? 'FFb45309' : (isDelayCol ? (finalDelay > 0 ? 'FFb91c1c' : 'FF15803d') : 'FF1e293b') },
+                italic: isProjected,
+                bold: colN === 1 || isDelayCol || (isReal && isLate),
+                color: {
+                    argb: isProjected ? 'FF94a3b8'
+                        : isReal ? (isLate ? 'FFb91c1c' : 'FF15803d')
+                        : (isDelayCol ? (finalDelay > 0 ? 'FFb91c1c' : 'FF15803d') : 'FF1e293b'),
+                },
             };
             cell.fill = {
                 type: 'pattern', pattern: 'solid',
-                fgColor: { argb: isProjected ? 'FFfef3c7' : (isDelayCol ? (finalDelay > 0 ? 'FFfee2e2' : 'FFdcfce7') : 'FFffffff') },
+                fgColor: {
+                    argb: isProjected ? 'FFffffff'
+                        : isReal ? (isLate ? 'FFfee2e2' : 'FFdcfce7')
+                        : (isDelayCol ? (finalDelay > 0 ? 'FFfee2e2' : 'FFdcfce7') : 'FFffffff'),
+                },
             };
             cell.border = bord();
             cell.alignment = { horizontal: colN === 1 ? 'left' : 'center', vertical: 'middle' };
         });
         excelRowIdx++;
+
+        // Vehicle label — merged vertically across the Plan/Actual pair,
+        // matching the reference report's layout.
+        ws.mergeCells(planRowN, 1, actualRowN, 1);
+        const vehCell = ws.getCell(planRowN, 1);
+        vehCell.value = label;
+        vehCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FFffffff' } };
+        vehCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
+        vehCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+
+        // Clear separation between vehicle blocks: thick top border on the
+        // Plan row, thick bottom border on the Actual row, across every column.
+        for (let c = 1; c <= totalCols; c++) {
+            ws.getCell(planRowN, c).border = { ...ws.getCell(planRowN, c).border, top: thickBord() };
+            ws.getCell(actualRowN, c).border = { ...ws.getCell(actualRowN, c).border, bottom: thickBord() };
+        }
     });
 
     ws.getColumn(1).width = 22;
     for (let i = 2; i <= totalCols - 1; i++) ws.getColumn(i).width = 11;
     ws.getColumn(totalCols).width = 10;
 
+    // ── Key & Legend worksheet — explains the file and how to read it ──
+    const wsKey2 = wb.addWorksheet('Key & Legend');
+    wsKey2.getColumn(1).width = 5;
+    wsKey2.getColumn(2).width = 26;
+    wsKey2.getColumn(3).width = 70;
+
+    wsKey2.addRow(['', title]);
+    wsKey2.mergeCells(1, 2, 1, 3);
+    wsKey2.getCell(1, 2).font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FF1e293b' } };
+    wsKey2.getRow(1).height = 24;
+    wsKey2.addRow([]); wsKey2.getRow(2).height = 8;
+
+    const keySection = (row, heading) => {
+        wsKey2.addRow(['', heading]);
+        wsKey2.mergeCells(row, 2, row, 3);
+        const c = wsKey2.getCell(row, 2);
+        c.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FF64748b' } };
+        c.border = { bottom: { style: 'medium', color: { argb: 'FFcbd5e1' } } };
+        wsKey2.getRow(row).height = 16;
+    };
+    const keyLine = (row, label, desc, opts = {}) => {
+        wsKey2.addRow(['', label, desc]);
+        wsKey2.getRow(row).height = 18;
+        const lbl = wsKey2.getCell(row, 2);
+        const dsc = wsKey2.getCell(row, 3);
+        lbl.font = { name: 'Calibri', size: 9, bold: true, color: { argb: opts.fg || 'FF334155' } };
+        lbl.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: opts.bg || 'FFf1f5f9' } };
+        lbl.alignment = { vertical: 'middle', horizontal: 'center' };
+        dsc.font = { name: 'Calibri', size: 9, color: { argb: 'FF475569' } };
+        dsc.alignment = { vertical: 'middle', wrapText: true, indent: 1 };
+        [2, 3].forEach(c => { wsKey2.getCell(row, c).border = bord(); });
+    };
+
+    keySection(3, 'WHAT THIS REPORT SHOWS');
+    keyLine(4, 'Layout', 'One row-pair per vehicle: "Plan" (planned start/end per station) above "Actual" (actual/recorded completion, or a projected date if not yet finished).');
+    keyLine(5, 'Vehicle label', 'Vehicle type + unit number, plus the unit code (e.g. EGY N25020) when assigned.');
+    keyLine(6, 'Stations', 'Columns are process stations in production route order, grouped and colour-coded by process group.');
+
+    wsKey2.addRow([]); wsKey2.getRow(7).height = 8;
+    keySection(8, 'ACTUAL ROW COLOURS');
+    keyLine(9, 'Green', 'Station completed on or before its planned end date.', { bg: 'FFdcfce7', fg: 'FF15803d' });
+    keyLine(10, 'Red', 'Station completed after its planned end date (late completion).', { bg: 'FFfee2e2', fg: 'FFb91c1c' });
+    keyLine(11, 'Light grey (no fill)', 'Not yet finished — showing a projected completion date (see below), not a real actual date.', { bg: 'FFffffff', fg: 'FF94a3b8' });
+
+    wsKey2.addRow([]); wsKey2.getRow(12).height = 8;
+    keySection(13, 'DELAY & PROJECTED COMPLETION — HOW THEY ARE CALCULATED');
+    keyLine(14, 'Delay column', 'The vehicle\'s most recently recorded delay: (actual completion date) − (planned end date) of its last finished station, in working days. 0d or blank means on schedule.');
+    keyLine(15, 'Projected date', 'For each not-yet-finished station, its planned end date is shifted forward by the vehicle\'s current carried delay (the same value shown in the Delay column at that point in the route). This carried delay updates at every station that has a real actual date, and rolls forward unchanged through every station that doesn\'t.');
+    keyLine(16, 'Example', 'A vehicle finishes Welding 3 working days late. Every later station\'s projected date (Machining, Painting, …) is shown 3 working days after its own planned date, until the vehicle records a new actual date that resets the carried delay.');
+
+    // ── Save ───────────────────────────────────────────────────────
     const now = new Date().toISOString().slice(0, 10);
-    const buf = await wb.xlsx.writeBuffer();
-    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `vpx_station_report_${now}.xlsx`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    showToast('Station report exported.', 'success');
+    const doDownload = async () => {
+        const buf = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `vpx_station_report_${now}.xlsx`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        showToast('Station report exported.', 'success');
+    };
+    if (preview) {
+        _showGenericPreview({ title, kind: 'html', html: _worksheetToHtml(ws), onDownload: doDownload });
+    } else {
+        await doDownload();
+    }
 }
 
-async function exportVpxStationReportPDF() {
+async function exportVpxStationReportPDF(preview) {
     if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (isF100KD2Module()) { showToast('Station report is only available for the F200-KD2 module.', 'error'); return; }
     if (!currentData?.length) { showToast('No data to export.', 'error'); return; }
@@ -9987,17 +10186,28 @@ async function exportVpxStationReportPDF() {
 
     const headers = ['Vehicle', ...activeCols.map(c => c.code), 'Delay'];
     const body = [];
-    const projectedFlags = []; // parallel to body — which station cells are projected, per row
+    const cellFlags = []; // parallel to body — {projected,late,real} per station cell, per row
+    const vehicleBlockStartRows = []; // body row index where each vehicle's Plan row starts
 
     rows.forEach(row => {
         const { cells, finalDelay } = _vpxProjectRow(row, activeCols);
-        const label = `${row.vehicle} ${row.vehicle_no || ''}`.trim();
+        const code = getUnitCode(row.vehicle, row.vehicle_no);
+        const label = `${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
 
-        body.push([label + ' Plan', ...cells.map(c => c.planned ? formatDateShort(c.planned) : ''), '']);
-        projectedFlags.push(cells.map(() => false));
+        vehicleBlockStartRows.push(body.length);
 
-        body.push([label + ' Actual', ...cells.map(c => c.actual ? formatDateShort(c.actual) : (c.planned ? '' : '—')), finalDelay > 0 ? `+${finalDelay}d` : '0d']);
-        projectedFlags.push(cells.map(c => c.projected));
+        body.push([
+            { content: label, rowSpan: 2, styles: { valign: 'middle', halign: 'center', fillColor: [51, 65, 85], textColor: [255, 255, 255], fontStyle: 'bold' } },
+            ...cells.map(c => c.planned ? formatDateShort(c.planned) : ''),
+            '',
+        ]);
+        cellFlags.push(cells.map(() => ({ projected: false, late: false, real: false })));
+
+        body.push([
+            ...cells.map(c => c.actual ? formatDateShort(c.actual) : (c.planned ? '' : '—')),
+            finalDelay > 0 ? `+${finalDelay}d` : '0d',
+        ]);
+        cellFlags.push(cells.map(c => ({ projected: c.projected, late: c.late, real: !c.projected && !!c.actual })));
     });
 
     doc.autoTable({
@@ -10009,13 +10219,42 @@ async function exportVpxStationReportPDF() {
         columnStyles: { 0: { cellWidth: 26, halign: 'left' } },
         didParseCell(data) {
             if (data.section !== 'body') return;
+            const rowIdx = data.row.index;
+            // Thick separator between vehicle blocks: top of every Plan row.
+            if (vehicleBlockStartRows.includes(rowIdx)) {
+                data.cell.styles.lineWidth = { top: 0.5, right: 0.15, bottom: 0.15, left: 0.15 };
+                data.cell.styles.lineColor = [71, 85, 105];
+            }
+            if (vehicleBlockStartRows.includes(rowIdx + 1)) {
+                data.cell.styles.lineWidth = { top: 0.15, right: 0.15, bottom: 0.5, left: 0.15 };
+                data.cell.styles.lineColor = [71, 85, 105];
+            }
             const colIdx = data.column.index;
-            if (colIdx === 0 || colIdx === headers.length - 1) return;
-            const flags = projectedFlags[data.row.index];
-            if (flags && flags[colIdx - 1]) {
-                data.cell.styles.textColor = [180, 83, 9];
+            const flags = cellFlags[rowIdx];
+            const isPlanRow = vehicleBlockStartRows.includes(rowIdx);
+            if (colIdx === 0 && isPlanRow) return; // vehicle label cell, styled inline above
+            // Column 0 is the vehicle label (Plan row only, via rowSpan) — station
+            // columns always start at table column index 1 in both Plan and Actual rows.
+            const stationColIdx = colIdx - 1;
+            if (colIdx === headers.length - 1) {
+                // Delay column
+                if (!isPlanRow) {
+                    const text = String(data.cell.raw || '');
+                    if (text.startsWith('+')) { data.cell.styles.textColor = [185, 28, 28]; data.cell.styles.fontStyle = 'bold'; }
+                    else if (text === '0d') { data.cell.styles.textColor = [21, 128, 61]; data.cell.styles.fontStyle = 'bold'; }
+                }
+                return;
+            }
+            if (stationColIdx < 0 || stationColIdx >= activeCols.length) return;
+            const f = flags?.[stationColIdx];
+            if (!f) return;
+            if (f.projected) {
+                data.cell.styles.textColor = [148, 163, 184];
                 data.cell.styles.fontStyle = 'italic';
-                data.cell.styles.fillColor = [254, 243, 199];
+            } else if (f.real) {
+                data.cell.styles.textColor = f.late ? [185, 28, 28] : [21, 128, 61];
+                data.cell.styles.fillColor = f.late ? [254, 226, 226] : [220, 252, 231];
+                if (f.late) data.cell.styles.fontStyle = 'bold';
             }
         },
         didDrawPage(data) {
@@ -10028,11 +10267,88 @@ async function exportVpxStationReportPDF() {
         },
     });
 
+    // ── Key & Legend page — explains the report and the delay calculation ──
+    doc.addPage('a4', 'portrait');
+    const KP_W = doc.internal.pageSize.getWidth();
+    let ky = 18;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(30, 41, 59);
+    doc.text('Key & Legend — ' + title, MARGIN, ky); ky += 10;
+
+    const keySection = txt => {
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(100, 116, 139);
+        doc.text(txt, MARGIN, ky); ky += 1;
+        doc.setDrawColor(203, 213, 225); doc.line(MARGIN, ky, KP_W - MARGIN, ky); ky += 6;
+    };
+    const keyLine = (label, desc, color) => {
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+        doc.setTextColor(color ? color[0] : 51, color ? color[1] : 65, color ? color[2] : 85);
+        doc.text(label, MARGIN + 2, ky);
+        doc.setFont('helvetica', 'normal'); doc.setTextColor(71, 85, 105);
+        const wrapped = doc.splitTextToSize(desc, KP_W - MARGIN * 2 - 42);
+        doc.text(wrapped, MARGIN + 42, ky);
+        ky += Math.max(5, wrapped.length * 4) + 2;
+    };
+
+    keySection('WHAT THIS REPORT SHOWS');
+    keyLine('Layout', 'One row-pair per vehicle: "Plan" (planned start/end per station) above "Actual" (actual/recorded completion, or a projected date if not yet finished).');
+    keyLine('Vehicle label', 'Vehicle type + unit number, plus the unit code (e.g. EGY N25020) when assigned.');
+    keyLine('Stations', 'Columns are process stations in production route order, grouped by process group.');
+    ky += 4;
+
+    keySection('ACTUAL ROW COLOURS');
+    keyLine('Green', 'Station completed on or before its planned end date.', [21, 128, 61]);
+    keyLine('Red', 'Station completed after its planned end date (late completion).', [185, 28, 28]);
+    keyLine('Grey / italic', 'Not yet finished — showing a projected completion date, not a real actual date.', [148, 163, 184]);
+    ky += 4;
+
+    keySection('DELAY & PROJECTED COMPLETION — HOW THEY ARE CALCULATED');
+    keyLine('Delay column', 'The vehicle\'s most recently recorded delay: (actual completion date) minus (planned end date) of its last finished station, in working days. 0d means on schedule.');
+    keyLine('Projected date', 'Each not-yet-finished station\'s planned end date is shifted forward by the vehicle\'s current carried delay. This carried delay updates at every station with a real actual date, and rolls forward unchanged through every station that doesn\'t.');
+    keyLine('Example', 'A vehicle finishes Welding 3 working days late. Every later station\'s projected date is shown 3 working days after its own planned date, until a new actual date resets the carried delay.');
+
     const now = new Date().toISOString().slice(0, 10);
-    doc.save(`vpx_station_report_${now}.pdf`);
-    showToast('Station report PDF exported.', 'success');
+    const doDownload = () => { doc.save(`vpx_station_report_${now}.pdf`); showToast('Station report PDF exported.', 'success'); };
+    if (preview) {
+        _showGenericPreview({ title, kind: 'pdf', src: doc.output('bloburl'), onDownload: doDownload });
+    } else {
+        doDownload();
+    }
 }
 
+/* ─── VPX "Generate Report" popup — replaces the 4 standalone export
+   buttons with a single entry point, mirroring the Issues report modal. ── */
+function wireVpxReportModal() {
+    const overlay = document.getElementById('vpxReportModalOverlay');
+    if (!overlay) return;
+    const close = () => { overlay.style.display = 'none'; };
+
+    document.getElementById('btnVpxReportModal')?.addEventListener('click', () => {
+        const hint = document.getElementById('vpxReportScopeHint');
+        if (hint) {
+            const parts = [getModuleBadge()];
+            if (_vpxVehicleTypeFilter) parts.push(_vpxVehicleTypeFilter);
+            if (_vpxCategoryFilter) parts.push(_vpxCategoryFilter);
+            hint.textContent = parts.join(' · ');
+        }
+        overlay.style.display = 'flex';
+    });
+    document.getElementById('vpxReportModalClose')?.addEventListener('click', close);
+    document.getElementById('vpxReportModalCancel')?.addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+    document.getElementById('btnVpxReportPDF')?.addEventListener('click', async () => {
+        const type = overlay.querySelector('input[name="vpxReportType"]:checked')?.value || 'matrix';
+        const preview = !!document.getElementById('vpxReportPreviewToggle')?.checked;
+        if (type === 'station') await exportVpxStationReportPDF(preview); else await exportVpxPDF(preview);
+        if (!preview) close();
+    });
+    document.getElementById('btnVpxReportExcel')?.addEventListener('click', async () => {
+        const type = overlay.querySelector('input[name="vpxReportType"]:checked')?.value || 'matrix';
+        const preview = !!document.getElementById('vpxReportPreviewToggle')?.checked;
+        if (type === 'station') await exportVpxStationReportExcel(preview); else await exportVpxExcel(preview);
+        if (!preview) close();
+    });
+}
 
 /* ─── Wire the modal ────────────────────────────────────────────── */
 function wireReportModal() {
@@ -10059,12 +10375,14 @@ function wireReportModal() {
 
     document.getElementById('btnExportPDF').addEventListener('click', () => {
         const type = document.querySelector('input[name="reportType"]:checked')?.value || 'full';
-        exportPDF(type, getVal('reportDateFrom'), getVal('reportDateTo'), getVal('reportCategory'));
+        const preview = !!document.getElementById('reportPreviewToggle')?.checked;
+        exportPDF(type, getVal('reportDateFrom'), getVal('reportDateTo'), getVal('reportCategory'), preview);
     });
 
     document.getElementById('btnExportExcel').addEventListener('click', async () => {
         const type = document.querySelector('input[name="reportType"]:checked')?.value || 'full';
-        await exportExcel(type, getVal('reportDateFrom'), getVal('reportDateTo'), getVal('reportCategory'));
+        const preview = !!document.getElementById('reportPreviewToggle')?.checked;
+        await exportExcel(type, getVal('reportDateFrom'), getVal('reportDateTo'), getVal('reportCategory'), preview);
     });
 }
 
@@ -11490,10 +11808,7 @@ function _closeIssueModal() {
    Wraps HTML in Word-recognised namespaces and saves it with the
    application/msword MIME type — Word/Google Docs open this natively,
    no docx-generation library required. */
-function exportHtmlAsWord(filename, titleText, bodyHtml) {
-    const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-<head><meta charset="utf-8"><title>${esc(titleText)}</title>
-<style>
+const WORD_DOC_STYLE = `
     body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #1e293b; }
     h1 { font-size: 16pt; margin: 0 0 4px; }
     .doc-sub { font-size: 9pt; color: #64748b; margin: 0 0 16px; }
@@ -11503,15 +11818,37 @@ function exportHtmlAsWord(filename, titleText, bodyHtml) {
     th { background: #1e3a5f; color: #e2e8f0; }
     tr:nth-child(even) td { background: #f8fafc; }
     .doc-summary-table th, .doc-summary-table td { font-size: 9.5pt; }
-</style>
+    .issue-report-card { border: 1px solid #e2e8f0; border-left: 4px solid #1e3a8a; padding: 8px 12px; margin: 0 0 12px; }
+    .issue-report-title { font-size: 11.5pt; font-weight: bold; margin: 0 0 2px; color: #0f172a; }
+    .issue-report-byline { font-size: 8.5pt; font-style: italic; color: #64748b; margin: 0 0 6px; }
+    .issue-report-sec { font-size: 9.5pt; margin: 0 0 4px; color: #334155; }
+    .issue-report-sec-label { font-weight: bold; }
+    .issue-report-sec-issue { color: #0f172a; }
+    .issue-report-sec-solution { color: #155e75; }
+    .issue-report-sec-action { color: #15803d; }
+    .issue-report-meta { font-size: 8pt; color: #64748b; margin: 6px 0 0; border-top: 1px solid #e2e8f0; padding-top: 4px; }
+    .issue-report-pic { color: #b45309; font-weight: bold; }
+`;
+
+function exportHtmlAsWord(filename, titleText, bodyHtml, preview) {
+    const doDownload = () => {
+        const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+<head><meta charset="utf-8"><title>${esc(titleText)}</title>
+<style>${WORD_DOC_STYLE}</style>
 </head><body>${bodyHtml}</body></html>`;
-    const blob = new Blob(['﻿', html], { type: 'application/msword' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    showToast('Word document exported.', 'success');
+        const blob = new Blob(['﻿', html], { type: 'application/msword' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        showToast('Word document exported.', 'success');
+    };
+    if (preview) {
+        _showGenericPreview({ title: titleText, kind: 'html', html: `<style>${WORD_DOC_STYLE}</style>${bodyHtml}`, onDownload: doDownload });
+    } else {
+        doDownload();
+    }
 }
 
 /* ================================================================
@@ -11647,7 +11984,8 @@ function _getIssueReportOpts() {
     const search   = document.getElementById('issueReportSearch')?.value?.trim() || '';
     const statuses   = Array.from(document.querySelectorAll('#issueReportStatusChecklist input:checked')).map(el => el.value);
     const categories = Array.from(document.querySelectorAll('#issueReportCategoryChecklist input:checked')).map(el => el.value);
-    return { type, period, layout, moduleScope, from, to, category, priority, reporter, search, statuses, categories };
+    const preview  = !!document.getElementById('issueReportPreviewToggle')?.checked;
+    return { type, period, layout, moduleScope, from, to, category, priority, reporter, search, statuses, categories, preview };
 }
 
 function _issueReportTitle(opts) {
@@ -11880,14 +12218,21 @@ async function exportIssueReportExcel(opts) {
     colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
 
     const now = new Date().toISOString().slice(0, 10);
-    const buf = await wb.xlsx.writeBuffer();
-    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `issues_report_${opts.type}_${now}.xlsx`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    showToast('Excel exported.', 'success');
+    const doDownload = async () => {
+        const buf = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `issues_report_${opts.type}_${now}.xlsx`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        showToast('Excel exported.', 'success');
+    };
+    if (opts.preview) {
+        _showGenericPreview({ title: _issueReportTitle(opts), kind: 'html', html: _worksheetToHtml(ws), onDownload: doDownload });
+    } else {
+        await doDownload();
+    }
 }
 
 /* ── PDF export (general list + status report) ───────────────────── */
@@ -11945,31 +12290,56 @@ function _renderIssueStatusOnePageReportPDF(doc, rows, title, modLabel) {
         y += 5;
 
         catRows.forEach(r => {
-            ensureRoom(14);
+            ensureRoom(16);
             doc.setFont('helvetica', 'bold');
-            doc.setFontSize(8.2);
+            doc.setFontSize(8.4);
             doc.setTextColor(15, 23, 42);
             doc.text(`•  ${r.title || 'Untitled'}`, MARGIN + 2, y);
-            y += 3.6;
+            y += 3.4;
 
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(7.2);
-            doc.setTextColor(71, 85, 105);
-            const lines = [];
-            if (r.description) lines.push(`Issue: ${r.description}`);
-            if (r.proposed_solution) lines.push(`Proposed Solution: ${r.proposed_solution}`);
-            if (r.notes) lines.push(`Action Taken: ${r.notes}`);
-            lines.push(`Reported: ${formatIssueDate(r.created_at)}`
-                + (r.resolved_at ? `   ·   Resolved: ${formatIssueDate(r.resolved_at)}` : '')
-                + (r.person_in_charge ? `   ·   PIC: ${r.person_in_charge}` : ''));
+            const reporter = r.reporter_name || r.reporter_email || 'Unknown';
+            doc.setFont('helvetica', 'italic');
+            doc.setFontSize(6.8);
+            doc.setTextColor(100, 116, 139);
+            doc.text(`Reported by: ${reporter}`, MARGIN + 6, y);
+            y += 3.4;
 
-            lines.forEach(line => {
-                const wrapped = doc.splitTextToSize(line, usableW - 6);
-                ensureRoom(wrapped.length * 3.4 + 1);
-                doc.text(wrapped, MARGIN + 6, y);
-                y += wrapped.length * 3.4;
+            const sections = [
+                { label: 'Issue', value: r.description, color: [15, 23, 42] },
+                { label: 'Proposed Solution', value: r.proposed_solution, color: [21, 94, 117] },
+                { label: 'Action Taken', value: r.notes, color: [21, 128, 61] },
+            ];
+            sections.forEach(sec => {
+                if (!sec.value) return;
+                ensureRoom(6);
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(6.8);
+                doc.setTextColor(sec.color[0], sec.color[1], sec.color[2]);
+                doc.text(`${sec.label}:`, MARGIN + 6, y);
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(71, 85, 105);
+                const wrapped = doc.splitTextToSize(sec.value, usableW - 6 - 34);
+                doc.text(wrapped, MARGIN + 34, y);
+                y += Math.max(3.4, wrapped.length * 3.4);
             });
-            y += 2.5;
+
+            const meta = [`Reported: ${formatIssueDate(r.created_at)}`];
+            if (r.resolved_at) meta.push(`Resolved: ${formatIssueDate(r.resolved_at)}`);
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(6.8);
+            doc.setTextColor(100, 116, 139);
+            ensureRoom(4);
+            doc.text(meta.join('   ·   '), MARGIN + 6, y);
+            if (r.person_in_charge) {
+                doc.setTextColor(180, 83, 9);
+                doc.text(`PIC: ${r.person_in_charge}`, MARGIN + 6 + doc.getTextWidth(meta.join('   ·   ')) + 4, y);
+            }
+            y += 3.4;
+
+            doc.setDrawColor(226, 232, 240);
+            doc.setLineWidth(0.15);
+            doc.line(MARGIN + 2, y, PAGE_W - MARGIN, y);
+            y += 3;
         });
         y += 2;
     });
@@ -11998,8 +12368,12 @@ async function exportIssueReportPDF(opts) {
     if (opts.type === 'status_report' && opts.layout === 'report') {
         const reportDoc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
         _renderIssueStatusOnePageReportPDF(reportDoc, rows, title, modLabel);
-        reportDoc.save(`issues_status_report_${exportDate}.pdf`);
-        showToast('PDF exported.', 'success');
+        const doDownload = () => { reportDoc.save(`issues_status_report_${exportDate}.pdf`); showToast('PDF exported.', 'success'); };
+        if (opts.preview) {
+            _showGenericPreview({ title, kind: 'pdf', src: reportDoc.output('bloburl'), onDownload: doDownload });
+        } else {
+            doDownload();
+        }
         return;
     }
 
@@ -12092,8 +12466,12 @@ async function exportIssueReportPDF(opts) {
         },
     });
 
-    doc.save(`issues_report_${opts.type}_${exportDate}.pdf`);
-    showToast('PDF exported.', 'success');
+    const doDownload = () => { doc.save(`issues_report_${opts.type}_${exportDate}.pdf`); showToast('PDF exported.', 'success'); };
+    if (opts.preview) {
+        _showGenericPreview({ title, kind: 'pdf', src: doc.output('bloburl'), onDownload: doDownload });
+    } else {
+        doDownload();
+    }
 }
 
 /* ── Word export (general list + status report) ──────────────────── */
@@ -12112,20 +12490,24 @@ async function exportIssueReportWord(opts) {
         let reportBody = `<h1>${esc(title)}</h1><p class="doc-sub">Module: ${esc(modLabel)} &middot; Generated: ${esc(new Date().toLocaleString('en-GB'))} &middot; ${rows.length} issue${rows.length !== 1 ? 's' : ''}</p>`;
         reportBody += `<p><strong>${_categoryCounts(rows).map(([label, count]) => `${esc(label)}: ${count}`).join(' &middot; ')}</strong></p>`;
         _issueStatusReportGroups(rows).forEach(({ label: catLabel, rows: catRows }) => {
-            reportBody += `<h2>${esc(catLabel)} (${catRows.length})</h2><ul>`;
+            reportBody += `<h2>${esc(catLabel)} (${catRows.length})</h2>`;
             catRows.forEach(r => {
+                const reporter = r.reporter_name || r.reporter_email || 'Unknown';
                 const meta = [`Reported: ${esc(formatIssueDate(r.created_at))}`];
                 if (r.resolved_at) meta.push(`Resolved: ${esc(formatIssueDate(r.resolved_at))}`);
-                if (r.person_in_charge) meta.push(`PIC: ${esc(r.person_in_charge)}`);
-                reportBody += `<li><strong>${esc(r.title || 'Untitled')}</strong><ul>`;
-                if (r.description) reportBody += `<li>Issue: ${esc(r.description)}</li>`;
-                if (r.proposed_solution) reportBody += `<li>Proposed Solution: ${esc(r.proposed_solution)}</li>`;
-                if (r.notes) reportBody += `<li>Action Taken: ${esc(r.notes)}</li>`;
-                reportBody += `<li>${meta.join(' &middot; ')}</li></ul></li>`;
+                reportBody += `<div class="issue-report-card">`;
+                reportBody += `<p class="issue-report-title">${esc(r.title || 'Untitled')}</p>`;
+                reportBody += `<p class="issue-report-byline">Reported by: ${esc(reporter)}</p>`;
+                if (r.description) reportBody += `<p class="issue-report-sec"><span class="issue-report-sec-label issue-report-sec-issue">Issue:</span> ${esc(r.description)}</p>`;
+                if (r.proposed_solution) reportBody += `<p class="issue-report-sec"><span class="issue-report-sec-label issue-report-sec-solution">Proposed Solution:</span> ${esc(r.proposed_solution)}</p>`;
+                if (r.notes) reportBody += `<p class="issue-report-sec"><span class="issue-report-sec-label issue-report-sec-action">Action Taken:</span> ${esc(r.notes)}</p>`;
+                reportBody += `<p class="issue-report-meta">${meta.join(' &middot; ')}`
+                    + (r.person_in_charge ? ` <span class="issue-report-pic">&middot; PIC: ${esc(r.person_in_charge)}</span>` : '')
+                    + `</p>`;
+                reportBody += `</div>`;
             });
-            reportBody += `</ul>`;
         });
-        exportHtmlAsWord(`issues_status_report_${now}.doc`, title, reportBody);
+        exportHtmlAsWord(`issues_status_report_${now}.doc`, title, reportBody, opts.preview);
         return;
     }
 
@@ -12174,7 +12556,7 @@ async function exportIssueReportWord(opts) {
     }
     body += `</table>`;
 
-    exportHtmlAsWord(`issues_report_${opts.type}_${now}.doc`, title, body);
+    exportHtmlAsWord(`issues_report_${opts.type}_${now}.doc`, title, body, opts.preview);
 }
 
 /* ── Issue notifications ────────────────────────────────────────── */

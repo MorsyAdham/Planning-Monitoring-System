@@ -4871,6 +4871,62 @@ body {
     color: var(--clr-text-muted);
 }
 
+/* ─── "View before exporting" toggle + preview modal ───────────────── */
+.report-preview-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: auto;
+    font-size: .8rem;
+    color: var(--clr-text-muted);
+    cursor: pointer;
+    user-select: none;
+}
+
+.report-preview-toggle input[type="checkbox"] {
+    accent-color: var(--clr-accent);
+    cursor: pointer;
+}
+
+.report-preview-modal {
+    width: min(94vw, 1100px);
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.report-preview-modal-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    padding: 0;
+}
+
+.report-preview-frame {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 65vh;
+    border: none;
+}
+
+.report-preview-html {
+    flex: 1 1 auto;
+    overflow: auto;
+    padding: 20px 24px;
+    background: #fff;
+    color: #1e293b;
+    max-height: 70vh;
+}
+
+.report-preview-html table {
+    border-collapse: collapse;
+}
+
+.report-preview-html td, .report-preview-html th {
+    border: 1px solid #e2e8f0;
+    font-size: .78rem;
+}
+
 /* ─── Export buttons ────────────────────────────────────────────── */
 .btn-report-pdf {
     background: rgba(239, 68, 68, .12);
