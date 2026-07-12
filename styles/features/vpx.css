@@ -88,3 +88,10 @@
     border-color: #4f8ef7;
     color: #2563eb;
 }
+
+/* Category sub-selector (Hull/Turret/Assembly, or Structure/Assembly) —
+   same segmented-button look, slightly smaller since it's the second tier. */
+.vpx-category-tabs .vpx-category-tab {
+    padding: 3px 11px;
+    font-size: .68rem;
+}

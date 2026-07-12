@@ -1482,12 +1482,22 @@ export function renderSharedDialogs() {
 
                         <!-- Period control — only shown for Status Report -->
                         <div class="form-group" id="issueReportPeriodGroup" style="display:none;margin-top:14px">
-                            <label class="form-label">Period <span class="form-label-optional">(controls the Resolved-date window only — Open/In Progress/Closed are always included)</span></label>
+                            <label class="form-label">Period <span class="form-label-optional">(issues reported or resolved within this window — All Time shows everything)</span></label>
                             <div class="kd2-create-mode-toggle" id="issueReportPeriodToggle">
                                 <button type="button" class="kd2-create-mode-btn" data-period="daily">Daily</button>
                                 <button type="button" class="kd2-create-mode-btn" data-period="weekly">Weekly</button>
                                 <button type="button" class="kd2-create-mode-btn" data-period="monthly">Monthly</button>
                                 <button type="button" class="kd2-create-mode-btn active" data-period="all_time">All Time</button>
+                            </div>
+                        </div>
+
+                        <!-- Layout control — only shown for Status Report; Report = one-page bullet
+                             summary (PDF/Word only), Table = today's grid (all formats) -->
+                        <div class="form-group" id="issueReportLayoutGroup" style="display:none;margin-top:14px">
+                            <label class="form-label">Layout <span class="form-label-optional">(Report is a one-page bullet-point summary — PDF &amp; Word only; Excel always uses Table)</span></label>
+                            <div class="kd2-create-mode-toggle" id="issueReportLayoutToggle">
+                                <button type="button" class="kd2-create-mode-btn active" data-layout="table">Table</button>
+                                <button type="button" class="kd2-create-mode-btn" data-layout="report">Report</button>
                             </div>
                         </div>
 

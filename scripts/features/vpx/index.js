@@ -14,6 +14,23 @@ export function initFeature() {
                     </div>
                     <div class="vpx-header-right">
                         <div id="vpxTypeTabs" class="vpx-type-tabs" hidden></div>
+                        <div id="vpxCategoryTabs" class="vpx-type-tabs vpx-category-tabs" hidden></div>
+                        <button class="btn btn-outline btn-sm" id="btnVpxStationReportExcel" title="Sequenced Plan/Actual station report (Excel) with delay-projected dates">
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
+                                style="width:14px;height:14px">
+                                <rect x="3" y="3" width="14" height="14" rx="2" />
+                                <path d="M6.5 7.5h7M6.5 10.5h7M6.5 13.5h4" />
+                            </svg>
+                            Station Report
+                        </button>
+                        <button class="btn btn-outline btn-sm" id="btnVpxStationReportPdf" title="Sequenced Plan/Actual station report (PDF) with delay-projected dates">
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
+                                style="width:14px;height:14px">
+                                <rect x="3" y="3" width="14" height="14" rx="2" />
+                                <path d="M6.5 7.5h7M6.5 10.5h7M6.5 13.5h4" />
+                            </svg>
+                            Station Report (PDF)
+                        </button>
                         <button class="btn btn-outline btn-sm" id="btnVpxPdf" title="Export print-friendly PDF">
                             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
                                 style="width:14px;height:14px">

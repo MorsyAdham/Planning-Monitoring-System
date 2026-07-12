@@ -116,7 +116,7 @@ async function removeExportPerm(id) {
 
 function _applyExportVisibility() {
     canExport().then(allowed => {
-        const ids = ['btnVpxPdf', 'btnVpxExcel', 'btnIssueReportModal', 'btnReports'];
+        const ids = ['btnVpxPdf', 'btnVpxExcel', 'btnVpxStationReportExcel', 'btnVpxStationReportPdf', 'btnIssueReportModal', 'btnReports'];
         ids.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = allowed ? '' : 'none';
@@ -3361,6 +3361,7 @@ const _isK10K11 = v => /K1[01]/i.test(String(v));
 
 let _vpxLastData = null;
 let _vpxVehicleTypeFilter = null;
+let _vpxCategoryFilter = null;
 
 function _getVehicleType(vehicle) {
     const v = String(vehicle || '');
@@ -3387,9 +3388,62 @@ function _renderVpxTypeTabs(types) {
     el.querySelectorAll('.vpx-type-tab').forEach(btn => {
         btn.addEventListener('click', () => {
             _vpxVehicleTypeFilter = btn.dataset.vtype;
+            _vpxCategoryFilter = null; // re-detect for the new vehicle type
             if (_vpxLastData) renderVPX(_vpxLastData);
         });
     });
+}
+
+/** K9 splits into Hull/Turret (from each station's component_group) plus
+ *  Assembly; K10/K11 don't split Hull/Turret (matches the reference daily
+ *  report, which has one combined "K10 and K11 Hull Structure" table), so
+ *  they only ever get "Structure" (everything non-Assembly) + "Assembly". */
+function _vpxTaskCategory(task, vehicleType, compMap) {
+    const group = task.category || getModuleCategory(task.process_station, task) || 'Other';
+    if (group === 'Assembly') return 'Assembly';
+    if (vehicleType === 'K9' && compMap) {
+        const comp = compMap.get(task.process_station || task.station_name)?.component_group;
+        if (comp === 'Hull' || comp === 'Turret') return comp;
+    }
+    return 'Structure';
+}
+
+function _detectVpxCategories(vehicleType, data, compMap) {
+    const seen = new Set();
+    data.forEach(t => seen.add(_vpxTaskCategory(t, vehicleType, compMap)));
+    const order = vehicleType === 'K9' ? ['Hull', 'Turret', 'Assembly'] : ['Structure', 'Assembly'];
+    return order.filter(c => seen.has(c));
+}
+
+function _renderVpxCategoryTabs(categories) {
+    const el = document.getElementById('vpxCategoryTabs');
+    if (!el) return;
+    if (!categories.length) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    el.innerHTML = categories.map(c =>
+        `<button class="vpx-type-tab vpx-category-tab${c === _vpxCategoryFilter ? ' active' : ''}" data-vcat="${c}">${c}</button>`
+    ).join('');
+    el.querySelectorAll('.vpx-category-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+            _vpxCategoryFilter = btn.dataset.vcat;
+            if (_vpxLastData) renderVPX(_vpxLastData);
+        });
+    });
+}
+
+/** Applies the currently-selected VPX vehicle-type + category tab to `data`.
+ *  Single source of truth shared by renderVPX and both export functions so
+ *  an export can never silently include more than what's on screen. */
+function _getVpxFilteredData(data) {
+    if (!isKD2Module() || !_vpxVehicleTypeFilter) return data;
+    let filtered = data.filter(t => _getVehicleType(t.vehicle) === _vpxVehicleTypeFilter);
+    if (_vpxCategoryFilter) {
+        const rt = getModuleRuntime?.();
+        const compMap = (_vpxVehicleTypeFilter === 'K9' && rt?.getStationCategoryMap)
+            ? rt.getStationCategoryMap('K9') : null;
+        filtered = filtered.filter(t => _vpxTaskCategory(t, _vpxVehicleTypeFilter, compMap) === _vpxCategoryFilter);
+    }
+    return filtered;
 }
 
 const VPX_COLUMNS = [
@@ -3886,6 +3940,7 @@ function renderVPX(data) {
     if (!data?.length) {
         container.innerHTML = `<div class="vpx-empty">${meta.emptyMessage}</div>`;
         _renderVpxTypeTabs([]);
+        _renderVpxCategoryTabs([]);
         return;
     }
 
@@ -3893,9 +3948,21 @@ function renderVPX(data) {
         const types = _detectVpxVehicleTypes(data);
         if (!types.includes(_vpxVehicleTypeFilter)) _vpxVehicleTypeFilter = types[0] || null;
         _renderVpxTypeTabs(types);
+
         if (_vpxVehicleTypeFilter) {
-            data = data.filter(t => _getVehicleType(t.vehicle) === _vpxVehicleTypeFilter);
+            const byType = data.filter(t => _getVehicleType(t.vehicle) === _vpxVehicleTypeFilter);
+            const rt = getModuleRuntime?.();
+            const compMap = (_vpxVehicleTypeFilter === 'K9' && rt?.getStationCategoryMap)
+                ? rt.getStationCategoryMap('K9') : null;
+            const categories = _detectVpxCategories(_vpxVehicleTypeFilter, byType, compMap);
+            if (!categories.includes(_vpxCategoryFilter)) _vpxCategoryFilter = categories[0] || null;
+            _renderVpxCategoryTabs(categories);
+        } else {
+            _renderVpxCategoryTabs([]);
         }
+        data = _getVpxFilteredData(data);
+    } else {
+        _renderVpxCategoryTabs([]);
     }
 
     const rows = buildVpxRows(data);
@@ -5689,6 +5756,8 @@ function wireEvents() {
     // VPX PDF export
     document.getElementById('btnVpxPdf')?.addEventListener('click', exportVpxPDF);
     document.getElementById('btnVpxExcel')?.addEventListener('click', exportVpxExcel);
+    document.getElementById('btnVpxStationReportExcel')?.addEventListener('click', exportVpxStationReportExcel);
+    document.getElementById('btnVpxStationReportPdf')?.addEventListener('click', exportVpxStationReportPDF);
 
     // Table fullscreen
     document.getElementById('btnTableFullscreen')?.addEventListener('click', toggleTableFullscreen);
@@ -9054,11 +9123,14 @@ async function exportVpxPDF() {
     }
     const meta = getVpxDisplayMeta();
 
-    // Apply same category filter as the table/VPX view
+    // Apply same category filter as the table/VPX view, then the currently
+    // selected VPX vehicle-type + Hull/Turret/Assembly tab (never export
+    // more than what's on screen).
     const _vpxCategory = getVal('filterCategory');
-    const vpxData = _vpxCategory
+    let vpxData = _vpxCategory
         ? currentData.filter(r => getModuleCategory(r.process_station, r) === _vpxCategory)
         : currentData;
+    vpxData = _getVpxFilteredData(vpxData);
 
     if (!vpxData.length) {
         showToast('No data matches the current filters.', 'error');
@@ -9302,9 +9374,10 @@ async function exportVpxExcel() {
 
     const _fCategory = getVal('filterCategory');
 
-    const vpxData = _fCategory
+    let vpxData = _fCategory
         ? currentData.filter(r => getModuleCategory(r.process_station, r) === _fCategory)
         : currentData;
+    vpxData = _getVpxFilteredData(vpxData);
     if (!vpxData.length) { showToast('No data matches the current filters.', 'error'); return; }
 
     const rows = buildVpxRows(vpxData);
@@ -9675,6 +9748,289 @@ async function exportVpxExcel() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     showToast('Excel exported successfully.', 'success');
+}
+
+
+/* ──────────────────────────────────────────────────────────────────
+   VPX STATION REPORT — sequenced Plan/Actual grid with delay projection
+   Matches the reference "Daily Production Progress Report" layout: one
+   Plan row + one Actual row per vehicle, stations in route order, with
+   a Delay column carried forward through not-yet-finished stations.
+   Always scoped to the current vehicle-type + category tab (via
+   _getVpxFilteredData), same as the plain PDF/Excel export buttons.
+   ────────────────────────────────────────────────────────────────── */
+
+/** Walks one vehicle's stations in route order, carrying its most recent
+ *  known delay forward onto every not-yet-finished station's projected
+ *  date. Returns per-station cells plus the row's final Delay value. */
+function _vpxProjectRow(vehicleRow, orderedCols) {
+    let carriedDelay = 0;
+    const cells = orderedCols.map(col => {
+        const key = col.resolve(vehicleRow.vehicle);
+        const task = key ? vehicleRow.stations[key] : null;
+        if (!task) return { planned: null, actual: null, projected: false };
+
+        const plannedEnd = task.end_date || null;
+        const actualEnd = task.progress?.completion_date || null;
+
+        if (actualEnd) {
+            carriedDelay = plannedEnd ? daysBetween(plannedEnd, actualEnd) : 0;
+            return { planned: plannedEnd, actual: actualEnd, projected: false };
+        }
+        const projectedDate = (plannedEnd && carriedDelay > 0) ? _addWorkingDays(plannedEnd, carriedDelay) : plannedEnd;
+        return { planned: plannedEnd, actual: projectedDate, projected: !!plannedEnd };
+    });
+    return { cells, finalDelay: carriedDelay };
+}
+
+function _vpxStationReportData() {
+    const _fCategory = getVal('filterCategory');
+    let vpxData = _fCategory
+        ? currentData.filter(r => getModuleCategory(r.process_station, r) === _fCategory)
+        : currentData;
+    vpxData = _getVpxFilteredData(vpxData);
+    if (!vpxData.length) return null;
+
+    const rows = buildVpxRows(vpxData);
+    const activeCols = buildVpxColumns(vpxData).filter(col =>
+        rows.some(row => { const k = col.resolve(row.vehicle); return k !== null && row.stations[k]; })
+    );
+    if (!activeCols.length) return null;
+
+    const titleParts = [getModuleBadge()];
+    if (_vpxVehicleTypeFilter) titleParts.push(_vpxVehicleTypeFilter);
+    if (_vpxCategoryFilter) titleParts.push(_vpxCategoryFilter);
+    titleParts.push('Station Report');
+
+    return { rows, activeCols, title: titleParts.join(' ') };
+}
+
+const VPX_REPORT_GRP_COLOR = {
+    'Welding': { bg: 'FF991b1b', fg: 'FFffffff' },
+    'Machining': { bg: 'FF0f766e', fg: 'FFffffff' },
+    'Shot Blasting and Painting': { bg: 'FF6b21a8', fg: 'FFffffff' },
+    'Assembly': { bg: 'FF1e3a8a', fg: 'FFffffff' },
+    'Processing': { bg: 'FF78350f', fg: 'FFffffff' },
+    'Final Inspection': { bg: 'FF064e3b', fg: 'FFffffff' },
+    'Final Test': { bg: 'FF334155', fg: 'FFffffff' },
+};
+
+async function exportVpxStationReportExcel() {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
+    if (isF100KD2Module()) { showToast('Station report is only available for the F200-KD2 module.', 'error'); return; }
+    if (!currentData?.length) { showToast('No data to export.', 'error'); return; }
+    if (typeof ExcelJS === 'undefined') { showToast('ExcelJS not loaded yet — please wait a moment and try again.', 'error'); return; }
+
+    const built = _vpxStationReportData();
+    if (!built) { showToast('No data matches the current filters.', 'error'); return; }
+    const { rows, activeCols, title } = built;
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PPMS';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('Station Report', {
+        pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+        views: [{ state: 'frozen', xSplit: 1, ySplit: 5 }],
+    });
+
+    const totalCols = 1 + activeCols.length + 1; // vehicle col + stations + Delay col
+
+    ws.mergeCells(1, 1, 1, totalCols);
+    const titleCell = ws.getCell(1, 1);
+    titleCell.value = title;
+    titleCell.font = { name: 'Calibri', size: 16, bold: true, color: { argb: 'FF1e293b' } };
+    ws.getRow(1).height = 24;
+
+    ws.mergeCells(2, 1, 2, totalCols);
+    const subCell = ws.getCell(2, 1);
+    subCell.value = `Generated: ${new Date().toLocaleString('en-GB')}  ·  ${rows.length} vehicle${rows.length !== 1 ? 's' : ''}`;
+    subCell.font = { name: 'Calibri', size: 8, italic: true, color: { argb: 'FF64748b' } };
+    ws.getRow(2).height = 13;
+
+    ws.addRow([]); ws.getRow(3).height = 6;
+
+    // Row 4 — station group header (blank over the Delay column)
+    const grpRowData = [''];
+    activeCols.forEach(col => grpRowData.push(col.group));
+    grpRowData.push('');
+    ws.addRow(grpRowData);
+    ws.getRow(4).height = 18;
+    let grpStart = 2, grpCurrent = activeCols[0]?.group;
+    const applyGrpMerge = (start, end, label) => {
+        if (start < end) ws.mergeCells(4, start, 4, end);
+        const gc = ws.getCell(4, start);
+        const gClr = VPX_REPORT_GRP_COLOR[label] || { bg: 'FF334155', fg: 'FFffffff' };
+        gc.value = label;
+        gc.font = { name: 'Calibri', size: 9, bold: true, color: { argb: gClr.fg } };
+        gc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: gClr.bg } };
+        gc.alignment = { horizontal: 'center', vertical: 'middle' };
+    };
+    activeCols.forEach((col, i) => {
+        const colN = i + 2;
+        if (col.group !== grpCurrent) {
+            applyGrpMerge(grpStart, colN - 1, grpCurrent);
+            grpStart = colN;
+            grpCurrent = col.group;
+        }
+        if (i === activeCols.length - 1) applyGrpMerge(grpStart, colN, grpCurrent);
+    });
+    const unitHdr4 = ws.getCell(4, 1);
+    unitHdr4.value = 'Vehicle';
+    unitHdr4.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FFffffff' } };
+    unitHdr4.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1e293b' } };
+    unitHdr4.alignment = { horizontal: 'center', vertical: 'middle' };
+    ws.getCell(4, totalCols).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
+
+    // Row 5 — station code header + "Delay"
+    const codeRowData = [''];
+    activeCols.forEach(col => codeRowData.push(col.code));
+    codeRowData.push('Delay');
+    ws.addRow(codeRowData);
+    ws.getRow(5).height = 16;
+    for (let c = 1; c <= totalCols; c++) {
+        const cell = ws.getCell(5, c);
+        const isEdge = c === 1 || c === totalCols;
+        cell.font = { name: 'Calibri', size: 8, bold: true, color: { argb: isEdge ? 'FFffffff' : 'FF1e293b' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isEdge ? 'FF1e293b' : 'FFf1f5f9' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = {
+            top: { style: 'medium', color: { argb: 'FF94a3b8' } },
+            bottom: { style: 'medium', color: { argb: 'FF94a3b8' } },
+            left: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+            right: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+        };
+    }
+
+    const bord = () => ({
+        top: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+        bottom: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+        left: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+        right: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+    });
+
+    let excelRowIdx = 6;
+    rows.forEach(row => {
+        const { cells, finalDelay } = _vpxProjectRow(row, activeCols);
+        const label = `${row.vehicle} ${row.vehicle_no || ''}`.trim();
+
+        // Plan row
+        ws.addRow([label + ' — Plan', ...cells.map(c => c.planned ? formatDateShort(c.planned) : ''), '']);
+        ws.getRow(excelRowIdx).eachCell({ includeEmpty: true }, (cell, colN) => {
+            cell.font = { name: 'Calibri', size: 8, color: { argb: 'FF475569' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf8fafc' } };
+            cell.border = bord();
+            cell.alignment = { horizontal: colN === 1 ? 'left' : 'center', vertical: 'middle' };
+        });
+        excelRowIdx++;
+
+        // Actual row — projected (not-yet-finished) cells are italic/amber
+        const actualVals = cells.map(c => c.actual ? formatDateShort(c.actual) : (c.planned ? '' : '—'));
+        ws.addRow([label + ' — Actual', ...actualVals, finalDelay > 0 ? `+${finalDelay}d` : '0d']);
+        ws.getRow(excelRowIdx).eachCell({ includeEmpty: true }, (cell, colN) => {
+            const isDelayCol = colN === totalCols;
+            const isProjected = colN > 1 && !isDelayCol && cells[colN - 2]?.projected;
+            cell.font = {
+                name: 'Calibri', size: 8,
+                italic: !!isProjected,
+                bold: colN === 1 || isDelayCol,
+                color: { argb: isProjected ? 'FFb45309' : (isDelayCol ? (finalDelay > 0 ? 'FFb91c1c' : 'FF15803d') : 'FF1e293b') },
+            };
+            cell.fill = {
+                type: 'pattern', pattern: 'solid',
+                fgColor: { argb: isProjected ? 'FFfef3c7' : (isDelayCol ? (finalDelay > 0 ? 'FFfee2e2' : 'FFdcfce7') : 'FFffffff') },
+            };
+            cell.border = bord();
+            cell.alignment = { horizontal: colN === 1 ? 'left' : 'center', vertical: 'middle' };
+        });
+        excelRowIdx++;
+    });
+
+    ws.getColumn(1).width = 22;
+    for (let i = 2; i <= totalCols - 1; i++) ws.getColumn(i).width = 11;
+    ws.getColumn(totalCols).width = 10;
+
+    const now = new Date().toISOString().slice(0, 10);
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `vpx_station_report_${now}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showToast('Station report exported.', 'success');
+}
+
+async function exportVpxStationReportPDF() {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
+    if (isF100KD2Module()) { showToast('Station report is only available for the F200-KD2 module.', 'error'); return; }
+    if (!currentData?.length) { showToast('No data to export.', 'error'); return; }
+    if (!window.jspdf) { showToast('PDF library not loaded — please refresh.', 'error'); return; }
+
+    const built = _vpxStationReportData();
+    if (!built) { showToast('No data matches the current filters.', 'error'); return; }
+    const { rows, activeCols, title } = built;
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const PAGE_W = doc.internal.pageSize.getWidth();
+    const PAGE_H = doc.internal.pageSize.getHeight();
+    const MARGIN = 10;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.setTextColor(30, 41, 59);
+    doc.text(title, MARGIN, 10);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Generated: ' + new Date().toLocaleString('en-GB'), PAGE_W - MARGIN, 10, { align: 'right' });
+
+    const headers = ['Vehicle', ...activeCols.map(c => c.code), 'Delay'];
+    const body = [];
+    const projectedFlags = []; // parallel to body — which station cells are projected, per row
+
+    rows.forEach(row => {
+        const { cells, finalDelay } = _vpxProjectRow(row, activeCols);
+        const label = `${row.vehicle} ${row.vehicle_no || ''}`.trim();
+
+        body.push([label + ' Plan', ...cells.map(c => c.planned ? formatDateShort(c.planned) : ''), '']);
+        projectedFlags.push(cells.map(() => false));
+
+        body.push([label + ' Actual', ...cells.map(c => c.actual ? formatDateShort(c.actual) : (c.planned ? '' : '—')), finalDelay > 0 ? `+${finalDelay}d` : '0d']);
+        projectedFlags.push(cells.map(c => c.projected));
+    });
+
+    doc.autoTable({
+        startY: 16,
+        head: [headers], body,
+        margin: { left: MARGIN, right: MARGIN },
+        styles: { fontSize: 5.5, cellPadding: 1.2, font: 'helvetica', textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.15 },
+        headStyles: { fillColor: [30, 58, 138], textColor: [241, 245, 249], fontStyle: 'bold', fontSize: 5.5, halign: 'center' },
+        columnStyles: { 0: { cellWidth: 26, halign: 'left' } },
+        didParseCell(data) {
+            if (data.section !== 'body') return;
+            const colIdx = data.column.index;
+            if (colIdx === 0 || colIdx === headers.length - 1) return;
+            const flags = projectedFlags[data.row.index];
+            if (flags && flags[colIdx - 1]) {
+                data.cell.styles.textColor = [180, 83, 9];
+                data.cell.styles.fontStyle = 'italic';
+                data.cell.styles.fillColor = [254, 243, 199];
+            }
+        },
+        didDrawPage(data) {
+            const pageCount = doc.internal.getNumberOfPages();
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(6);
+            doc.setTextColor(148, 163, 184);
+            doc.text(title, MARGIN, PAGE_H - 5);
+            doc.text(`Page ${data.pageNumber} of ${pageCount}`, PAGE_W - MARGIN, PAGE_H - 5, { align: 'right' });
+        },
+    });
+
+    const now = new Date().toISOString().slice(0, 10);
+    doc.save(`vpx_station_report_${now}.pdf`);
+    showToast('Station report PDF exported.', 'success');
 }
 
 
@@ -11238,14 +11594,16 @@ async function buildIssueReportRows(type, opts = {}) {
         if (error) { showToast('Report failed: ' + error.message, 'error'); return []; }
         const win = _issueReportPeriodWindow(period);
         const rows = (data || []).filter(r => {
-            // Only "resolved" is date-gated by the period — every other included
-            // status reflects current state, not a point-in-time event, so it's
-            // always shown once its checkbox is checked.
-            if (r.status !== 'resolved') return true;
+            // Daily/Weekly/Monthly = activity within the window: reported in
+            // the window, or resolved in the window. All Time is unfiltered.
             if (period === 'all_time') return true;
-            if (!r.resolved_at) return false;
-            const t = new Date(r.resolved_at);
-            return t >= win.from && t <= win.to;
+            const created = new Date(r.created_at);
+            if (created >= win.from && created <= win.to) return true;
+            if (r.status === 'resolved' && r.resolved_at) {
+                const resolved = new Date(r.resolved_at);
+                if (resolved >= win.from && resolved <= win.to) return true;
+            }
+            return false;
         });
         return rows.sort(_issueReportCategorySort);
     }
@@ -11279,6 +11637,7 @@ function _categoryCounts(rows) {
 function _getIssueReportOpts() {
     const type       = document.querySelector('input[name="issueReportType"]:checked')?.value || 'all';
     const period     = document.querySelector('#issueReportPeriodToggle .kd2-create-mode-btn.active')?.dataset.period || 'all_time';
+    const layout     = document.querySelector('#issueReportLayoutToggle .kd2-create-mode-btn.active')?.dataset.layout || 'table';
     const moduleScope = document.querySelector('#issueReportModuleToggle .kd2-create-mode-btn.active')?.dataset.scope || 'current';
     const from     = document.getElementById('issueReportDateFrom')?.value || '';
     const to       = document.getElementById('issueReportDateTo')?.value || '';
@@ -11288,7 +11647,7 @@ function _getIssueReportOpts() {
     const search   = document.getElementById('issueReportSearch')?.value?.trim() || '';
     const statuses   = Array.from(document.querySelectorAll('#issueReportStatusChecklist input:checked')).map(el => el.value);
     const categories = Array.from(document.querySelectorAll('#issueReportCategoryChecklist input:checked')).map(el => el.value);
-    return { type, period, moduleScope, from, to, category, priority, reporter, search, statuses, categories };
+    return { type, period, layout, moduleScope, from, to, category, priority, reporter, search, statuses, categories };
 }
 
 function _issueReportTitle(opts) {
@@ -11325,6 +11684,7 @@ function wireIssueReportModal() {
         radio.addEventListener('change', () => {
             const isStatusReport = document.querySelector('input[name="issueReportType"]:checked')?.value === 'status_report';
             document.getElementById('issueReportPeriodGroup').style.display            = isStatusReport ? '' : 'none';
+            document.getElementById('issueReportLayoutGroup').style.display            = isStatusReport ? '' : 'none';
             document.getElementById('issueReportStatusChecklistGroup').style.display   = isStatusReport ? '' : 'none';
             document.getElementById('issueReportCategoryChecklistGroup').style.display = isStatusReport ? '' : 'none';
             document.getElementById('issueReportDateGroup').style.display           = isStatusReport ? 'none' : '';
@@ -11338,6 +11698,14 @@ function wireIssueReportModal() {
         const btn = e.target.closest('.kd2-create-mode-btn');
         if (!btn) return;
         document.querySelectorAll('#issueReportPeriodToggle .kd2-create-mode-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        updateIssueReportPreview();
+    });
+
+    document.getElementById('issueReportLayoutToggle')?.addEventListener('click', e => {
+        const btn = e.target.closest('.kd2-create-mode-btn');
+        if (!btn) return;
+        document.querySelectorAll('#issueReportLayoutToggle .kd2-create-mode-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         updateIssueReportPreview();
     });
@@ -11523,6 +11891,99 @@ async function exportIssueReportExcel(opts) {
 }
 
 /* ── PDF export (general list + status report) ───────────────────── */
+/** One-page(ish) bullet-point layout for the Status Report — grouped by
+ *  category, prose instead of a grid. Shared shape by PDF and Word. */
+function _issueStatusReportGroups(rows) {
+    const grouped = new Map();
+    rows.forEach(r => {
+        const label = ISSUE_CATEGORY_LABELS[r.category] || r.category || 'Other';
+        if (!grouped.has(label)) grouped.set(label, []);
+        grouped.get(label).push(r);
+    });
+    return [...grouped.keys()].sort((a, b) => a.localeCompare(b)).map(label => ({ label, rows: grouped.get(label) }));
+}
+
+function _renderIssueStatusOnePageReportPDF(doc, rows, title, modLabel) {
+    const PAGE_W = doc.internal.pageSize.getWidth();
+    const PAGE_H = doc.internal.pageSize.getHeight();
+    const MARGIN = 16;
+    const usableW = PAGE_W - MARGIN * 2;
+    let y = MARGIN;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(15);
+    doc.setTextColor(15, 23, 42);
+    doc.text(title, MARGIN, y);
+    y += 6;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Module: ${modLabel}   ·   Generated: ${new Date().toLocaleString('en-GB')}   ·   ${rows.length} issue${rows.length !== 1 ? 's' : ''}`, MARGIN, y);
+    y += 6;
+
+    const counts = _categoryCounts(rows);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(37, 99, 235);
+    const summaryLines = doc.splitTextToSize(counts.map(([label, count]) => `${label}: ${count}`).join('   ·   '), usableW);
+    doc.text(summaryLines, MARGIN, y);
+    y += summaryLines.length * 4 + 4;
+
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.3);
+    doc.line(MARGIN, y, PAGE_W - MARGIN, y);
+    y += 5;
+
+    const ensureRoom = needed => { if (y + needed > PAGE_H - MARGIN) { doc.addPage(); y = MARGIN; } };
+
+    _issueStatusReportGroups(rows).forEach(({ label: catLabel, rows: catRows }) => {
+        ensureRoom(10);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(10.5);
+        doc.setTextColor(30, 58, 138);
+        doc.text(`${catLabel} (${catRows.length})`, MARGIN, y);
+        y += 5;
+
+        catRows.forEach(r => {
+            ensureRoom(14);
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(8.2);
+            doc.setTextColor(15, 23, 42);
+            doc.text(`•  ${r.title || 'Untitled'}`, MARGIN + 2, y);
+            y += 3.6;
+
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(7.2);
+            doc.setTextColor(71, 85, 105);
+            const lines = [];
+            if (r.description) lines.push(`Issue: ${r.description}`);
+            if (r.proposed_solution) lines.push(`Proposed Solution: ${r.proposed_solution}`);
+            if (r.notes) lines.push(`Action Taken: ${r.notes}`);
+            lines.push(`Reported: ${formatIssueDate(r.created_at)}`
+                + (r.resolved_at ? `   ·   Resolved: ${formatIssueDate(r.resolved_at)}` : '')
+                + (r.person_in_charge ? `   ·   PIC: ${r.person_in_charge}` : ''));
+
+            lines.forEach(line => {
+                const wrapped = doc.splitTextToSize(line, usableW - 6);
+                ensureRoom(wrapped.length * 3.4 + 1);
+                doc.text(wrapped, MARGIN + 6, y);
+                y += wrapped.length * 3.4;
+            });
+            y += 2.5;
+        });
+        y += 2;
+    });
+
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let p = 1; p <= pageCount; p++) {
+        doc.setPage(p);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6);
+        doc.setTextColor(148, 163, 184);
+        doc.text(`Page ${p} of ${pageCount}`, PAGE_W - MARGIN, PAGE_H - 6, { align: 'right' });
+    }
+}
+
 async function exportIssueReportPDF(opts) {
     if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (!window.jspdf) { showToast('PDF library not loaded — please refresh.', 'error'); return; }
@@ -11530,12 +11991,22 @@ async function exportIssueReportPDF(opts) {
     const rows = await buildIssueReportRows(opts.type, opts);
 
     const { jsPDF } = window.jspdf;
+    const title = _issueReportTitle(opts);
+    const modLabel = _issueReportModuleLabel(opts);
+    const exportDate = new Date().toISOString().slice(0, 10);
+
+    if (opts.type === 'status_report' && opts.layout === 'report') {
+        const reportDoc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+        _renderIssueStatusOnePageReportPDF(reportDoc, rows, title, modLabel);
+        reportDoc.save(`issues_status_report_${exportDate}.pdf`);
+        showToast('PDF exported.', 'success');
+        return;
+    }
+
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const PAGE_W = doc.internal.pageSize.getWidth();
     const PAGE_H = doc.internal.pageSize.getHeight();
     const MARGIN = 14;
-    const title = _issueReportTitle(opts);
-    const modLabel = _issueReportModuleLabel(opts);
     const isStatusReport = opts.type === 'status_report';
     const isByCategory    = opts.type === 'by_category';
 
@@ -11621,7 +12092,6 @@ async function exportIssueReportPDF(opts) {
         },
     });
 
-    const exportDate = new Date().toISOString().slice(0, 10);
     doc.save(`issues_report_${opts.type}_${exportDate}.pdf`);
     showToast('PDF exported.', 'success');
 }
@@ -11635,6 +12105,29 @@ async function exportIssueReportWord(opts) {
     const modLabel = _issueReportModuleLabel(opts);
     const isStatusReport = opts.type === 'status_report';
     const isByCategory    = opts.type === 'by_category';
+
+    const now = new Date().toISOString().slice(0, 10);
+
+    if (isStatusReport && opts.layout === 'report') {
+        let reportBody = `<h1>${esc(title)}</h1><p class="doc-sub">Module: ${esc(modLabel)} &middot; Generated: ${esc(new Date().toLocaleString('en-GB'))} &middot; ${rows.length} issue${rows.length !== 1 ? 's' : ''}</p>`;
+        reportBody += `<p><strong>${_categoryCounts(rows).map(([label, count]) => `${esc(label)}: ${count}`).join(' &middot; ')}</strong></p>`;
+        _issueStatusReportGroups(rows).forEach(({ label: catLabel, rows: catRows }) => {
+            reportBody += `<h2>${esc(catLabel)} (${catRows.length})</h2><ul>`;
+            catRows.forEach(r => {
+                const meta = [`Reported: ${esc(formatIssueDate(r.created_at))}`];
+                if (r.resolved_at) meta.push(`Resolved: ${esc(formatIssueDate(r.resolved_at))}`);
+                if (r.person_in_charge) meta.push(`PIC: ${esc(r.person_in_charge)}`);
+                reportBody += `<li><strong>${esc(r.title || 'Untitled')}</strong><ul>`;
+                if (r.description) reportBody += `<li>Issue: ${esc(r.description)}</li>`;
+                if (r.proposed_solution) reportBody += `<li>Proposed Solution: ${esc(r.proposed_solution)}</li>`;
+                if (r.notes) reportBody += `<li>Action Taken: ${esc(r.notes)}</li>`;
+                reportBody += `<li>${meta.join(' &middot; ')}</li></ul></li>`;
+            });
+            reportBody += `</ul>`;
+        });
+        exportHtmlAsWord(`issues_status_report_${now}.doc`, title, reportBody);
+        return;
+    }
 
     let body = `<h1>${esc(title)}</h1><p class="doc-sub">Module: ${esc(modLabel)} &middot; Generated: ${esc(new Date().toLocaleString('en-GB'))} &middot; ${rows.length} issue${rows.length !== 1 ? 's' : ''}</p>`;
 
@@ -11681,7 +12174,6 @@ async function exportIssueReportWord(opts) {
     }
     body += `</table>`;
 
-    const now = new Date().toISOString().slice(0, 10);
     exportHtmlAsWord(`issues_report_${opts.type}_${now}.doc`, title, body);
 }
 
