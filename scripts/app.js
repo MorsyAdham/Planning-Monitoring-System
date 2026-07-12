@@ -11838,24 +11838,25 @@ function _closeIssueModal() {
    application/msword MIME type — Word/Google Docs open this natively,
    no docx-generation library required. */
 const WORD_DOC_STYLE = `
-    body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #1e293b; }
-    h1 { font-size: 16pt; margin: 0 0 4px; }
-    .doc-sub { font-size: 9pt; color: #64748b; margin: 0 0 16px; }
-    h2 { font-size: 12pt; margin: 18px 0 6px; border-bottom: 1px solid #cbd5e1; padding-bottom: 3px; }
+    body { font-family: Calibri, Arial, sans-serif; font-size: 12pt; color: #1e293b; }
+    h1 { font-size: 22pt; margin: 0 0 5px; color: #0f172a; }
+    .doc-sub { font-size: 11pt; color: #64748b; margin: 0 0 18px; }
+    h2 { font-size: 15pt; margin: 22px 0 10px; background: #1e3a8a; color: #ffffff; padding: 8px 12px; border-radius: 3px; }
+    h2:first-of-type { margin-top: 4px; }
     table { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
-    th, td { border: 1px solid #cbd5e1; padding: 5px 7px; font-size: 9pt; text-align: left; vertical-align: top; }
+    th, td { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 10pt; text-align: left; vertical-align: top; }
     th { background: #1e3a5f; color: #e2e8f0; }
     tr:nth-child(even) td { background: #f8fafc; }
-    .doc-summary-table th, .doc-summary-table td { font-size: 9.5pt; }
-    .issue-report-card { border: 1px solid #e2e8f0; border-left: 4px solid #1e3a8a; padding: 10px 16px; margin: 0 0 16px; }
-    .issue-report-title { font-size: 15pt; font-weight: bold; margin: 0 0 3px; color: #0f172a; }
-    .issue-report-byline { font-size: 11pt; font-style: italic; color: #64748b; margin: 0 0 8px; }
-    .issue-report-sec { font-size: 12pt; margin: 0 0 6px; color: #334155; }
-    .issue-report-sec-label { font-weight: bold; display: block; margin-bottom: 1px; }
+    .doc-summary-table th, .doc-summary-table td { font-size: 10.5pt; }
+    .issue-report-card { border: 1px solid #e2e8f0; border-left: 5px solid #2563eb; background: #f8fafc; border-radius: 4px; padding: 14px 18px; margin: 0 0 20px; }
+    .issue-report-title { font-size: 16pt; font-weight: bold; margin: 0 0 4px; color: #0f172a; }
+    .issue-report-byline { font-size: 11.5pt; font-style: italic; color: #64748b; margin: 0 0 12px; }
+    .issue-report-sec { font-size: 12.5pt; margin: 0 0 10px; color: #334155; line-height: 1.4; }
+    .issue-report-sec-label { font-weight: bold; display: block; margin-bottom: 2px; }
     .issue-report-sec-issue { color: #0f172a; }
     .issue-report-sec-solution { color: #155e75; }
     .issue-report-sec-action { color: #15803d; }
-    .issue-report-meta { font-size: 10.5pt; color: #64748b; margin: 8px 0 0; border-top: 1px solid #e2e8f0; padding-top: 5px; }
+    .issue-report-meta { font-size: 11pt; color: #64748b; margin: 12px 0 0; border-top: 1px solid #e2e8f0; padding-top: 8px; }
     .issue-report-pic { color: #b45309; font-weight: bold; }
 `;
 
@@ -12285,103 +12286,137 @@ function _renderIssueStatusOnePageReportPDF(doc, rows, title, modLabel) {
     let y = MARGIN;
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(20);
+    doc.setFontSize(24);
     doc.setTextColor(15, 23, 42);
     doc.text(title, MARGIN, y);
-    y += 8;
+    y += 9.5;
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10.5);
+    doc.setFontSize(11.5);
     doc.setTextColor(100, 116, 139);
     doc.text(`Module: ${modLabel}   ·   Generated: ${new Date().toLocaleString('en-GB')}   ·   ${rows.length} issue${rows.length !== 1 ? 's' : ''}`, MARGIN, y);
-    y += 7.5;
+    y += 9;
 
     const counts = _categoryCounts(rows);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
+    doc.setFontSize(12);
     doc.setTextColor(37, 99, 235);
     const summaryLines = doc.splitTextToSize(counts.map(([label, count]) => `${label}: ${count}`).join('   ·   '), usableW);
     doc.text(summaryLines, MARGIN, y);
-    y += summaryLines.length * 5 + 5;
+    y += summaryLines.length * 6 + 6;
 
     doc.setDrawColor(203, 213, 225);
-    doc.setLineWidth(0.3);
+    doc.setLineWidth(0.4);
     doc.line(MARGIN, y, PAGE_W - MARGIN, y);
-    y += 7;
+    y += 9;
 
     const ensureRoom = needed => { if (y + needed > PAGE_H - MARGIN) { doc.addPage(); y = MARGIN; } };
 
+    const BAR_W = 3.2;
+    const PAD_X = 7;
+    const PAD_TOP = 6;
+    const PAD_BOTTOM = 5;
+    const tx = MARGIN + BAR_W + PAD_X;
+    const textW = usableW - BAR_W - PAD_X * 2;
+
     _issueStatusReportGroups(rows).forEach(({ label: catLabel, rows: catRows }) => {
-        ensureRoom(14);
+        ensureRoom(18);
+        // Category band — a solid header bar so each group is unmistakably separated.
+        doc.setFillColor(30, 58, 138);
+        doc.roundedRect(MARGIN, y - 6.5, usableW, 10.5, 1.6, 1.6, 'F');
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(14);
-        doc.setTextColor(30, 58, 138);
-        doc.text(`${catLabel} (${catRows.length})`, MARGIN, y);
-        y += 7;
+        doc.setFontSize(14.5);
+        doc.setTextColor(255, 255, 255);
+        doc.text(`${catLabel}  ·  ${catRows.length} issue${catRows.length !== 1 ? 's' : ''}`, MARGIN + 5, y + 1);
+        y += 12;
 
         catRows.forEach(r => {
-            ensureRoom(22);
+            // ── measure pass — compute the card's full height before drawing anything ──
             doc.setFont('helvetica', 'bold');
-            doc.setFontSize(12.5);
-            doc.setTextColor(15, 23, 42);
-            const titleWrapped = doc.splitTextToSize(`•  ${r.title || 'Untitled'}`, usableW - 2);
-            doc.text(titleWrapped, MARGIN + 2, y);
-            y += titleWrapped.length * 5;
+            doc.setFontSize(15);
+            const titleLines = doc.splitTextToSize(r.title || 'Untitled', textW);
 
             const reporter = r.reporter_name || r.reporter_email || 'Unknown';
-            doc.setFont('helvetica', 'italic');
-            doc.setFontSize(9.5);
-            doc.setTextColor(100, 116, 139);
-            doc.text(`Reported by: ${reporter}`, MARGIN + 6, y);
-            y += 6;
 
             const sections = [
                 { label: 'Issue', value: r.description, color: [15, 23, 42] },
                 { label: 'Proposed Solution', value: r.proposed_solution, color: [21, 94, 117] },
                 { label: 'Action Taken', value: r.notes, color: [21, 128, 61] },
-            ];
-            sections.forEach(sec => {
-                if (!sec.value) return;
-                ensureRoom(10);
-                doc.setFont('helvetica', 'bold');
-                doc.setFontSize(10.5);
-                doc.setTextColor(sec.color[0], sec.color[1], sec.color[2]);
-                doc.text(`${sec.label}:`, MARGIN + 6, y);
-                y += 5;
-                doc.setFont('helvetica', 'normal');
-                doc.setFontSize(10);
-                doc.setTextColor(51, 65, 85);
-                const wrapped = doc.splitTextToSize(sec.value, usableW - 10);
-                ensureRoom(wrapped.length * 4.6);
-                doc.text(wrapped, MARGIN + 10, y);
-                y += wrapped.length * 4.6 + 2;
-            });
+            ].filter(s => s.value);
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(11.5);
+            const sectionData = sections.map(sec => ({ ...sec, wrapped: doc.splitTextToSize(sec.value, textW) }));
 
             const meta = [`Reported: ${formatIssueDate(r.created_at)}`];
             if (r.resolved_at) meta.push(`Resolved: ${formatIssueDate(r.resolved_at)}`);
+
+            const titleH = titleLines.length * 6.4;
+            const bylineH = 6.5;
+            const sectionsH = sectionData.reduce((sum, sec) => sum + 6 + sec.wrapped.length * 5.4 + 2.5, 0);
+            const dividerGap = 5;
+            const metaH = 6;
+            const cardH = PAD_TOP + titleH + bylineH + sectionsH + dividerGap + metaH + PAD_BOTTOM;
+
+            ensureRoom(cardH + 7);
+
+            const cardTop = y;
+            doc.setFillColor(248, 250, 252);
+            doc.setDrawColor(226, 232, 240);
+            doc.setLineWidth(0.35);
+            doc.roundedRect(MARGIN, cardTop, usableW, cardH, 2.2, 2.2, 'FD');
+            doc.setFillColor(37, 99, 235);
+            doc.rect(MARGIN, cardTop, BAR_W, cardH, 'F');
+
+            let cy = cardTop + PAD_TOP + 4;
+
             doc.setFont('helvetica', 'bold');
-            doc.setFontSize(9.5);
+            doc.setFontSize(15);
+            doc.setTextColor(15, 23, 42);
+            doc.text(titleLines, tx, cy);
+            cy += titleH;
+
+            doc.setFont('helvetica', 'italic');
+            doc.setFontSize(10.5);
             doc.setTextColor(100, 116, 139);
-            ensureRoom(6);
-            doc.text(meta.join('   ·   '), MARGIN + 6, y);
-            if (r.person_in_charge) {
-                doc.setTextColor(180, 83, 9);
-                doc.text(`PIC: ${r.person_in_charge}`, MARGIN + 6 + doc.getTextWidth(meta.join('   ·   ')) + 5, y);
-            }
-            y += 5;
+            doc.text(`Reported by: ${reporter}`, tx, cy);
+            cy += bylineH;
+
+            sectionData.forEach(sec => {
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(11.5);
+                doc.setTextColor(sec.color[0], sec.color[1], sec.color[2]);
+                doc.text(`${sec.label}:`, tx, cy);
+                cy += 6;
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(11.5);
+                doc.setTextColor(51, 65, 85);
+                doc.text(sec.wrapped, tx, cy);
+                cy += sec.wrapped.length * 5.4 + 2.5;
+            });
 
             doc.setDrawColor(226, 232, 240);
-            doc.setLineWidth(0.15);
-            doc.line(MARGIN + 2, y, PAGE_W - MARGIN, y);
-            y += 5;
+            doc.setLineWidth(0.25);
+            doc.line(tx, cy, MARGIN + usableW - PAD_X, cy);
+            cy += 5.5;
+
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(10.5);
+            doc.setTextColor(100, 116, 139);
+            doc.text(meta.join('   ·   '), tx, cy);
+            if (r.person_in_charge) {
+                doc.setTextColor(180, 83, 9);
+                doc.text(`PIC: ${r.person_in_charge}`, tx + doc.getTextWidth(meta.join('   ·   ')) + 6, cy);
+            }
+
+            y = cardTop + cardH + 7;
         });
-        y += 3;
+        y += 4;
     });
 
     const pageCount = doc.internal.getNumberOfPages();
     for (let p = 1; p <= pageCount; p++) {
         doc.setPage(p);
         doc.setFont('helvetica', 'normal');
-        doc.setFontSize(6);
+        doc.setFontSize(8);
         doc.setTextColor(148, 163, 184);
         doc.text(`Page ${p} of ${pageCount}`, PAGE_W - MARGIN, PAGE_H - 6, { align: 'right' });
     }
@@ -12521,7 +12556,7 @@ async function exportIssueReportWord(opts) {
 
     if (isStatusReport && opts.layout === 'report') {
         let reportBody = `<h1>${esc(title)}</h1><p class="doc-sub">Module: ${esc(modLabel)} &middot; Generated: ${esc(new Date().toLocaleString('en-GB'))} &middot; ${rows.length} issue${rows.length !== 1 ? 's' : ''}</p>`;
-        reportBody += `<p><strong>${_categoryCounts(rows).map(([label, count]) => `${esc(label)}: ${count}`).join(' &middot; ')}</strong></p>`;
+        reportBody += `<p style="font-size:13pt;font-weight:bold;color:#2563eb;margin:0 0 10px">${_categoryCounts(rows).map(([label, count]) => `${esc(label)}: ${count}`).join(' &middot; ')}</p>`;
         _issueStatusReportGroups(rows).forEach(({ label: catLabel, rows: catRows }) => {
             reportBody += `<h2>${esc(catLabel)} (${catRows.length})</h2>`;
             catRows.forEach(r => {
