@@ -1730,6 +1730,31 @@ export function renderSharedDialogs() {
             </div>
         </div>
 
+        <!-- ═══════════════════════════════════ VPX DELAY REASON MODAL -->
+        <div class="modal-overlay" id="vpxDelayReasonModalOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="vpxDelayReasonModalTitle">
+            <div class="modal">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="vpxDelayReasonModalTitle">Delay Reason</h4>
+                    <button class="modal-close" id="vpxDelayReasonModalClose" aria-label="Close">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label class="form-label">Main reason for this vehicle's delay
+                            <span class="form-label-optional">(shown in the Station Report, after the Delay column)</span></label>
+                        <textarea id="vpxDelayReasonText" class="issue-form-textarea" rows="4"
+                            placeholder="e.g. Waiting on machining rework after a dimensional NCR…"></textarea>
+                    </div>
+                    <p class="vpx-delay-reason-hint" id="vpxDelayReasonViewerHint" style="display:none">
+                        Only planners and admins can edit this.</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-ghost" id="vpxDelayReasonCancel">Cancel</button>
+                    <button class="btn btn-primary" id="vpxDelayReasonSave">Save</button>
+                </div>
+            </div>
+        </div>
+
         <!-- ═══════════════════════════════════ GENERIC REPORT PREVIEW MODAL -->
         <div class="modal-overlay" id="genericPreviewModalOverlay" style="display:none;" role="dialog" aria-modal="true"
             aria-labelledby="genericPreviewModalTitle">

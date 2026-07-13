@@ -845,6 +845,7 @@ let _tableFilters  = [];          // [{ id, field, fieldLabel, value }]
 let _filterSeq     = 0;           // unique id counter for filter chips
 let unitCodeMap = {};      // { 'K9||M1': 'EGY N25020', ... }
 let unitRegistryRows = [];
+let vpxDelayReasonMap = {}; // { 'K9||M1': { id: <kd2_vehicle_units.id>, reason: 'text' }, ... } — KD2 only
 let activePlanId = null;    // plan row being marked complete
 
 /* ──────────────────────────────────────────────────────────────────
@@ -1250,11 +1251,20 @@ async function loadUnitCodes() {
     try {
         unitCodeMap = {};
         unitRegistryRows = [];
+        vpxDelayReasonMap = {};
         if (isKD2Module()) {
-            const [{ data: units, error: unitsError }, { data: battalions, error: battalionError }] = await Promise.all([
-                db.from('kd2_vehicle_units').select('battalion_id, vehicle_type, unit_serial, unit_label, unit_code'),
-                db.from('kd2_battalions').select('id, battalion_code'),
-            ]);
+            // delay_reason may not exist yet on a not-yet-migrated database —
+            // retry without it rather than losing unit codes entirely.
+            const UNIT_COLS = 'id, battalion_id, vehicle_type, unit_serial, unit_label, unit_code, delay_reason';
+            let unitsResult = await db.from('kd2_vehicle_units').select(UNIT_COLS);
+            if (unitsResult.error) {
+                const retryPayload = _stripUndefinedColumn({ delay_reason: null }, unitsResult.error);
+                if (retryPayload) {
+                    unitsResult = await db.from('kd2_vehicle_units').select(UNIT_COLS.replace(', delay_reason', ''));
+                }
+            }
+            const { data: units, error: unitsError } = unitsResult;
+            const { data: battalions, error: battalionError } = await db.from('kd2_battalions').select('id, battalion_code');
             if (unitsError) throw unitsError;
             if (battalionError) throw battalionError;
             const battalionMap = Object.fromEntries((battalions || []).map(row => [row.id, row.battalion_code]));
@@ -1264,8 +1274,13 @@ async function loadUnitCodes() {
                 const fallbackLabel = battalionCode
                     ? `${battalionCode} / ${r.vehicle_type}-${String(r.unit_serial).padStart(2, '0')}`
                     : `${r.vehicle_type}-${String(r.unit_serial).padStart(2, '0')}`;
-                if (r.unit_label) unitCodeMap[r.vehicle_type + '||' + r.unit_label] = code;
-                unitCodeMap[r.vehicle_type + '||' + fallbackLabel] = code;
+                const key1 = r.unit_label ? r.vehicle_type + '||' + r.unit_label : null;
+                const key2 = r.vehicle_type + '||' + fallbackLabel;
+                if (key1) unitCodeMap[key1] = code;
+                unitCodeMap[key2] = code;
+                const drEntry = { id: r.id, reason: r.delay_reason || '' };
+                if (key1) vpxDelayReasonMap[key1] = drEntry;
+                vpxDelayReasonMap[key2] = drEntry;
                 unitRegistryRows.push({
                     battalion_id: r.battalion_id,
                     battalion_code: battalionCode || '—',
@@ -1294,6 +1309,7 @@ async function loadUnitCodes() {
         console.warn('Unit codes table not found or error — unit codes disabled:', e.message);
         unitCodeMap = {};
         unitRegistryRows = [];
+        vpxDelayReasonMap = {};
     }
 }
 
@@ -4057,6 +4073,15 @@ function renderVPX(data) {
         var rowPctHtml = row.total > 0
             ? '<div class="vpx-unit-pct-row"><div class="vpx-unit-pct-bar-wrap"><div class="vpx-unit-pct-bar-fill" style="width:' + rowPct + '%"></div></div><span class="vpx-unit-pct-text">' + row.done + '/' + row.total + ' (' + rowPct + '%)</span></div>'
             : '';
+        var drEntry = isKD2Module() ? getDelayReasonEntry(row.vehicle, row.vehicle_no) : null;
+        var drHasReason = !!(drEntry && drEntry.reason);
+        var drBtnHtml = drEntry
+            ? '<button type="button" class="vpx-delay-reason-btn' + (drHasReason ? ' has-reason' : '') + '"'
+                + ' data-vpx-vehicle="' + esc(row.vehicle) + '" data-vpx-unit="' + esc(row.vehicle_no) + '"'
+                + ' title="' + (drHasReason ? 'Delay reason: ' + esc(drEntry.reason) : 'Add a delay reason') + '">'
+                + '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 2.5h7.5L13 5v8.5a1 1 0 01-1 1H3a1 1 0 01-1-1v-10a1 1 0 011-1z"/><path d="M9.5 2.5V5H13"/><path d="M4.5 8h5M4.5 10.5h3.5"/></svg>'
+                + '</button>'
+            : '';
         html += '<td class="vpx-td-vehicle vpx-td-unit">'
             + '<div class="vpx-unit-inner">'
             + '<span class="vpx-unit-dot"></span>'
@@ -4065,6 +4090,7 @@ function renderVPX(data) {
             + (secondaryLabel ? '<span class="vpx-unit-code">' + esc(secondaryLabel) + '</span>' : '')
             + rowPctHtml
             + '</div>'
+            + drBtnHtml
             + '</div>'
             + '</td>';
 
@@ -5707,6 +5733,7 @@ function wireEvents() {
     wireReportModal();
     wireIssueReportModal();
     wireVpxReportModal();
+    wireVpxDelayReasonModal();
 
     // Notification bell (F100-KD2 and F200-KD2)
     wireNotifBell();
@@ -6018,6 +6045,15 @@ function getUnitCode(vehicle, vehicle_no) {
 function unitLabel(vehicle, vehicle_no) {
     const code = getUnitCode(vehicle, vehicle_no);
     return code ? vehicle_no + ' · ' + code : vehicle_no;
+}
+
+/** Delay-reason lookup — { id, reason } for a vehicle+unit, or null if the
+ *  vehicle isn't registered in Unit Codes (no row to attach a reason to). */
+function getDelayReasonEntry(vehicle, vehicle_no) {
+    return vpxDelayReasonMap[vehicle + '||' + vehicle_no] || null;
+}
+function getDelayReason(vehicle, vehicle_no) {
+    return getDelayReasonEntry(vehicle, vehicle_no)?.reason || '';
 }
 
 function daysBetween(from, to) {
@@ -9977,7 +10013,9 @@ async function exportVpxStationReportExcel(preview) {
         views: [{ state: 'frozen', xSplit: 1, ySplit: 5 }],
     });
 
-    const totalCols = 1 + activeCols.length + 1; // vehicle col + stations + Delay col
+    const totalCols = 1 + activeCols.length + 2; // vehicle col + stations + Delay + Delay Reason cols
+    const delayCol = totalCols - 1;
+    const reasonCol = totalCols;
 
     ws.mergeCells(1, 1, 1, totalCols);
     const titleCell = ws.getCell(1, 1);
@@ -9993,10 +10031,10 @@ async function exportVpxStationReportExcel(preview) {
 
     ws.addRow([]); ws.getRow(3).height = 6;
 
-    // Row 4 — station group header (blank over the Delay column)
+    // Row 4 — station group header (blank over the Delay/Delay Reason columns)
     const grpRowData = [''];
     activeCols.forEach(col => grpRowData.push(col.group));
-    grpRowData.push('');
+    grpRowData.push('', '');
     ws.addRow(grpRowData);
     ws.getRow(4).height = 18;
     let grpStart = 2, grpCurrent = activeCols[0]?.group;
@@ -10025,15 +10063,15 @@ async function exportVpxStationReportExcel(preview) {
     unitHdr4.alignment = { horizontal: 'center', vertical: 'middle' };
     ws.getCell(4, totalCols).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
 
-    // Row 5 — station code header + "Delay"
+    // Row 5 — station code header + "Delay" + "Delay Reason"
     const codeRowData = [''];
     activeCols.forEach(col => codeRowData.push(col.code));
-    codeRowData.push('Delay');
+    codeRowData.push('Delay', 'Delay Reason');
     ws.addRow(codeRowData);
     ws.getRow(5).height = 16;
     for (let c = 1; c <= totalCols; c++) {
         const cell = ws.getCell(5, c);
-        const isEdge = c === 1 || c === totalCols;
+        const isEdge = c === 1 || c === delayCol || c === reasonCol;
         cell.font = { name: 'Calibri', size: 8, bold: true, color: { argb: isEdge ? 'FFffffff' : 'FF1e293b' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isEdge ? 'FF1e293b' : 'FFf1f5f9' } };
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -10063,24 +10101,24 @@ async function exportVpxStationReportExcel(preview) {
         const actualRowN = excelRowIdx + 1;
 
         // Plan row
-        ws.addRow(['', ...cells.map(c => c.planned ? formatDateShort(c.planned) : ''), '']);
+        ws.addRow(['', ...cells.map(c => c.planned ? formatDateShort(c.planned) : ''), '', '']);
         ws.getRow(planRowN).eachCell({ includeEmpty: true }, (cell, colN) => {
             cell.font = { name: 'Calibri', size: 8, color: { argb: 'FF475569' } };
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf8fafc' } };
             cell.border = bord();
             cell.alignment = { horizontal: colN === 1 ? 'left' : 'center', vertical: 'middle' };
         });
-        ws.getCell(planRowN, totalCols).value = 'Plan';
-        ws.getCell(planRowN, totalCols).font = { name: 'Calibri', size: 7, italic: true, color: { argb: 'FF94a3b8' } };
+        ws.getCell(planRowN, delayCol).value = 'Plan';
+        ws.getCell(planRowN, delayCol).font = { name: 'Calibri', size: 7, italic: true, color: { argb: 'FF94a3b8' } };
         excelRowIdx++;
 
         // Actual row — real completions are red (late) / green (on-time);
         // not-yet-finished (projected) cells are light-grey text, no fill.
         const actualVals = cells.map(c => c.actual ? formatDateShort(c.actual) : (c.planned ? '' : '—'));
-        ws.addRow(['', ...actualVals, finalDelay > 0 ? `+${finalDelay}d` : '0d']);
+        ws.addRow(['', ...actualVals, finalDelay > 0 ? `+${finalDelay}d` : '0d', '']);
         ws.getRow(actualRowN).eachCell({ includeEmpty: true }, (cell, colN) => {
-            const isDelayCol = colN === totalCols;
-            const c = colN > 1 && !isDelayCol ? cells[colN - 2] : null;
+            const isDelayCol = colN === delayCol;
+            const c = colN > 1 && !isDelayCol && colN !== reasonCol ? cells[colN - 2] : null;
             const isProjected = !!c?.projected;
             const isLate = !!c?.late;
             const isReal = c && !c.projected && c.actual;
@@ -10116,6 +10154,16 @@ async function exportVpxStationReportExcel(preview) {
         vehCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
         vehCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
 
+        // Delay Reason — editable per-vehicle note (VPX matrix "note" icon),
+        // merged the same way as the vehicle label.
+        const delayReason = getDelayReason(row.vehicle, row.vehicle_no);
+        ws.mergeCells(planRowN, reasonCol, actualRowN, reasonCol);
+        const reasonCell = ws.getCell(planRowN, reasonCol);
+        reasonCell.value = delayReason || '—';
+        reasonCell.font = { name: 'Calibri', size: 8, italic: !delayReason, color: { argb: delayReason ? 'FF78350f' : 'FF94a3b8' } };
+        reasonCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: delayReason ? 'FFfffbeb' : 'FFffffff' } };
+        reasonCell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true, indent: 1 };
+
         // Clear separation between vehicle blocks: thick top border on the
         // Plan row, thick bottom border on the Actual row, across every column.
         for (let c = 1; c <= totalCols; c++) {
@@ -10125,8 +10173,9 @@ async function exportVpxStationReportExcel(preview) {
     });
 
     ws.getColumn(1).width = 22;
-    for (let i = 2; i <= totalCols - 1; i++) ws.getColumn(i).width = 11;
-    ws.getColumn(totalCols).width = 10;
+    for (let i = 2; i <= delayCol - 1; i++) ws.getColumn(i).width = 11;
+    ws.getColumn(delayCol).width = 10;
+    ws.getColumn(reasonCol).width = 34;
 
     // ── Key & Legend worksheet — explains the file and how to read it ──
     const wsKey2 = wb.addWorksheet('Key & Legend');
@@ -10177,6 +10226,7 @@ async function exportVpxStationReportExcel(preview) {
     keyLine(14, 'Delay column', 'The vehicle\'s most recently recorded delay: (actual completion date) − (planned end date) of its last finished station, in working days. 0d or blank means on schedule.');
     keyLine(15, 'Projected date', 'For each not-yet-finished station, its planned end date is shifted forward by the vehicle\'s current carried delay (the same value shown in the Delay column at that point in the route). This carried delay updates at every station that has a real actual date, and rolls forward unchanged through every station that doesn\'t.');
     keyLine(16, 'Example', 'A vehicle finishes Welding 3 working days late. Every later station\'s projected date (Machining, Painting, …) is shown 3 working days after its own planned date, until the vehicle records a new actual date that resets the carried delay.');
+    keyLine(17, 'Delay Reason column', 'A free-text note explaining the vehicle\'s main delay, entered by a planner/admin on the VPX matrix (click the note icon on the vehicle\'s row). One current reason per vehicle — editing it overwrites the previous note.');
 
     // ── Save ───────────────────────────────────────────────────────
     const now = new Date().toISOString().slice(0, 10);
@@ -10222,7 +10272,7 @@ async function exportVpxStationReportPDF(preview) {
     doc.setTextColor(100, 116, 139);
     doc.text('Generated: ' + new Date().toLocaleString('en-GB'), PAGE_W - MARGIN, 10, { align: 'right' });
 
-    const headers = ['Vehicle', ...activeCols.map(c => c.code), 'Delay'];
+    const headers = ['Vehicle', ...activeCols.map(c => c.code), 'Delay', 'Delay Reason'];
     const body = [];
     const cellFlags = []; // parallel to body — {projected,late,real} per station cell, per row
     const vehicleBlockStartRows = []; // body row index where each vehicle's Plan row starts
@@ -10231,6 +10281,7 @@ async function exportVpxStationReportPDF(preview) {
         const { cells, finalDelay } = _vpxProjectRow(row, activeCols);
         const code = getUnitCode(row.vehicle, row.vehicle_no);
         const label = `${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
+        const delayReason = getDelayReason(row.vehicle, row.vehicle_no);
 
         vehicleBlockStartRows.push(body.length);
 
@@ -10238,6 +10289,7 @@ async function exportVpxStationReportPDF(preview) {
             { content: label, rowSpan: 2, styles: { valign: 'middle', halign: 'center', fillColor: [51, 65, 85], textColor: [255, 255, 255], fontStyle: 'bold' } },
             ...cells.map(c => c.planned ? formatDateShort(c.planned) : ''),
             '',
+            { content: delayReason || '—', rowSpan: 2, styles: { valign: 'middle', halign: 'left', fillColor: delayReason ? [255, 251, 235] : [255, 255, 255], textColor: delayReason ? [120, 53, 15] : [148, 163, 184], fontStyle: delayReason ? 'normal' : 'italic' } },
         ]);
         cellFlags.push(cells.map(() => ({ projected: false, late: false, real: false })));
 
@@ -10254,7 +10306,7 @@ async function exportVpxStationReportPDF(preview) {
         margin: { left: MARGIN, right: MARGIN },
         styles: { fontSize: 5.5, cellPadding: 1.2, font: 'helvetica', textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.15 },
         headStyles: { fillColor: [30, 58, 138], textColor: [241, 245, 249], fontStyle: 'bold', fontSize: 5.5, halign: 'center' },
-        columnStyles: { 0: { cellWidth: 26, halign: 'left' } },
+        columnStyles: { 0: { cellWidth: 26, halign: 'left' }, [headers.length - 1]: { cellWidth: 40, halign: 'left' } },
         didParseCell(data) {
             if (data.section !== 'body') return;
             const rowIdx = data.row.index;
@@ -10271,10 +10323,11 @@ async function exportVpxStationReportPDF(preview) {
             const flags = cellFlags[rowIdx];
             const isPlanRow = vehicleBlockStartRows.includes(rowIdx);
             if (colIdx === 0 && isPlanRow) return; // vehicle label cell, styled inline above
+            if (colIdx === headers.length - 1) return; // Delay Reason cell (Plan row only, via rowSpan), styled inline above
             // Column 0 is the vehicle label (Plan row only, via rowSpan) — station
             // columns always start at table column index 1 in both Plan and Actual rows.
             const stationColIdx = colIdx - 1;
-            if (colIdx === headers.length - 1) {
+            if (colIdx === headers.length - 2) {
                 // Delay column
                 if (!isPlanRow) {
                     const text = String(data.cell.raw || '');
@@ -10343,6 +10396,7 @@ async function exportVpxStationReportPDF(preview) {
     keyLine('Delay column', 'The vehicle\'s most recently recorded delay: (actual completion date) minus (planned end date) of its last finished station, in working days. 0d means on schedule.');
     keyLine('Projected date', 'Each not-yet-finished station\'s planned end date is shifted forward by the vehicle\'s current carried delay. This carried delay updates at every station with a real actual date, and rolls forward unchanged through every station that doesn\'t.');
     keyLine('Example', 'A vehicle finishes Welding 3 working days late. Every later station\'s projected date is shown 3 working days after its own planned date, until a new actual date resets the carried delay.');
+    keyLine('Delay Reason column', 'A free-text note explaining the vehicle\'s main delay, entered by a planner/admin on the VPX matrix (click the note icon on the vehicle\'s row). One current reason per vehicle — editing it overwrites the previous note.');
 
     const now = new Date().toISOString().slice(0, 10);
     const doDownload = () => { doc.save(`vpx_station_report_${now}.pdf`); showToast('Station report PDF exported.', 'success'); };
@@ -10385,6 +10439,75 @@ function wireVpxReportModal() {
         const preview = !!document.getElementById('vpxReportPreviewToggle')?.checked;
         if (type === 'station') await exportVpxStationReportExcel(preview); else await exportVpxExcel(preview);
         if (!preview) close();
+    });
+}
+
+/* ─── VPX delay-reason editing — click the note icon on a vehicle's row
+   header to view/edit why it's delayed; flows into the Station Report as
+   the "Delay Reason" column. Gated by the same permission as plan edits. ── */
+function openVpxDelayReasonModal(vehicle, vehicleNo) {
+    const overlay = document.getElementById('vpxDelayReasonModalOverlay');
+    if (!overlay) return;
+    const entry = getDelayReasonEntry(vehicle, vehicleNo);
+    if (!entry) {
+        showToast('Add this vehicle in Unit Codes first to attach a delay reason.', 'error');
+        return;
+    }
+
+    const titleEl = document.getElementById('vpxDelayReasonModalTitle');
+    if (titleEl) titleEl.textContent = `Delay Reason — ${vehicle} ${vehicleNo}`;
+    const textEl = document.getElementById('vpxDelayReasonText');
+    if (textEl) textEl.value = entry.reason || '';
+
+    const canEdit = canEditPlan();
+    if (textEl) textEl.disabled = !canEdit;
+    const saveBtn = document.getElementById('vpxDelayReasonSave');
+    if (saveBtn) saveBtn.style.display = canEdit ? '' : 'none';
+    const hint = document.getElementById('vpxDelayReasonViewerHint');
+    if (hint) hint.style.display = canEdit ? 'none' : '';
+
+    overlay.dataset.rowId = entry.id;
+    overlay.dataset.vehicle = vehicle;
+    overlay.dataset.vehicleNo = vehicleNo;
+    overlay.style.display = 'flex';
+}
+
+async function saveVpxDelayReason() {
+    const overlay = document.getElementById('vpxDelayReasonModalOverlay');
+    const rowId = overlay?.dataset?.rowId;
+    if (!rowId) return;
+    if (!canEditPlan()) { showToast('Only planners and admins can edit the delay reason.', 'error'); return; }
+
+    const text = document.getElementById('vpxDelayReasonText')?.value?.trim() || '';
+    const saveBtn = document.getElementById('vpxDelayReasonSave');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+
+    const { error } = await db.from('kd2_vehicle_units').update({ delay_reason: text || null }).eq('id', rowId);
+
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
+    if (error) { showToast('Failed to save: ' + error.message, 'error'); return; }
+
+    const vehicle = overlay.dataset.vehicle, vehicleNo = overlay.dataset.vehicleNo;
+    const entry = getDelayReasonEntry(vehicle, vehicleNo);
+    if (entry) entry.reason = text;
+    showToast('Delay reason saved.', 'success');
+    overlay.style.display = 'none';
+    if (currentData?.length) renderVPX(currentData);
+}
+
+function wireVpxDelayReasonModal() {
+    const overlay = document.getElementById('vpxDelayReasonModalOverlay');
+    if (!overlay) return;
+    const close = () => { overlay.style.display = 'none'; };
+    document.getElementById('vpxDelayReasonModalClose')?.addEventListener('click', close);
+    document.getElementById('vpxDelayReasonCancel')?.addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    document.getElementById('vpxDelayReasonSave')?.addEventListener('click', saveVpxDelayReason);
+
+    document.getElementById('vpxMatrix')?.addEventListener('click', e => {
+        const btn = e.target.closest('.vpx-delay-reason-btn');
+        if (!btn) return;
+        openVpxDelayReasonModal(btn.dataset.vpxVehicle, btn.dataset.vpxUnit);
     });
 }
 

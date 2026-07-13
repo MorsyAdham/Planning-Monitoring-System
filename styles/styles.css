@@ -8329,6 +8329,45 @@ th.vpx-grp-processing:first-of-type {
     white-space: nowrap;
 }
 
+/* ─── VPX per-vehicle delay-reason button ──────────────────────── */
+.vpx-delay-reason-btn {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    margin-left: auto;
+    padding: 0;
+    border-radius: 6px;
+    border: 1px solid var(--clr-border);
+    background: transparent;
+    color: var(--clr-text-muted);
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+}
+.vpx-delay-reason-btn svg { width: 13px; height: 13px; }
+.vpx-delay-reason-btn:hover {
+    border-color: rgba(79, 142, 247, .5);
+    color: #93c5fd;
+    background: rgba(79, 142, 247, .1);
+}
+.vpx-delay-reason-btn.has-reason {
+    border-color: rgba(245, 158, 11, .5);
+    color: #f59e0b;
+    background: rgba(245, 158, 11, .12);
+}
+[data-theme="light"] .vpx-delay-reason-btn.has-reason {
+    color: #b45309;
+    background: rgba(245, 158, 11, .14);
+}
+
+.vpx-delay-reason-hint {
+    margin-top: 10px;
+    font-size: .78rem;
+    color: var(--clr-text-muted);
+}
+
 /* ─── Table % Done cell (F100) ─────────────────────────────────── */
 .tbl-pct-cell {
     white-space: nowrap;
