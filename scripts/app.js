@@ -10063,18 +10063,19 @@ async function exportVpxStationReportExcel(preview) {
     unitHdr4.alignment = { horizontal: 'center', vertical: 'middle' };
     ws.getCell(4, totalCols).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
 
-    // Row 5 — station code header + "Delay" + "Delay Reason"
+    // Row 5 — station code + full name header, "Delay" + "Delay Reason"
+    const stationHeaderText = col => (col.name && col.name !== col.code) ? `${col.code}\n${col.name}` : col.code;
     const codeRowData = [''];
-    activeCols.forEach(col => codeRowData.push(col.code));
+    activeCols.forEach(col => codeRowData.push(stationHeaderText(col)));
     codeRowData.push('Delay', 'Delay Reason');
     ws.addRow(codeRowData);
-    ws.getRow(5).height = 16;
+    ws.getRow(5).height = 30;
     for (let c = 1; c <= totalCols; c++) {
         const cell = ws.getCell(5, c);
         const isEdge = c === 1 || c === delayCol || c === reasonCol;
         cell.font = { name: 'Calibri', size: 8, bold: true, color: { argb: isEdge ? 'FFffffff' : 'FF1e293b' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isEdge ? 'FF1e293b' : 'FFf1f5f9' } };
-        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
         cell.border = {
             top: { style: 'medium', color: { argb: 'FF94a3b8' } },
             bottom: { style: 'medium', color: { argb: 'FF94a3b8' } },
@@ -10173,7 +10174,7 @@ async function exportVpxStationReportExcel(preview) {
     });
 
     ws.getColumn(1).width = 22;
-    for (let i = 2; i <= delayCol - 1; i++) ws.getColumn(i).width = 11;
+    for (let i = 2; i <= delayCol - 1; i++) ws.getColumn(i).width = 14;
     ws.getColumn(delayCol).width = 10;
     ws.getColumn(reasonCol).width = 34;
 
@@ -10272,7 +10273,8 @@ async function exportVpxStationReportPDF(preview) {
     doc.setTextColor(100, 116, 139);
     doc.text('Generated: ' + new Date().toLocaleString('en-GB'), PAGE_W - MARGIN, 10, { align: 'right' });
 
-    const headers = ['Vehicle', ...activeCols.map(c => c.code), 'Delay', 'Delay Reason'];
+    const stationHeaderText = col => (col.name && col.name !== col.code) ? `${col.code}\n${col.name}` : col.code;
+    const headers = ['Vehicle', ...activeCols.map(stationHeaderText), 'Delay', 'Delay Reason'];
     const body = [];
     const cellFlags = []; // parallel to body — {projected,late,real} per station cell, per row
     const vehicleBlockStartRows = []; // body row index where each vehicle's Plan row starts
