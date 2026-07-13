@@ -1278,7 +1278,7 @@ async function loadUnitCodes() {
                 const key2 = r.vehicle_type + '||' + fallbackLabel;
                 if (key1) unitCodeMap[key1] = code;
                 unitCodeMap[key2] = code;
-                const drEntry = { id: r.id, reason: r.delay_reason || '' };
+                const drEntry = { id: r.id, reasons: (r.delay_reason && typeof r.delay_reason === 'object') ? r.delay_reason : {} };
                 if (key1) vpxDelayReasonMap[key1] = drEntry;
                 vpxDelayReasonMap[key2] = drEntry;
                 unitRegistryRows.push({
@@ -4074,11 +4074,12 @@ function renderVPX(data) {
             ? '<div class="vpx-unit-pct-row"><div class="vpx-unit-pct-bar-wrap"><div class="vpx-unit-pct-bar-fill" style="width:' + rowPct + '%"></div></div><span class="vpx-unit-pct-text">' + row.done + '/' + row.total + ' (' + rowPct + '%)</span></div>'
             : '';
         var drEntry = isKD2Module() ? getDelayReasonEntry(row.vehicle, row.vehicle_no) : null;
-        var drHasReason = !!(drEntry && drEntry.reason);
+        var drCategory = _vpxCategoryFilter || 'general';
+        var drReason = drEntry?.reasons?.[drCategory] || '';
         var drBtnHtml = drEntry
-            ? '<button type="button" class="vpx-delay-reason-btn' + (drHasReason ? ' has-reason' : '') + '"'
-                + ' data-vpx-vehicle="' + esc(row.vehicle) + '" data-vpx-unit="' + esc(row.vehicle_no) + '"'
-                + ' title="' + (drHasReason ? 'Delay reason: ' + esc(drEntry.reason) : 'Add a delay reason') + '">'
+            ? '<button type="button" class="vpx-delay-reason-btn' + (drReason ? ' has-reason' : '') + '"'
+                + ' data-vpx-vehicle="' + esc(row.vehicle) + '" data-vpx-unit="' + esc(row.vehicle_no) + '" data-vpx-category="' + esc(drCategory) + '"'
+                + ' title="' + (drReason ? 'Delay reason (' + esc(drCategory) + '): ' + esc(drReason) : 'Add a delay reason (' + esc(drCategory) + ')') + '">'
                 + '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 2.5h7.5L13 5v8.5a1 1 0 01-1 1H3a1 1 0 01-1-1v-10a1 1 0 011-1z"/><path d="M9.5 2.5V5H13"/><path d="M4.5 8h5M4.5 10.5h3.5"/></svg>'
                 + '</button>'
             : '';
@@ -6047,13 +6048,15 @@ function unitLabel(vehicle, vehicle_no) {
     return code ? vehicle_no + ' · ' + code : vehicle_no;
 }
 
-/** Delay-reason lookup — { id, reason } for a vehicle+unit, or null if the
- *  vehicle isn't registered in Unit Codes (no row to attach a reason to). */
+/** Delay-reason lookup — { id, reasons } for a vehicle+unit, or null if the
+ *  vehicle isn't registered in Unit Codes (no row to attach a reason to).
+ *  `reasons` is keyed by VPX category (Hull/Turret/Assembly/Structure) since
+ *  each component tracks its delay separately. */
 function getDelayReasonEntry(vehicle, vehicle_no) {
     return vpxDelayReasonMap[vehicle + '||' + vehicle_no] || null;
 }
-function getDelayReason(vehicle, vehicle_no) {
-    return getDelayReasonEntry(vehicle, vehicle_no)?.reason || '';
+function getDelayReason(vehicle, vehicle_no, category) {
+    return getDelayReasonEntry(vehicle, vehicle_no)?.reasons?.[category || 'general'] || '';
 }
 
 function daysBetween(from, to) {
@@ -10067,7 +10070,7 @@ async function exportVpxStationReportExcel(preview) {
     const stationHeaderText = col => (col.name && col.name !== col.code) ? `${col.code}\n${col.name}` : col.code;
     const codeRowData = [''];
     activeCols.forEach(col => codeRowData.push(stationHeaderText(col)));
-    codeRowData.push('Delay', 'Delay Reason');
+    codeRowData.push('Delay', _vpxCategoryFilter ? `Delay Reason (${_vpxCategoryFilter})` : 'Delay Reason');
     ws.addRow(codeRowData);
     ws.getRow(5).height = 30;
     for (let c = 1; c <= totalCols; c++) {
@@ -10155,9 +10158,9 @@ async function exportVpxStationReportExcel(preview) {
         vehCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
         vehCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
 
-        // Delay Reason — editable per-vehicle note (VPX matrix "note" icon),
-        // merged the same way as the vehicle label.
-        const delayReason = getDelayReason(row.vehicle, row.vehicle_no);
+        // Delay Reason — editable per-vehicle, per-category note (VPX matrix
+        // "note" icon), scoped to the tab this report was generated from.
+        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, _vpxCategoryFilter);
         ws.mergeCells(planRowN, reasonCol, actualRowN, reasonCol);
         const reasonCell = ws.getCell(planRowN, reasonCol);
         reasonCell.value = delayReason || '—';
@@ -10227,7 +10230,7 @@ async function exportVpxStationReportExcel(preview) {
     keyLine(14, 'Delay column', 'The vehicle\'s most recently recorded delay: (actual completion date) − (planned end date) of its last finished station, in working days. 0d or blank means on schedule.');
     keyLine(15, 'Projected date', 'For each not-yet-finished station, its planned end date is shifted forward by the vehicle\'s current carried delay (the same value shown in the Delay column at that point in the route). This carried delay updates at every station that has a real actual date, and rolls forward unchanged through every station that doesn\'t.');
     keyLine(16, 'Example', 'A vehicle finishes Welding 3 working days late. Every later station\'s projected date (Machining, Painting, …) is shown 3 working days after its own planned date, until the vehicle records a new actual date that resets the carried delay.');
-    keyLine(17, 'Delay Reason column', 'A free-text note explaining the vehicle\'s main delay, entered by a planner/admin on the VPX matrix (click the note icon on the vehicle\'s row). One current reason per vehicle — editing it overwrites the previous note.');
+    keyLine(17, 'Delay Reason column', 'A free-text note explaining the vehicle\'s main delay, entered by a planner/admin on the VPX matrix (click the note icon on the vehicle\'s row). Tracked separately per component (Hull/Turret/Assembly, etc.), matching the category tab shown in this report — one current reason per vehicle+component; editing it overwrites the previous note for that component.');
 
     // ── Save ───────────────────────────────────────────────────────
     const now = new Date().toISOString().slice(0, 10);
@@ -10274,7 +10277,7 @@ async function exportVpxStationReportPDF(preview) {
     doc.text('Generated: ' + new Date().toLocaleString('en-GB'), PAGE_W - MARGIN, 10, { align: 'right' });
 
     const stationHeaderText = col => (col.name && col.name !== col.code) ? `${col.code}\n${col.name}` : col.code;
-    const headers = ['Vehicle', ...activeCols.map(stationHeaderText), 'Delay', 'Delay Reason'];
+    const headers = ['Vehicle', ...activeCols.map(stationHeaderText), 'Delay', _vpxCategoryFilter ? `Delay Reason (${_vpxCategoryFilter})` : 'Delay Reason'];
     const body = [];
     const cellFlags = []; // parallel to body — {projected,late,real} per station cell, per row
     const vehicleBlockStartRows = []; // body row index where each vehicle's Plan row starts
@@ -10283,7 +10286,7 @@ async function exportVpxStationReportPDF(preview) {
         const { cells, finalDelay } = _vpxProjectRow(row, activeCols);
         const code = getUnitCode(row.vehicle, row.vehicle_no);
         const label = `${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
-        const delayReason = getDelayReason(row.vehicle, row.vehicle_no);
+        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, _vpxCategoryFilter);
 
         vehicleBlockStartRows.push(body.length);
 
@@ -10398,7 +10401,7 @@ async function exportVpxStationReportPDF(preview) {
     keyLine('Delay column', 'The vehicle\'s most recently recorded delay: (actual completion date) minus (planned end date) of its last finished station, in working days. 0d means on schedule.');
     keyLine('Projected date', 'Each not-yet-finished station\'s planned end date is shifted forward by the vehicle\'s current carried delay. This carried delay updates at every station with a real actual date, and rolls forward unchanged through every station that doesn\'t.');
     keyLine('Example', 'A vehicle finishes Welding 3 working days late. Every later station\'s projected date is shown 3 working days after its own planned date, until a new actual date resets the carried delay.');
-    keyLine('Delay Reason column', 'A free-text note explaining the vehicle\'s main delay, entered by a planner/admin on the VPX matrix (click the note icon on the vehicle\'s row). One current reason per vehicle — editing it overwrites the previous note.');
+    keyLine('Delay Reason column', 'A free-text note explaining the vehicle\'s main delay, entered by a planner/admin on the VPX matrix (click the note icon on the vehicle\'s row). Tracked separately per component (Hull/Turret/Assembly, etc.), matching the category tab shown in this report — one current reason per vehicle+component; editing it overwrites the previous note for that component.');
 
     const now = new Date().toISOString().slice(0, 10);
     const doDownload = () => { doc.save(`vpx_station_report_${now}.pdf`); showToast('Station report PDF exported.', 'success'); };
@@ -10447,7 +10450,7 @@ function wireVpxReportModal() {
 /* ─── VPX delay-reason editing — click the note icon on a vehicle's row
    header to view/edit why it's delayed; flows into the Station Report as
    the "Delay Reason" column. Gated by the same permission as plan edits. ── */
-function openVpxDelayReasonModal(vehicle, vehicleNo) {
+function openVpxDelayReasonModal(vehicle, vehicleNo, category) {
     const overlay = document.getElementById('vpxDelayReasonModalOverlay');
     if (!overlay) return;
     const entry = getDelayReasonEntry(vehicle, vehicleNo);
@@ -10457,9 +10460,9 @@ function openVpxDelayReasonModal(vehicle, vehicleNo) {
     }
 
     const titleEl = document.getElementById('vpxDelayReasonModalTitle');
-    if (titleEl) titleEl.textContent = `Delay Reason — ${vehicle} ${vehicleNo}`;
+    if (titleEl) titleEl.textContent = `Delay Reason — ${vehicle} ${vehicleNo} (${category})`;
     const textEl = document.getElementById('vpxDelayReasonText');
-    if (textEl) textEl.value = entry.reason || '';
+    if (textEl) textEl.value = entry.reasons?.[category] || '';
 
     const canEdit = canEditPlan();
     if (textEl) textEl.disabled = !canEdit;
@@ -10471,27 +10474,32 @@ function openVpxDelayReasonModal(vehicle, vehicleNo) {
     overlay.dataset.rowId = entry.id;
     overlay.dataset.vehicle = vehicle;
     overlay.dataset.vehicleNo = vehicleNo;
+    overlay.dataset.category = category;
     overlay.style.display = 'flex';
 }
 
 async function saveVpxDelayReason() {
     const overlay = document.getElementById('vpxDelayReasonModalOverlay');
     const rowId = overlay?.dataset?.rowId;
-    if (!rowId) return;
+    const category = overlay?.dataset?.category;
+    if (!rowId || !category) return;
     if (!canEditPlan()) { showToast('Only planners and admins can edit the delay reason.', 'error'); return; }
 
     const text = document.getElementById('vpxDelayReasonText')?.value?.trim() || '';
     const saveBtn = document.getElementById('vpxDelayReasonSave');
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
 
-    const { error } = await db.from('kd2_vehicle_units').update({ delay_reason: text || null }).eq('id', rowId);
+    const vehicle = overlay.dataset.vehicle, vehicleNo = overlay.dataset.vehicleNo;
+    const entry = getDelayReasonEntry(vehicle, vehicleNo);
+    const nextReasons = { ...(entry?.reasons || {}) };
+    if (text) nextReasons[category] = text; else delete nextReasons[category];
+
+    const { error } = await db.from('kd2_vehicle_units').update({ delay_reason: nextReasons }).eq('id', rowId);
 
     if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
     if (error) { showToast('Failed to save: ' + error.message, 'error'); return; }
 
-    const vehicle = overlay.dataset.vehicle, vehicleNo = overlay.dataset.vehicleNo;
-    const entry = getDelayReasonEntry(vehicle, vehicleNo);
-    if (entry) entry.reason = text;
+    if (entry) entry.reasons = nextReasons;
     showToast('Delay reason saved.', 'success');
     overlay.style.display = 'none';
     if (currentData?.length) renderVPX(currentData);
@@ -10509,7 +10517,7 @@ function wireVpxDelayReasonModal() {
     document.getElementById('vpxMatrix')?.addEventListener('click', e => {
         const btn = e.target.closest('.vpx-delay-reason-btn');
         if (!btn) return;
-        openVpxDelayReasonModal(btn.dataset.vpxVehicle, btn.dataset.vpxUnit);
+        openVpxDelayReasonModal(btn.dataset.vpxVehicle, btn.dataset.vpxUnit, btn.dataset.vpxCategory);
     });
 }
 
