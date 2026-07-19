@@ -1,1 +1,76 @@
 /* Filter bar ownership. */
+
+/* ── Multi-select checkbox dropdown filters (SIMS-style) ──────────── */
+.ms-filter {
+    position: relative;
+}
+
+.ms-trigger {
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    position: relative;
+    padding-right: 28px;
+}
+
+.ms-trigger::after {
+    content: '';
+    position: absolute;
+    right: 13px;
+    top: 50%;
+    width: 7px;
+    height: 7px;
+    border-right: 1.5px solid var(--clr-text-muted);
+    border-bottom: 1.5px solid var(--clr-text-muted);
+    transform: translateY(-65%) rotate(45deg);
+    pointer-events: none;
+}
+
+.ms-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    min-width: 200px;
+    max-height: 260px;
+    overflow-y: auto;
+    background: var(--clr-surface-2);
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-card);
+    padding: 6px;
+    z-index: 1100;
+}
+
+.ms-menu .ms-option {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    font-size: .82rem;
+    font-weight: 500;
+    color: var(--clr-text);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.ms-option:hover {
+    background: var(--clr-accent-dim);
+}
+
+.ms-option input[type="checkbox"] {
+    accent-color: var(--clr-accent);
+    cursor: pointer;
+}
+
+.ms-option-all {
+    font-weight: 700;
+    color: var(--clr-accent);
+}
+
+.ms-option-divider {
+    height: 1px;
+    margin: 4px 6px;
+    background: var(--clr-border-soft);
+}

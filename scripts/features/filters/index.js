@@ -5,45 +5,46 @@ export function initFeature() {
             <div class="filter-grid">
                 <!-- ── F200 standard filters (hidden when F100-KD2 active) ─────── -->
                 <div class="filter-item" id="filterVehicleGroup">
-                    <label class="filter-label" for="filterVehicle">Vehicle</label>
-                    <select id="filterVehicle" class="filter-control">
-                        <option value="">All Vehicles</option>
-                    </select>
+                    <label class="filter-label">Vehicle</label>
+                    <div class="ms-filter" id="filterVehicleWrap">
+                        <button type="button" class="ms-trigger filter-control" id="filterVehicleBtn">All</button>
+                        <div class="ms-menu" id="filterVehicleMenu" hidden></div>
+                    </div>
                 </div>
                 <div class="filter-item" id="filterK9ComponentGroup" style="display:none;">
-                    <label class="filter-label" for="filterK9Component">K9 Component</label>
-                    <select id="filterK9Component" class="filter-control">
-                        <option value="">All Components</option>
-                        <option value="Hull">Hull</option>
-                        <option value="Turret">Turret</option>
-                    </select>
+                    <label class="filter-label">K9 Component</label>
+                    <div class="ms-filter" id="filterK9ComponentWrap">
+                        <button type="button" class="ms-trigger filter-control" id="filterK9ComponentBtn">All</button>
+                        <div class="ms-menu" id="filterK9ComponentMenu" hidden></div>
+                    </div>
                 </div>
                 <div class="filter-item" id="filterBattalionGroup" style="display:none;">
-                    <label class="filter-label" for="filterBattalion">Battalion</label>
-                    <select id="filterBattalion" class="filter-control">
-                        <option value="">All Battalions</option>
-                    </select>
+                    <label class="filter-label">Battalion</label>
+                    <div class="ms-filter" id="filterBattalionWrap">
+                        <button type="button" class="ms-trigger filter-control" id="filterBattalionBtn">All</button>
+                        <div class="ms-menu" id="filterBattalionMenu" hidden></div>
+                    </div>
                 </div>
                 <div class="filter-item" id="filterUnitGroup">
-                    <label class="filter-label" for="filterUnit" id="filterUnitLabel">Unit</label>
-                    <select id="filterUnit" class="filter-control">
-                        <option value="">All Units</option>
-                    </select>
+                    <label class="filter-label" id="filterUnitLabel">Unit</label>
+                    <div class="ms-filter" id="filterUnitWrap">
+                        <button type="button" class="ms-trigger filter-control" id="filterUnitBtn">All</button>
+                        <div class="ms-menu" id="filterUnitMenu" hidden></div>
+                    </div>
                 </div>
                 <div class="filter-item" id="filterCategoryGroup">
-                    <label class="filter-label" for="filterCategory">Category</label>
-                    <select id="filterCategory" class="filter-control">
-                        <option value="">All Categories</option>
-                        <option value="Assembly">Assembly</option>
-                        <option value="Final Test">Final Test</option>
-                        <option value="Processing">Processing</option>
-                    </select>
+                    <label class="filter-label">Category</label>
+                    <div class="ms-filter" id="filterCategoryWrap">
+                        <button type="button" class="ms-trigger filter-control" id="filterCategoryBtn">All</button>
+                        <div class="ms-menu" id="filterCategoryMenu" hidden></div>
+                    </div>
                 </div>
                 <div class="filter-item" id="filterWeekGroup">
-                    <label class="filter-label" for="filterWeek">Week</label>
-                    <select id="filterWeek" class="filter-control">
-                        <option value="">All Weeks</option>
-                    </select>
+                    <label class="filter-label">Week</label>
+                    <div class="ms-filter" id="filterWeekWrap">
+                        <button type="button" class="ms-trigger filter-control" id="filterWeekBtn">All</button>
+                        <div class="ms-menu" id="filterWeekMenu" hidden></div>
+                    </div>
                 </div>
                 <div class="filter-item" id="filterTimeFrameGroup">
                     <label class="filter-label" for="filterTimeFrame">Time Frame</label>
@@ -63,13 +64,18 @@ export function initFeature() {
                     <label class="filter-label" for="filterEndDate">End Date</label>
                     <input type="date" id="filterEndDate" class="filter-control" />
                 </div>
+                <div class="filter-item" id="filterSearchGroup">
+                    <label class="filter-label" for="filterSearch">Search</label>
+                    <input type="text" id="filterSearch" class="filter-control" placeholder="Search..." autocomplete="off" />
+                </div>
 
                 <!-- ── F100-KD2 filters (shown only when F100-KD2 active) ────────── -->
                 <div class="filter-item" id="f100BattalionGroup" style="display:none;">
-                    <label class="filter-label" for="f100Battalion">Battalion</label>
-                    <select id="f100Battalion" class="filter-control">
-                        <option value="">All Battalions</option>
-                    </select>
+                    <label class="filter-label">Battalion</label>
+                    <div class="ms-filter" id="f100BattalionWrap">
+                        <button type="button" class="ms-trigger filter-control" id="f100BattalionBtn">All</button>
+                        <div class="ms-menu" id="f100BattalionMenu" hidden></div>
+                    </div>
                 </div>
                 <div class="filter-item" id="f100ModeGroup" style="display:none;">
                     <label class="filter-label" for="f100Mode">Mode</label>
@@ -79,47 +85,39 @@ export function initFeature() {
                     </select>
                 </div>
                 <div class="filter-item" id="f100GunPartGroup" style="display:none;">
-                    <label class="filter-label" for="f100GunPart">Gun Part</label>
-                    <select id="f100GunPart" class="filter-control">
-                        <option value="">All Parts</option>
-                    </select>
+                    <label class="filter-label">Gun Part</label>
+                    <div class="ms-filter" id="f100GunPartWrap">
+                        <button type="button" class="ms-trigger filter-control" id="f100GunPartBtn">All</button>
+                        <div class="ms-menu" id="f100GunPartMenu" hidden></div>
+                    </div>
                 </div>
                 <div class="filter-item" id="f100SerialGroup" style="display:none;">
-                    <label class="filter-label" for="f100Serial">Unit</label>
-                    <select id="f100Serial" class="filter-control">
-                        <option value="">All Units</option>
-                    </select>
+                    <label class="filter-label">Unit</label>
+                    <div class="ms-filter" id="f100SerialWrap">
+                        <button type="button" class="ms-trigger filter-control" id="f100SerialBtn">All</button>
+                        <div class="ms-menu" id="f100SerialMenu" hidden></div>
+                    </div>
                 </div>
                 <div class="filter-item" id="f100ManufacturerGroup" style="display:none;">
-                    <label class="filter-label" for="f100Manufacturer">Manufacturer</label>
-                    <select id="f100Manufacturer" class="filter-control">
-                        <option value="">All</option>
-                        <option value="HAS">HAS</option>
-                        <option value="DOOWON">DOOWON</option>
-                    </select>
+                    <label class="filter-label">Manufacturer</label>
+                    <div class="ms-filter" id="f100ManufacturerWrap">
+                        <button type="button" class="ms-trigger filter-control" id="f100ManufacturerBtn">All</button>
+                        <div class="ms-menu" id="f100ManufacturerMenu" hidden></div>
+                    </div>
                 </div>
                 <div class="filter-item" id="f100VehicleTypeGroup" style="display:none;">
-                    <label class="filter-label" for="f100VehicleType">Vehicle</label>
-                    <select id="f100VehicleType" class="filter-control">
-                        <option value="">All Vehicles</option>
-                        <option value="K9">K9</option>
-                        <option value="K10">K10</option>
-                        <option value="K11">K11</option>
-                    </select>
+                    <label class="filter-label">Vehicle</label>
+                    <div class="ms-filter" id="f100VehicleTypeWrap">
+                        <button type="button" class="ms-trigger filter-control" id="f100VehicleTypeBtn">All</button>
+                        <div class="ms-menu" id="f100VehicleTypeMenu" hidden></div>
+                    </div>
                 </div>
 
                 <div class="filter-item filter-actions">
-                    <button class="btn btn-primary" id="btnApply">
-                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M3 5h14M6 10h8M9 15h2" />
-                        </svg>
-                        Apply Filters
-                    </button>
                     <button class="btn btn-ghost" id="btnReset">Reset</button>
                 </div>
             </div>
         </section>
 `.trim();
 }
-
 

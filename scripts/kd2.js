@@ -215,17 +215,7 @@ window.PPMSModuleRuntime = (() => {
     }
 
     function populateCategoryFilter(categories) {
-        const sel = document.getElementById('filterCategory');
-        if (!sel) return;
-        const currentVal = sel.value;
-        sel.innerHTML = '<option value="">All Categories</option>';
-        categories.forEach(category => {
-            const opt = document.createElement('option');
-            opt.value = category;
-            opt.textContent = category;
-            sel.appendChild(opt);
-        });
-        if ([...sel.options].some(opt => opt.value === currentVal)) sel.value = currentVal;
+        if (typeof populateMultiSelectOptions === 'function') populateMultiSelectOptions('category', categories || []);
     }
 
     function setDisplay(id, visible) {
@@ -691,8 +681,13 @@ window.PPMSModuleRuntime = (() => {
         }
     }
 
+    // filterState is defined by app.js (loaded after this script but before any
+    // of these getters are actually called) — filterBattalion/filterVehicle/filterUnit
+    // are now multi-select Sets, not <select> elements; these getters return the
+    // first concretely-selected value (or '' for "All") for single-value consumers.
     function getBattalionFilterValue() {
-        return document.getElementById('filterBattalion')?.value?.trim() || '';
+        if (typeof filterState === 'undefined') return '';
+        return [...filterState.battalion].find(v => v !== 'all') || '';
     }
 
     function updateGenerationTarget() {
@@ -738,24 +733,32 @@ window.PPMSModuleRuntime = (() => {
     async function loadData(db, filters) {
         if (!state.stations.length) await loadWorkspaceData();
         let query = db.from('kd2_plan_live').select('*');
-        if (filters.battalion) query = query.eq('battalion_code', filters.battalion);
-        if (filters.vehicle) query = query.eq('vehicle', filters.vehicle);
-        if (filters.unit) query = query.eq('vehicle_no', filters.unit);
-        if (filters.week) query = query.lte('start_date', filters.weekEndForFilter).gte('end_date', filters.weekStartForFilter);
+        // battalion/vehicle/unit/k9Component/weekRanges are arrays (possibly empty,
+        // meaning "all") — the filter bar supports multi-select on these fields.
+        if (filters.battalion && filters.battalion.length) query = query.in('battalion_code', filters.battalion);
+        if (filters.vehicle && filters.vehicle.length) query = query.in('vehicle', filters.vehicle);
+        if (filters.unit && filters.unit.length) query = query.in('vehicle_no', filters.unit);
+        if (filters.weekRanges && filters.weekRanges.length === 1) {
+            query = query.lte('start_date', filters.weekRanges[0].weekEnd).gte('end_date', filters.weekRanges[0].weekStart);
+        } else if (filters.weekRanges && filters.weekRanges.length > 1) {
+            query = query.or(filters.weekRanges
+                .map(r => `and(start_date.lte.${r.weekEnd},end_date.gte.${r.weekStart})`)
+                .join(','));
+        }
         query = applyTimeFrame(query, filters);
         let rows = await queryAll(query);
-        
+
         // Apply K9 component filter using component_group from station definitions
-        if (filters.k9Component) {
+        if (filters.k9Component && filters.k9Component.length) {
             const compMap = new Map(
                 state.stations
-                    .filter(s => s.vehicle_type === (filters.vehicle || 'K9'))
+                    .filter(s => s.vehicle_type === (filters.vehicle?.length === 1 ? filters.vehicle[0] : 'K9'))
                     .map(s => [s.station_code, s.component_group || ''])
             );
-            const wanted = filters.k9Component; // 'Hull' or 'Turret'
+            const wanted = filters.k9Component; // ['Hull'] and/or ['Turret']
             rows = rows.filter(row => {
                 const grp = compMap.get(row.station_code) || '';
-                return grp === wanted || grp.startsWith(wanted + ' ');
+                return wanted.some(w => grp === w || grp.startsWith(w + ' '));
             });
         }
         
@@ -1767,11 +1770,13 @@ window.PPMSModuleRuntime = (() => {
     }
 
     function getVehicleFilterValue() {
-        return document.getElementById('filterVehicle')?.value?.trim() || '';
+        if (typeof filterState === 'undefined') return '';
+        return [...filterState.vehicle].find(v => v !== 'all') || '';
     }
 
     function getUnitFilterValue() {
-        return document.getElementById('filterUnit')?.value?.trim() || '';
+        if (typeof filterState === 'undefined') return '';
+        return [...filterState.unit].find(v => v !== 'all') || '';
     }
 
     function formatUnitLabel(vehicle, unitSerial, preferredLabel = '') {
@@ -6534,7 +6539,7 @@ window.PPMSModuleRuntime = (() => {
             window.location.reload();
         });
 
-        document.getElementById('filterBattalion')?.addEventListener('change', updateGenerationTarget);
+        document.getElementById('filterBattalionMenu')?.addEventListener('change', updateGenerationTarget);
         document.getElementById('btnKd2RefreshInputs')?.addEventListener('click', refreshWorkspace);
         document.getElementById('btnKd2Bootstrap')?.addEventListener('click', bootstrapBattalions);
         document.getElementById('btnKd2NewBattalion')?.addEventListener('click', () => openPlanningModal(null));

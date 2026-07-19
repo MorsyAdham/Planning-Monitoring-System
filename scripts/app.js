@@ -418,12 +418,10 @@ function syncReportCategoryOptions() {
         target.disabled = false;
         const wrap = target.closest('.form-group') || target.parentElement;
         if (wrap) wrap.style.opacity = '';
-        const source = document.getElementById('filterCategory');
-        if (source) {
-            const currentVal = target.value;
-            target.innerHTML = source.innerHTML;
-            if ([...target.options].some(opt => opt.value === currentVal)) target.value = currentVal;
-        }
+        const currentVal = target.value;
+        target.innerHTML = '<option value="">All Categories</option>' +
+            filterOptions.category.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+        if ([...target.options].some(opt => opt.value === currentVal)) target.value = currentVal;
     }
     // Show/hide KD2-only report type cards
     const kd2 = isKD2Module();
@@ -449,19 +447,7 @@ function syncReportCategoryOptions() {
 }
 
 function populateCategorySelect(values) {
-    const sel = document.getElementById('filterCategory');
-    if (!sel) return;
-    const currentVal = sel.value;
-    sel.innerHTML = '<option value="">All Categories</option>';
-    values.forEach(value => {
-        const opt = document.createElement('option');
-        opt.value = value;
-        opt.textContent = value;
-        sel.appendChild(opt);
-    });
-    if ([...sel.options].some(opt => opt.value === currentVal)) {
-        sel.value = currentVal;
-    }
+    populateMultiSelectOptions('category', values);
 }
 
 function getModuleProgressTable() {
@@ -849,6 +835,202 @@ let vpxDelayReasonMap = {}; // { 'K9||M1': { id: <kd2_vehicle_units.id>, reason:
 let activePlanId = null;    // plan row being marked complete
 
 /* ──────────────────────────────────────────────────────────────────
+   MULTI-SELECT FILTERS (SIMS-style — Set-backed checkbox dropdowns)
+   ────────────────────────────────────────────────────────────────── */
+const filterState = {
+    vehicle: new Set(['all']),
+    k9Component: new Set(['all']),
+    battalion: new Set(['all']),
+    unit: new Set(['all']),
+    category: new Set(['all']),
+    week: new Set(['all']),
+    f100Battalion: new Set(['all']),
+    f100GunPart: new Set(['all']),
+    f100Serial: new Set(['all']),
+    f100Manufacturer: new Set(['all']),
+    f100VehicleType: new Set(['all']),
+};
+
+const filterOptions = {
+    vehicle: [],
+    k9Component: [{ value: 'Hull', label: 'Hull' }, { value: 'Turret', label: 'Turret' }],
+    battalion: [],
+    unit: [],       // { value: vehicle_no, label, vehicle }
+    // Default (non-KD2) module's fixed category list — KD2 overrides this at
+    // runtime via populateCategorySelect(kd2Filters.categories) in loadFilters().
+    category: [{ value: 'Assembly', label: 'Assembly' }, { value: 'Final Test', label: 'Final Test' }, { value: 'Processing', label: 'Processing' }],
+    week: [],
+    f100Battalion: [],
+    f100GunPart: [],
+    f100Serial: [],
+    f100Manufacturer: [{ value: 'HAS', label: 'HAS' }, { value: 'DOOWON', label: 'DOOWON' }],
+    f100VehicleType: [{ value: 'K9', label: 'K9' }, { value: 'K10', label: 'K10' }, { value: 'K11', label: 'K11' }],
+};
+
+const filterConfig = {
+    vehicle:          { btn: 'filterVehicleBtn',          menu: 'filterVehicleMenu' },
+    k9Component:      { btn: 'filterK9ComponentBtn',      menu: 'filterK9ComponentMenu' },
+    battalion:         { btn: 'filterBattalionBtn',        menu: 'filterBattalionMenu' },
+    unit:              { btn: 'filterUnitBtn',             menu: 'filterUnitMenu' },
+    category:          { btn: 'filterCategoryBtn',         menu: 'filterCategoryMenu' },
+    week:              { btn: 'filterWeekBtn',             menu: 'filterWeekMenu' },
+    f100Battalion:     { btn: 'f100BattalionBtn',          menu: 'f100BattalionMenu' },
+    f100GunPart:       { btn: 'f100GunPartBtn',            menu: 'f100GunPartMenu' },
+    f100Serial:        { btn: 'f100SerialBtn',             menu: 'f100SerialMenu' },
+    f100Manufacturer:  { btn: 'f100ManufacturerBtn',       menu: 'f100ManufacturerMenu' },
+    f100VehicleType:   { btn: 'f100VehicleTypeBtn',        menu: 'f100VehicleTypeMenu' },
+};
+
+/** Generic Set-membership matcher: true if "All" selected or value is in the set. */
+function matchesMultiSet(selected, rawValue) {
+    if (!selected || selected.size === 0 || selected.has('all')) return true;
+    return selected.has(String(rawValue ?? '').trim());
+}
+
+/** Apply a multi-select filter to a Supabase query via .in(), or a no-op if "All". */
+function applyInFilter(query, column, selectedSet) {
+    if (!selectedSet || selectedSet.size === 0 || selectedSet.has('all')) return query;
+    return query.in(column, [...selectedSet]);
+}
+
+/** Button label: "All" / the single selected option's label / "N selected". */
+function updateMultiSelectButtonLabel(key) {
+    const cfg = filterConfig[key];
+    const btn = document.getElementById(cfg.btn);
+    if (!btn) return;
+    const selected = filterState[key];
+    const options = filterOptions[key];
+
+    if (!selected || selected.has('all') || selected.size === 0) {
+        btn.textContent = 'All';
+        return;
+    }
+    if (selected.size === 1) {
+        const v = [...selected][0];
+        const opt = options.find(o => o.value === v);
+        btn.textContent = opt ? opt.label : v;
+        return;
+    }
+    btn.textContent = `${selected.size} selected`;
+}
+
+/** Same summary text as the button label, for use in titles/filenames/export chips. */
+function filterLabel(key, allLabel = 'All') {
+    const selected = filterState[key];
+    const options = filterOptions[key];
+    if (!selected || selected.has('all') || selected.size === 0) return allLabel;
+    if (selected.size === 1) {
+        const v = [...selected][0];
+        return options.find(o => o.value === v)?.label || v;
+    }
+    return `${selected.size} selected`;
+}
+
+/** Rebuild a filter's checkbox menu from filterOptions[key]/filterState[key]. */
+function renderMultiSelectMenu(key) {
+    const cfg = filterConfig[key];
+    const menu = document.getElementById(cfg.menu);
+    if (!menu) return;
+    const options = filterOptions[key];
+    const selected = filterState[key];
+
+    // Drop selections that no longer exist in the current option set
+    const validValues = new Set(options.map(o => o.value));
+    for (const v of [...selected]) {
+        if (v !== 'all' && !validValues.has(v)) selected.delete(v);
+    }
+    if (selected.size === 0) selected.add('all');
+
+    const allChecked = selected.has('all');
+    menu.innerHTML = `
+        <label class="ms-option ms-option-all">
+            <input type="checkbox" data-value="all" ${allChecked ? 'checked' : ''} />
+            <span>All</span>
+        </label>
+        <div class="ms-option-divider"></div>
+        ${options.map(o => `
+            <label class="ms-option">
+                <input type="checkbox" data-value="${esc(o.value)}" ${(!allChecked && selected.has(o.value)) ? 'checked' : ''} />
+                <span>${esc(o.label)}</span>
+            </label>
+        `).join('')}
+    `;
+
+    updateMultiSelectButtonLabel(key);
+}
+
+/** Open one filter's menu, closing all others (single-menu-open-at-a-time). */
+function toggleMultiSelectMenu(key) {
+    const cfg = filterConfig[key];
+    const menu = document.getElementById(cfg.menu);
+    if (!menu) return;
+    const shouldOpen = menu.hidden;
+    Object.keys(filterConfig).forEach(k => {
+        const m = document.getElementById(filterConfig[k].menu);
+        if (m) m.hidden = true;
+    });
+    menu.hidden = !shouldOpen;
+}
+
+/** Rebuild filterOptions[key] from a plain array of values, then re-render its menu. */
+function populateMultiSelectOptions(key, values, labelFn = v => v) {
+    filterOptions[key] = (values || []).map(v => ({ value: v, label: labelFn(v) }));
+    renderMultiSelectMenu(key);
+}
+
+/** Checkbox-menu change handler: mutates filterState, re-renders the menu, and re-applies. */
+function handleMultiSelectMenuChange(key, e, onApply) {
+    const target = e.target;
+    if (!target.matches('input[type="checkbox"]')) return;
+    const value = target.dataset.value;
+    const selected = filterState[key];
+
+    if (value === 'all') {
+        selected.clear();
+        selected.add('all');
+    } else {
+        selected.delete('all');
+        if (target.checked) selected.add(value);
+        else selected.delete(value);
+        if (selected.size === 0) selected.add('all');
+    }
+
+    renderMultiSelectMenu(key);
+    if (typeof onApply === 'function') onApply(key);
+}
+
+function resetMultiSelectFilters() {
+    Object.keys(filterConfig).forEach(key => {
+        filterState[key] = new Set(['all']);
+        renderMultiSelectMenu(key);
+    });
+}
+
+/** Union of vehicle types implied by the currently-selected Units, when Vehicle is "All". */
+function impliedVehiclesFromUnits() {
+    if (!filterState.vehicle.has('all')) return null;
+    if (filterState.unit.has('all')) return null;
+    const vehicles = new Set();
+    filterOptions.unit.forEach(o => {
+        if (filterState.unit.has(o.value) && o.vehicle) vehicles.add(o.vehicle);
+    });
+    return vehicles.size ? vehicles : null;
+}
+
+/** Client-side pass: category (multi-select) + free-text search, ANDed together. */
+function applyActiveFilters(rows) {
+    const q = (document.getElementById('filterSearch')?.value || '').trim().toLowerCase();
+    return (rows || []).filter(r => {
+        if (!matchesMultiSet(filterState.category, getModuleCategory(r.process_station, r))) return false;
+        if (q) {
+            const hay = Object.values(r).join(' ').toLowerCase();
+            if (!hay.includes(q)) return false;
+        }
+        return true;
+    });
+}
+
+/* ──────────────────────────────────────────────────────────────────
    3. ENTRY POINT
    ────────────────────────────────────────────────────────────────── */
 async function initializeApp() {
@@ -1190,9 +1372,9 @@ async function loadFilters() {
     try {
         if (isKD2Module() && getModuleRuntime()?.loadFilters) {
             const kd2Filters = await getModuleRuntime().loadFilters(db);
-            populateSelect('filterBattalion', kd2Filters.battalions || [], 'All Battalions');
-            populateSelect('filterVehicle', kd2Filters.vehicles, 'All Vehicles');
-            populateSelect('filterWeek', kd2Filters.weeks, 'All Weeks');
+            populateMultiSelectOptions('battalion', kd2Filters.battalions || []);
+            populateMultiSelectOptions('vehicle', kd2Filters.vehicles);
+            populateMultiSelectOptions('week', kd2Filters.weeks);
             populateCategorySelect(kd2Filters.categories || []);
             await loadUnitCodes();
             populateUnitFilter(null);
@@ -1223,27 +1405,14 @@ async function loadFilters() {
         const weeks = [...new Set(plans.map(r => r.start_date ? weekLabel(r.start_date) : r.week).filter(Boolean))]
             .sort((a, b) => parseInt(a.replace(/[^0-9]/g, ''), 10) - parseInt(b.replace(/[^0-9]/g, ''), 10));
 
-        populateSelect('filterVehicle', vehicles, 'All Vehicles');
-        populateSelect('filterWeek', weeks, 'All Weeks');
+        populateMultiSelectOptions('vehicle', vehicles);
+        populateMultiSelectOptions('week', weeks);
         populateUnitFilter(null);
 
     } catch (err) {
         showToast('Failed to load filter options.', 'error');
         console.error(err);
     }
-}
-
-function populateSelect(id, values, placeholder) {
-    const sel = document.getElementById(id);
-    const currentVal = sel.value;
-    sel.innerHTML = `<option value="">${placeholder}</option>`;
-    values.forEach(v => {
-        const opt = document.createElement('option');
-        opt.value = v;
-        opt.textContent = v;
-        sel.appendChild(opt);
-    });
-    if (currentVal) sel.value = currentVal;
 }
 
 /** Load vehicle_units table into unitCodeMap */
@@ -1324,13 +1493,12 @@ function getRegisteredUnitNames(vehicle = null, fallbackRows = currentData) {
     ].filter(Boolean))].sort(naturalSort);
 }
 
-/** Populate unit filter. When vehicle is given, shows "M1 · code"; otherwise shows "K9 · M1 · code"
- *  so the vehicle context is always captured in data-vehicle for correct filtering. */
-function populateUnitFilter(vehicle = null) {
-    const sel = document.getElementById('filterUnit');
-    const prevVal = sel.value;
-    const prevVehicle = sel.options[sel.selectedIndex]?.dataset?.vehicle || '';
-    sel.innerHTML = '<option value="">All Units</option>';
+/** Rebuild filterOptions.unit, scoped to `vehicleSet` (Set of vehicle codes, or
+ *  null/"all" for no scope). Each option keeps its `.vehicle` so the implied-vehicle
+ *  inference (impliedVehiclesFromUnits) can recover it when Vehicle is left on "All". */
+function populateUnitFilter(vehicleSet = null) {
+    const scoped = (vehicleSet && !vehicleSet.has?.('all') && vehicleSet.size) ? vehicleSet : null;
+    const singleVehicle = scoped && scoped.size === 1;
 
     const pairs = [];
     const seen = new Set();
@@ -1338,7 +1506,7 @@ function populateUnitFilter(vehicle = null) {
         const v = r.vehicle || r.vehicle_type || '';
         const u = r.vehicle_no || '';
         if (!v || !u) return;
-        if (vehicle && v !== vehicle) return;
+        if (scoped && !scoped.has(v)) return;
         const key = v + '||' + u;
         if (!seen.has(key)) { seen.add(key); pairs.push({ v, u }); }
     });
@@ -1347,37 +1515,26 @@ function populateUnitFilter(vehicle = null) {
         return vc !== 0 ? vc : naturalSort(a.u, b.u);
     });
 
-    pairs.forEach(({ v, u }) => {
+    filterOptions.unit = pairs.map(({ v, u }) => {
         const code = unitCodeMap[v + '||' + u] || '';
-        const opt = document.createElement('option');
-        opt.value = u;
-        opt.dataset.vehicle = v;
         const base = code ? u + ' · ' + code : u;
-        opt.textContent = vehicle ? base : v + ' · ' + base;
-        sel.appendChild(opt);
+        return { value: u, vehicle: v, label: singleVehicle ? base : v + ' · ' + base };
     });
-
-    if (prevVal) {
-        const idx = [...sel.options].findIndex(o => o.value === prevVal && o.dataset.vehicle === prevVehicle);
-        if (idx >= 0) sel.selectedIndex = idx;
-        else {
-            const fallback = [...sel.options].findIndex(o => o.value === prevVal);
-            if (fallback >= 0) sel.selectedIndex = fallback;
-        }
-    }
+    renderMultiSelectMenu('unit');
 }
 
-/** Called when filterVehicle changes — cascade unit dropdown */
+/** Called when the Vehicle filter changes — cascade unit dropdown */
 function onVehicleFilterChange() {
-    const vehicle = getVal('filterVehicle');
-    populateUnitFilter(vehicle || null);
-    
-    // Show K9 component filter only when K9 is selected
+    populateUnitFilter(filterState.vehicle);
+
+    // Show K9 component filter only when K9 is among the selected vehicles
     const k9ComponentGroup = document.getElementById('filterK9ComponentGroup');
     if (k9ComponentGroup) {
-        k9ComponentGroup.style.display = vehicle === 'K9' ? 'flex' : 'none';
-        if (vehicle !== 'K9') {
-            setVal('filterK9Component', '');
+        const hasK9 = filterState.vehicle.has('K9');
+        k9ComponentGroup.style.display = hasK9 ? 'flex' : 'none';
+        if (!hasK9) {
+            filterState.k9Component = new Set(['all']);
+            renderMultiSelectMenu('k9Component');
         }
     }
 }
@@ -1409,10 +1566,7 @@ function restoreScrollPos(pos) {
  * Call this after any in-memory mutation of currentData.
  */
 function refreshAllViews() {
-    const category = getVal('filterCategory');
-    const displayData = category
-        ? currentData.filter(r => getModuleCategory(r.process_station, r) === category)
-        : currentData;
+    const displayData = applyActiveFilters(currentData);
 
     const pos = saveScrollPos();
     renderTable(applyTableSearchFilters(displayData));
@@ -1437,8 +1591,6 @@ function refreshAllViews() {
    ────────────────────────────────────────────────────────────────── */
 
 async function populateF100GunPartFilter() {
-    const sel = document.getElementById('f100GunPart');
-    if (!sel) return;
     try {
         const { data, error } = await db
             .from('f100_parts')
@@ -1446,38 +1598,28 @@ async function populateF100GunPartFilter() {
             .eq('module', 'gun')
             .order('sort_order');
         if (error) return;
-        const current = sel.value;
-        sel.innerHTML = '<option value="">All Parts</option>';
-        (data || []).forEach(p => {
-            const opt = document.createElement('option');
-            opt.value = p.id;
-            opt.textContent = `${p.part_name} (${p.part_number})`;
-            sel.appendChild(opt);
-        });
-        if ([...sel.options].some(o => o.value === current)) sel.value = current;
+        filterOptions.f100GunPart = (data || []).map(p => ({
+            value: String(p.id),
+            label: `${p.part_name} (${p.part_number})`,
+        }));
+        renderMultiSelectMenu('f100GunPart');
     } catch (e) {
         console.warn('F100 gun part filter load failed:', e.message);
     }
 }
 
 async function populateF100BattalionFilter() {
-    const sel = document.getElementById('f100Battalion');
-    if (!sel) return;
     try {
         const { data, error } = await db
             .from('f100_battalions')
             .select('battalion_code, battalion_name')
             .order('battalion_code');
         if (error) return;
-        const current = sel.value;
-        sel.innerHTML = '<option value="">All Battalions</option>';
-        (data || []).forEach(b => {
-            const opt = document.createElement('option');
-            opt.value = b.battalion_code;
-            opt.textContent = b.battalion_name ? `${b.battalion_code} – ${b.battalion_name}` : b.battalion_code;
-            sel.appendChild(opt);
-        });
-        if ([...sel.options].some(o => o.value === current)) sel.value = current;
+        filterOptions.f100Battalion = (data || []).map(b => ({
+            value: b.battalion_code,
+            label: b.battalion_name ? `${b.battalion_code} – ${b.battalion_name}` : b.battalion_code,
+        }));
+        renderMultiSelectMenu('f100Battalion');
     } catch (e) {
         console.warn('F100 battalion filter load failed:', e.message);
     }
@@ -1499,15 +1641,15 @@ async function loadF100Data() {
     await populateF100BattalionFilter();
     if (mode === 'gun') await populateF100GunPartFilter();
 
-    const battalion    = getVal('f100Battalion') || null;
-    const gunPart      = mode === 'gun'     ? (getVal('f100GunPart')      || null) : null;
-    const manufacturer = mode === 'vehicle' ? (getVal('f100Manufacturer') || null) : null;
-    const vehicleType  = mode === 'vehicle' ? (getVal('f100VehicleType')  || null) : null;
-    const serialFilter = mode === 'gun'     ? (getVal('f100Serial')       || null) : null;
+    const battalionSet    = filterState.f100Battalion;
+    const gunPartSet      = mode === 'gun'     ? filterState.f100GunPart      : null;
+    const manufacturerSet = mode === 'vehicle' ? filterState.f100Manufacturer : null;
+    const vehicleTypeSet  = mode === 'vehicle' ? filterState.f100VehicleType  : null;
+    const serialSet       = mode === 'gun'     ? filterState.f100Serial       : null;
 
     // 1. Load matching parts
     let partsQ = db.from('f100_parts').select('*').eq('module', mode).order('sort_order');
-    if (manufacturer) partsQ = partsQ.eq('manufacturer', manufacturer);
+    if (manufacturerSet) partsQ = applyInFilter(partsQ, 'manufacturer', manufacturerSet);
     const { data: parts, error: partsErr } = await partsQ;
     if (partsErr) throw partsErr;
 
@@ -1515,7 +1657,7 @@ async function loadF100Data() {
     (parts || []).forEach(p => { partMap[p.id] = p; });
 
     let partIds = Object.keys(partMap);
-    if (mode === 'gun' && gunPart) partIds = [gunPart];
+    if (mode === 'gun' && gunPartSet && !gunPartSet.has('all')) partIds = [...gunPartSet];
 
     if (!partIds.length) {
         currentData = [];
@@ -1540,9 +1682,9 @@ async function loadF100Data() {
 
     // 3. Load plans — filtered by battalion, vehicle type, and serial if selected
     let plansQ = db.from('f100_plans').select('*').in('part_id', partIds);
-    if (battalion)    plansQ = plansQ.eq('battalion_code', battalion);
-    if (vehicleType)  plansQ = plansQ.eq('vehicle_type', vehicleType);
-    if (serialFilter) plansQ = plansQ.eq('serial_number', parseInt(serialFilter, 10));
+    plansQ = applyInFilter(plansQ, 'battalion_code', battalionSet);
+    if (vehicleTypeSet) plansQ = applyInFilter(plansQ, 'vehicle_type', vehicleTypeSet);
+    if (serialSet && !serialSet.has('all')) plansQ = plansQ.in('serial_number', [...serialSet].map(n => parseInt(n, 10)));
     // Gun mode always restricts to K9
     if (mode === 'gun') plansQ = plansQ.eq('vehicle_type', 'K9');
     const { data: plans, error: plansErr } = await plansQ;
@@ -1565,22 +1707,21 @@ async function loadF100Data() {
         };
     });
 
-    // 4b. Populate serial (unit) dropdown for gun mode using K9 vehicle units
+    // 4b. Populate serial (unit) dropdown for gun mode using K9 vehicle units,
+    // scoped to whichever battalions are currently selected (if any).
     if (mode === 'gun' && serialGroup) {
-        const serialSel = document.getElementById('f100Serial');
-        if (serialSel) {
-            const batId = battalionsList?.find(b => b.battalion_code === battalion)?.id;
-            const k9Units = (vehicleUnits || []).filter(u =>
-                u.vehicle_type === 'K9' && (!batId || u.battalion_id === batId)
-            ).sort((a, b) => (a.unit_serial ?? 0) - (b.unit_serial ?? 0));
-            const prevVal = serialSel.value;
-            serialSel.innerHTML = '<option value="">All Units</option>' +
-                k9Units.map(u => {
-                    const lbl = u.unit_label || u.unit_code || `Unit ${u.unit_serial}`;
-                    return `<option value="${u.unit_serial}">${esc(lbl)}</option>`;
-                }).join('');
-            if (prevVal && [...serialSel.options].some(o => o.value === prevVal)) serialSel.value = prevVal;
-        }
+        const batCodes = [...battalionSet].filter(v => v !== 'all');
+        const batIds = new Set(
+            batCodes.map(code => battalionsList?.find(b => b.battalion_code === code)?.id).filter(Boolean)
+        );
+        const k9Units = (vehicleUnits || []).filter(u =>
+            u.vehicle_type === 'K9' && (!batIds.size || batIds.has(u.battalion_id))
+        ).sort((a, b) => (a.unit_serial ?? 0) - (b.unit_serial ?? 0));
+        filterOptions.f100Serial = k9Units.map(u => ({
+            value: String(u.unit_serial),
+            label: u.unit_label || u.unit_code || `Unit ${u.unit_serial}`,
+        }));
+        renderMultiSelectMenu('f100Serial');
     }
 
     // 5. Flatten and normalize into display rows
@@ -1653,24 +1794,24 @@ async function loadData() {
         }
 
         if (isKD2Module() && getModuleRuntime()?.loadData) {
-            const week = getVal('filterWeek');
-            const wr = week ? isoWeekDateRange(week) : null;
-            const _unitSel = document.getElementById('filterUnit');
-            const _unitVehicle = _unitSel?.options[_unitSel.selectedIndex]?.dataset?.vehicle || '';
+            const weekList = filterState.week.has('all') ? [] : [...filterState.week];
+            const weekRanges = weekList.map(w => isoWeekDateRange(w)).filter(Boolean);
+            const impliedVehicles = impliedVehiclesFromUnits();
+            const vehicleList = !filterState.vehicle.has('all')
+                ? [...filterState.vehicle]
+                : (impliedVehicles ? [...impliedVehicles] : []);
             currentData = await getModuleRuntime().loadData(db, {
-                vehicle: getVal('filterVehicle') || _unitVehicle,
-                battalion: getVal('filterBattalion'),
-                unit: getVal('filterUnit'),
-                week,
-                weekStartForFilter: wr?.weekStart || null,
-                weekEndForFilter: wr?.weekEnd || null,
+                vehicle: vehicleList,
+                battalion: filterState.battalion.has('all') ? [] : [...filterState.battalion],
+                unit: filterState.unit.has('all') ? [] : [...filterState.unit],
+                weekRanges,
                 timeFrame: getVal('filterTimeFrame'),
                 today: todayStr(),
                 ...currentWeekRange(),
                 ...currentMonthRange(),
                 startDate: getVal('filterStartDate'),
                 endDate: getVal('filterEndDate'),
-                k9Component: getVal('filterK9Component'),
+                k9Component: filterState.k9Component.has('all') ? [] : [...filterState.k9Component],
             });
 
             currentData.sort((a, b) => {
@@ -1687,10 +1828,7 @@ async function loadData() {
                 return (a.start_date || '').localeCompare(b.start_date || '');
             });
 
-            const category = getVal('filterCategory');
-            const displayData = category
-                ? currentData.filter(r => getModuleCategory(r.process_station, r) === category)
-                : currentData;
+            const displayData = applyActiveFilters(currentData);
 
             renderTable(applyTableSearchFilters(displayData));
             updateSummary(displayData);
@@ -1720,26 +1858,25 @@ async function loadData() {
         )
       `);
 
-        // Vehicle filter — also inherit from unit option's data-vehicle when vehicle filter is unset
-        const _unitSelA = document.getElementById('filterUnit');
-        const _unitVehicleA = _unitSelA?.options[_unitSelA.selectedIndex]?.dataset?.vehicle || '';
-        const vehicle = getVal('filterVehicle') || _unitVehicleA;
-        if (vehicle) query = query.eq('vehicle', vehicle);
+        // Vehicle filter — also inherit from implied vehicle(s) when Vehicle is left on "All"
+        // but specific Units are selected (each Unit option carries its own vehicle).
+        const impliedVehiclesA = impliedVehiclesFromUnits();
+        const vehicleSetA = !filterState.vehicle.has('all') ? filterState.vehicle : impliedVehiclesA;
+        if (vehicleSetA) query = applyInFilter(query, 'vehicle', vehicleSetA);
 
         // Unit filter
-        const unit = getVal('filterUnit');
-        if (unit) query = query.eq('vehicle_no', unit);
+        query = applyInFilter(query, 'vehicle_no', filterState.unit);
 
-        // Week filter — include all tasks whose date range overlaps the selected ISO week
-        const week = getVal('filterWeek');
-        if (week) {
-            const wr = isoWeekDateRange(week);
-            if (wr) {
-                // Task overlaps week if: start_date <= weekEnd AND end_date >= weekStart
-                query = query
-                    .lte('start_date', wr.weekEnd)
-                    .gte('end_date', wr.weekStart);
-            }
+        // Week filter — include all tasks whose date range overlaps any selected ISO week
+        const weekListA = filterState.week.has('all') ? [] : [...filterState.week];
+        const weekRangesA = weekListA.map(w => isoWeekDateRange(w)).filter(Boolean);
+        if (weekRangesA.length === 1) {
+            // Task overlaps week if: start_date <= weekEnd AND end_date >= weekStart
+            query = query.lte('start_date', weekRangesA[0].weekEnd).gte('end_date', weekRangesA[0].weekStart);
+        } else if (weekRangesA.length > 1) {
+            query = query.or(weekRangesA
+                .map(r => `and(start_date.lte.${r.weekEnd},end_date.gte.${r.weekStart})`)
+                .join(','));
         }
 
         // Time-frame filter
@@ -1825,11 +1962,8 @@ async function loadData() {
             console.warn('PPMS: category debug failed', e.message || e);
         }
 
-        // Category filter (client-side — maps process_station → category)
-        const category = getVal('filterCategory');
-        const displayData = category
-            ? currentData.filter(r => getModuleCategory(r.process_station, r) === category)
-            : currentData;
+        // Category + search filter (client-side — maps process_station → category)
+        const displayData = applyActiveFilters(currentData);
 
         renderTable(displayData);
         updateSummary(displayData);
@@ -2139,9 +2273,7 @@ function renderF100Table(data) {
         viewBar.querySelectorAll('.f100-view-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 _f100TableView = btn.dataset.view;
-                const _cat = getVal('filterCategory');
-                const _base = _cat ? currentData.filter(r => getModuleCategory(r.process_station, r) === _cat) : currentData;
-                renderF100Table(applyTableSearchFilters(_base));
+                renderF100Table(applyTableSearchFilters(applyActiveFilters(currentData)));
             });
         });
     } else if (viewBar) {
@@ -2565,9 +2697,7 @@ function wireF100TableEvents(tbody) {
 
 // ── Dynamic filter bar ────────────────────────────────────────────
 function _reapplyFilters() {
-    const cat = getVal('filterCategory');
-    const base = cat ? currentData.filter(r => getModuleCategory(r.process_station, r) === cat) : currentData;
-    const filtered = applyTableSearchFilters(base);
+    const filtered = applyTableSearchFilters(applyActiveFilters(currentData));
     renderTable(filtered);
     const rc = document.getElementById('rowCount');
     if (rc) rc.textContent = filtered.length + ' record' + (filtered.length !== 1 ? 's' : '') + (_tableFilters.length ? ' (filtered)' : '');
@@ -2692,9 +2822,7 @@ function renderTable(data) {
             viewBar.querySelectorAll('.f100-view-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
                     _kd2TableView = btn.dataset.view;
-                    const _cat = getVal('filterCategory');
-                    const _base = _cat ? currentData.filter(r => getModuleCategory(r.process_station, r) === _cat) : currentData;
-                    renderTable(applyTableSearchFilters(_base));
+                    renderTable(applyTableSearchFilters(applyActiveFilters(currentData)));
                 });
             });
         } else if (viewBar) {
@@ -3700,10 +3828,10 @@ function buildVpxRows(data) {
 
 function getVpxTitleParts() {
     const parts = [getModuleBadge()];
-    const battalion = isKD2Module() ? getVal('filterBattalion') : '';
-    const vehicle = getVal('filterVehicle');
-    const unit = getVal('filterUnit');
-    const category = getVal('filterCategory');
+    const battalion = isKD2Module() ? filterLabel('battalion', '') : '';
+    const vehicle = filterLabel('vehicle', '');
+    const unit = filterLabel('unit', '');
+    const category = filterLabel('category', '');
     if (battalion) parts.push(battalion);
     if (vehicle) parts.push(vehicle);
     if (unit) parts.push(unit);
@@ -4959,6 +5087,7 @@ async function saveActualStart(planId, dateValue) {
             row.progress = snapAfter || row.progress || {};
             row.progress.actual_start_date = valueToSave;
             if (!updateTableRowInPlace(planId)) refreshAllViews();
+            else renderVPX(currentData);
         } else {
             const pos = saveScrollPos();
             await loadData();
@@ -5050,6 +5179,7 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
             row2.progress.completed = !!valueToSave;
             row2.progress.completion_date = valueToSave;
             if (!updateTableRowInPlace(planId)) refreshAllViews();
+            else renderVPX(currentData);
         } else {
             const pos = saveScrollPos();
             await loadData();
@@ -5620,6 +5750,7 @@ async function markComplete() {
             mRow.progress.completion_date = compDate;
             mRow.progress.notes = notes || null;
             if (!updateTableRowInPlace(planId)) refreshAllViews();
+            else renderVPX(currentData);
         } else {
             const pos = saveScrollPos();
             await loadData();
@@ -5682,30 +5813,55 @@ async function importPlan() {
    ────────────────────────────────────────────────────────────────── */
 function wireEvents() {
     // Filters
-    document.getElementById('btnApply').addEventListener('click', loadData);
     document.getElementById('btnReset').addEventListener('click', resetFilters);
     document.getElementById('btnGanttLegendToggle')?.addEventListener('click', () => {
         _ganttLegendOpen = !_ganttLegendOpen;
         syncGanttLegendUi();
     });
 
-    // Cascade: when vehicle changes, update unit dropdown to match
-    document.getElementById('filterVehicle')?.addEventListener('change', onVehicleFilterChange);
-    
-    // Reload data when K9 component filter changes
-    document.getElementById('filterK9Component')?.addEventListener('change', loadData);
+    // Multi-select checkbox filters — button toggles its menu (closing all
+    // others), menu checkbox changes mutate filterState and auto-apply.
+    // Render each menu now so static-option filters (k9Component, f100Manufacturer,
+    // f100VehicleType) aren't empty on first open; dynamic ones get re-rendered
+    // again once their real option lists load.
+    Object.keys(filterConfig).forEach(key => renderMultiSelectMenu(key));
+    Object.keys(filterConfig).forEach(key => {
+        const cfg = filterConfig[key];
+        document.getElementById(cfg.btn)?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleMultiSelectMenu(key);
+        });
+        document.getElementById(cfg.menu)?.addEventListener('change', (e) => {
+            handleMultiSelectMenuChange(key, e, () => {
+                if (key === 'vehicle') onVehicleFilterChange();
+                loadData();
+            });
+        });
+    });
+    document.addEventListener('click', (e) => {
+        Object.keys(filterConfig).forEach(key => {
+            const cfg = filterConfig[key];
+            const btn = document.getElementById(cfg.btn);
+            const menu = document.getElementById(cfg.menu);
+            if (menu && !menu.hidden && !btn?.contains(e.target) && !menu.contains(e.target)) {
+                menu.hidden = true;
+            }
+        });
+    });
 
-    // F100-KD2 filter changes
-    document.getElementById('f100Battalion')?.addEventListener('change', loadData);
+    // Search box is a client-side filter over already-fetched data — re-render only, no re-fetch
+    document.getElementById('filterSearch')?.addEventListener('input', refreshAllViews);
+
+    document.getElementById('filterStartDate')?.addEventListener('change', loadData);
+    document.getElementById('filterEndDate')?.addEventListener('change', loadData);
+
+    // F100 Mode stays single-select (gun-parts vs vehicle-parts is a mode toggle, not a filter)
     document.getElementById('f100Mode')?.addEventListener('change', loadData);
-    document.getElementById('f100GunPart')?.addEventListener('change', loadData);
-    document.getElementById('f100Manufacturer')?.addEventListener('change', loadData);
-    document.getElementById('f100VehicleType')?.addEventListener('change', loadData);
-    document.getElementById('f100Serial')?.addEventListener('change', loadData);
     document.getElementById('filterTimeFrame').addEventListener('change', function () {
         const isCustom = this.value === 'custom';
         document.getElementById('customDateStart').style.display = isCustom ? '' : 'none';
         document.getElementById('customDateEnd').style.display = isCustom ? '' : 'none';
+        if (!isCustom) loadData();
     });
 
     // Import panel
@@ -5889,23 +6045,22 @@ function wireEvents() {
 }
 
 function resetFilters() {
-    ['filterBattalion', 'filterVehicle', 'filterUnit', 'filterWeek', 'filterCategory'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = '';
-    });
-    // F100 filters
+    resetMultiSelectFilters();
+    const k9ComponentGroup = document.getElementById('filterK9ComponentGroup');
+    if (k9ComponentGroup) k9ComponentGroup.style.display = 'none';
+
+    // F100 Mode stays single-select
     const f100Mode = document.getElementById('f100Mode');
     if (f100Mode) f100Mode.value = 'gun';
-    ['f100Battalion', 'f100GunPart', 'f100Manufacturer', 'f100VehicleType', 'f100Serial'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = '';
-    });
+
     const tf = document.getElementById('filterTimeFrame');
     if (tf) tf.value = 'all';
     document.getElementById('filterStartDate').value = '';
     document.getElementById('filterEndDate').value = '';
     document.getElementById('customDateStart').style.display = 'none';
     document.getElementById('customDateEnd').style.display = 'none';
+    const searchEl = document.getElementById('filterSearch');
+    if (searchEl) searchEl.value = '';
     _tableFilters = [];
     const _inlineBar = document.getElementById('tblFilterBarInline');
     if (_inlineBar) _inlineBar.innerHTML = '';
@@ -6146,6 +6301,13 @@ function esc(str) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
+}
+
+/** Escape + turn line breaks into <br> — HTML collapses raw \n, so multi-line
+ *  or bulleted text (same source field the PDF export renders line-by-line
+ *  via jsPDF's splitTextToSize) would otherwise flatten into one paragraph. */
+function escNl(str) {
+    return esc(str).replace(/\r\n|\r|\n/g, '<br>');
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -6483,19 +6645,17 @@ function renderGantt(plans, startDate, endDate) {
         if (!groups[groupKey][laneKey]) groups[groupKey][laneKey] = [];
     };
     const laneMetaKey = (groupKey, laneKey) => `${groupKey}|||${laneKey}`;
-    const vehicleFilter = getVal('filterVehicle');
-    const unitFilter = getVal('filterUnit');
-    const battalionFilter = isKD2Module() ? getVal('filterBattalion') : isF100KD2Module() ? getVal('f100Battalion') : '';
-    const _unitSelG = document.getElementById('filterUnit');
-    const _unitVehicleG = _unitSelG?.options[_unitSelG?.selectedIndex]?.dataset?.vehicle || '';
-    const effectiveVehicleFilter = vehicleFilter || _unitVehicleG;
+    const unitSetG = filterState.unit;
+    const battalionSetG = isKD2Module() ? filterState.battalion : isF100KD2Module() ? filterState.f100Battalion : new Set(['all']);
+    const impliedVehiclesG = impliedVehiclesFromUnits();
+    const effectiveVehicleSetG = !filterState.vehicle.has('all') ? filterState.vehicle : impliedVehiclesG;
     // F100 has no unit registry — skip pre-population entirely
     if (!isKd2ProcessView && !isF100KD2Module()) {
         unitRegistryRows
             .filter(row =>
-                (!effectiveVehicleFilter || row.vehicle === effectiveVehicleFilter) &&
-                (!unitFilter || row.vehicle_no === unitFilter) &&
-                (!battalionFilter || !isKD2Module() || row.battalion_code === battalionFilter)
+                (!effectiveVehicleSetG || effectiveVehicleSetG.has(row.vehicle)) &&
+                matchesMultiSet(unitSetG, row.vehicle_no) &&
+                matchesMultiSet(battalionSetG, row.battalion_code)
             )
             .forEach(row => {
                 const groupKey = isKD2Module() ? (row.battalion_code || '—') : row.vehicle;
@@ -7601,23 +7761,14 @@ const REPORT_TYPES = {
     late: { label: 'Late Completions', filter: r => calculateStatus(r) === 'Late Completion' },
     planned: { label: 'Not Started Report', filter: r => calculateStatus(r) === 'Planned' },
     vehicle: {
-        label: 'By Vehicle Report', filter: r => {
-            const v = getVal('filterVehicle');
-            return v ? r.vehicle === v : true;
-        }
+        label: 'By Vehicle Report', filter: r => matchesMultiSet(filterState.vehicle, r.vehicle)
     },
     // KD2-only types
     battalion: {
-        label: 'By Battalion', filter: r => {
-            const b = getVal('filterBattalion');
-            return b ? r.battalion_code === b : true;
-        }
+        label: 'By Battalion', filter: r => matchesMultiSet(filterState.battalion, r.battalion_code)
     },
     vtype: {
-        label: 'By Vehicle Type', filter: r => {
-            const v = getVal('filterVehicle');
-            return v ? r.vehicle === v : true;
-        }
+        label: 'By Vehicle Type', filter: r => matchesMultiSet(filterState.vehicle, r.vehicle)
     },
     analytics: { label: 'Station Analytics', filter: () => true },
 };
@@ -7836,8 +7987,8 @@ async function exportPDF(typeKey, fromDate, toDate, category, preview) {
     const MARGIN = 14;
     const now = new Date().toLocaleString('en-GB');
     const stats = buildSummaryStats(rows);
-    const vehicle = getVal('filterVehicle') || 'All';
-    const battalion = isKD2Module() ? (getVal('filterBattalion') || 'All') : '';
+    const vehicle = filterLabel('vehicle');
+    const battalion = isKD2Module() ? filterLabel('battalion') : '';
     const moduleBadge = getModuleBadge();
     const moduleTitle = getModuleReportTitle();
     const moduleSubtitle = getModuleReportSubtitle();
@@ -8132,12 +8283,12 @@ async function exportExcel(typeKey, fromDate, toDate, category, preview) {
 
     // ── Active filter labels for title ─────────────────────────────
     const moduleBadge = getModuleBadge();
-    const fBattalion = isKD2Module() ? getVal('filterBattalion') : '';
-    const fVehicle = getVal('filterVehicle');
-    const fUnit = getVal('filterUnit');
-    const fWeek = getVal('filterWeek');
+    const fBattalion = isKD2Module() ? filterLabel('battalion', '') : '';
+    const fVehicle = filterLabel('vehicle', '');
+    const fUnit = filterLabel('unit', '');
+    const fWeek = filterLabel('week', '');
     const fTF = getVal('filterTimeFrame');
-    const fCategory = category || getVal('filterCategory');
+    const fCategory = category || filterLabel('category', '');
     const fFrom = fromDate || getVal('filterStartDate');
     const fTo = toDate || getVal('filterEndDate');
 
@@ -8539,8 +8690,8 @@ function exportKD2AnalyticsPDF(fromDate, toDate, category) {
 
     // Filter chips
     const chips = [];
-    const fBattalion = getVal('filterBattalion');
-    const fVehicle = getVal('filterVehicle');
+    const fBattalion = filterLabel('battalion', '');
+    const fVehicle = filterLabel('vehicle', '');
     if (fBattalion && fBattalion !== 'All') chips.push(`Battalion: ${fBattalion}`);
     if (fVehicle && fVehicle !== 'All') chips.push(`Vehicle Type: ${fVehicle}`);
     if (category) chips.push(`Category: ${category}`);
@@ -8698,7 +8849,7 @@ async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
     ws.getRow(1).height = 26;
 
     // Filters row
-    const fBattalion = getVal('filterBattalion'), fVehicle = getVal('filterVehicle');
+    const fBattalion = filterLabel('battalion', ''), fVehicle = filterLabel('vehicle', '');
     const fc = [...(fBattalion?[`Battalion: ${fBattalion}`]:[]), ...(fVehicle?[`Vehicle Type: ${fVehicle}`]:[]), ...(category?[`Category: ${category}`]:[]), ...((fromDate||toDate)?[`Dates: ${fromDate||'…'} → ${toDate||'…'}`]:[])];
     ws.addRow(['Filters: ' + (fc.length ? fc.join('   |   ') : 'All data') + '     Generated: ' + new Date().toLocaleString('en-GB')]);
     ws.mergeCells(2, 1, 2, ACOLS.length);
@@ -9184,10 +9335,7 @@ async function exportVpxPDF(preview) {
     // Apply same category filter as the table/VPX view, then the currently
     // selected VPX vehicle-type + Hull/Turret/Assembly tab (never export
     // more than what's on screen).
-    const _vpxCategory = getVal('filterCategory');
-    let vpxData = _vpxCategory
-        ? currentData.filter(r => getModuleCategory(r.process_station, r) === _vpxCategory)
-        : currentData;
+    let vpxData = applyActiveFilters(currentData);
     vpxData = _getVpxFilteredData(vpxData);
 
     if (!vpxData.length) {
@@ -9434,11 +9582,7 @@ async function exportVpxExcel(preview) {
     }
     const meta = getVpxDisplayMeta();
 
-    const _fCategory = getVal('filterCategory');
-
-    let vpxData = _fCategory
-        ? currentData.filter(r => getModuleCategory(r.process_station, r) === _fCategory)
-        : currentData;
+    let vpxData = applyActiveFilters(currentData);
     vpxData = _getVpxFilteredData(vpxData);
     if (!vpxData.length) { showToast('No data matches the current filters.', 'error'); return; }
 
@@ -9967,10 +10111,7 @@ function _vpxProjectRow(vehicleRow, orderedCols) {
 }
 
 function _vpxStationReportData() {
-    const _fCategory = getVal('filterCategory');
-    let vpxData = _fCategory
-        ? currentData.filter(r => getModuleCategory(r.process_station, r) === _fCategory)
-        : currentData;
+    let vpxData = applyActiveFilters(currentData);
     vpxData = _getVpxFilteredData(vpxData);
     if (!vpxData.length) return null;
 
@@ -10759,7 +10900,7 @@ async function openUcForm(id) {
             }
         }
 
-        const currentBattalion = getVal('f100Battalion');
+        const currentBattalion = [...filterState.f100Battalion].find(v => v !== 'all') || '';
         const currentBattalionRow = battalions.find(row => row.battalion_code === currentBattalion);
         const battalionOption = currentBattalionRow ? [...bSel.options].find(opt => opt.value === String(currentBattalionRow.id)) : null;
         if (battalionOption) bSel.value = battalionOption.value;
@@ -10798,11 +10939,11 @@ async function openUcForm(id) {
             }
         }
 
-        const currentBattalion = getVal('filterBattalion');
+        const currentBattalion = [...filterState.battalion].find(v => v !== 'all') || '';
         const currentBattalionRow = battalions.find(row => row.battalion_code === currentBattalion);
         const battalionOption = currentBattalionRow ? [...bSel.options].find(opt => opt.value === String(currentBattalionRow.id)) : null;
         if (battalionOption) bSel.value = battalionOption.value;
-        const currentVehicle = getVal('filterVehicle');
+        const currentVehicle = [...filterState.vehicle].find(v => v !== 'all') || '';
         if (['K9', 'K10', 'K11'].includes(currentVehicle)) vSel.value = currentVehicle;
         document.getElementById('ucEditId').value = '';
         unitText.value = '';
@@ -10948,7 +11089,7 @@ async function saveUnitCode() {
             if (error) throw error;
 
             await loadUnitCodes();
-            populateUnitFilter(getVal('filterVehicle') || null);
+            populateUnitFilter(filterState.vehicle);
             refreshAllViews();
             closeUcForm();
             loadUcTable();
@@ -10970,7 +11111,7 @@ async function saveUnitCode() {
 
         // Refresh in-memory map and re-render
         await loadUnitCodes();
-        populateUnitFilter(getVal('filterVehicle') || null);
+        populateUnitFilter(filterState.vehicle);
         refreshAllViews();
         closeUcForm();
         loadUcTable();
@@ -10988,7 +11129,7 @@ async function deleteUnitCode(id) {
         if (error) throw error;
         if (!isF100KD2Module()) {
             await loadUnitCodes();
-            populateUnitFilter(getVal('filterVehicle') || null);
+            populateUnitFilter(filterState.vehicle);
             refreshAllViews();
         }
         loadUcTable();
@@ -11597,7 +11738,8 @@ async function _populateIssueReporterFilter() {
     return _populateReporterSelect('issueFilterReporter');
 }
 
-async function loadIssues(reset = false) {
+async function loadIssues(reset = false, opts = {}) {
+    const { silent = false } = opts;
     if (reset) { _issuesOffset = 0; loadIssuesOverview().catch(() => {}); }
 
     const search   = (document.getElementById('issueSearch')?.value || '').trim();
@@ -11608,8 +11750,10 @@ async function loadIssues(reset = false) {
     const from     = document.getElementById('issueFilterFrom')?.value || '';
     const to       = document.getElementById('issueFilterTo')?.value || '';
     const tbody    = document.getElementById('issuesTableBody');
+    const wrap     = tbody?.closest('.issues-table-wrap');
+    const savedScrollTop = silent ? wrap?.scrollTop : 0;
 
-    if (reset && tbody) {
+    if (reset && tbody && !silent) {
         tbody.innerHTML = `<tr><td colspan="9" class="table-empty"><div class="empty-state"><span class="spinner"></span><p>Loading…</p></div></td></tr>`;
     }
 
@@ -11665,6 +11809,8 @@ async function loadIssues(reset = false) {
         moreBtn.style.display = (_issuesOffset < _issuesTotalCount) ? '' : 'none';
         moreBtn.onclick = () => loadIssues(false);
     }
+
+    if (silent && wrap) wrap.scrollTop = savedScrollTop;
 }
 
 function resetIssueFilters() {
@@ -12001,7 +12147,7 @@ async function saveIssue() {
         const sel = document.getElementById('issueFilterReporter');
         if (sel) { while (sel.options.length > 1) sel.remove(1); }
         await _populateIssueReporterFilter();
-        await loadIssues(true);
+        await loadIssues(true, { silent: true });
     } catch (err) {
         console.error('saveIssue error:', err);
         const msg = err?.message || String(err);
@@ -12856,9 +13002,9 @@ async function exportIssueReportWord(opts) {
                 reportBody += `<div class="issue-report-card">`;
                 reportBody += `<h3 class="issue-report-title">${esc(r.title || 'Untitled')}</h3>`;
                 reportBody += `<p class="issue-report-byline">Reported by: ${esc(reporter)}</p>`;
-                if (r.description) reportBody += `<p class="issue-report-sec-label issue-report-sec-issue">Issue:</p><p class="issue-report-sec-text">${esc(r.description)}</p>`;
-                if (r.proposed_solution) reportBody += `<p class="issue-report-sec-label issue-report-sec-solution">Proposed Solution:</p><p class="issue-report-sec-text">${esc(r.proposed_solution)}</p>`;
-                if (r.notes) reportBody += `<p class="issue-report-sec-label issue-report-sec-action">Action Taken:</p><p class="issue-report-sec-text">${esc(r.notes)}</p>`;
+                if (r.description) reportBody += `<p class="issue-report-sec-label issue-report-sec-issue">Issue:</p><p class="issue-report-sec-text">${escNl(r.description)}</p>`;
+                if (r.proposed_solution) reportBody += `<p class="issue-report-sec-label issue-report-sec-solution">Proposed Solution:</p><p class="issue-report-sec-text">${escNl(r.proposed_solution)}</p>`;
+                if (r.notes) reportBody += `<p class="issue-report-sec-label issue-report-sec-action">Action Taken:</p><p class="issue-report-sec-text">${escNl(r.notes)}</p>`;
                 reportBody += `<p class="issue-report-meta">${meta.join(' &middot; ')}`
                     + (r.person_in_charge ? ` <span class="issue-report-pic">&middot; PIC: ${esc(r.person_in_charge)}</span>` : '')
                     + `</p>`;
@@ -12886,9 +13032,9 @@ async function exportIssueReportWord(opts) {
             body += `<tr>
                 <td>${esc(ISSUE_CATEGORY_LABELS[r.category] || r.category || '')}</td>
                 <td>${esc(r.title || '')}</td>
-                <td>${esc(r.description || '')}</td>
-                <td>${esc(r.proposed_solution || '')}</td>
-                <td>${esc(r.notes || '')}</td>
+                <td>${escNl(r.description || '')}</td>
+                <td>${escNl(r.proposed_solution || '')}</td>
+                <td>${escNl(r.notes || '')}</td>
                 <td>${esc(formatIssueDate(r.created_at))}</td>
                 <td>${r.resolved_at ? esc(formatIssueDate(r.resolved_at)) : ''}</td>
                 <td>${esc(r.person_in_charge || '')}</td>
@@ -12905,8 +13051,8 @@ async function exportIssueReportWord(opts) {
                 <td>${esc((r.status || '').replace(/_/g, ' '))}</td>
                 <td>${esc(r.reporter_name || r.reporter_email || '')}</td>
                 <td>${esc(r.person_in_charge || '')}</td>
-                <td>${esc(r.description || '')}</td>
-                <td>${esc(r.proposed_solution || '')}</td>
+                <td>${escNl(r.description || '')}</td>
+                <td>${escNl(r.proposed_solution || '')}</td>
                 <td>${esc(formatIssueDate(r.created_at))}</td>
                 <td>${r.resolved_at ? esc(formatIssueDate(r.resolved_at)) : ''}</td>
             </tr>`;
@@ -14000,8 +14146,7 @@ wireGanttControls = function () {
         const gsEl = document.getElementById('ganttStart');
         const geEl = document.getElementById('ganttEnd');
         if (gsEl?.value && geEl?.value) {
-            const category = getVal('filterCategory');
-            const data = category ? currentData.filter(r => getModuleCategory(r.process_station, r) === category) : currentData;
+            const data = applyActiveFilters(currentData);
             renderGantt(data, gsEl.value, geEl.value);
         }
     });
@@ -14010,8 +14155,7 @@ wireGanttControls = function () {
         const gsEl = document.getElementById('ganttStart');
         const geEl = document.getElementById('ganttEnd');
         if (gsEl?.value && geEl?.value) {
-            const category = getVal('filterCategory');
-            const data = category ? currentData.filter(r => getModuleCategory(r.process_station, r) === category) : currentData;
+            const data = applyActiveFilters(currentData);
             renderGantt(data, gsEl.value, geEl.value);
         }
     });
@@ -14712,7 +14856,7 @@ async function openF100AddBlockModal() {
     }
 
     // Pre-select current battalion filter
-    const currentBattalionCode = getVal('f100Battalion');
+    const currentBattalionCode = [...filterState.f100Battalion].find(v => v !== 'all') || '';
     if (currentBattalionCode) {
         const { data: bRow } = await db.from('f100_battalions').select('id').eq('battalion_code', currentBattalionCode).maybeSingle();
         if (bRow) bSel.value = String(bRow.id);

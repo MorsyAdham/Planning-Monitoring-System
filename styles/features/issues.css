@@ -298,6 +298,8 @@ input.issues-filter-select  { padding: 0 6px; width: 120px; }
 /* ── Table wrapper ──────────────────────────────────────────────── */
 .issues-table-wrap {
     overflow-x: auto;
+    overflow-y: auto;
+    max-height: 60vh;
     -webkit-overflow-scrolling: touch;
 }
 
