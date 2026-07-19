@@ -2,7 +2,7 @@ import { bootstrapPage, loadRuntimeScripts } from '../core/app-bootstrap.js';
 import { CDN_SCRIPTS, ROUTES } from '../core/config.js';
 import { byId } from '../core/dom.js';
 import { redirectIfAuthenticated } from '../core/guards.js';
-import { applyStoredTheme, applyTheme, getTheme } from '../core/session.js';
+import { applyStoredTheme, applyTheme, getTheme, saveSession } from '../core/session.js';
 import { createSupabaseClient } from '../core/supabase-client.js';
 import { renderLoginLayout } from '../templates/login-layout.js';
 
