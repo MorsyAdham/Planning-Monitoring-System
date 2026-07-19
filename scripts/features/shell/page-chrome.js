@@ -66,6 +66,14 @@ export function renderPageChrome() {
                     </button>
                 </div>
 
+                <!-- ── Theme picker (standalone, outside the More menu) ── -->
+                <div class="theme-picker-wrap" id="themePickerWrap">
+                    <button class="btn-nav-icon" id="btnThemePicker" title="Theme" aria-haspopup="true" aria-expanded="false">
+                        <span id="themePickerIcon"></span>
+                    </button>
+                    <div class="theme-picker-dropdown" id="themePickerDropdown" style="display:none" role="menu"></div>
+                </div>
+
                 <!-- ── More menu (collapsible) ── -->
                 <div class="nav-more-wrap" id="navMoreWrap">
                     <button class="btn-nav-icon" id="btnNavMore" title="More options" aria-haspopup="true" aria-expanded="false">
@@ -74,19 +82,6 @@ export function renderPageChrome() {
                         </svg>
                     </button>
                     <div class="nav-more-dropdown" id="navMoreDropdown" style="display:none" role="menu">
-                        <!-- Theme toggle -->
-                        <button class="nav-more-btn" id="btnTheme" role="menuitem">
-                            <svg class="icon-sun" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                                <circle cx="10" cy="10" r="4" />
-                                <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42" />
-                            </svg>
-                            <svg class="icon-moon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                                <path d="M17.5 12A7.5 7.5 0 018 2.5a7.5 7.5 0 100 15 7.5 7.5 0 009.5-5.5z" />
-                            </svg>
-                            <span class="nav-theme-lbl-dark">Switch to Light</span>
-                            <span class="nav-theme-lbl-light">Switch to Dark</span>
-                        </button>
-                        <div class="nav-more-divider"></div>
                         <!-- Audit Log (master_admin only) -->
                         <button class="nav-more-btn" id="btnAuditLog" role="menuitem" style="display:none">
                             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">

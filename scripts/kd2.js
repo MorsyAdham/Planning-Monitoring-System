@@ -95,7 +95,6 @@ window.PPMSModuleRuntime = (() => {
         templateEditorVehicle: '',
         templateEditorBlocks: [],
         templateInsertIndex: null,
-        processEditorVehicle: 'K9',
     };
     const placementPointer = { x: 0, y: 0, ready: false };
     let placementGhostEl = null;
@@ -992,10 +991,6 @@ window.PPMSModuleRuntime = (() => {
         setProcessError('');
     }
 
-    function processEditorVehicle() {
-        return document.getElementById('kd2ProcessVehicle')?.value || state.processEditorVehicle || state.routeVehicle || 'K9';
-    }
-
     function processCategoriesForVehicle(vehicle) {
         return state.categories
             .filter(row => row.vehicle_type === vehicle)
@@ -1031,158 +1026,178 @@ window.PPMSModuleRuntime = (() => {
             .map(row => parseInt(row.route_sequence, 10) || 0)) + 1;
     }
 
-    function setProcessFormStatus(message) {
-        const el = document.getElementById('kd2ProcessFormStatus');
-        if (!el) return;
-        el.textContent = message;
+    // ── Process table state — a single flat table across all vehicles,
+    // filtered by Vehicle/Category/Search, with true in-row editing (one
+    // row editable at a time, so the edit inputs can use fixed ids). ──
+    let _processEditingKey = null;   // 'vehicle||stationCode' of the row being edited, or null
+    let _processNewRowDraft = null;  // { vehicle, categoryCode } while adding a new station, or null
+
+    function categoryNameFor(vehicle, categoryCode) {
+        return (state.categories.find(row => row.vehicle_type === vehicle && row.category_code === categoryCode) || {}).category_name || categoryCode;
     }
 
-    function syncProcessCategoryOptions(selected = '') {
-        const select = document.getElementById('kd2ProcessCategory');
+    function syncProcessFilterCategoryOptions() {
+        const select = document.getElementById('kd2ProcessCategoryFilter');
         if (!select) return;
-        const vehicle = processEditorVehicle();
-        const categories = processCategoriesForVehicle(vehicle);
-        if (!categories.length) {
-            select.innerHTML = '<option value="">No KD2 categories available</option>';
-            return;
-        }
-        const resolved = categories.some(row => row.category_code === selected) ? selected : categories[0].category_code;
-        select.innerHTML = categories.map(row => `
-            <option value="${escapeHtml(row.category_code)}" ${row.category_code === resolved ? 'selected' : ''}>
-                ${escapeHtml(row.category_name)}
-            </option>
-        `).join('');
+        const current = select.value;
+        const seen = new Map();
+        state.categories.forEach(row => { if (!seen.has(row.category_code)) seen.set(row.category_code, row.category_name); });
+        const options = [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+        select.innerHTML = '<option value="">All Categories</option>' +
+            options.map(([code, name]) => `<option value="${escapeHtml(code)}">${escapeHtml(name)}</option>`).join('');
+        if ([...select.options].some(o => o.value === current)) select.value = current;
     }
 
-    function resetProcessForm({ vehicle = processEditorVehicle(), categoryCode = '' } = {}) {
-        state.processEditorVehicle = vehicle;
-        const vehicleSelect = document.getElementById('kd2ProcessVehicle');
-        if (vehicleSelect) vehicleSelect.value = vehicle;
-
-        const categories = processCategoriesForVehicle(vehicle);
-        const resolvedCategory = categories.some(row => row.category_code === categoryCode)
-            ? categoryCode
-            : (categories[0]?.category_code || '');
-
-        syncProcessCategoryOptions(resolvedCategory);
-        document.getElementById('kd2ProcessStationCodeOriginal').value = '';
-        document.getElementById('kd2ProcessName').value = '';
-        document.getElementById('kd2ProcessWorkCenter').value = '';
-        document.getElementById('kd2ProcessSequence').value = resolvedCategory ? nextProcessCategorySequence(vehicle, resolvedCategory) : '';
-        document.getElementById('kd2ProcessRouteSequence').value = nextProcessRouteSequence(vehicle);
-        document.getElementById('kd2ProcessLeadTime').value = '';
-        document.getElementById('kd2ProcessLeadSource').value = '';
-        document.getElementById('kd2ProcessStationNotes').value = '';
-        document.getElementById('kd2ProcessLeadNotes').value = '';
-        setProcessFormStatus('Creating a new process station.');
-        setProcessError('');
+    function renderProcessViewRow(station) {
+        const lead = leadTimeRecord(station.vehicle_type, 'station', station.category_code, station.station_code);
+        return `
+            <tr>
+                <td>${escapeHtml(station.vehicle_type)}</td>
+                <td>${escapeHtml(categoryNameFor(station.vehicle_type, station.category_code))}</td>
+                <td>
+                    <strong>${escapeHtml(station.station_name)}</strong>
+                    <span class="kd2-process-code">${escapeHtml(station.station_code)}</span>
+                    ${station.requires_xray ? '<span class="kd2-xray-chip" title="Requires X-ray inspection">X-RAY</span>' : ''}
+                </td>
+                <td>${escapeHtml(station.work_center || '—')}</td>
+                <td>
+                    <div class="kd2-process-reorder">
+                        <span>${station.station_sequence_in_category}</span>
+                        <div class="kd2-process-reorder-arrows">
+                            <button type="button" class="kd2-reorder-btn" title="Move up in category" data-kd2-process-move="${escapeHtml(station.station_code)}" data-kd2-move-vehicle="${escapeHtml(station.vehicle_type)}" data-kd2-move-scope="category" data-kd2-move-dir="up">&#9650;</button>
+                            <button type="button" class="kd2-reorder-btn" title="Move down in category" data-kd2-process-move="${escapeHtml(station.station_code)}" data-kd2-move-vehicle="${escapeHtml(station.vehicle_type)}" data-kd2-move-scope="category" data-kd2-move-dir="down">&#9660;</button>
+                        </div>
+                    </div>
+                </td>
+                <td>
+                    <div class="kd2-process-reorder">
+                        <span>${station.route_sequence}</span>
+                        <div class="kd2-process-reorder-arrows">
+                            <button type="button" class="kd2-reorder-btn" title="Move up in route" data-kd2-process-move="${escapeHtml(station.station_code)}" data-kd2-move-vehicle="${escapeHtml(station.vehicle_type)}" data-kd2-move-scope="route" data-kd2-move-dir="up">&#9650;</button>
+                            <button type="button" class="kd2-reorder-btn" title="Move down in route" data-kd2-process-move="${escapeHtml(station.station_code)}" data-kd2-move-vehicle="${escapeHtml(station.vehicle_type)}" data-kd2-move-scope="route" data-kd2-move-dir="down">&#9660;</button>
+                        </div>
+                    </div>
+                </td>
+                <td>${escapeHtml(leadTimeText(station.vehicle_type, station.category_code, station.station_code))}</td>
+                <td>${escapeHtml(lead?.lead_time_source || '—')}</td>
+                <td>${escapeHtml(station.notes || '—')}</td>
+                <td>
+                    <div class="kd2-process-actions">
+                        <button class="kd2-icon-action-btn" type="button" title="Edit" data-kd2-process-edit="${escapeHtml(station.station_code)}" data-kd2-process-edit-vehicle="${escapeHtml(station.vehicle_type)}">&#9998;</button>
+                        <button class="kd2-icon-action-btn kd2-icon-action-danger" type="button" title="Retire" data-kd2-process-delete="${escapeHtml(station.station_code)}" data-kd2-process-delete-vehicle="${escapeHtml(station.vehicle_type)}">&#128465;</button>
+                    </div>
+                </td>
+            </tr>`;
     }
 
-    function loadProcessIntoForm(vehicle, stationCode) {
-        const station = state.stations.find(row => row.vehicle_type === vehicle && row.station_code === stationCode);
-        if (!station) {
-            setProcessError('The selected process station is no longer available.');
-            return;
-        }
-        const lead = leadTimeRecord(vehicle, 'station', station.category_code, station.station_code);
-        state.processEditorVehicle = vehicle;
-        document.getElementById('kd2ProcessVehicle').value = vehicle;
-        syncProcessCategoryOptions(station.category_code);
-        document.getElementById('kd2ProcessStationCodeOriginal').value = station.station_code;
-        document.getElementById('kd2ProcessCategory').value = station.category_code;
-        document.getElementById('kd2ProcessName').value = station.station_name || '';
-        document.getElementById('kd2ProcessWorkCenter').value = station.work_center || '';
-        document.getElementById('kd2ProcessSequence').value = station.station_sequence_in_category || '';
-        document.getElementById('kd2ProcessRouteSequence').value = station.route_sequence || '';
-        document.getElementById('kd2ProcessLeadTime').value = lead?.lead_time_days ?? '';
-        document.getElementById('kd2ProcessLeadSource').value = lead?.lead_time_source || '';
-        document.getElementById('kd2ProcessStationNotes').value = station.notes || '';
-        document.getElementById('kd2ProcessLeadNotes').value = lead?.notes || '';
-        setProcessFormStatus(`Editing ${station.station_name} (${station.station_code}).`);
-        setProcessError('');
+    function renderProcessEditRow(station) {
+        const lead = leadTimeRecord(station.vehicle_type, 'station', station.category_code, station.station_code);
+        const categories = processCategoriesForVehicle(station.vehicle_type);
+        return `
+            <tr class="kd2-process-row-editing">
+                <td>${escapeHtml(station.vehicle_type)}</td>
+                <td>
+                    <select id="peCategory" class="kd2-process-input">
+                        ${categories.map(c => `<option value="${escapeHtml(c.category_code)}" ${c.category_code === station.category_code ? 'selected' : ''}>${escapeHtml(c.category_name)}</option>`).join('')}
+                    </select>
+                </td>
+                <td><input type="text" id="peName" class="kd2-process-input" value="${escapeHtml(station.station_name)}" /></td>
+                <td><input type="text" id="peWorkCenter" class="kd2-process-input" value="${escapeHtml(station.work_center || '')}" /></td>
+                <td><input type="number" id="peSequence" class="kd2-process-input" min="1" step="1" value="${station.station_sequence_in_category}" /></td>
+                <td><input type="number" id="peRoute" class="kd2-process-input" min="1" step="1" value="${station.route_sequence}" /></td>
+                <td><input type="number" id="peLeadTime" class="kd2-process-input" min="0.25" step="0.25" value="${lead?.lead_time_days ?? ''}" placeholder="Blank = pending" /></td>
+                <td><input type="text" id="peLeadSource" class="kd2-process-input" value="${escapeHtml(lead?.lead_time_source || '')}" /></td>
+                <td><input type="text" id="peNotes" class="kd2-process-input" value="${escapeHtml(station.notes || '')}" /></td>
+                <td>
+                    <div class="kd2-process-actions">
+                        <label class="form-check" style="padding:0"><input type="checkbox" id="peRequiresXray" ${station.requires_xray ? 'checked' : ''} /><span>X-ray</span></label>
+                        <button type="button" class="btn btn-primary btn-sm" data-kd2-process-save="${escapeHtml(station.station_code)}" data-kd2-process-save-vehicle="${escapeHtml(station.vehicle_type)}">Save</button>
+                        <button type="button" class="btn btn-ghost btn-sm" data-kd2-process-cancel>Cancel</button>
+                    </div>
+                </td>
+            </tr>`;
     }
 
-    function renderProcessEditor() {
+    function renderProcessNewRow(draft) {
+        const categories = processCategoriesForVehicle(draft.vehicle);
+        const categoryCode = categories.some(c => c.category_code === draft.categoryCode) ? draft.categoryCode : (categories[0]?.category_code || '');
+        return `
+            <tr class="kd2-process-row-editing">
+                <td>
+                    <select id="peNewVehicle" class="kd2-process-input">
+                        ${VEHICLES.map(v => `<option value="${v}" ${v === draft.vehicle ? 'selected' : ''}>${v}</option>`).join('')}
+                    </select>
+                </td>
+                <td>
+                    <select id="peCategory" class="kd2-process-input">
+                        ${categories.map(c => `<option value="${escapeHtml(c.category_code)}" ${c.category_code === categoryCode ? 'selected' : ''}>${escapeHtml(c.category_name)}</option>`).join('')}
+                    </select>
+                </td>
+                <td><input type="text" id="peName" class="kd2-process-input" placeholder="Station name" /></td>
+                <td><input type="text" id="peWorkCenter" class="kd2-process-input" placeholder="Optional" /></td>
+                <td><input type="number" id="peSequence" class="kd2-process-input" min="1" step="1" value="${categoryCode ? nextProcessCategorySequence(draft.vehicle, categoryCode) : 1}" /></td>
+                <td><input type="number" id="peRoute" class="kd2-process-input" min="1" step="1" value="${nextProcessRouteSequence(draft.vehicle)}" /></td>
+                <td><input type="number" id="peLeadTime" class="kd2-process-input" min="0.25" step="0.25" placeholder="Blank = pending" /></td>
+                <td><input type="text" id="peLeadSource" class="kd2-process-input" placeholder="Optional" /></td>
+                <td><input type="text" id="peNotes" class="kd2-process-input" placeholder="Optional" /></td>
+                <td>
+                    <div class="kd2-process-actions">
+                        <label class="form-check" style="padding:0"><input type="checkbox" id="peRequiresXray" /><span>X-ray</span></label>
+                        <button type="button" class="btn btn-primary btn-sm" data-kd2-process-save-new>Save</button>
+                        <button type="button" class="btn btn-ghost btn-sm" data-kd2-process-cancel>Cancel</button>
+                    </div>
+                </td>
+            </tr>`;
+    }
+
+    function renderProcessTable() {
         const container = document.getElementById('kd2ProcessBody');
         const summary = document.getElementById('kd2ProcessSummary');
-        const vehicleSelect = document.getElementById('kd2ProcessVehicle');
-        if (!container || !summary || !vehicleSelect) return;
+        if (!container || !summary) return;
 
-        const vehicle = processEditorVehicle();
-        state.processEditorVehicle = vehicle;
-        vehicleSelect.value = vehicle;
-        const categories = processCategoriesForVehicle(vehicle);
-        const stations = processStationsForVehicle(vehicle);
+        syncProcessFilterCategoryOptions();
 
-        if (!categories.length) {
-            syncProcessCategoryOptions('');
-            summary.textContent = `${vehicle} route master is not loaded yet.`;
-            container.innerHTML = '<div class="empty-state"><p>No KD2 process categories were found for this vehicle.</p></div>';
-            setProcessFormStatus('Create KD2 categories before adding process stations.');
-            return;
-        }
+        const vehicleFilter = document.getElementById('kd2ProcessVehicleFilter')?.value || '';
+        const categoryFilter = document.getElementById('kd2ProcessCategoryFilter')?.value || '';
+        const search = (document.getElementById('kd2ProcessSearch')?.value || '').trim().toLowerCase();
 
-        const currentCategory = document.getElementById('kd2ProcessCategory')?.value || '';
-        syncProcessCategoryOptions(currentCategory);
+        let stations = state.stations.slice();
+        if (vehicleFilter) stations = stations.filter(s => s.vehicle_type === vehicleFilter);
+        if (categoryFilter) stations = stations.filter(s => s.category_code === categoryFilter);
+        if (search) stations = stations.filter(s =>
+            (s.station_name || '').toLowerCase().includes(search) ||
+            (s.station_code || '').toLowerCase().includes(search)
+        );
+        stations.sort((a, b) =>
+            VEHICLES.indexOf(a.vehicle_type) - VEHICLES.indexOf(b.vehicle_type) ||
+            String(a.category_code || '').localeCompare(String(b.category_code || '')) ||
+            (a.station_sequence_in_category || 0) - (b.station_sequence_in_category || 0)
+        );
 
-        summary.textContent = `${vehicle}: ${stations.length} active process station${stations.length === 1 ? '' : 's'} across ${categories.length} categories. Edit one row or add a new station below.`;
-        container.innerHTML = categories.map(category => {
-            const categoryStations = stations.filter(station => station.category_code === category.category_code);
-            return `
-                <section class="kd2-process-category" data-category-code="${escapeHtml(category.category_code)}">
-                    <div class="kd2-process-category-head">
-                        <div>
-                            <strong>${escapeHtml(category.category_name)}</strong>
-                            <span class="kd2-leadtime-code">${escapeHtml(category.category_code)} · Category ${category.category_sequence}</span>
-                        </div>
-                        <span class="kd2-route-badge">${categoryStations.length} station${categoryStations.length === 1 ? '' : 's'}</span>
-                    </div>
-                    ${categoryStations.length ? `
-                        <div class="kd2-process-table-wrap">
-                            <table class="table kd2-process-table">
-                                <thead>
-                                    <tr>
-                                        <th>Station</th>
-                                        <th>Work Center</th>
-                                        <th>Order</th>
-                                        <th>Route</th>
-                                        <th>Lead Time</th>
-                                        <th>Notes</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${categoryStations.map(station => {
-                                        const lead = leadTimeRecord(vehicle, 'station', station.category_code, station.station_code);
-                                        return `
-                                            <tr>
-                                                <td>
-                                                    <strong>${escapeHtml(station.station_name)}</strong>
-                                                    <span class="kd2-process-code">${escapeHtml(station.station_code)}</span>
-                                                </td>
-                                                <td>${escapeHtml(station.work_center || '—')}</td>
-                                                <td>${station.station_sequence_in_category}</td>
-                                                <td>${station.route_sequence}</td>
-                                                <td>${escapeHtml(leadTimeText(vehicle, station.category_code, station.station_code))}</td>
-                                                <td>${escapeHtml(station.notes || lead?.notes || '—')}</td>
-                                                <td>
-                                                    <div class="kd2-process-actions">
-                                                        <button class="kd2-action-link" type="button" data-kd2-process-edit="${escapeHtml(station.station_code)}">Edit</button>
-                                                        <button class="kd2-action-link btn-kd2-danger" type="button" data-kd2-process-delete="${escapeHtml(station.station_code)}">Retire</button>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        `;
-                                    }).join('')}
-                                </tbody>
-                            </table>
-                        </div>
-                    ` : `
-                        <div class="empty-state" style="padding:18px 16px"><p>No active process stations in this category yet.</p></div>
-                    `}
-                </section>
-            `;
-        }).join('');
+        summary.textContent = `${stations.length} process station${stations.length === 1 ? '' : 's'} shown` +
+            (vehicleFilter ? ` · ${vehicleFilter}` : '') +
+            (categoryFilter ? ` · ${categoryNameFor(vehicleFilter || (stations[0]?.vehicle_type || 'K9'), categoryFilter)}` : '') + '.';
+
+        const rowsHtml = [];
+        if (_processNewRowDraft) rowsHtml.push(renderProcessNewRow(_processNewRowDraft));
+        stations.forEach(station => {
+            const key = station.vehicle_type + '||' + station.station_code;
+            rowsHtml.push(_processEditingKey === key ? renderProcessEditRow(station) : renderProcessViewRow(station));
+        });
+
+        container.innerHTML = `
+            <div class="kd2-process-table-wrap">
+                <table class="table kd2-process-table kd2-process-table-flat">
+                    <thead>
+                        <tr>
+                            <th>Vehicle</th><th>Category</th><th>Station</th><th>Work Center</th>
+                            <th>Order</th><th>Route</th><th>Lead Time</th><th>Lead Source</th>
+                            <th>Notes</th><th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml.join('') || `<tr><td colspan="10" class="empty-state" style="padding:18px"><p>No process stations match these filters.</p></td></tr>`}</tbody>
+                </table>
+            </div>`;
     }
 
     async function openProcessModal(preferredVehicle = state.routeVehicle || 'K9') {
@@ -1197,55 +1212,22 @@ window.PPMSModuleRuntime = (() => {
             return;
         }
 
-        const vehicle = VEHICLES.includes(preferredVehicle) ? preferredVehicle : (state.routeVehicle || 'K9');
-        state.processEditorVehicle = vehicle;
-        resetProcessForm({ vehicle });
-        renderProcessEditor();
+        _processEditingKey = null;
+        _processNewRowDraft = null;
         setProcessError('');
+        const vehicleFilterEl = document.getElementById('kd2ProcessVehicleFilter');
+        if (vehicleFilterEl) vehicleFilterEl.value = VEHICLES.includes(preferredVehicle) ? preferredVehicle : '';
+        const categoryFilterEl = document.getElementById('kd2ProcessCategoryFilter');
+        if (categoryFilterEl) categoryFilterEl.value = '';
+        const searchEl = document.getElementById('kd2ProcessSearch');
+        if (searchEl) searchEl.value = '';
+        renderProcessTable();
         const overlay = document.getElementById('kd2ProcessOverlay');
         // Use the wide overlay layout so the modal aligns to top and can
-        // provide more vertical space for the process editor.
+        // provide more vertical space for the process table.
         if (overlay) overlay.classList.add('modal-overlay-wide');
         moveProcessOverlayToActiveHost();
         if (overlay) overlay.style.display = 'flex';
-        // Setup category filter behaviour after rendering
-        setupProcessFilter();
-    }
-
-    function setupProcessFilter() {
-        const filter = document.getElementById('kd2ProcessCategoryFilter');
-        const clearBtn = document.getElementById('btnKd2ProcessFilterClear');
-        const shell = document.getElementById('kd2ProcessBody');
-        if (!filter || !shell) return;
-        const vehicle = processEditorVehicle();
-        const categories = processCategoriesForVehicle(vehicle);
-        filter.innerHTML = '<option value="">All Categories</option>' + categories.map(cat => ` <option value="${escapeHtml(cat.category_code)}">${escapeHtml(cat.category_name)}</option>`).join('');
-        // keep current selection if set in the form
-        filter.value = document.getElementById('kd2ProcessCategory')?.value || '';
-        function applyFilter() {
-            const sel = filter.value;
-            document.querySelectorAll('.kd2-process-category').forEach(sec => {
-                const code = sec.getAttribute('data-category-code') || '';
-                if (!sel) {
-                    sec.classList.remove('is-hidden','is-focused');
-                } else if (code === sel) {
-                    sec.classList.remove('is-hidden');
-                    sec.classList.add('is-focused');
-                    // scroll so header aligns under filter bar
-                    const head = sec.querySelector('.kd2-process-category-head');
-                    const shellRect = shell.getBoundingClientRect();
-                    const headRect = head ? head.getBoundingClientRect() : sec.getBoundingClientRect();
-                    const filterRect = document.getElementById('kd2ProcessCategoryFilter').getBoundingClientRect();
-                    const offset = headRect.top - shellRect.top - filterRect.height - 8; // small gap
-                    shell.scrollBy({ top: offset, behavior: 'smooth' });
-                } else {
-                    sec.classList.add('is-hidden');
-                    sec.classList.remove('is-focused');
-                }
-            });
-        }
-        filter.addEventListener('change', applyFilter);
-        if (clearBtn) clearBtn.addEventListener('click', () => { filter.value = ''; applyFilter(); });
     }
 
     function renderLeadTimeEditor() {
@@ -1391,27 +1373,26 @@ window.PPMSModuleRuntime = (() => {
         return stationCode;
     }
 
-    async function saveProcessStation() {
+    /** Save the single row currently in edit mode. `originalStationCode` is '' for a new station. */
+    async function saveProcessStationRow(vehicle, originalStationCode) {
         if (!dbRef) return;
         if (!canManageKD2()) {
             toast('Only planners and admins can edit KD2 processes.', 'error');
             return;
         }
 
-        const vehicle = processEditorVehicle();
-        const originalStationCode = document.getElementById('kd2ProcessStationCodeOriginal')?.value || '';
-        const categoryCode = document.getElementById('kd2ProcessCategory')?.value || '';
-        const stationName = document.getElementById('kd2ProcessName')?.value?.trim() || '';
-        const workCenter = document.getElementById('kd2ProcessWorkCenter')?.value?.trim() || '';
-        const stationNotes = document.getElementById('kd2ProcessStationNotes')?.value?.trim() || '';
-        const leadSource = document.getElementById('kd2ProcessLeadSource')?.value?.trim() || '';
-        const leadNotes = document.getElementById('kd2ProcessLeadNotes')?.value?.trim() || '';
-        const stationSequence = parseRouteSequenceValue(document.getElementById('kd2ProcessSequence')?.value || '');
-        const routeSequence = parseRouteSequenceValue(document.getElementById('kd2ProcessRouteSequence')?.value || '');
-        const leadTime = parseLeadTimeValue(document.getElementById('kd2ProcessLeadTime')?.value || '');
+        const categoryCode = document.getElementById('peCategory')?.value || '';
+        const stationName = document.getElementById('peName')?.value?.trim() || '';
+        const workCenter = document.getElementById('peWorkCenter')?.value?.trim() || '';
+        const stationNotes = document.getElementById('peNotes')?.value?.trim() || '';
+        const leadSource = document.getElementById('peLeadSource')?.value?.trim() || '';
+        const stationSequence = parseRouteSequenceValue(document.getElementById('peSequence')?.value || '');
+        const routeSequence = parseRouteSequenceValue(document.getElementById('peRoute')?.value || '');
+        const leadTime = parseLeadTimeValue(document.getElementById('peLeadTime')?.value || '');
+        const requiresXray = !!document.getElementById('peRequiresXray')?.checked;
 
         if (!categoryCode) {
-            setProcessError('Select a KD2 category before saving the process.');
+            setProcessError('Select a category before saving.');
             return;
         }
         if (!stationName) {
@@ -1460,6 +1441,7 @@ window.PPMSModuleRuntime = (() => {
             route_sequence: routeSequence,
             is_active: true,
             notes: stationNotes || null,
+            requires_xray: requiresXray,
         };
         const routePayload = {
             vehicle_type: vehicle,
@@ -1475,7 +1457,9 @@ window.PPMSModuleRuntime = (() => {
             planning_level: 'station',
             lead_time_days: leadTime,
             lead_time_source: leadSource || null,
-            notes: leadNotes || null,
+            // Lead Time Notes no longer has its own UI field — preserve whatever was
+            // already there rather than silently wiping it out on every row edit.
+            notes: beforeLead?.notes ?? null,
         };
 
         try {
@@ -1512,13 +1496,15 @@ window.PPMSModuleRuntime = (() => {
             await writeAudit('UPSERT', 'kd2_process_lead_times', beforeLead?.id || `${vehicle}:${stationCode}:station`, beforeLead, leadPayload);
 
             toast(`KD2 process "${stationName}" ${originalStationCode ? 'updated' : 'created'}.`, 'success');
+            _processEditingKey = null;
+            _processNewRowDraft = null;
+            setProcessError('');
             await refreshWorkspace();
             // Force template editor to rebuild from the refreshed station/route state so newly
             // added or updated processes appear immediately without a page reload.
             ensureTemplateEditorState(vehicle, { force: true });
             await helpers.reloadAll?.();
-            resetProcessForm({ vehicle, categoryCode });
-            renderProcessEditor();
+            renderProcessTable();
             renderTemplateEditor();
         } catch (error) {
             setProcessError(error.message);
@@ -1560,14 +1546,60 @@ window.PPMSModuleRuntime = (() => {
             await writeAudit('UPDATE', 'kd2_process_routes', `${vehicle}:${stationCode}`, beforeRoute, beforeRoute ? { ...beforeRoute, is_active: false } : { vehicle_type: vehicle, station_code: stationCode, is_active: false });
 
             toast(`"${station.station_name}" retired.`, 'success');
+            if (_processEditingKey === vehicle + '||' + stationCode) _processEditingKey = null;
             await refreshWorkspace();
             await helpers.reloadAll?.();
-            if (document.getElementById('kd2ProcessStationCodeOriginal')?.value === stationCode) {
-                resetProcessForm({ vehicle, categoryCode: station.category_code });
-            }
-            renderProcessEditor();
+            renderProcessTable();
         } catch (error) {
             setProcessError(error.message);
+        }
+    }
+
+    /** Swap a station's order with its neighbor — 'category' scope reorders within
+     *  station_sequence_in_category, 'route' scope reorders within route_sequence
+     *  for the whole vehicle. Uses a temporary sentinel value for the 3-step swap
+     *  so the (vehicle_type, category_code, station_sequence_in_category) unique
+     *  constraint is never violated mid-update. */
+    async function moveProcessStationOrder(vehicle, stationCode, direction, scope) {
+        if (!dbRef) return;
+        if (!canManageKD2()) {
+            toast('Only planners and admins can edit KD2 processes.', 'error');
+            return;
+        }
+        const field = scope === 'route' ? 'route_sequence' : 'station_sequence_in_category';
+        const station = state.stations.find(row => row.vehicle_type === vehicle && row.station_code === stationCode);
+        if (!station) return;
+
+        const siblings = state.stations
+            .filter(row => row.vehicle_type === vehicle && (scope === 'route' || row.category_code === station.category_code))
+            .sort((a, b) => (a[field] || 0) - (b[field] || 0));
+        const idx = siblings.findIndex(row => row.station_code === stationCode);
+        const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+        if (idx < 0 || swapIdx < 0 || swapIdx >= siblings.length) return;
+        const other = siblings[swapIdx];
+        const stationVal = station[field];
+        const otherVal = other[field];
+        const TEMP_SEQUENCE = 999999;
+
+        try {
+            let { error } = await dbRef.from('kd2_process_stations').update({ [field]: TEMP_SEQUENCE }).eq('vehicle_type', vehicle).eq('station_code', station.station_code);
+            if (error) throw error;
+            ({ error } = await dbRef.from('kd2_process_stations').update({ [field]: stationVal }).eq('vehicle_type', vehicle).eq('station_code', other.station_code));
+            if (error) throw error;
+            ({ error } = await dbRef.from('kd2_process_stations').update({ [field]: otherVal }).eq('vehicle_type', vehicle).eq('station_code', station.station_code));
+            if (error) throw error;
+
+            if (scope === 'route') {
+                await dbRef.from('kd2_process_routes').update({ route_sequence: stationVal }).eq('vehicle_type', vehicle).eq('station_code', other.station_code);
+                await dbRef.from('kd2_process_routes').update({ route_sequence: otherVal }).eq('vehicle_type', vehicle).eq('station_code', station.station_code);
+            }
+
+            await writeAudit('UPDATE', 'kd2_process_stations', `${vehicle}:${stationCode}`, { [field]: stationVal }, { [field]: otherVal });
+            await refreshWorkspace();
+            await helpers.reloadAll?.();
+            renderProcessTable();
+        } catch (error) {
+            setProcessError('Failed to reorder: ' + error.message);
         }
     }
 
@@ -6513,7 +6545,7 @@ window.PPMSModuleRuntime = (() => {
             renderPlanningInputs();
             renderRouteFlow();
             if (document.getElementById('kd2LeadTimeOverlay')?.style.display === 'flex') renderLeadTimeEditor();
-            if (document.getElementById('kd2ProcessOverlay')?.style.display === 'flex') renderProcessEditor();
+            if (document.getElementById('kd2ProcessOverlay')?.style.display === 'flex') renderProcessTable();
             if (document.getElementById('kd2NoWorkOverlay')?.style.display === 'flex') renderNoWorkDays();
             if (document.getElementById('kd2PlanCreateOverlay')?.style.display === 'flex') {
                 const preserveStation = document.getElementById('kd2PlanCreateStation')?.value || '';
@@ -6838,30 +6870,60 @@ window.PPMSModuleRuntime = (() => {
         });
         document.getElementById('kd2ProcessClose')?.addEventListener('click', closeProcessModal);
         document.getElementById('btnKd2ProcessCancel')?.addEventListener('click', closeProcessModal);
-        document.getElementById('btnKd2ProcessSave')?.addEventListener('click', saveProcessStation);
         document.getElementById('btnKd2ProcessReset')?.addEventListener('click', () => {
-            resetProcessForm({ vehicle: processEditorVehicle(), categoryCode: document.getElementById('kd2ProcessCategory')?.value || '' });
+            const vehicleFilter = document.getElementById('kd2ProcessVehicleFilter')?.value || '';
+            const categoryFilter = document.getElementById('kd2ProcessCategoryFilter')?.value || '';
+            _processEditingKey = null;
+            _processNewRowDraft = { vehicle: VEHICLES.includes(vehicleFilter) ? vehicleFilter : 'K9', categoryCode: categoryFilter };
+            renderProcessTable();
         });
-        document.getElementById('kd2ProcessVehicle')?.addEventListener('change', event => {
-            resetProcessForm({ vehicle: event.target.value });
-            renderProcessEditor();
-        });
-        document.getElementById('kd2ProcessCategory')?.addEventListener('change', event => {
-            const originalStationCode = document.getElementById('kd2ProcessStationCodeOriginal')?.value || '';
-            const sequenceInput = document.getElementById('kd2ProcessSequence');
-            if (sequenceInput) {
-                sequenceInput.value = nextProcessCategorySequence(processEditorVehicle(), event.target.value, originalStationCode);
+        document.getElementById('kd2ProcessVehicleFilter')?.addEventListener('change', renderProcessTable);
+        document.getElementById('kd2ProcessCategoryFilter')?.addEventListener('change', renderProcessTable);
+        document.getElementById('kd2ProcessSearch')?.addEventListener('input', renderProcessTable);
+        document.getElementById('kd2ProcessBody')?.addEventListener('change', event => {
+            // The new-row's own Vehicle select changes which category list applies — re-render.
+            if (event.target.id === 'peNewVehicle' && _processNewRowDraft) {
+                _processNewRowDraft.vehicle = event.target.value;
+                _processNewRowDraft.categoryCode = '';
+                renderProcessTable();
             }
         });
         document.getElementById('kd2ProcessBody')?.addEventListener('click', event => {
+            const moveBtn = event.target.closest('[data-kd2-process-move]');
+            if (moveBtn) {
+                moveProcessStationOrder(moveBtn.dataset.kd2MoveVehicle || '', moveBtn.dataset.kd2ProcessMove || '', moveBtn.dataset.kd2MoveDir, moveBtn.dataset.kd2MoveScope);
+                return;
+            }
             const editBtn = event.target.closest('[data-kd2-process-edit]');
             if (editBtn) {
-                loadProcessIntoForm(processEditorVehicle(), editBtn.dataset.kd2ProcessEdit || '');
+                _processNewRowDraft = null;
+                _processEditingKey = (editBtn.dataset.kd2ProcessEditVehicle || '') + '||' + (editBtn.dataset.kd2ProcessEdit || '');
+                setProcessError('');
+                renderProcessTable();
                 return;
             }
             const deleteBtn = event.target.closest('[data-kd2-process-delete]');
             if (deleteBtn) {
-                deleteProcessStation(processEditorVehicle(), deleteBtn.dataset.kd2ProcessDelete || '');
+                deleteProcessStation(deleteBtn.dataset.kd2ProcessDeleteVehicle || '', deleteBtn.dataset.kd2ProcessDelete || '');
+                return;
+            }
+            const cancelBtn = event.target.closest('[data-kd2-process-cancel]');
+            if (cancelBtn) {
+                _processEditingKey = null;
+                _processNewRowDraft = null;
+                setProcessError('');
+                renderProcessTable();
+                return;
+            }
+            const saveBtn = event.target.closest('[data-kd2-process-save]');
+            if (saveBtn) {
+                saveProcessStationRow(saveBtn.dataset.kd2ProcessSaveVehicle || '', saveBtn.dataset.kd2ProcessSave || '');
+                return;
+            }
+            const saveNewBtn = event.target.closest('[data-kd2-process-save-new]');
+            if (saveNewBtn) {
+                const newVehicle = document.getElementById('peNewVehicle')?.value || 'K9';
+                saveProcessStationRow(newVehicle, '');
             }
         });
         document.getElementById('kd2ProcessOverlay')?.addEventListener('click', function (e) {

@@ -6,9 +6,7 @@ export function renderPageTail() {
     </main>
 
     <footer class="site-footer">
-        <span>KD1 Assembly Control System</span>
-        <span class="footer-sep">|</span>
-        <span>&copy; 2026 Adham Morsy</span>
+        <span>Production Plan Monitoring System &copy; 2026 &nbsp;&middot;&nbsp; Adham Morsy</span>
     </footer>
 `.trim();
 }

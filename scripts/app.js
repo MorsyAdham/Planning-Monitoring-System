@@ -425,7 +425,7 @@ function syncReportCategoryOptions() {
     }
     // Show/hide KD2-only report type cards
     const kd2 = isKD2Module();
-    ['kd2ReportCardBattalion', 'kd2ReportCardVtype', 'kd2ReportCardAnalytics'].forEach(id => {
+    ['kd2ReportCardBattalion', 'kd2ReportCardVtype', 'kd2ReportCardAnalytics', 'kd2ReportCardXray'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.hidden = !kd2;
     });
@@ -439,7 +439,7 @@ function syncReportCategoryOptions() {
     // If a KD2-only type was checked but we're now in a non-KD2 module, reset to full
     if (!kd2) {
         const checked = document.querySelector('input[name="reportType"]:checked');
-        if (checked && ['battalion', 'vtype', 'analytics'].includes(checked.value)) {
+        if (checked && ['battalion', 'vtype', 'analytics', 'xray_status'].includes(checked.value)) {
             const fullRadio = document.querySelector('input[name="reportType"][value="full"]');
             if (fullRadio) { fullRadio.checked = true; }
         }
@@ -1378,6 +1378,7 @@ async function loadFilters() {
             populateCategorySelect(kd2Filters.categories || []);
             await loadUnitCodes();
             populateUnitFilter(null);
+            await loadXrayEligibleStations();
             await getModuleRuntime().loadPlanningSnapshot?.(db);
             return;
         }
@@ -1784,7 +1785,19 @@ async function loadF100Data() {
     checkNotifJump();
 }
 
+let _loadDataDebounceTimer = null;
+/** Coalesces rapid-fire filter changes (e.g. checking several boxes in a
+ *  multi-select menu) into a single fetch instead of one full reload per
+ *  click — each click was previously re-running the whole loadData() query
+ *  and re-render, so selecting N values meant N sequential network round
+ *  trips. Fires ~350ms after the last change. */
+function loadDataDebounced(delay = 350) {
+    clearTimeout(_loadDataDebounceTimer);
+    _loadDataDebounceTimer = setTimeout(() => { loadData(); }, delay);
+}
+
 async function loadData() {
+    clearTimeout(_loadDataDebounceTimer);
     try {
         setTableLoading(true);
 
@@ -1813,6 +1826,30 @@ async function loadData() {
                 endDate: getVal('filterEndDate'),
                 k9Component: filterState.k9Component.has('all') ? [] : [...filterState.k9Component],
             });
+
+            // kd2_plan_live (the view loadData() above queries) doesn't expose the
+            // X-ray/repair columns — fetch them separately for completed Welding
+            // rows only and stitch into each row's progress object.
+            const xrayProgressIds = currentData
+                .filter(row => row.progress?.completed && row.progress?.id && isXrayEligible(row))
+                .map(row => row.progress.id);
+            if (xrayProgressIds.length) {
+                try {
+                    const { data: xrayRows, error: xrayErr } = await db.from('kd2_progress').select('id, xray_cycles, final_qa_date').in('id', xrayProgressIds);
+                    if (xrayErr) throw xrayErr;
+                    const xrayMap = new Map((xrayRows || []).map(r => [r.id, r]));
+                    currentData.forEach(row => {
+                        const x = row.progress?.id ? xrayMap.get(row.progress.id) : null;
+                        if (x) {
+                            row.progress.xray_cycles = x.xray_cycles || [];
+                            row.progress.final_qa_date = x.final_qa_date || null;
+                        }
+                    });
+                } catch (e) {
+                    // Migration 42 not applied yet — X-ray markers just won't show until it is.
+                    console.warn('X-ray/repair columns unavailable:', e.message);
+                }
+            }
 
             currentData.sort((a, b) => {
                 const vCmp = vehicleSort(a.vehicle, b.vehicle); if (vCmp !== 0) return vCmp;
@@ -2033,6 +2070,83 @@ function calculateStatus(row) {
     return 'Planned';
 }
 
+/* ──────────────────────────────────────────────────────────────────
+   6b. X-RAY / REPAIR CYCLE (KD2 stations flagged "Requires X-ray")
+   ────────────────────────────────────────────────────────────────── */
+
+const XRAY_STAGE_META = {
+    awaiting_xray:          { label: 'X-ray',         cls: 'xray-marker-awaiting' },
+    in_xray:                { label: 'In X-ray',      cls: 'xray-marker-inxray' },
+    failed_awaiting_repair: { label: 'Repair Needed', cls: 'xray-marker-failed' },
+    in_repair:              { label: 'In Repair',     cls: 'xray-marker-inrepair' },
+    passed:                 { label: 'QA Passed',     cls: 'xray-marker-passed' },
+};
+
+/** vehicle_type||station_name -> true, for stations flagged "Requires X-ray" in Manage Processes.
+ *  Populated by loadXrayEligibleStations(), called from loadFilters()'s KD2 branch. */
+let _xrayEligibleStationKeys = new Set();
+
+async function loadXrayEligibleStations() {
+    if (!isKD2Module()) { _xrayEligibleStationKeys = new Set(); return; }
+    try {
+        const { data, error } = await db.from('kd2_process_stations')
+            .select('vehicle_type, station_name').eq('requires_xray', true).eq('is_active', true);
+        if (error) throw error;
+        _xrayEligibleStationKeys = new Set((data || []).map(s => s.vehicle_type + '||' + s.station_name));
+    } catch (e) {
+        // Migration 42 not applied yet, or the column doesn't exist — no stations are X-ray-eligible until it is.
+        console.warn('X-ray-eligible station list unavailable:', e.message);
+        _xrayEligibleStationKeys = new Set();
+    }
+}
+
+/** Whether a row is eligible for the X-ray/repair marker at all — stations flagged "Requires X-ray". */
+function isXrayEligible(row) {
+    return isKD2Module() && _xrayEligibleStationKeys.has((row.vehicle || '') + '||' + (row.process_station || ''));
+}
+
+/** Derive the current X-ray/repair stage from a progress object. Pure — no DB access.
+ *  Once a cycle exists, `xray_cycles` is the source of truth for the stage, not
+ *  `completed` — a failed X-ray deliberately clears `completed` (§5 completion
+ *  coupling), so gating on it here would hide the marker for a row that's
+ *  actively mid-repair. `completed` only matters before any cycle has started,
+ *  to decide whether the row is even eligible to show "Awaiting X-ray" yet. */
+function getXrayStage(progress) {
+    const cycles = Array.isArray(progress?.xray_cycles) ? progress.xray_cycles : [];
+    if (!cycles.length) {
+        return progress?.completed ? { stage: 'awaiting_xray', cycle: null } : { stage: 'none', cycle: null };
+    }
+    if (progress.final_qa_date) return { stage: 'passed', cycle: null };
+    const last = cycles[cycles.length - 1];
+    if (!last.xray_end) return { stage: 'in_xray', cycle: last };
+    if (last.result === 'fail' && !last.repair_start) return { stage: 'failed_awaiting_repair', cycle: last };
+    if (last.result === 'fail' && !last.repair_end) return { stage: 'in_repair', cycle: last };
+    return { stage: 'awaiting_xray', cycle: null }; // repair just finished — ready for the next X-ray cycle
+}
+
+/** Given the (possibly just-edited) cycles array, derive final_qa_date and the
+ *  completed/completion_date that should follow from it. Single source of truth
+ *  for both live actions (saveXrayAction) and history edits (saveXrayCycleEdit). */
+function applyXrayCompletionCoupling(progress, cycles) {
+    const last = cycles[cycles.length - 1];
+    // Mirrors getXrayStage's reasoning: passing is terminal (no cycle follows a
+    // pass), so only the last cycle in the array ever determines the outcome.
+    if (last && last.result === 'pass') return { final_qa_date: last.xray_end, completed: true, completion_date: last.xray_end };
+    if (last && last.result === 'fail') return { final_qa_date: null, completed: false, completion_date: null };
+    // No cycles yet, or mid-cycle (no result recorded) — leave completed/completion_date as they are.
+    return { final_qa_date: null, completed: progress.completed, completion_date: progress.completion_date };
+}
+
+/** Small clickable marker for the current stage, or '' if not eligible / not completed yet. */
+function renderXrayMarker(planId, row) {
+    if (!isXrayEligible(row)) return '';
+    const { stage } = getXrayStage(row.progress);
+    if (stage === 'none') return '';
+    const meta = XRAY_STAGE_META[stage];
+    if (!meta) return '';
+    return `<button type="button" class="xray-marker ${meta.cls}" data-plan-id="${planId}" title="X-ray / repair status — click for details">${meta.label}</button>`;
+}
+
 function ganttHighlightState(row) {
     // F100 uses status string directly
     if (row.module === 'gun' || row.module === 'vehicle') {
@@ -2185,7 +2299,7 @@ function updateTableRowInPlace(planId) {
 
     const status = calculateStatus(row);
     const badgeCls = `badge badge-${status.toLowerCase().replace(' ', '-').replace('late-completion', 'late')}`;
-    if (cells[9]) cells[9].innerHTML = `<span class="${badgeCls}">${status}</span>`;
+    if (cells[9]) cells[9].innerHTML = `<span class="${badgeCls}">${status}</span> ${renderXrayMarker(row.id, row)}`;
 
     const delay = delayDays(row);
     let delayHtml;
@@ -3049,7 +3163,7 @@ function renderTable(data) {
         <td class="mono">${formatDate(row.end_date)}</td>
         <td>${startInputHtml}</td>
         <td>${endInputHtml}</td>
-        <td><span class="${badgeCls}">${status}</span></td>
+        <td><span class="${badgeCls}">${status}</span> ${renderXrayMarker(row.id, row)}</td>
         <td>${delayHtml}</td>
         <td class="f100-comment-cell">${commentBtn}</td>
       </tr>`;
@@ -3541,10 +3655,13 @@ function _renderVpxTypeTabs(types) {
 /** K9 splits into Hull/Turret (from each station's component_group) plus
  *  Assembly; K10/K11 don't split Hull/Turret (matches the reference daily
  *  report, which has one combined "K10 and K11 Hull Structure" table), so
- *  they only ever get "Structure" (everything non-Assembly) + "Assembly". */
+ *  they only ever get "Structure" (everything non-Assembly) + "Assembly".
+ *  Assembly, Processing, and Final Test are shown together under the one
+ *  "Assembly" tab (for every vehicle type) rather than splitting Processing/
+ *  Final Test off into Structure/Hull/Turret. */
 function _vpxTaskCategory(task, vehicleType, compMap) {
     const group = task.category || getModuleCategory(task.process_station, task) || 'Other';
-    if (group === 'Assembly') return 'Assembly';
+    if (group === 'Assembly' || group === 'Processing' || group === 'Final Test') return 'Assembly';
     if (vehicleType === 'K9' && compMap) {
         const comp = compMap.get(task.process_station || task.station_name)?.component_group;
         if (comp === 'Hull' || comp === 'Turret') return comp;
@@ -4271,7 +4388,7 @@ function renderVPX(data) {
                 + '<div class="vpx-dates">'
                 + '<span class="vpx-date-plan">' + planRange + '</span>'
                 + '<span class="vpx-date-act' + (actRange ? '' : ' vpx-date-none') + '">' + (actRange || '—') + '</span>'
-                + '</div></td>';
+                + '</div>' + renderXrayMarker(task.id, task) + '</td>';
         });
 
         html += '</tr>';
@@ -5834,7 +5951,7 @@ function wireEvents() {
         document.getElementById(cfg.menu)?.addEventListener('change', (e) => {
             handleMultiSelectMenuChange(key, e, () => {
                 if (key === 'vehicle') onVehicleFilterChange();
-                loadData();
+                loadDataDebounced();
             });
         });
     });
@@ -5852,8 +5969,8 @@ function wireEvents() {
     // Search box is a client-side filter over already-fetched data — re-render only, no re-fetch
     document.getElementById('filterSearch')?.addEventListener('input', refreshAllViews);
 
-    document.getElementById('filterStartDate')?.addEventListener('change', loadData);
-    document.getElementById('filterEndDate')?.addEventListener('change', loadData);
+    document.getElementById('filterStartDate')?.addEventListener('change', loadDataDebounced);
+    document.getElementById('filterEndDate')?.addEventListener('change', loadDataDebounced);
 
     // F100 Mode stays single-select (gun-parts vs vehicle-parts is a mode toggle, not a filter)
     document.getElementById('f100Mode')?.addEventListener('change', loadData);
@@ -5861,7 +5978,7 @@ function wireEvents() {
         const isCustom = this.value === 'custom';
         document.getElementById('customDateStart').style.display = isCustom ? '' : 'none';
         document.getElementById('customDateEnd').style.display = isCustom ? '' : 'none';
-        if (!isCustom) loadData();
+        if (!isCustom) loadDataDebounced();
     });
 
     // Import panel
@@ -5891,6 +6008,7 @@ function wireEvents() {
     wireIssueReportModal();
     wireVpxReportModal();
     wireVpxDelayReasonModal();
+    wireXrayModal();
 
     // Notification bell (F100-KD2 and F200-KD2)
     wireNotifBell();
@@ -5994,6 +6112,32 @@ function wireEvents() {
         moreDropdown.style.display = 'none';
         btnNavMore?.setAttribute('aria-expanded', 'false');
     });
+
+    // ── Theme picker (standalone, not nested in the More menu) ────────
+    const btnThemePicker = document.getElementById('btnThemePicker');
+    const themeDropdown = document.getElementById('themePickerDropdown');
+    if (btnThemePicker && themeDropdown) {
+        renderThemePickerIcon();
+        renderThemePickerMenu();
+        btnThemePicker.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const open = themeDropdown.style.display !== 'none';
+            themeDropdown.style.display = open ? 'none' : 'block';
+            btnThemePicker.setAttribute('aria-expanded', String(!open));
+        });
+        document.addEventListener('click', (e) => {
+            if (!themeDropdown.contains(e.target) && e.target !== btnThemePicker) {
+                themeDropdown.style.display = 'none';
+                btnThemePicker.setAttribute('aria-expanded', 'false');
+            }
+        });
+        themeDropdown.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-theme-choice]');
+            if (btn) setTheme(btn.dataset.themeChoice);
+            themeDropdown.style.display = 'none';
+            btnThemePicker.setAttribute('aria-expanded', 'false');
+        });
+    }
 
     // ── Export Permissions (inside User Management modal) ─────────────
     document.getElementById('btnExportPermAdd')?.addEventListener('click', addExportPerm);
@@ -6323,13 +6467,33 @@ function escNl(str) {
    ================================================================ */
 const THEME_KEY_BASE = 'ppms_theme';
 
-(function applyStoredTheme() {
-    // Before login we don't know the user; use the last-set theme
-    // to prevent a flash.  Falls back to old 'kd1_theme' key.
-    const stored = localStorage.getItem(THEME_KEY_BASE + '_last')
-                || localStorage.getItem('kd1_theme');
-    if (stored === 'light') document.documentElement.setAttribute('data-theme', 'light');
+const THEME_ORDER = ['dark', 'light', 'nord', 'dracula', 'midnight', 'catppuccin'];
+const THEME_META = {
+    dark:       { label: 'Dark' },
+    light:      { label: 'Light' },
+    nord:       { label: 'Nord' },
+    dracula:    { label: 'Dracula' },
+    midnight:   { label: 'Midnight' },
+    catppuccin: { label: 'Catppuccin' },
+};
+const THEME_ICON_SVG = {
+    dark: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17.5 12A7.5 7.5 0 018 2.5a7.5 7.5 0 100 15 7.5 7.5 0 009.5-5.5z"/></svg>`,
+    light: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10" cy="10" r="4"/><path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42"/></svg>`,
+    nord: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M10 1v18M2.5 5.5l15 9M2.5 14.5l15-9"/><path d="M10 4l-1.6 1.6M10 4l1.6 1.6M10 16l-1.6-1.6M10 16l1.6-1.6M4.7 6.8l.4-2.1M4.7 6.8l2 .8M15.3 13.2l-.4 2.1M15.3 13.2l-2-.8M15.3 6.8l-2 .8M15.3 6.8l.4-2.1M4.7 13.2l2-.8M4.7 13.2l-.4 2.1"/></svg>`,
+    dracula: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 2C10 2 4.5 9.5 4.5 13a5.5 5.5 0 0011 0C15.5 9.5 10 2 10 2z"/></svg>`,
+    midnight: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M10 2l1.8 5.2L17 9l-5.2 1.8L10 16l-1.8-5.2L3 9l5.2-1.8L10 2z"/></svg>`,
+    catppuccin: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 4l2 4M15 4l-2 4"/><circle cx="10" cy="11" r="6"/><path d="M7.5 11h.01M12.5 11h.01M9 13.5c.5.5 1.5.5 2 0"/></svg>`,
+};
+
+function _applyThemeAttr(theme) {
+    if (theme && theme !== 'dark') document.documentElement.setAttribute('data-theme', theme);
     else document.documentElement.removeAttribute('data-theme');
+}
+
+(function applyStoredTheme() {
+    // Before login we don't know the user; use the last-set theme to prevent a flash.
+    const stored = localStorage.getItem(THEME_KEY_BASE + '_last');
+    _applyThemeAttr(THEME_ORDER.includes(stored) ? stored : 'dark');
 })();
 
 function _userThemeKey() {
@@ -6338,33 +6502,61 @@ function _userThemeKey() {
 }
 
 function getCurrentTheme() {
-    return document.documentElement.getAttribute('data-theme') || 'dark';
+    const t = document.documentElement.getAttribute('data-theme');
+    return THEME_ORDER.includes(t) ? t : 'dark';
+}
+
+function renderThemePickerIcon() {
+    const icon = THEME_ICON_SVG[getCurrentTheme()] || THEME_ICON_SVG.dark;
+    // Navbar picker trigger + the Gantt view's own theme button both show
+    // the current theme's icon, kept in sync from this one place.
+    ['themePickerIcon', 'ganttThemePickerIcon'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = icon;
+    });
+}
+
+function renderThemePickerMenu() {
+    const menu = document.getElementById('themePickerDropdown');
+    if (!menu) return;
+    const current = getCurrentTheme();
+    menu.innerHTML = THEME_ORDER.map(name => `
+        <button class="nav-more-btn theme-picker-option${name === current ? ' active' : ''}" type="button" data-theme-choice="${name}" role="menuitem">
+            ${THEME_ICON_SVG[name]}
+            <span>${THEME_META[name].label}</span>
+        </button>
+    `).join('');
 }
 
 function setTheme(theme) {
-    if (theme === 'light') {
-        document.documentElement.setAttribute('data-theme', 'light');
-    } else {
-        document.documentElement.removeAttribute('data-theme');
-    }
+    if (!THEME_ORDER.includes(theme)) theme = 'dark';
+    _applyThemeAttr(theme);
     localStorage.setItem(_userThemeKey(), theme);
     localStorage.setItem(THEME_KEY_BASE + '_last', theme); // anti-flash fallback
-    // Re-render charts with correct palette for new theme
-    if (currentData.length) refreshAllViews();
+    renderThemePickerIcon();
+    renderThemePickerMenu();
+    // Charts bake colors into the canvas at creation time, so they need a
+    // repaint — everything else (table/VPX/Gantt/badges) is styled through
+    // CSS custom properties and already repaints for free from the
+    // data-theme attribute change above, so a full refreshAllViews() here
+    // (table + VPX + Gantt + charts rebuild) was pure wasted work.
+    if (currentData.length) renderCharts(applyActiveFilters(currentData));
 }
 
 function toggleTheme() {
-    setTheme(getCurrentTheme() === 'dark' ? 'light' : 'dark');
+    const idx = THEME_ORDER.indexOf(getCurrentTheme());
+    setTheme(THEME_ORDER[(idx + 1) % THEME_ORDER.length]);
 }
 
 /** Called after login — restores this user's saved theme preference. */
 function applyUserTheme() {
     const saved = localStorage.getItem(_userThemeKey());
-    if (saved && saved !== getCurrentTheme()) {
-        if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
-        else document.documentElement.removeAttribute('data-theme');
-        // Don't call setTheme() to avoid refreshAllViews before data is loaded
+    if (saved && THEME_ORDER.includes(saved) && saved !== getCurrentTheme()) {
+        _applyThemeAttr(saved);
+        // Don't call setTheme() to avoid a chart re-render before data is loaded
     }
+    renderThemePickerIcon();
+    renderThemePickerMenu();
 }
 
 /** Return the correct colour set for charts based on current theme */
@@ -6382,8 +6574,8 @@ function themeChartColors() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Wire theme toggle
-    document.getElementById('btnTheme')?.addEventListener('click', toggleTheme);
+    // Wire theme toggle (Gantt view's own shortcut — cycles the same 6 themes
+    // as the navbar picker; the picker itself is wired in wireEvents())
     document.getElementById('btnGanttTheme')?.addEventListener('click', toggleTheme);
     initializeApp();
 });
@@ -7771,7 +7963,26 @@ const REPORT_TYPES = {
         label: 'By Vehicle Type', filter: r => matchesMultiSet(filterState.vehicle, r.vehicle)
     },
     analytics: { label: 'Station Analytics', filter: () => true },
+    xray_status: {
+        label: 'X-ray Status',
+        filter: r => isXrayEligible(r) && ['awaiting_xray', 'in_xray', 'failed_awaiting_repair', 'in_repair'].includes(getXrayStage(r.progress).stage),
+    },
 };
+
+/** Rows for the X-ray Status Report — every unit currently mid-cycle (not yet passed), one row per unit/station. */
+function buildXrayStatusRows() {
+    const IN_PROGRESS_STAGES = ['awaiting_xray', 'in_xray', 'failed_awaiting_repair', 'in_repair'];
+    const cmp = (a, b) => String(a || '').localeCompare(String(b || ''), undefined, { numeric: true, sensitivity: 'base' });
+    return currentData
+        .filter(r => isXrayEligible(r))
+        .map(r => ({ row: r, info: getXrayStage(r.progress) }))
+        .filter(x => IN_PROGRESS_STAGES.includes(x.info.stage))
+        .sort((a, b) =>
+            cmp(a.row.battalion_code, b.row.battalion_code) ||
+            cmp(a.row.vehicle, b.row.vehicle) ||
+            cmp(a.row.vehicle_no, b.row.vehicle_no)
+        );
+}
 
 /* ─── Merged route-order map for reports (min seq across all vehicles) ─ */
 function getReportRouteOrder() {
@@ -7965,6 +8176,9 @@ async function exportPDF(typeKey, fromDate, toDate, category, preview) {
     if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (isKD2Module() && typeKey === 'analytics') {
         return exportKD2AnalyticsPDF(fromDate, toDate, category);
+    }
+    if (isKD2Module() && typeKey === 'xray_status') {
+        return exportXrayStatusPDF();
     }
     try {
     const def = REPORT_TYPES[typeKey];
@@ -8269,6 +8483,9 @@ async function exportExcel(typeKey, fromDate, toDate, category, preview) {
     if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (isKD2Module() && typeKey === 'analytics') {
         return exportKD2AnalyticsExcel(fromDate, toDate, category);
+    }
+    if (isKD2Module() && typeKey === 'xray_status') {
+        return exportXrayStatusExcel();
     }
     try {
     if (typeof ExcelJS === 'undefined') {
@@ -8960,6 +9177,145 @@ async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
     } catch (err) {
         console.error('[exportKD2AnalyticsExcel]', err);
         showToast('Analytics Excel export failed: ' + (err.message || err), 'error');
+    }
+}
+
+/* ================================================================
+   X-RAY STATUS REPORT — PDF + Excel (list of units mid-cycle)
+   ================================================================ */
+async function exportXrayStatusPDF() {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
+    try {
+        const items = buildXrayStatusRows();
+        if (!items.length) { showToast('No units currently in the X-ray/repair cycle.', 'error'); return; }
+        if (!window.jspdf) { showToast('PDF library not loaded — please refresh and try again.', 'error'); return; }
+
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+        const PAGE_W = doc.internal.pageSize.getWidth();
+        const MARGIN = 14;
+        const now = new Date().toLocaleString('en-GB');
+        const moduleBadge = getModuleBadge();
+
+        doc.setFillColor(248, 250, 252); doc.rect(0, 0, PAGE_W, 22, 'F');
+        doc.setFillColor(168, 85, 247); doc.rect(0, 0, 4, 22, 'F');
+        doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.3); doc.line(0, 22, PAGE_W, 22);
+        doc.setFillColor(168, 85, 247); doc.roundedRect(MARGIN + 2, 4, 18, 12, 2, 2, 'F');
+        doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+        doc.text(moduleBadge, MARGIN + 11, 11.5, { align: 'center' });
+        doc.setFontSize(13); doc.setTextColor(15, 23, 42);
+        doc.text('X-ray / Repair Status Report', MARGIN + 24, 10);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 116, 139);
+        doc.text(`Generated: ${now} · ${items.length} unit${items.length !== 1 ? 's' : ''} in cycle`, PAGE_W - MARGIN, 12, { align: 'right' });
+
+        const headers = ['Battalion', 'Vehicle', 'Unit', 'Station', 'Stage', 'Cycle', 'X-ray Start', 'X-ray End', 'Repair Start', 'Repair End'];
+        const body = items.map(({ row, info }) => {
+            const meta = XRAY_STAGE_META[info.stage];
+            const c = info.cycle || {};
+            return [
+                row.battalion_code || '—', row.vehicle, row.vehicle_no, row.process_station,
+                meta?.label || info.stage,
+                c.cycle ?? '—',
+                c.xray_start ? formatDate(c.xray_start) : '—',
+                c.xray_end ? formatDate(c.xray_end) : '—',
+                c.repair_start ? formatDate(c.repair_start) : '—',
+                c.repair_end ? formatDate(c.repair_end) : '—',
+            ];
+        });
+
+        doc.autoTable({
+            startY: 28,
+            head: [headers], body,
+            margin: { left: MARGIN, right: MARGIN },
+            styles: { fontSize: 7.5, cellPadding: 2.5, font: 'helvetica', textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.25 },
+            headStyles: { fillColor: [88, 28, 135], textColor: [241, 245, 249], fontStyle: 'bold', fontSize: 7, halign: 'center' },
+            alternateRowStyles: { fillColor: [248, 250, 252] },
+            columnStyles: { 5: { halign: 'center' } },
+        });
+
+        doc.save(`${moduleBadge}_Xray_Status_${new Date().toISOString().slice(0, 10)}.pdf`);
+        showToast(`X-ray status report exported — ${items.length} units`, 'success');
+    } catch (err) {
+        console.error('[exportXrayStatusPDF]', err);
+        showToast('X-ray status PDF export failed: ' + (err.message || err), 'error');
+    }
+}
+
+async function exportXrayStatusExcel() {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
+    try {
+        if (typeof ExcelJS === 'undefined') { showToast('ExcelJS not loaded.', 'error'); return; }
+        const items = buildXrayStatusRows();
+        if (!items.length) { showToast('No units currently in the X-ray/repair cycle.', 'error'); return; }
+
+        const moduleBadge = getModuleBadge();
+        const NAV = 'FF581c87', MUTE = 'FF64748b', WHITE = 'FFffffff', ALT = 'FFf9fafb', BORD = 'FFe2e8f0';
+        function bdr() { return { top: { style: 'thin', color: { argb: BORD } }, bottom: { style: 'thin', color: { argb: BORD } }, left: { style: 'thin', color: { argb: BORD } }, right: { style: 'thin', color: { argb: BORD } } }; }
+
+        const wb = new ExcelJS.Workbook();
+        wb.creator = `${moduleBadge} X-ray Status`; wb.created = new Date();
+        const ws = wb.addWorksheet('X-ray Status', {
+            pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+            views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }],
+        });
+        const COLS = [
+            { h: 'Battalion', w: 14 }, { h: 'Vehicle', w: 12 }, { h: 'Unit', w: 14 }, { h: 'Station', w: 30 },
+            { h: 'Stage', w: 18 }, { h: 'Cycle', w: 8 }, { h: 'X-ray Start', w: 14 }, { h: 'X-ray End', w: 14 },
+            { h: 'Repair Start', w: 14 }, { h: 'Repair End', w: 14 },
+        ];
+        ws.columns = COLS.map(c => ({ width: c.w }));
+
+        ws.addRow([`${moduleBadge} · X-ray / Repair Status Report`]);
+        ws.mergeCells(1, 1, 1, COLS.length);
+        Object.assign(ws.getCell(1, 1), { font: { name: 'Calibri', size: 15, bold: true, color: { argb: NAV } }, alignment: { vertical: 'middle' } });
+        ws.getRow(1).height = 26;
+
+        ws.addRow([`Generated: ${new Date().toLocaleString('en-GB')}     ${items.length} unit${items.length !== 1 ? 's' : ''} in cycle`]);
+        ws.mergeCells(2, 1, 2, COLS.length);
+        Object.assign(ws.getCell(2, 1), { font: { name: 'Calibri', size: 8, italic: true, color: { argb: MUTE } } });
+        ws.getRow(2).height = 14;
+        ws.addRow([]); ws.getRow(3).height = 5;
+
+        ws.addRow(COLS.map(c => c.h));
+        ws.getRow(4).height = 18;
+        COLS.forEach((_, ci) => {
+            const cell = ws.getCell(4, ci + 1);
+            cell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: WHITE } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAV } };
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            cell.border = bdr();
+        });
+
+        items.forEach(({ row, info }, ri) => {
+            const meta = XRAY_STAGE_META[info.stage];
+            const c = info.cycle || {};
+            const rowBg = ri % 2 === 1 ? ALT : WHITE;
+            ws.addRow([
+                row.battalion_code || '—', row.vehicle, row.vehicle_no, row.process_station,
+                meta?.label || info.stage, c.cycle ?? '—',
+                c.xray_start ? formatDate(c.xray_start) : '—', c.xray_end ? formatDate(c.xray_end) : '—',
+                c.repair_start ? formatDate(c.repair_start) : '—', c.repair_end ? formatDate(c.repair_end) : '—',
+            ]);
+            const excelRow = ws.getRow(ri + 5); excelRow.height = 16;
+            COLS.forEach((_, ci) => {
+                const cell = ws.getCell(ri + 5, ci + 1);
+                cell.font = { name: 'Calibri', size: 9, color: { argb: 'FF1e293b' } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+                cell.alignment = { horizontal: ci < 4 ? 'left' : 'center', vertical: 'middle', indent: ci < 4 ? 1 : 0 };
+                cell.border = bdr();
+            });
+        });
+
+        const buffer = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `${moduleBadge}_Xray_Status_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+        showToast(`X-ray status Excel exported — ${items.length} units`, 'success');
+    } catch (err) {
+        console.error('[exportXrayStatusExcel]', err);
+        showToast('X-ray status Excel export failed: ' + (err.message || err), 'error');
     }
 }
 
@@ -10659,6 +11015,238 @@ function wireVpxDelayReasonModal() {
         const btn = e.target.closest('.vpx-delay-reason-btn');
         if (!btn) return;
         openVpxDelayReasonModal(btn.dataset.vpxVehicle, btn.dataset.vpxUnit, btn.dataset.vpxCategory);
+    });
+}
+
+/* ─── X-ray / repair cycle — click the marker on a Welding-station row (main
+   table or VPX cell) to see the cycle history and advance to the next step. ── */
+const XRAY_ACTIONS_BY_STAGE = {
+    awaiting_xray:          [{ action: 'start_xray',    label: 'Start X-ray' }],
+    in_xray:                [{ action: 'xray_pass',     label: 'No Issues — Pass' }, { action: 'xray_fail', label: 'Issues Found — Fail' }],
+    failed_awaiting_repair: [{ action: 'start_repair',  label: 'Start Repair' }],
+    in_repair:              [{ action: 'finish_repair', label: 'Repair Finished' }],
+};
+
+/** Which cycle row (index) is currently in inline-edit mode in the open modal, if any. */
+let _xrayEditingIndex = null;
+
+function renderXrayCycleRow(cycle, index, canEdit) {
+    return `<tr>
+        <td>${cycle.cycle}</td>
+        <td>${cycle.xray_start ? formatDate(cycle.xray_start) : '—'}</td>
+        <td>${cycle.xray_end ? formatDate(cycle.xray_end) : '—'}</td>
+        <td>${cycle.result ? `<span class="xray-result-${cycle.result}">${cycle.result === 'pass' ? 'Pass' : 'Fail'}</span>` : '—'}</td>
+        <td>${cycle.repair_start ? formatDate(cycle.repair_start) : '—'}</td>
+        <td>${cycle.repair_end ? formatDate(cycle.repair_end) : '—'}</td>
+        <td>${canEdit ? `
+            <button type="button" class="xray-cycle-edit-btn" data-cycle-index="${index}" title="Edit this cycle">&#9998;</button>
+            <button type="button" class="xray-cycle-edit-btn xray-cycle-delete-btn" data-cycle-index="${index}" title="Delete this cycle">&#128465;</button>
+        ` : ''}</td>
+    </tr>`;
+}
+
+function renderXrayCycleEditRow(cycle, index) {
+    const dateInput = (id, val) => `<input type="date" class="xray-cycle-input" id="${id}" value="${val || ''}" />`;
+    return `<tr class="xray-cycle-editing">
+        <td>${cycle.cycle}</td>
+        <td>${dateInput('xrayEditStart', cycle.xray_start)}</td>
+        <td>${dateInput('xrayEditEnd', cycle.xray_end)}</td>
+        <td>
+            <select id="xrayEditResult" class="xray-cycle-input">
+                <option value="" ${!cycle.result ? 'selected' : ''}>—</option>
+                <option value="pass" ${cycle.result === 'pass' ? 'selected' : ''}>Pass</option>
+                <option value="fail" ${cycle.result === 'fail' ? 'selected' : ''}>Fail</option>
+            </select>
+        </td>
+        <td>${dateInput('xrayEditRepairStart', cycle.repair_start)}</td>
+        <td>${dateInput('xrayEditRepairEnd', cycle.repair_end)}</td>
+        <td class="xray-cycle-edit-actions">
+            <button type="button" class="btn btn-primary btn-sm xray-cycle-save-btn" data-cycle-index="${index}">Save</button>
+            <button type="button" class="btn btn-ghost btn-sm xray-cycle-cancel-btn">Cancel</button>
+        </td>
+    </tr>`;
+}
+
+function openXrayModal(planId) {
+    const overlay = document.getElementById('xrayModalOverlay');
+    if (!overlay) return;
+    const row = currentData.find(t => String(t.id) === String(planId));
+    if (!row || !isXrayEligible(row)) return;
+    if (overlay.dataset.planId !== String(planId)) _xrayEditingIndex = null;
+
+    const titleEl = document.getElementById('xrayModalTitle');
+    if (titleEl) titleEl.textContent = `X-ray / Repair — ${row.vehicle} ${row.vehicle_no} · ${row.process_station}`;
+
+    const cycles = Array.isArray(row.progress?.xray_cycles) ? row.progress.xray_cycles : [];
+    const canEdit = canWrite();
+    const body = document.getElementById('xrayHistoryBody');
+    if (body) {
+        body.innerHTML = cycles.length
+            ? cycles.map((c, i) => _xrayEditingIndex === i ? renderXrayCycleEditRow(c, i) : renderXrayCycleRow(c, i, canEdit)).join('')
+            : `<tr><td colspan="7" class="xray-history-empty">No X-ray cycles recorded yet.</td></tr>`;
+    }
+
+    const { stage } = getXrayStage(row.progress);
+    const actionRow = document.getElementById('xrayActionRow');
+    if (actionRow) {
+        if (_xrayEditingIndex !== null) {
+            actionRow.innerHTML = `<p class="xray-viewer-hint">Editing cycle ${cycles[_xrayEditingIndex]?.cycle} above — save or cancel that edit first.</p>`;
+        } else if (stage === 'passed') {
+            actionRow.innerHTML = `<p class="xray-passed-note">&#x2713; Passed X-ray on ${formatDate(row.progress.final_qa_date)} — no repair needed.</p>`;
+        } else if (!canEdit) {
+            actionRow.innerHTML = `<p class="xray-viewer-hint">Only planners and admins can update X-ray/repair status.</p>`;
+        } else {
+            const actions = XRAY_ACTIONS_BY_STAGE[stage] || [];
+            actionRow.innerHTML = `
+                <div class="form-group">
+                    <label class="form-label">Date</label>
+                    <input type="date" id="xrayActionDate" class="filter-control" value="${todayStr()}" />
+                </div>
+                <div class="xray-action-buttons">
+                    ${actions.map(a => `<button type="button" class="btn btn-primary xray-action-btn" data-action="${a.action}">${a.label}</button>`).join('')}
+                </div>`;
+        }
+    }
+
+    overlay.dataset.planId = planId;
+    overlay.style.display = 'flex';
+}
+
+async function saveXrayAction(planId, action, dateValue) {
+    if (!canWrite()) { showToast('Viewer accounts cannot edit data.', 'error'); return; }
+    const row = currentData.find(t => String(t.id) === String(planId));
+    if (!row || !isXrayEligible(row)) return;
+    if (!row.progress?.id) { showToast('No progress record found for this task yet.', 'error'); return; }
+
+    const valueToSave = dateValue || todayStr();
+    const cycles = (Array.isArray(row.progress.xray_cycles) ? row.progress.xray_cycles : []).map(c => ({ ...c }));
+
+    if (action === 'start_xray') {
+        cycles.push({ cycle: cycles.length + 1, xray_start: valueToSave, xray_end: null, result: null, repair_start: null, repair_end: null });
+    } else {
+        const last = cycles[cycles.length - 1];
+        if (!last) { showToast('Start an X-ray cycle first.', 'error'); return; }
+        if (action === 'xray_pass') { last.xray_end = valueToSave; last.result = 'pass'; }
+        else if (action === 'xray_fail') { last.xray_end = valueToSave; last.result = 'fail'; }
+        else if (action === 'start_repair') { last.repair_start = valueToSave; }
+        else if (action === 'finish_repair') { last.repair_end = valueToSave; }
+        else return;
+    }
+
+    await _persistXrayCycles(planId, row, cycles, 'X-ray/repair status updated.');
+}
+
+/** Full edit of a past cycle's recorded fields (dates + pass/fail result). */
+async function saveXrayCycleEdit(planId, cycleIndex, updatedFields) {
+    if (!canWrite()) { showToast('Viewer accounts cannot edit data.', 'error'); return; }
+    const row = currentData.find(t => String(t.id) === String(planId));
+    if (!row || !isXrayEligible(row)) return;
+    if (!row.progress?.id) return;
+
+    const cycles = (Array.isArray(row.progress.xray_cycles) ? row.progress.xray_cycles : []).map(c => ({ ...c }));
+    if (!cycles[cycleIndex]) return;
+    cycles[cycleIndex] = { ...cycles[cycleIndex], ...updatedFields };
+
+    _xrayEditingIndex = null;
+    await _persistXrayCycles(planId, row, cycles, 'X-ray cycle updated.');
+}
+
+/** Remove a cycle entered by mistake — renumbers the remaining cycles so they
+ *  stay sequential (1, 2, 3…), then recomputes completion coupling from what's left. */
+async function deleteXrayCycle(planId, cycleIndex) {
+    if (!canWrite()) { showToast('Viewer accounts cannot edit data.', 'error'); return; }
+    const row = currentData.find(t => String(t.id) === String(planId));
+    if (!row || !isXrayEligible(row)) return;
+    if (!row.progress?.id) return;
+
+    const cycles = (Array.isArray(row.progress.xray_cycles) ? row.progress.xray_cycles : []).map(c => ({ ...c }));
+    if (!cycles[cycleIndex]) return;
+    if (!window.confirm(`Delete cycle ${cycles[cycleIndex].cycle}? This can't be undone.`)) return;
+
+    cycles.splice(cycleIndex, 1);
+    cycles.forEach((c, i) => { c.cycle = i + 1; });
+
+    _xrayEditingIndex = null;
+    await _persistXrayCycles(planId, row, cycles, 'X-ray cycle deleted.');
+}
+
+/** Shared write path for both live actions and history edits — recomputes the
+ *  completion coupling (§5), writes kd2_progress in one round trip, re-renders. */
+async function _persistXrayCycles(planId, row, cycles, successMessage) {
+    const coupling = applyXrayCompletionCoupling(row.progress, cycles);
+    try {
+        const before = {
+            xray_cycles: row.progress.xray_cycles || [], final_qa_date: row.progress.final_qa_date || null,
+            completed: row.progress.completed, completion_date: row.progress.completion_date,
+        };
+        const after = { xray_cycles: cycles, ...coupling };
+        const { error } = await db.from('kd2_progress').update(after).eq('id', row.progress.id);
+        if (error) throw error;
+        auditLog('UPDATE', 'kd2_progress', row.progress.id, before, after);
+        markLocalSave();
+        Object.assign(row.progress, after);
+        showToast(successMessage, 'success');
+        if (!updateTableRowInPlace(planId)) refreshAllViews();
+        else renderVPX(currentData);
+        openXrayModal(planId); // refresh the open modal to show the new stage
+    } catch (err) {
+        showToast('Error saving X-ray/repair status: ' + err.message, 'error');
+        console.error(err);
+    }
+}
+
+function wireXrayModal() {
+    const overlay = document.getElementById('xrayModalOverlay');
+    if (!overlay) return;
+    const close = () => { overlay.style.display = 'none'; _xrayEditingIndex = null; };
+    document.getElementById('xrayModalClose')?.addEventListener('click', close);
+    document.getElementById('xrayModalCancel')?.addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+    document.getElementById('xrayActionRow')?.addEventListener('click', e => {
+        const btn = e.target.closest('.xray-action-btn');
+        if (!btn) return;
+        const dateValue = document.getElementById('xrayActionDate')?.value || '';
+        saveXrayAction(overlay.dataset.planId, btn.dataset.action, dateValue);
+    });
+
+    document.getElementById('xrayHistoryBody')?.addEventListener('click', e => {
+        const deleteBtn = e.target.closest('.xray-cycle-delete-btn');
+        if (deleteBtn) {
+            deleteXrayCycle(overlay.dataset.planId, parseInt(deleteBtn.dataset.cycleIndex, 10));
+            return;
+        }
+        const editBtn = e.target.closest('.xray-cycle-edit-btn');
+        if (editBtn) {
+            _xrayEditingIndex = parseInt(editBtn.dataset.cycleIndex, 10);
+            openXrayModal(overlay.dataset.planId);
+            return;
+        }
+        const cancelBtn = e.target.closest('.xray-cycle-cancel-btn');
+        if (cancelBtn) {
+            _xrayEditingIndex = null;
+            openXrayModal(overlay.dataset.planId);
+            return;
+        }
+        const saveBtn = e.target.closest('.xray-cycle-save-btn');
+        if (saveBtn) {
+            const index = parseInt(saveBtn.dataset.cycleIndex, 10);
+            saveXrayCycleEdit(overlay.dataset.planId, index, {
+                xray_start: document.getElementById('xrayEditStart')?.value || null,
+                xray_end: document.getElementById('xrayEditEnd')?.value || null,
+                result: document.getElementById('xrayEditResult')?.value || null,
+                repair_start: document.getElementById('xrayEditRepairStart')?.value || null,
+                repair_end: document.getElementById('xrayEditRepairEnd')?.value || null,
+            });
+        }
+    });
+
+    ['mainTable', 'vpxMatrix'].forEach(containerId => {
+        document.getElementById(containerId)?.addEventListener('click', e => {
+            const marker = e.target.closest('.xray-marker');
+            if (!marker) return;
+            openXrayModal(marker.dataset.planId);
+        });
     });
 }
 

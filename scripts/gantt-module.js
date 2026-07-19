@@ -55,14 +55,8 @@
                     </button>
                 </div>
                 <div class="filter-item" style="padding-top:18px">
-                    <button class="btn-theme gantt-theme-btn" id="btnGanttTheme" title="Toggle light / dark theme" aria-label="Toggle light / dark theme">
-                        <svg class="icon-sun" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                            <circle cx="10" cy="10" r="4" />
-                            <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42" />
-                        </svg>
-                        <svg class="icon-moon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                            <path d="M17.5 12A7.5 7.5 0 018 2.5a7.5 7.5 0 100 15 7.5 7.5 0 009.5-5.5z" />
-                        </svg>
+                    <button class="btn-theme gantt-theme-btn" id="btnGanttTheme" title="Cycle theme" aria-label="Cycle theme">
+                        <span id="ganttThemePickerIcon"></span>
                     </button>
                 </div>
                 <div class="filter-item gantt-export-schedule-wrap" style="padding-top:18px;position:relative">

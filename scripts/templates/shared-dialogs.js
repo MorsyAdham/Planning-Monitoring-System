@@ -141,6 +141,17 @@ export function renderSharedDialogs() {
                                     <span class="rtc-desc">Avg plan vs actual · delay per process</span>
                                 </div>
                             </label>
+                            <label class="report-type-card" id="kd2ReportCardXray" hidden>
+                                <input type="radio" name="reportType" value="xray_status" />
+                                <div class="rtc-inner">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <rect x="4" y="3" width="16" height="18" rx="2" />
+                                        <path d="M8 8h8M8 12h8M8 16h5" />
+                                    </svg>
+                                    <span class="rtc-label">X-ray Status</span>
+                                    <span class="rtc-desc">Units currently in X-ray / repair</span>
+                                </div>
+                            </label>
                         </div>
                     </div>
 
@@ -1180,78 +1191,39 @@ export function renderSharedDialogs() {
 
         <div class="modal-overlay" id="kd2ProcessOverlay" style="display:none;" role="dialog" aria-modal="true"
             aria-labelledby="kd2ProcessTitle">
-            <div class="modal modal-wide" style="max-width:1080px">
+            <div class="modal modal-wide" style="max-width:1280px">
                 <div class="modal-header">
                     <h4 class="modal-title" id="kd2ProcessTitle">KD2 Process Maintenance</h4>
                     <button class="modal-close" id="kd2ProcessClose">&#x2715;</button>
                 </div>
                 <div class="modal-body">
-<div class="modal-info" id="kd2ProcessSummary">Load a KD2 vehicle route to create, edit, or retire process stations.</div>
+                    <div class="modal-info" id="kd2ProcessSummary">Loading process stations…</div>
                     <div class="kd2-process-toolbar">
                         <div class="form-group">
-                            <label class="form-label" for="kd2ProcessVehicle">Vehicle</label>
-                            <select id="kd2ProcessVehicle" class="filter-control">
+                            <label class="form-label" for="kd2ProcessVehicleFilter">Vehicle</label>
+                            <select id="kd2ProcessVehicleFilter" class="filter-control">
+                                <option value="">All Vehicles</option>
                                 <option value="K9">K9</option>
                                 <option value="K10">K10</option>
                                 <option value="K11">K11</option>
                             </select>
                         </div>
-                        <button class="btn btn-ghost btn-sm" type="button" id="btnKd2ProcessReset">New Process</button>
-                    </div>
-                    <input type="hidden" id="kd2ProcessStationCodeOriginal" />
-                    <div class="modal-info" id="kd2ProcessFormStatus">Creating a new process station.</div>
-                    <div class="kd2-modal-grid kd2-process-form">
                         <div class="form-group">
-                            <label class="form-label" for="kd2ProcessCategory">Category</label>
-                            <select id="kd2ProcessCategory" class="filter-control"></select>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" for="kd2ProcessName">Station Name</label>
-                            <input type="text" id="kd2ProcessName" class="filter-control" placeholder="Hull fitting, final touch-up..." />
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" for="kd2ProcessWorkCenter">Work Center <span class="form-label-optional">(optional)</span></label>
-                            <input type="text" id="kd2ProcessWorkCenter" class="filter-control" placeholder="A03, Paint line..." />
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" for="kd2ProcessSequence">Station Order</label>
-                            <input type="number" id="kd2ProcessSequence" class="filter-control" min="1" step="1" />
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" for="kd2ProcessRouteSequence">Route</label>
-                            <input type="number" id="kd2ProcessRouteSequence" class="filter-control" min="1" step="1" />
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" for="kd2ProcessLeadTime">Lead Time (Days) <span class="form-label-optional">(optional)</span></label>
-                            <input type="number" id="kd2ProcessLeadTime" class="filter-control" min="0.25" step="0.25" placeholder="Blank = pending" />
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" for="kd2ProcessLeadSource">Lead Time Source <span class="form-label-optional">(optional)</span></label>
-                            <input type="text" id="kd2ProcessLeadSource" class="filter-control" placeholder="Optional source" />
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" for="kd2ProcessStationNotes">Station Notes <span class="form-label-optional">(optional)</span></label>
-                            <input type="text" id="kd2ProcessStationNotes" class="filter-control" placeholder="Optional station note" />
-                        </div>
-                        <div class="form-group" style="grid-column:1/-1">
-                            <label class="form-label" for="kd2ProcessLeadNotes">Lead Time Notes <span class="form-label-optional">(optional)</span></label>
-                            <input type="text" id="kd2ProcessLeadNotes" class="filter-control" placeholder="Pending confirmation, supplier estimate..." />
-                        </div>
-                    </div>
-                    <div class="kd2-process-filter-bar">
-                        <div style="display:flex;align-items:center;gap:12px;">
-                            <label class="form-label" for="kd2ProcessCategoryFilter" style="margin:0">Category</label>
+                            <label class="form-label" for="kd2ProcessCategoryFilter">Category</label>
                             <select id="kd2ProcessCategoryFilter" class="filter-control">
                                 <option value="">All Categories</option>
                             </select>
-                            <button class="btn btn-ghost btn-sm" id="btnKd2ProcessFilterClear" type="button">Show all</button>
                         </div>
+                        <div class="form-group">
+                            <label class="form-label" for="kd2ProcessSearch">Search</label>
+                            <input type="text" id="kd2ProcessSearch" class="filter-control" placeholder="Station name or code…" />
+                        </div>
+                        <button class="btn btn-primary btn-sm" type="button" id="btnKd2ProcessReset">+ New Process</button>
                     </div>
                     <div class="kd2-process-shell" id="kd2ProcessBody"></div>
                     <div class="ab-error" id="kd2ProcessError" style="display:none"></div>
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-primary" id="btnKd2ProcessSave">Save Process</button>
                     <button class="btn btn-ghost" id="btnKd2ProcessCancel">Done</button>
                 </div>
             </div>
@@ -1751,6 +1723,29 @@ export function renderSharedDialogs() {
                 <div class="modal-footer">
                     <button class="btn btn-ghost" id="vpxDelayReasonCancel">Cancel</button>
                     <button class="btn btn-primary" id="vpxDelayReasonSave">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════════════════════════════ X-RAY / REPAIR MODAL -->
+        <div class="modal-overlay" id="xrayModalOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="xrayModalTitle">
+            <div class="modal">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="xrayModalTitle">X-ray / Repair</h4>
+                    <button class="modal-close" id="xrayModalClose" aria-label="Close">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+                    <table class="xray-history-table">
+                        <thead>
+                            <tr><th>Cycle</th><th>X-ray Start</th><th>X-ray End</th><th>Result</th><th>Repair Start</th><th>Repair End</th><th></th></tr>
+                        </thead>
+                        <tbody id="xrayHistoryBody"></tbody>
+                    </table>
+                    <div class="xray-action-row" id="xrayActionRow"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-ghost" id="xrayModalCancel">Close</button>
                 </div>
             </div>
         </div>
