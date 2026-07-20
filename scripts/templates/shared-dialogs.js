@@ -1702,6 +1702,51 @@ export function renderSharedDialogs() {
             </div>
         </div>
 
+        <!-- ═══════════════════════════════════ EXECUTIVE REPORT MODAL -->
+        <div class="modal-overlay" id="execReportModalOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="execReportModalTitle">
+            <div class="modal report-modal">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="execReportModalTitle">Executive Report</h4>
+                    <button class="modal-close" id="execReportModalClose" aria-label="Close">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="exec-report-desc">
+                        Combines the VPX Station Report for every vehicle and component — K9 (Hull, Turret,
+                        Assembly), then K10 (Structure, Assembly), then K11 (Structure, Assembly) — followed by
+                        the Production Issues Status Report (all time, every status and category), in one document.
+                        You'll see a preview before anything downloads.
+                    </p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-report-pdf" id="btnExecReportPDF">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 4h8l4 4v10H4V4z" />
+                            <path d="M12 4v4h4" />
+                            <path d="M7 13h6M7 10h3" />
+                        </svg>
+                        Preview PDF
+                    </button>
+                    <button class="btn btn-report-excel" id="btnExecReportExcel">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="3" width="16" height="14" rx="2" />
+                            <path d="M6 7l3 3-3 3M11 13h4" />
+                        </svg>
+                        Preview Excel
+                    </button>
+                    <button class="btn btn-ghost" id="btnExecReportWord">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 3h9l3 3v11H4z" />
+                            <path d="M13 3v3h3" />
+                            <path d="M6.5 10l1 5 1.5-4 1.5 4 1-5" />
+                        </svg>
+                        Preview Word
+                    </button>
+                    <button class="btn btn-ghost" id="execReportModalCancel">Cancel</button>
+                </div>
+            </div>
+        </div>
+
         <!-- ═══════════════════════════════════ VPX DELAY REASON MODAL -->
         <div class="modal-overlay" id="vpxDelayReasonModalOverlay" style="display:none;" role="dialog" aria-modal="true"
             aria-labelledby="vpxDelayReasonModalTitle">

@@ -116,6 +116,17 @@ export function initFeature() {
                 <div class="filter-item filter-actions">
                     <button class="btn btn-ghost" id="btnReset">Reset</button>
                 </div>
+
+                <div class="filter-item filter-exec-report-item">
+                    <button type="button" class="btn-exec-report" id="btnExecReport" title="Executive Report — combined VPX Station Report + Issues Status Report">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 3h9l3 3v11H4z" />
+                            <path d="M13 3v3h3" />
+                            <path d="M7 10h6M7 13h6M7 16h3" />
+                        </svg>
+                        Executive Report
+                    </button>
+                </div>
             </div>
         </section>
 `.trim();

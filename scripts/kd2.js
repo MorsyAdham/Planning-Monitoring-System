@@ -289,6 +289,7 @@ window.PPMSModuleRuntime = (() => {
         setDisplay('chartsSection', !f100);   // Charts not yet implemented for F100
         setDisplay('btnGanttEdit', true);
         setDisplay('btnReports', true);
+        setDisplay('vpxViewToggle', !f100);   // Station Report view isn't implemented for F100's VPX yet
 
         // Dynamic text labels
         if (f100) {

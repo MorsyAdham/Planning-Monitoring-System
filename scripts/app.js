@@ -116,7 +116,7 @@ async function removeExportPerm(id) {
 
 function _applyExportVisibility() {
     canExport().then(allowed => {
-        const ids = ['btnVpxReportModal', 'btnIssueReportModal', 'btnReports'];
+        const ids = ['btnVpxReportModal', 'btnIssueReportModal', 'btnReports', 'btnExecReport'];
         ids.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = allowed ? '' : 'none';
@@ -3620,6 +3620,7 @@ const _isK10K11 = v => /K1[01]/i.test(String(v));
 let _vpxLastData = null;
 let _vpxVehicleTypeFilter = null;
 let _vpxCategoryFilter = null;
+let _vpxViewMode = 'matrix'; // 'matrix' | 'station' — mirrors the Gantt's Unit/Process view switch
 
 function _getVehicleType(vehicle) {
     const v = String(vehicle || '');
@@ -3695,10 +3696,10 @@ function _renderVpxCategoryTabs(categories) {
 /** Applies the currently-selected VPX vehicle-type + category tab to `data`.
  *  Single source of truth shared by renderVPX and both export functions so
  *  an export can never silently include more than what's on screen. */
-function _getVpxFilteredData(data) {
+function _getVpxFilteredData(data, includeCategory = true) {
     if (!isKD2Module() || !_vpxVehicleTypeFilter) return data;
     let filtered = data.filter(t => _getVehicleType(t.vehicle) === _vpxVehicleTypeFilter);
-    if (_vpxCategoryFilter) {
+    if (includeCategory && _vpxCategoryFilter) {
         const rt = getModuleRuntime?.();
         const compMap = (_vpxVehicleTypeFilter === 'K9' && rt?.getStationCategoryMap)
             ? rt.getStationCategoryMap('K9') : null;
@@ -4226,6 +4227,15 @@ function renderVPX(data) {
         _renderVpxCategoryTabs([]);
     }
 
+    // "Station Report" view reuses the exact same table/dot/date styling as
+    // the Matrix (below) — same classes, same on-screen look, same tab-scoped
+    // rows/columns/progress — just with a trailing Delay column and per-cell
+    // status driven by the corrected late/overdue/projected calculation
+    // instead of calculateStatus. Delay is computed purely from this tab's
+    // own columns (Hull, Turret, Assembly, etc. are independent component
+    // streams, not sequential phases, so one component's delay must never
+    // be computed from — or shown identical to — a different component's).
+    const stationMode = _vpxViewMode === 'station';
     const rows = buildVpxRows(data);
     const activeCols = buildVpxColumns(data).filter(col =>
         rows.some(row => { const k = col.resolve(row.vehicle); return k !== null && row.stations[k]; })
@@ -4254,7 +4264,7 @@ function renderVPX(data) {
 
     function grpSlug(g) { return g.toLowerCase().replace(/[^a-z0-9]+/g, '-'); }
 
-    let html = '<table class="vpx-table" role="grid"><thead>';
+    let html = '<table class="vpx-table' + (stationMode ? ' vpx-table-station' : '') + '" role="grid"><thead>';
 
     // Group header row — colored top border matching F100 style
     html += `<tr class="vpx-group-row"><th class="vpx-th-vehicle" rowspan="2">${meta.headerLabel.replace(/ · /g, ' &middot; ')}</th>`;
@@ -4262,6 +4272,7 @@ function renderVPX(data) {
         const color = grpColorMap[g.label] || F100_VPX_PART_COLORS[0];
         html += '<th class="vpx-th-group vpx-grp-' + grpSlug(g.label) + '" colspan="' + g.span + '" style="box-shadow:inset 0 2px 0 ' + color + '">' + g.label + '</th>';
     });
+    if (stationMode) html += '<th class="vpx-th-delay" rowspan="2">Delay</th>';
     html += '</tr><tr class="vpx-col-row">';
     activeCols.forEach((col, ci) => {
         const color = grpColorMap[col.group] || F100_VPX_PART_COLORS[0];
@@ -4286,6 +4297,7 @@ function renderVPX(data) {
                     + '</div>'
                     + '</td>';
                 activeCols.forEach(() => { html += '<td class="vpx-group-fill vpx-group-battalion"></td>'; });
+                if (stationMode) html += '<td class="vpx-group-fill vpx-group-battalion"></td>';
                 html += '</tr>';
             }
             // Vehicle group row — sticks below the battalion row
@@ -4297,6 +4309,7 @@ function renderVPX(data) {
                     + '</div>'
                     + '</td>';
                 activeCols.forEach(() => { html += '<td class="vpx-group-fill vpx-group-vehicle"></td>'; });
+                if (stationMode) html += '<td class="vpx-group-fill vpx-group-vehicle"></td>';
                 html += '</tr>';
             }
         } else if (row.vehicle !== prevVehicle) {
@@ -4308,6 +4321,7 @@ function renderVPX(data) {
                 + '</div>'
                 + '</td>';
             activeCols.forEach(() => { html += '<td class="vpx-group-fill"></td>'; });
+            if (stationMode) html += '<td class="vpx-group-fill"></td>';
             html += '</tr>';
         }
 
@@ -4340,12 +4354,53 @@ function renderVPX(data) {
             + '</div>'
             + '</td>';
 
+        var proj = stationMode ? _vpxProjectRow(row, activeCols, activeCols) : null;
+
         activeCols.forEach((col, ci) => {
             var grpCls = 'vpx-grp-' + grpSlug(col.group);
             var stationKey = col.resolve(row.vehicle);
 
             if (stationKey === null) {
                 html += '<td class="vpx-cell vpx-cell-na ' + grpCls + '" data-ri="' + ri + '" data-ci="' + ci + '" title="' + col.name + ' — N/A for ' + esc(row.vehicle) + '"><span class="vpx-na">N/A</span></td>';
+                return;
+            }
+
+            if (stationMode) {
+                var c = proj.cells[ci];
+                if (!c || !c.planned) {
+                    html += '<td class="vpx-cell vpx-cell-empty ' + grpCls + '" data-ri="' + ri + '" data-ci="' + ci + '" title="' + col.name + ' — not yet planned">—</td>';
+                    return;
+                }
+                var sDot, sSlug, sActLabel;
+                if (c.overdue) {
+                    sDot = 'vpx-dot-over'; sSlug = 'overdue'; sActLabel = 'exp ' + formatDateShort(c.expected);
+                } else if (c.late) {
+                    sDot = 'vpx-dot-late'; sSlug = 'late'; sActLabel = formatDateShort(c.actual);
+                } else if (c.actual && !c.projected) {
+                    sDot = 'vpx-dot-ok'; sSlug = 'completed'; sActLabel = formatDateShort(c.actual);
+                } else if (c.projected && c.actual) {
+                    // Not yet finished/not yet due — still show the expected
+                    // completion date (planned end shifted forward by
+                    // whatever delay this component is currently carrying),
+                    // same as Overdue cells do, just not red-highlighted.
+                    sDot = 'vpx-dot-plan'; sSlug = 'planned'; sActLabel = 'exp ' + formatDateShort(c.actual);
+                } else {
+                    sDot = 'vpx-dot-plan'; sSlug = 'planned'; sActLabel = null;
+                }
+                var sTip = [
+                    col.code + '  ' + col.name,
+                    'Planned end : ' + formatDate(c.planned),
+                    c.overdue ? ('Expected    : ' + formatDate(c.expected))
+                        : (c.actual && !c.projected) ? ('Completed   : ' + formatDate(c.actual))
+                        : (c.projected && c.actual) ? ('Expected    : ' + formatDate(c.actual))
+                        : null,
+                ].filter(Boolean).join('\n').replace(/"/g, "'");
+                html += '<td class="vpx-cell ' + grpCls + ' vpx-status-' + sSlug + '" data-ri="' + ri + '" data-ci="' + ci + '" title="' + sTip + '">'
+                    + '<span class="vpx-dot ' + sDot + '"></span>'
+                    + '<div class="vpx-dates">'
+                    + '<span class="vpx-date-plan">' + formatDateShort(c.planned) + '</span>'
+                    + '<span class="vpx-date-act' + (sActLabel ? '' : ' vpx-date-none') + '">' + (sActLabel || '—') + '</span>'
+                    + '</div></td>';
                 return;
             }
 
@@ -4390,6 +4445,16 @@ function renderVPX(data) {
                 + '<span class="vpx-date-act' + (actRange ? '' : ' vpx-date-none') + '">' + (actRange || '—') + '</span>'
                 + '</div>' + renderXrayMarker(task.id, task) + '</td>';
         });
+
+        if (stationMode) {
+            var fd = proj.finalDelay;
+            var delayPillCls = fd > 0 ? 'vpx-delay-pill-late' : 'vpx-delay-pill-ok';
+            var delayIcon = fd > 0
+                ? '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5v6M6 8.5L3.5 6M6 8.5 8.5 6"/></svg>'
+                : '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.5l2.5 2.5 4.5-6"/></svg>';
+            html += '<td class="vpx-td-delay"><span class="vpx-delay-pill ' + delayPillCls + '" title="Biggest single-station delay within this component\'s own stations">'
+                + delayIcon + '<span>' + (fd > 0 ? fd + 'd late' : 'On time') + '</span></span></td>';
+        }
 
         html += '</tr>';
     });
@@ -6002,11 +6067,13 @@ function wireEvents() {
     // Gantt controls
     wireGanttControls();
     bindVpxFullscreenUi();
+    wireVpxViewToggle();
 
     // Report modal
     wireReportModal();
     wireIssueReportModal();
     wireVpxReportModal();
+    wireExecReportModal();
     wireVpxDelayReasonModal();
     wireXrayModal();
 
@@ -10442,15 +10509,38 @@ function _showGenericPreview({ title, kind, src, html, sheets, onDownload }) {
     newCloseBtn.addEventListener('click', close);
 }
 
-/** Walks one vehicle's stations in route order, carrying its most recent
- *  known delay forward onto every not-yet-finished station's projected
- *  date. Returns per-station cells plus the row's final Delay value. */
-function _vpxProjectRow(vehicleRow, orderedCols) {
+/** Walks one vehicle's stations in `orderedCols` order, carrying a delay
+ *  picked up at one station forward onto later not-yet-finished stations'
+ *  projected dates. Callers pass just ONE component's own columns (Hull,
+ *  Turret, Assembly, etc.) as `orderedCols` — these are independent build
+ *  streams on the same vehicle, not sequential phases, so a delay from one
+ *  component must never carry into, or be blended with, another
+ *  component's own delay/projection.
+ *  A not-yet-finished station whose own planned end date has already
+ *  passed is "overdue" — matches calculateStatus()'s Overdue rule — and is
+ *  highlighted red, showing its expected completion date (its planned end
+ *  date shifted forward by whatever delay was carried into it) instead of
+ *  silently showing nothing.
+ *  `displayCols` (defaults to the same list) picks which of those walked
+ *  stations actually get emitted as cells.
+ *  The returned Delay is the BIGGEST single-station delay found within
+ *  `orderedCols` (this one component's own stations) — each station's own
+ *  delay computed independently (a late completion's own overrun, or an
+ *  unfinished station's own today-vs-planned shortfall), not a value that
+ *  carries or cascades from one station into the next. A vehicle can (and
+ *  usually will) show a different Delay on each of its component tabs. */
+function _vpxProjectRow(vehicleRow, orderedCols, displayCols = orderedCols) {
     let carriedDelay = 0;
-    const cells = orderedCols.map(col => {
+    let maxDelay = 0;
+    const today = todayStr();
+    const colId = c => `${c.code}||${c.name}||${c.group}`;
+    const cellById = new Map();
+    const blank = { planned: null, actual: null, projected: false, late: false, overdue: false };
+    orderedCols.forEach(col => {
+        const cid = colId(col);
         const key = col.resolve(vehicleRow.vehicle);
         const task = key ? vehicleRow.stations[key] : null;
-        if (!task) return { planned: null, actual: null, projected: false, late: false };
+        if (!task) { cellById.set(cid, blank); return; }
 
         const plannedEnd = task.end_date || null;
         const actualEnd = task.progress?.completion_date || null;
@@ -10458,16 +10548,36 @@ function _vpxProjectRow(vehicleRow, orderedCols) {
         if (actualEnd) {
             const delay = plannedEnd ? daysBetween(plannedEnd, actualEnd) : 0;
             carriedDelay = delay;
-            return { planned: plannedEnd, actual: actualEnd, projected: false, late: delay > 0 };
+            if (delay > maxDelay) maxDelay = delay;
+            cellById.set(cid, { planned: plannedEnd, actual: actualEnd, projected: false, late: delay > 0, overdue: false });
+        } else if (plannedEnd && today > plannedEnd) {
+            // Expected completion — the same planned-date-plus-carried-delay
+            // projection every other not-yet-finished station uses, computed
+            // from the delay already carried INTO this station (before its
+            // own overdue shortfall below updates that carry further).
+            const expected = carriedDelay > 0 ? _addWorkingDays(plannedEnd, carriedDelay) : plannedEnd;
+            const delay = daysBetween(plannedEnd, today);
+            carriedDelay = delay;
+            if (delay > maxDelay) maxDelay = delay;
+            cellById.set(cid, { planned: plannedEnd, actual: null, projected: false, late: true, overdue: true, expected });
+        } else {
+            const projectedDate = (plannedEnd && carriedDelay > 0) ? _addWorkingDays(plannedEnd, carriedDelay) : plannedEnd;
+            cellById.set(cid, { planned: plannedEnd, actual: projectedDate, projected: !!plannedEnd, late: false, overdue: false });
         }
-        const projectedDate = (plannedEnd && carriedDelay > 0) ? _addWorkingDays(plannedEnd, carriedDelay) : plannedEnd;
-        return { planned: plannedEnd, actual: projectedDate, projected: !!plannedEnd, late: false };
     });
-    return { cells, finalDelay: carriedDelay };
+    const cells = displayCols.map(col => cellById.get(colId(col)) || blank);
+    return { cells, finalDelay: maxDelay };
 }
 
 function _vpxStationReportData() {
     let vpxData = applyActiveFilters(currentData);
+    // Category-scoped to this tab only — Hull, Turret, Assembly, etc. are
+    // independent component streams on the same vehicle, not sequential
+    // phases, so a vehicle's Hull delay must never be computed from (or
+    // shown identical to) its Turret delay. Delay is therefore calculated
+    // purely from each component's own stations; `allCols` below is kept
+    // equal to `activeCols` (not a separate full-route set) so every call
+    // site that projects delay/dates does so within this one component.
     vpxData = _getVpxFilteredData(vpxData);
     if (!vpxData.length) return null;
 
@@ -10476,13 +10586,14 @@ function _vpxStationReportData() {
         rows.some(row => { const k = col.resolve(row.vehicle); return k !== null && row.stations[k]; })
     );
     if (!activeCols.length) return null;
+    const allCols = activeCols;
 
     const titleParts = [getModuleBadge()];
     if (_vpxVehicleTypeFilter) titleParts.push(_vpxVehicleTypeFilter);
     if (_vpxCategoryFilter) titleParts.push(_vpxCategoryFilter);
     titleParts.push('Station Report');
 
-    return { rows, activeCols, title: titleParts.join(' ') };
+    return { rows, activeCols, allCols, title: titleParts.join(' ') };
 }
 
 const VPX_REPORT_GRP_COLOR = {
@@ -10495,20 +10606,16 @@ const VPX_REPORT_GRP_COLOR = {
     'Final Test': { bg: 'FF334155', fg: 'FFffffff' },
 };
 
-async function exportVpxStationReportExcel(preview) {
-    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
-    if (isF100KD2Module()) { showToast('Station report is only available for the F200-KD2 module.', 'error'); return; }
-    if (!currentData?.length) { showToast('No data to export.', 'error'); return; }
-    if (typeof ExcelJS === 'undefined') { showToast('ExcelJS not loaded yet — please wait a moment and try again.', 'error'); return; }
-
-    const built = _vpxStationReportData();
-    if (!built) { showToast('No data matches the current filters.', 'error'); return; }
-    const { rows, activeCols, title } = built;
-
-    const wb = new ExcelJS.Workbook();
-    wb.creator = 'PPMS';
-    wb.created = new Date();
-    const ws = wb.addWorksheet('Station Report', {
+/** Draws one Station Report worksheet (title/subtitle, grouped station
+ *  headers, Plan/Actual row-pairs per vehicle, Delay + Delay Reason columns)
+ *  into `wb`. `categoryForReason` (defaults to the tab implied by `built`'s
+ *  own title context, i.e. the current `_vpxCategoryFilter` at call time)
+ *  is threaded through explicitly rather than read from the global so this
+ *  is safe to call for a category other than whatever tab is on screen —
+ *  needed by the Executive Report, which builds one sheet per segment. */
+function _addVpxStationReportSheet(wb, built, sheetName, categoryForReason = _vpxCategoryFilter) {
+    const { rows, activeCols, allCols, title } = built;
+    const ws = wb.addWorksheet(sheetName, {
         pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
         views: [{ state: 'frozen', xSplit: 1, ySplit: 5 }],
     });
@@ -10567,7 +10674,7 @@ async function exportVpxStationReportExcel(preview) {
     const stationHeaderText = col => (col.name && col.name !== col.code) ? `${col.code}\n${col.name}` : col.code;
     const codeRowData = [''];
     activeCols.forEach(col => codeRowData.push(stationHeaderText(col)));
-    codeRowData.push('Delay', _vpxCategoryFilter ? `Delay Reason (${_vpxCategoryFilter})` : 'Delay Reason');
+    codeRowData.push('Delay', categoryForReason ? `Delay Reason (${categoryForReason})` : 'Delay Reason');
     ws.addRow(codeRowData);
     ws.getRow(5).height = 30;
     for (let c = 1; c <= totalCols; c++) {
@@ -10595,7 +10702,7 @@ async function exportVpxStationReportExcel(preview) {
 
     let excelRowIdx = 6;
     rows.forEach(row => {
-        const { cells, finalDelay } = _vpxProjectRow(row, activeCols);
+        const { cells, finalDelay } = _vpxProjectRow(row, allCols, activeCols);
         const code = getUnitCode(row.vehicle, row.vehicle_no);
         const label = `${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
         const planRowN = excelRowIdx;
@@ -10613,31 +10720,36 @@ async function exportVpxStationReportExcel(preview) {
         ws.getCell(planRowN, delayCol).font = { name: 'Calibri', size: 7, italic: true, color: { argb: 'FF94a3b8' } };
         excelRowIdx++;
 
-        // Actual row — real completions are red (late) / green (on-time);
-        // not-yet-finished (projected) cells are light-grey text, no fill.
-        const actualVals = cells.map(c => c.actual ? formatDateShort(c.actual) : (c.planned ? '' : '—'));
+        // Actual row — green (completed on time), blue (late completion),
+        // red (overdue: not yet done, already past planned end — shows its
+        // expected completion date); not-yet-finished (projected, still
+        // within schedule) cells are grey.
+        const actualVals = cells.map(c => c.overdue ? formatDateShort(c.expected) : (c.actual ? formatDateShort(c.actual) : (c.planned ? '' : '—')));
         ws.addRow(['', ...actualVals, finalDelay > 0 ? `+${finalDelay}d` : '0d', '']);
         ws.getRow(actualRowN).eachCell({ includeEmpty: true }, (cell, colN) => {
             const isDelayCol = colN === delayCol;
             const c = colN > 1 && !isDelayCol && colN !== reasonCol ? cells[colN - 2] : null;
+            const isOverdue = !!c?.overdue;
             const isProjected = !!c?.projected;
             const isLate = !!c?.late;
-            const isReal = c && !c.projected && c.actual;
+            const isReal = c && !c.projected && !c.overdue && c.actual;
             cell.font = {
                 name: 'Calibri', size: 8,
                 italic: isProjected,
-                bold: colN === 1 || isDelayCol || (isReal && isLate),
+                bold: colN === 1 || isDelayCol || isOverdue || (isReal && isLate),
                 color: {
-                    argb: isProjected ? 'FF94a3b8'
-                        : isReal ? (isLate ? 'FFb91c1c' : 'FF15803d')
+                    argb: isOverdue ? 'FFb91c1c'
+                        : isProjected ? 'FF94a3b8'
+                        : isReal ? (isLate ? 'FF1d4ed8' : 'FF15803d')
                         : (isDelayCol ? (finalDelay > 0 ? 'FFb91c1c' : 'FF15803d') : 'FF1e293b'),
                 },
             };
             cell.fill = {
                 type: 'pattern', pattern: 'solid',
                 fgColor: {
-                    argb: isProjected ? 'FFffffff'
-                        : isReal ? (isLate ? 'FFfee2e2' : 'FFdcfce7')
+                    argb: isOverdue ? 'FFfee2e2'
+                        : isProjected ? 'FFffffff'
+                        : isReal ? (isLate ? 'FFdbeafe' : 'FFdcfce7')
                         : (isDelayCol ? (finalDelay > 0 ? 'FFfee2e2' : 'FFdcfce7') : 'FFffffff'),
                 },
             };
@@ -10657,7 +10769,7 @@ async function exportVpxStationReportExcel(preview) {
 
         // Delay Reason — editable per-vehicle, per-category note (VPX matrix
         // "note" icon), scoped to the tab this report was generated from.
-        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, _vpxCategoryFilter);
+        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, categoryForReason);
         ws.mergeCells(planRowN, reasonCol, actualRowN, reasonCol);
         const reasonCell = ws.getCell(planRowN, reasonCol);
         reasonCell.value = delayReason || '—';
@@ -10677,9 +10789,20 @@ async function exportVpxStationReportExcel(preview) {
     for (let i = 2; i <= delayCol - 1; i++) ws.getColumn(i).width = 14;
     ws.getColumn(delayCol).width = 10;
     ws.getColumn(reasonCol).width = 34;
+}
 
-    // ── Key & Legend worksheet — explains the file and how to read it ──
-    const wsKey2 = wb.addWorksheet('Key & Legend');
+/** Draws the "Key & Legend" worksheet explaining a Station Report's layout,
+ *  colours, and delay calculation — shared by the standalone Station Report
+ *  export (one sheet per file) and the Executive Report (one shared sheet
+ *  covering every segment). */
+function _addStationReportKeySheet(wb, title, sheetName = 'Key & Legend') {
+    const bord = () => ({
+        top: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+        bottom: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+        left: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+        right: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+    });
+    const wsKey2 = wb.addWorksheet(sheetName);
     wsKey2.getColumn(1).width = 5;
     wsKey2.getColumn(2).width = 26;
     wsKey2.getColumn(3).width = 70;
@@ -10719,17 +10842,35 @@ async function exportVpxStationReportExcel(preview) {
     wsKey2.addRow([]); wsKey2.getRow(7).height = 8;
     keySection(8, 'ACTUAL ROW COLOURS');
     keyLine(9, 'Green', 'Station completed on or before its planned end date.', { bg: 'FFdcfce7', fg: 'FF15803d' });
-    keyLine(10, 'Red', 'Station completed after its planned end date (late completion).', { bg: 'FFfee2e2', fg: 'FFb91c1c' });
-    keyLine(11, 'Light grey (no fill)', 'Not yet finished — showing a projected completion date (see below), not a real actual date.', { bg: 'FFffffff', fg: 'FF94a3b8' });
+    keyLine(10, 'Blue', 'Station completed, but after its planned end date (late completion).', { bg: 'FFdbeafe', fg: 'FF1d4ed8' });
+    keyLine(11, 'Red', 'Not yet completed, and already past its planned end date (Overdue) — the date shown is when it\'s now expected to finish, not a real actual date.', { bg: 'FFfee2e2', fg: 'FFb91c1c' });
+    keyLine(12, 'Light grey (no fill)', 'Not yet finished, and still within its planned schedule — showing a projected completion date (see below), not a real actual date.', { bg: 'FFffffff', fg: 'FF94a3b8' });
 
-    wsKey2.addRow([]); wsKey2.getRow(12).height = 8;
-    keySection(13, 'DELAY & PROJECTED COMPLETION — HOW THEY ARE CALCULATED');
-    keyLine(14, 'Delay column', 'The vehicle\'s most recently recorded delay: (actual completion date) − (planned end date) of its last finished station, in working days. 0d or blank means on schedule.');
-    keyLine(15, 'Projected date', 'For each not-yet-finished station, its planned end date is shifted forward by the vehicle\'s current carried delay (the same value shown in the Delay column at that point in the route). This carried delay updates at every station that has a real actual date, and rolls forward unchanged through every station that doesn\'t.');
-    keyLine(16, 'Example', 'A vehicle finishes Welding 3 working days late. Every later station\'s projected date (Machining, Painting, …) is shown 3 working days after its own planned date, until the vehicle records a new actual date that resets the carried delay.');
-    keyLine(17, 'Delay Reason column', 'A free-text note explaining the vehicle\'s main delay, entered by a planner/admin on the VPX matrix (click the note icon on the vehicle\'s row). Tracked separately per component (Hull/Turret/Assembly, etc.), matching the category tab shown in this report — one current reason per vehicle+component; editing it overwrites the previous note for that component.');
+    wsKey2.addRow([]); wsKey2.getRow(13).height = 8;
+    keySection(14, 'DELAY & PROJECTED COMPLETION — HOW THEY ARE CALCULATED');
+    keyLine(15, 'Delay column', 'The single biggest delay found among THIS component\'s own stations only (this tab — Hull, Turret, Assembly, etc. are independent build streams on the same vehicle, not sequential phases, so they\'re never mixed) — each station\'s own delay computed independently: a late completion\'s own overrun, or an unfinished/overdue station\'s own (today) − (planned end date) shortfall, in working days. A vehicle can show a different Delay on each of its component tabs. 0d means on schedule.');
+    keyLine(16, 'Projected date', 'For each not-yet-finished, not-yet-overdue station, its planned end date is shifted forward by the delay carried into it from the most recent late-completed or overdue station before it, within this same component\'s own stations. This carry updates station-by-station and is not the same figure as the Delay column above (which is this component\'s single biggest delay, not the running carry).');
+    keyLine(17, 'Example', 'A vehicle finishes Welding 3 working days late. Machining\'s projected date is shown 3 working days after its own planned date, until the vehicle records a new actual date — or falls further behind at an overdue station — which updates that carry.');
+    keyLine(18, 'Overdue (red)', 'A station not yet marked complete whose planned end date has already passed. The date shown is its expected completion — planned end date shifted forward by whatever delay was carried into it — not a real actual date.');
+    keyLine(19, 'Delay Reason column', 'A free-text note explaining the vehicle\'s main delay, entered by a planner/admin on the VPX matrix (click the note icon on the vehicle\'s row). Tracked separately per component (Hull/Turret/Assembly, etc.), matching the category tab shown in this report — one current reason per vehicle+component; editing it overwrites the previous note for that component.');
+}
 
-    // ── Save ───────────────────────────────────────────────────────
+async function exportVpxStationReportExcel(preview) {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
+    if (isF100KD2Module()) { showToast('Station report is only available for the F200-KD2 module.', 'error'); return; }
+    if (!currentData?.length) { showToast('No data to export.', 'error'); return; }
+    if (typeof ExcelJS === 'undefined') { showToast('ExcelJS not loaded yet — please wait a moment and try again.', 'error'); return; }
+
+    const built = _vpxStationReportData();
+    if (!built) { showToast('No data matches the current filters.', 'error'); return; }
+    const { title } = built;
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PPMS';
+    wb.created = new Date();
+    _addVpxStationReportSheet(wb, built, 'Station Report');
+    _addStationReportKeySheet(wb, title);
+
     const now = new Date().toISOString().slice(0, 10);
     const doDownload = async () => {
         const buf = await wb.xlsx.writeBuffer();
@@ -10748,18 +10889,14 @@ async function exportVpxStationReportExcel(preview) {
     }
 }
 
-async function exportVpxStationReportPDF(preview) {
-    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
-    if (isF100KD2Module()) { showToast('Station report is only available for the F200-KD2 module.', 'error'); return; }
-    if (!currentData?.length) { showToast('No data to export.', 'error'); return; }
-    if (!window.jspdf) { showToast('PDF library not loaded — please refresh.', 'error'); return; }
-
-    const built = _vpxStationReportData();
-    if (!built) { showToast('No data matches the current filters.', 'error'); return; }
-    const { rows, activeCols, title } = built;
-
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+/** Draws one Station Report table onto whatever page `doc` is currently on
+ *  (caller controls `doc.addPage()` beforehand) — title header + the grouped
+ *  Plan/Actual autoTable. `categoryForReason` is threaded through explicitly
+ *  (see `_addVpxStationReportSheet` above) so this is safe to call for a
+ *  category other than whatever tab is on screen, as the Executive Report
+ *  does once per segment. */
+function _drawVpxStationReportTable(doc, built, title, categoryForReason = _vpxCategoryFilter) {
+    const { rows, activeCols, allCols } = built;
     const PAGE_W = doc.internal.pageSize.getWidth();
     const PAGE_H = doc.internal.pageSize.getHeight();
     const MARGIN = 10;
@@ -10774,16 +10911,16 @@ async function exportVpxStationReportPDF(preview) {
     doc.text('Generated: ' + new Date().toLocaleString('en-GB'), PAGE_W - MARGIN, 10, { align: 'right' });
 
     const stationHeaderText = col => (col.name && col.name !== col.code) ? `${col.code}\n${col.name}` : col.code;
-    const headers = ['Vehicle', ...activeCols.map(stationHeaderText), 'Delay', _vpxCategoryFilter ? `Delay Reason (${_vpxCategoryFilter})` : 'Delay Reason'];
+    const headers = ['Vehicle', ...activeCols.map(stationHeaderText), 'Delay', categoryForReason ? `Delay Reason (${categoryForReason})` : 'Delay Reason'];
     const body = [];
     const cellFlags = []; // parallel to body — {projected,late,real} per station cell, per row
     const vehicleBlockStartRows = []; // body row index where each vehicle's Plan row starts
 
     rows.forEach(row => {
-        const { cells, finalDelay } = _vpxProjectRow(row, activeCols);
+        const { cells, finalDelay } = _vpxProjectRow(row, allCols, activeCols);
         const code = getUnitCode(row.vehicle, row.vehicle_no);
         const label = `${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
-        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, _vpxCategoryFilter);
+        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, categoryForReason);
 
         vehicleBlockStartRows.push(body.length);
 
@@ -10796,10 +10933,10 @@ async function exportVpxStationReportPDF(preview) {
         cellFlags.push(cells.map(() => ({ projected: false, late: false, real: false })));
 
         body.push([
-            ...cells.map(c => c.actual ? formatDateShort(c.actual) : (c.planned ? '' : '—')),
+            ...cells.map(c => c.overdue ? formatDateShort(c.expected) : (c.actual ? formatDateShort(c.actual) : (c.planned ? '' : '—'))),
             finalDelay > 0 ? `+${finalDelay}d` : '0d',
         ]);
-        cellFlags.push(cells.map(c => ({ projected: c.projected, late: c.late, real: !c.projected && !!c.actual })));
+        cellFlags.push(cells.map(c => ({ projected: c.projected, late: c.late, overdue: c.overdue, real: !c.projected && !c.overdue && !!c.actual })));
     });
 
     doc.autoTable({
@@ -10841,12 +10978,16 @@ async function exportVpxStationReportPDF(preview) {
             if (stationColIdx < 0 || stationColIdx >= activeCols.length) return;
             const f = flags?.[stationColIdx];
             if (!f) return;
-            if (f.projected) {
+            if (f.overdue) {
+                data.cell.styles.textColor = [185, 28, 28];
+                data.cell.styles.fillColor = [254, 226, 226];
+                data.cell.styles.fontStyle = 'bold';
+            } else if (f.projected) {
                 data.cell.styles.textColor = [148, 163, 184];
                 data.cell.styles.fontStyle = 'italic';
             } else if (f.real) {
-                data.cell.styles.textColor = f.late ? [185, 28, 28] : [21, 128, 61];
-                data.cell.styles.fillColor = f.late ? [254, 226, 226] : [220, 252, 231];
+                data.cell.styles.textColor = f.late ? [29, 78, 216] : [21, 128, 61];
+                data.cell.styles.fillColor = f.late ? [219, 234, 254] : [220, 252, 231];
                 if (f.late) data.cell.styles.fontStyle = 'bold';
             }
         },
@@ -10859,9 +11000,15 @@ async function exportVpxStationReportPDF(preview) {
             doc.text(`Page ${data.pageNumber} of ${pageCount}`, PAGE_W - MARGIN, PAGE_H - 5, { align: 'right' });
         },
     });
+}
 
-    // ── Key & Legend page — explains the report and the delay calculation ──
-    doc.addPage('a4', 'portrait');
+/** Draws the "Key & Legend" page explaining a Station Report's layout,
+ *  colours, and delay calculation onto a fresh portrait page (caller must
+ *  `doc.addPage('a4','portrait')` first) — shared by the standalone
+ *  Station Report export and the Executive Report's single trailing
+ *  legend page. */
+function _drawStationReportKeyPage(doc, title) {
+    const MARGIN = 10;
     const KP_W = doc.internal.pageSize.getWidth();
     let ky = 18;
     doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(30, 41, 59);
@@ -10890,15 +11037,36 @@ async function exportVpxStationReportPDF(preview) {
 
     keySection('ACTUAL ROW COLOURS');
     keyLine('Green', 'Station completed on or before its planned end date.', [21, 128, 61]);
-    keyLine('Red', 'Station completed after its planned end date (late completion).', [185, 28, 28]);
-    keyLine('Grey / italic', 'Not yet finished — showing a projected completion date, not a real actual date.', [148, 163, 184]);
+    keyLine('Blue', 'Station completed, but after its planned end date (late completion).', [29, 78, 216]);
+    keyLine('Red', 'Not yet completed, and already past its planned end date (Overdue) — the date shown is when it\'s now expected to finish, not a real actual date.', [185, 28, 28]);
+    keyLine('Grey / italic', 'Not yet finished, and still within its planned schedule — showing a projected completion date, not a real actual date.', [148, 163, 184]);
     ky += 4;
 
     keySection('DELAY & PROJECTED COMPLETION — HOW THEY ARE CALCULATED');
-    keyLine('Delay column', 'The vehicle\'s most recently recorded delay: (actual completion date) minus (planned end date) of its last finished station, in working days. 0d means on schedule.');
-    keyLine('Projected date', 'Each not-yet-finished station\'s planned end date is shifted forward by the vehicle\'s current carried delay. This carried delay updates at every station with a real actual date, and rolls forward unchanged through every station that doesn\'t.');
-    keyLine('Example', 'A vehicle finishes Welding 3 working days late. Every later station\'s projected date is shown 3 working days after its own planned date, until a new actual date resets the carried delay.');
+    keyLine('Delay column', 'The single biggest delay found among THIS component\'s own stations only (this tab — Hull, Turret, Assembly, etc. are independent build streams on the same vehicle, not sequential phases, so they\'re never mixed) — each station\'s own delay computed independently: a late completion\'s own overrun, or an unfinished/overdue station\'s own (today) minus (planned end date) shortfall, in working days. A vehicle can show a different Delay on each of its component tabs. 0d means on schedule.');
+    keyLine('Projected date', 'Each not-yet-finished, not-yet-overdue station\'s planned end date is shifted forward by the delay carried into it from the most recent late-completed or overdue station before it, within this same component\'s own stations. This is not the same figure as the Delay column above (which is this component\'s single biggest delay, not the running carry).');
+    keyLine('Example', 'A vehicle finishes Welding 3 working days late. Machining\'s projected date is shown 3 working days after its own planned date, until a new actual date — or falling further behind at an overdue station — updates that carry.');
+    keyLine('Overdue (red)', 'A station not yet marked complete whose planned end date has already passed. The date shown is its expected completion — planned end date shifted forward by whatever delay was carried into it — not a real actual date.', [185, 28, 28]);
     keyLine('Delay Reason column', 'A free-text note explaining the vehicle\'s main delay, entered by a planner/admin on the VPX matrix (click the note icon on the vehicle\'s row). Tracked separately per component (Hull/Turret/Assembly, etc.), matching the category tab shown in this report — one current reason per vehicle+component; editing it overwrites the previous note for that component.');
+}
+
+async function exportVpxStationReportPDF(preview) {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
+    if (isF100KD2Module()) { showToast('Station report is only available for the F200-KD2 module.', 'error'); return; }
+    if (!currentData?.length) { showToast('No data to export.', 'error'); return; }
+    if (!window.jspdf) { showToast('PDF library not loaded — please refresh.', 'error'); return; }
+
+    const built = _vpxStationReportData();
+    if (!built) { showToast('No data matches the current filters.', 'error'); return; }
+    const { title } = built;
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    _drawVpxStationReportTable(doc, built, title);
+
+    // ── Key & Legend page — explains the report and the delay calculation ──
+    doc.addPage('a4', 'portrait');
+    _drawStationReportKeyPage(doc, title);
 
     const now = new Date().toISOString().slice(0, 10);
     const doDownload = () => { doc.save(`vpx_station_report_${now}.pdf`); showToast('Station report PDF exported.', 'success'); };
@@ -10907,6 +11075,284 @@ async function exportVpxStationReportPDF(preview) {
     } else {
         doDownload();
     }
+}
+
+/* ================================================================
+   EXECUTIVE REPORT — VPX Station Report for every vehicle/component
+   segment (K9 → K10 → K11, each split by Hull/Turret/Assembly or
+   Structure/Assembly) followed by the all-time Issues Status Report,
+   combined into one Excel workbook / PDF / Word document with preview.
+   ================================================================ */
+
+/** Builds an HTML `<table>` fragment for one VPX Station Report segment,
+ *  for the Executive Report's Word export — mirrors the Excel/PDF Plan/
+ *  Actual row-pair layout and colour rules (green/red/overdue/grey) using
+ *  inline styles. `categoryForReason` is threaded through explicitly (see
+ *  `_addVpxStationReportSheet` above) rather than read from the global. */
+function _vpxStationReportSegmentHtml(built, categoryForReason) {
+    const { rows, activeCols, allCols } = built;
+    const grpColor = label => {
+        const c = VPX_REPORT_GRP_COLOR[label] || { bg: 'FF334155', fg: 'FFffffff' };
+        return { bg: '#' + c.bg.slice(2), fg: '#' + c.fg.slice(2) };
+    };
+    const stationHeaderText = col => (col.name && col.name !== col.code) ? `${esc(col.code)}<br>${esc(col.name)}` : esc(col.code);
+
+    let groupCells = '';
+    let i = 0;
+    while (i < activeCols.length) {
+        let j = i;
+        while (j + 1 < activeCols.length && activeCols[j + 1].group === activeCols[i].group) j++;
+        const { bg, fg } = grpColor(activeCols[i].group);
+        groupCells += `<th colspan="${j - i + 1}" style="background:${bg};color:${fg};text-align:center">${esc(activeCols[i].group)}</th>`;
+        i = j + 1;
+    }
+
+    let html = `<table><tr><th style="background:#1e293b;color:#fff">Vehicle</th>${groupCells}<th colspan="2" style="background:#1e293b;color:#fff"></th></tr>`;
+    html += `<tr><th style="background:#1e293b;color:#fff"></th>${activeCols.map(c => `<th style="background:#f1f5f9;color:#1e293b">${stationHeaderText(c)}</th>`).join('')}<th style="background:#1e293b;color:#fff">Delay</th><th style="background:#1e293b;color:#fff">${categoryForReason ? `Delay Reason (${esc(categoryForReason)})` : 'Delay Reason'}</th></tr>`;
+
+    rows.forEach(row => {
+        const { cells, finalDelay } = _vpxProjectRow(row, allCols, activeCols);
+        const code = getUnitCode(row.vehicle, row.vehicle_no);
+        const label = `${esc(row.vehicle)} #${esc(row.vehicle_no || '')}${code ? '<br>' + esc(code) : ''}`;
+        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, categoryForReason);
+
+        html += `<tr>`;
+        html += `<td rowspan="2" style="background:#334155;color:#fff;font-weight:bold;text-align:center;vertical-align:middle">${label}</td>`;
+        cells.forEach(c => {
+            html += `<td style="background:#f8fafc;color:#475569;text-align:center">${c.planned ? esc(formatDateShort(c.planned)) : ''}</td>`;
+        });
+        html += `<td style="color:#94a3b8;font-style:italic;text-align:center">Plan</td>`;
+        html += `<td rowspan="2" style="background:${delayReason ? '#fffbeb' : '#ffffff'};color:${delayReason ? '#78350f' : '#94a3b8'};font-style:${delayReason ? 'normal' : 'italic'};vertical-align:middle">${esc(delayReason || '—')}</td>`;
+        html += `</tr><tr>`;
+        cells.forEach(c => {
+            let bg = '#ffffff', color = '#1e293b', weight = 'normal', italic = false, text;
+            if (c.overdue) { bg = '#fee2e2'; color = '#b91c1c'; weight = 'bold'; text = formatDateShort(c.expected); }
+            else if (c.projected) { color = '#94a3b8'; italic = true; text = c.actual ? formatDateShort(c.actual) : ''; }
+            else if (c.actual) { bg = c.late ? '#dbeafe' : '#dcfce7'; color = c.late ? '#1d4ed8' : '#15803d'; weight = c.late ? 'bold' : 'normal'; text = formatDateShort(c.actual); }
+            else { text = c.planned ? '' : '—'; }
+            html += `<td style="background:${bg};color:${color};font-weight:${weight};font-style:${italic ? 'italic' : 'normal'};text-align:center">${esc(text || '')}</td>`;
+        });
+        const delayColor = finalDelay > 0 ? '#b91c1c' : '#15803d';
+        html += `<td style="color:${delayColor};font-weight:bold;text-align:center">${finalDelay > 0 ? '+' + finalDelay + 'd' : '0d'}</td>`;
+        html += `</tr>`;
+    });
+
+    html += `</table>`;
+    return html;
+}
+
+/** Walks K9 → K10 → K11, each split into its own component tabs (Hull/
+ *  Turret/Assembly for K9; Structure/Assembly for K10/K11, per
+ *  `_detectVpxCategories`), collecting one Station Report segment per
+ *  vehicle+component via the existing `_vpxStationReportData()` — the same
+ *  function the single-tab Station Report export uses, so segment data and
+ *  delay/overdue calculation are identical to what's on screen for that tab.
+ *  Temporarily overrides `_vpxVehicleTypeFilter`/`_vpxCategoryFilter` (the
+ *  module-level globals every VPX render reads) and restores them
+ *  synchronously before returning — safe because nothing in the loop is
+ *  `await`ed, so the live VPX screen can't re-render mid-loop with the
+ *  wrong tab selected. Segments with no data are skipped, same as the
+ *  single-tab export's own empty-state handling. */
+function _collectVpxExecutiveSegments() {
+    const savedType = _vpxVehicleTypeFilter, savedCat = _vpxCategoryFilter;
+    const segments = [];
+    try {
+        const rt = getModuleRuntime?.();
+        for (const vtype of ['K9', 'K10', 'K11']) {
+            _vpxVehicleTypeFilter = vtype;
+            const typedData = applyActiveFilters(currentData).filter(t => _getVehicleType(t.vehicle) === vtype);
+            const compMap = (vtype === 'K9' && rt?.getStationCategoryMap) ? rt.getStationCategoryMap('K9') : null;
+            const categories = _detectVpxCategories(vtype, typedData, compMap);
+            for (const cat of categories) {
+                _vpxCategoryFilter = cat;
+                const built = _vpxStationReportData();
+                if (built) segments.push({ vtype, cat, heading: `${vtype} — ${cat}`, ...built });
+            }
+        }
+    } finally {
+        _vpxVehicleTypeFilter = savedType;
+        _vpxCategoryFilter = savedCat;
+    }
+    return segments;
+}
+
+/** All-time, every status/category, Issues Status Report rows — "all time,
+ *  everything selected" reuses the same fallback-to-all logic the Issues
+ *  Status Report modal's own "All Time" + no-checklist-selection state
+ *  already implements in `buildIssueReportRows`. */
+function _buildIssueStatusReportRowsAllTime() {
+    return buildIssueReportRows('status_report', { period: 'all_time', moduleScope: 'current', statuses: [], categories: [] });
+}
+
+async function exportExecutiveReportExcel(preview) {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
+    if (!isKD2Module()) { showToast('Executive Report is only available for the F200-KD2 module.', 'error'); return; }
+    if (typeof ExcelJS === 'undefined') { showToast('ExcelJS not loaded yet — please wait a moment and try again.', 'error'); return; }
+    showToast('Preparing Executive Report…', 'info');
+
+    const segments = _collectVpxExecutiveSegments();
+    const issueRows = await _buildIssueStatusReportRowsAllTime();
+    if (!segments.length && !issueRows.length) { showToast('No data available for the Executive Report.', 'error'); return; }
+    const title = 'Executive Report';
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PPMS';
+    wb.created = new Date();
+    const usedNames = new Set();
+    segments.forEach(seg => {
+        let name = `${seg.vtype} - ${seg.cat}`.slice(0, 31);
+        let n = 2;
+        while (usedNames.has(name)) { name = `${seg.vtype} - ${seg.cat} (${n++})`.slice(0, 31); }
+        usedNames.add(name);
+        _addVpxStationReportSheet(wb, seg, name, seg.cat);
+    });
+    _addIssueStatusReportSheet(wb, issueRows, 'Issues Status Report', 'Production Issues Status Report — All Time');
+    _addStationReportKeySheet(wb, title);
+
+    const now = new Date().toISOString().slice(0, 10);
+    const doDownload = async () => {
+        const buf = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `executive_report_${now}.xlsx`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        showToast('Executive Report exported.', 'success');
+    };
+    if (preview) {
+        _showGenericPreview({ title, kind: 'sheets', sheets: _workbookToSheets(wb), onDownload: doDownload });
+    } else {
+        await doDownload();
+    }
+}
+
+async function exportExecutiveReportPDF(preview) {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
+    if (!isKD2Module()) { showToast('Executive Report is only available for the F200-KD2 module.', 'error'); return; }
+    if (!window.jspdf) { showToast('PDF library not loaded — please refresh.', 'error'); return; }
+    showToast('Preparing Executive Report…', 'info');
+
+    const segments = _collectVpxExecutiveSegments();
+    const issueRows = await _buildIssueStatusReportRowsAllTime();
+    if (!segments.length && !issueRows.length) { showToast('No data available for the Executive Report.', 'error'); return; }
+    const title = 'Executive Report';
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pageNumberOf = () => doc.internal.getCurrentPageInfo().pageNumber;
+    const hasOutline = !!doc.outline?.add;
+
+    segments.forEach((seg, i) => {
+        if (i > 0) doc.addPage('a4', 'landscape');
+        _drawVpxStationReportTable(doc, seg, seg.heading, seg.cat);
+        if (hasOutline) { try { doc.outline.add(null, seg.heading, { pageNumber: pageNumberOf() }); } catch {} }
+    });
+
+    // ── Production Issues Status Report — same flat table-layout as the
+    // standalone Issues Status Report PDF export (table layout branch).
+    // Only start a new page if a VPX segment already used page 1. ──
+    if (segments.length) doc.addPage('a4', 'landscape');
+    if (hasOutline) { try { doc.outline.add(null, 'Production Issues Status Report (All Time)', { pageNumber: pageNumberOf() }); } catch {} }
+    {
+        const PAGE_W = doc.internal.pageSize.getWidth();
+        const PAGE_H = doc.internal.pageSize.getHeight();
+        const MARGIN = 14;
+        const issueTitle = 'Production Issues Status Report — All Time';
+
+        doc.setFillColor(248, 250, 252);
+        doc.rect(0, 0, PAGE_W, 22, 'F');
+        doc.setFillColor(37, 99, 235);
+        doc.rect(0, 0, 4, 22, 'F');
+        doc.setDrawColor(226, 232, 240);
+        doc.setLineWidth(0.3);
+        doc.line(0, 22, PAGE_W, 22);
+        doc.setTextColor(15, 23, 42);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(13);
+        doc.text(issueTitle, MARGIN + 2, 10);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7.5);
+        doc.setTextColor(100, 116, 139);
+        doc.text(`Generated: ${new Date().toLocaleString('en-GB')}   ·   ${issueRows.length} issue${issueRows.length !== 1 ? 's' : ''}`, PAGE_W - MARGIN, 17, { align: 'right' });
+
+        let pillX = MARGIN;
+        const pillY = 26.5;
+        _categoryCounts(issueRows).forEach(([label, count]) => {
+            const text = `${label}: ${count}`;
+            doc.setFontSize(6.5);
+            const tw = doc.getTextWidth(text) + 8;
+            doc.setFillColor(37, 99, 235);
+            try { doc.setGState(new doc.GState({ opacity: 0.15 })); } catch {}
+            doc.roundedRect(pillX, pillY - 3.5, tw, 5.5, 1, 1, 'F');
+            try { doc.setGState(new doc.GState({ opacity: 1 })); } catch {}
+            doc.setTextColor(37, 99, 235);
+            doc.setFont('helvetica', 'bold');
+            doc.text(text, pillX + 4, pillY + 0.5);
+            pillX += tw + 4;
+        });
+
+        const headers = ['Category', 'Title', 'Issue/Problem', 'Proposed Solution', 'Action Taken', 'Reported', 'Resolved', 'PIC'];
+        const body = issueRows.map(r => [
+            ISSUE_CATEGORY_LABELS[r.category] || r.category || '—',
+            (r.title || '').slice(0, 36),
+            (r.description || '—').slice(0, 44),
+            (r.proposed_solution || '—').slice(0, 44),
+            (r.notes || '—').slice(0, 44),
+            formatIssueDate(r.created_at),
+            r.resolved_at ? formatIssueDate(r.resolved_at) : '—',
+            (r.person_in_charge || '—').slice(0, 18),
+        ]);
+        doc.autoTable({
+            startY: 33,
+            head: [headers], body,
+            margin: { left: MARGIN, right: MARGIN },
+            styles: { fontSize: 6.5, cellPadding: [2, 2.5], font: 'helvetica', textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.18 },
+            headStyles: { fillColor: [30, 58, 138], textColor: [241, 245, 249], fontStyle: 'bold', fontSize: 6.2, halign: 'center', cellPadding: [3, 2.5] },
+            alternateRowStyles: { fillColor: [248, 250, 252] },
+            didDrawPage(data) {
+                const pageCount = doc.internal.getNumberOfPages();
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(6);
+                doc.setTextColor(148, 163, 184);
+                doc.text(issueTitle, MARGIN, PAGE_H - 5);
+                doc.text(`Page ${data.pageNumber} of ${pageCount}`, PAGE_W - MARGIN, PAGE_H - 5, { align: 'right' });
+            },
+        });
+    }
+
+    doc.addPage('a4', 'portrait');
+    if (hasOutline) { try { doc.outline.add(null, 'Key & Legend', { pageNumber: pageNumberOf() }); } catch {} }
+    _drawStationReportKeyPage(doc, title);
+
+    const now = new Date().toISOString().slice(0, 10);
+    const doDownload = () => { doc.save(`executive_report_${now}.pdf`); showToast('Executive Report exported.', 'success'); };
+    if (preview) {
+        _showGenericPreview({ title, kind: 'pdf', src: doc.output('bloburl'), onDownload: doDownload });
+    } else {
+        doDownload();
+    }
+}
+
+async function exportExecutiveReportWord(preview) {
+    if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
+    if (!isKD2Module()) { showToast('Executive Report is only available for the F200-KD2 module.', 'error'); return; }
+    showToast('Preparing Executive Report…', 'info');
+
+    const segments = _collectVpxExecutiveSegments();
+    const issueRows = await _buildIssueStatusReportRowsAllTime();
+    if (!segments.length && !issueRows.length) { showToast('No data available for the Executive Report.', 'error'); return; }
+
+    let body = `<h1>Executive Report</h1><p class="doc-sub">Generated: ${esc(new Date().toLocaleString('en-GB'))}</p>`;
+    segments.forEach(seg => {
+        body += `<h2>${esc(seg.heading)}</h2>`;
+        body += _vpxStationReportSegmentHtml(seg, seg.cat);
+    });
+    body += `<h2>Production Issues Status Report (All Time)</h2>`;
+    body += _issueStatusReportTableHtml(issueRows);
+
+    const now = new Date().toISOString().slice(0, 10);
+    exportHtmlAsWord(`executive_report_${now}.doc`, 'Executive Report', body, preview);
 }
 
 /* ─── VPX "Generate Report" popup — replaces the 4 standalone export
@@ -10942,6 +11388,30 @@ function wireVpxReportModal() {
         if (type === 'station') await exportVpxStationReportExcel(preview); else await exportVpxExcel(preview);
         if (!preview) close();
     });
+}
+
+/* ─── Executive Report modal — combined VPX Station Report (every
+   vehicle/component segment) + all-time Issues Status Report. Always
+   previews before download, per how this report is meant to be used. ── */
+function wireExecReportModal() {
+    const overlay = document.getElementById('execReportModalOverlay');
+    if (!overlay) return;
+    const close = () => { overlay.style.display = 'none'; };
+
+    document.getElementById('btnExecReport')?.addEventListener('click', () => {
+        overlay.style.display = 'flex';
+    });
+    document.getElementById('execReportModalClose')?.addEventListener('click', close);
+    document.getElementById('execReportModalCancel')?.addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+    // Always previews (never a silent direct download) — the modal stays
+    // open underneath the preview so the user can try another format
+    // without re-opening it, matching how the VPX Report modal behaves
+    // when its own "View before exporting" toggle is checked.
+    document.getElementById('btnExecReportPDF')?.addEventListener('click', () => exportExecutiveReportPDF(true));
+    document.getElementById('btnExecReportExcel')?.addEventListener('click', () => exportExecutiveReportExcel(true));
+    document.getElementById('btnExecReportWord')?.addEventListener('click', () => exportExecutiveReportWord(true));
 }
 
 /* ─── VPX delay-reason editing — click the note icon on a vehicle's row
@@ -13298,6 +13768,83 @@ async function exportIssueReportExcel(opts) {
     }
 }
 
+/** Adds the Issues Status Report's flat-table layout as a new worksheet in
+ *  `wb` — same header/summary/table styling as the status_report branch of
+ *  the standalone `exportIssueReportExcel`, duplicated (not shared) here
+ *  since it's only ever called once per workbook and the standalone
+ *  exporter's own multi-type branching isn't worth threading a workbook
+ *  parameter through. Used by the Executive Report's Issues segment. */
+function _addIssueStatusReportSheet(wb, rows, sheetName, titleLabel) {
+    const ws = wb.addWorksheet(sheetName.slice(0, 31));
+    let cursorRow = 1;
+
+    ws.mergeCells(cursorRow, 1, cursorRow, 8);
+    const t = ws.getCell(cursorRow, 1);
+    t.value = titleLabel;
+    t.font  = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FF1e293b' } };
+    t.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf8fafc' } };
+    t.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(cursorRow).height = 26;
+    cursorRow++;
+
+    ws.mergeCells(cursorRow, 1, cursorRow, 8);
+    const s = ws.getCell(cursorRow, 1);
+    s.value = `Generated: ${new Date().toLocaleString('en-GB')}   ·   ${rows.length} issue${rows.length !== 1 ? 's' : ''}`;
+    s.font  = { name: 'Calibri', size: 8, italic: true, color: { argb: 'FF64748b' } };
+    s.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf8fafc' } };
+    ws.getRow(cursorRow).height = 13;
+    ws.addRow([]);
+
+    const sumHdr = ws.addRow(['Category', 'Count']);
+    sumHdr.eachCell(c => {
+        c.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FFe2e8f0' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1e3a5f' } };
+    });
+    _categoryCounts(rows).forEach(([label, count]) => { ws.addRow([label, count]); });
+    ws.addRow([]);
+
+    const HDR_BG = 'FF1e3a5f', HDR_TEXT = 'FFe2e8f0';
+    const headers = ['Category', 'Title', 'Issue/Problem', 'Proposed Solution', 'Action Taken', 'Date of Reporting', 'Date Resolved', 'Person In Charge'];
+    const hdrRow = ws.addRow(headers);
+    hdrRow.height = 20;
+    hdrRow.eachCell(cell => {
+        cell.font   = { name: 'Calibri', size: 9, bold: true, color: { argb: HDR_TEXT } };
+        cell.fill   = { type: 'pattern', pattern: 'solid', fgColor: { argb: HDR_BG } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = { bottom: { style: 'thin', color: { argb: 'FF2563eb' } } };
+    });
+
+    const bord = () => ({
+        top: { style: 'thin', color: { argb: 'FFe2e8f0' } }, bottom: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+        left: { style: 'thin', color: { argb: 'FFe2e8f0' } }, right: { style: 'thin', color: { argb: 'FFe2e8f0' } },
+    });
+
+    rows.forEach((r, i) => {
+        const rowBg = i % 2 === 0 ? 'FFffffff' : 'FFf8fafc';
+        const values = [
+            ISSUE_CATEGORY_LABELS[r.category] || r.category || '',
+            r.title || '',
+            r.description || '',
+            r.proposed_solution || '',
+            r.notes || '',
+            formatIssueDate(r.created_at),
+            r.resolved_at ? formatIssueDate(r.resolved_at) : '',
+            r.person_in_charge || '',
+        ];
+        const dataRow = ws.addRow(values);
+        dataRow.height = 16;
+        dataRow.eachCell({ includeEmpty: true }, cell => {
+            cell.font   = { name: 'Calibri', size: 9, color: { argb: 'FF1e293b' } };
+            cell.fill   = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+            cell.border = bord();
+            cell.alignment = { vertical: 'middle', wrapText: false };
+        });
+    });
+
+    const colWidths = [18, 34, 42, 42, 42, 16, 16, 22];
+    colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+}
+
 /* ── PDF export (general list + status report) ───────────────────── */
 /** One-page(ish) bullet-point layout for the Status Report — grouped by
  *  category, prose instead of a grid. Shared shape by PDF and Word. */
@@ -13605,7 +14152,13 @@ async function exportIssueReportWord(opts) {
 
     let body = `<h1>${esc(title)}</h1><p class="doc-sub">Module: ${esc(modLabel)} &middot; Generated: ${esc(new Date().toLocaleString('en-GB'))} &middot; ${rows.length} issue${rows.length !== 1 ? 's' : ''}</p>`;
 
-    if (isByCategory || isStatusReport) {
+    if (isStatusReport) {
+        body += _issueStatusReportTableHtml(rows);
+        exportHtmlAsWord(`issues_status_report_${now}.doc`, title, body, opts.preview);
+        return;
+    }
+
+    if (isByCategory) {
         body += `<h2>Summary by Category</h2><table class="doc-summary-table"><tr><th>Category</th><th>Count</th></tr>`;
         _categoryCounts(rows).forEach(([label, count]) => {
             body += `<tr><td>${esc(label)}</td><td>${count}</td></tr>`;
@@ -13614,41 +14167,54 @@ async function exportIssueReportWord(opts) {
     }
 
     body += `<h2>Issues</h2><table>`;
-    if (isStatusReport) {
-        body += `<tr><th>Category</th><th>Title</th><th>Issue/Problem</th><th>Proposed Solution</th><th>Action Taken</th><th>Date of Reporting</th><th>Date Resolved</th><th>Person In Charge</th></tr>`;
-        rows.forEach(r => {
-            body += `<tr>
-                <td>${esc(ISSUE_CATEGORY_LABELS[r.category] || r.category || '')}</td>
-                <td>${esc(r.title || '')}</td>
-                <td>${escNl(r.description || '')}</td>
-                <td>${escNl(r.proposed_solution || '')}</td>
-                <td>${escNl(r.notes || '')}</td>
-                <td>${esc(formatIssueDate(r.created_at))}</td>
-                <td>${r.resolved_at ? esc(formatIssueDate(r.resolved_at)) : ''}</td>
-                <td>${esc(r.person_in_charge || '')}</td>
-            </tr>`;
-        });
-    } else {
-        body += `<tr><th>#</th><th>Title</th><th>Category</th><th>Priority</th><th>Status</th><th>Reporter</th><th>Person In Charge</th><th>Description</th><th>Proposed Solution</th><th>Reported On</th><th>Resolved At</th></tr>`;
-        rows.forEach((r, i) => {
-            body += `<tr>
-                <td>${i + 1}</td>
-                <td>${esc(r.title || '')}</td>
-                <td>${esc(ISSUE_CATEGORY_LABELS[r.category] || r.category || '')}</td>
-                <td>${esc(r.priority || '')}</td>
-                <td>${esc((r.status || '').replace(/_/g, ' '))}</td>
-                <td>${esc(r.reporter_name || r.reporter_email || '')}</td>
-                <td>${esc(r.person_in_charge || '')}</td>
-                <td>${escNl(r.description || '')}</td>
-                <td>${escNl(r.proposed_solution || '')}</td>
-                <td>${esc(formatIssueDate(r.created_at))}</td>
-                <td>${r.resolved_at ? esc(formatIssueDate(r.resolved_at)) : ''}</td>
-            </tr>`;
-        });
-    }
+    body += `<tr><th>#</th><th>Title</th><th>Category</th><th>Priority</th><th>Status</th><th>Reporter</th><th>Person In Charge</th><th>Description</th><th>Proposed Solution</th><th>Reported On</th><th>Resolved At</th></tr>`;
+    rows.forEach((r, i) => {
+        body += `<tr>
+            <td>${i + 1}</td>
+            <td>${esc(r.title || '')}</td>
+            <td>${esc(ISSUE_CATEGORY_LABELS[r.category] || r.category || '')}</td>
+            <td>${esc(r.priority || '')}</td>
+            <td>${esc((r.status || '').replace(/_/g, ' '))}</td>
+            <td>${esc(r.reporter_name || r.reporter_email || '')}</td>
+            <td>${esc(r.person_in_charge || '')}</td>
+            <td>${escNl(r.description || '')}</td>
+            <td>${escNl(r.proposed_solution || '')}</td>
+            <td>${esc(formatIssueDate(r.created_at))}</td>
+            <td>${r.resolved_at ? esc(formatIssueDate(r.resolved_at)) : ''}</td>
+        </tr>`;
+    });
     body += `</table>`;
 
     exportHtmlAsWord(`issues_report_${opts.type}_${now}.doc`, title, body, opts.preview);
+}
+
+/** Summary-by-category + full-issues table fragment for the Issues Status
+ *  Report's flat "table" layout — shared by the standalone Word export
+ *  (`exportIssueReportWord`, status_report type, table layout) and the
+ *  Executive Report's Issues segment. */
+function _issueStatusReportTableHtml(rows) {
+    let html = `<h2>Summary by Category</h2><table class="doc-summary-table"><tr><th>Category</th><th>Count</th></tr>`;
+    _categoryCounts(rows).forEach(([label, count]) => {
+        html += `<tr><td>${esc(label)}</td><td>${count}</td></tr>`;
+    });
+    html += `</table>`;
+
+    html += `<h2>Issues</h2><table>`;
+    html += `<tr><th>Category</th><th>Title</th><th>Issue/Problem</th><th>Proposed Solution</th><th>Action Taken</th><th>Date of Reporting</th><th>Date Resolved</th><th>Person In Charge</th></tr>`;
+    rows.forEach(r => {
+        html += `<tr>
+            <td>${esc(ISSUE_CATEGORY_LABELS[r.category] || r.category || '')}</td>
+            <td>${esc(r.title || '')}</td>
+            <td>${escNl(r.description || '')}</td>
+            <td>${escNl(r.proposed_solution || '')}</td>
+            <td>${escNl(r.notes || '')}</td>
+            <td>${esc(formatIssueDate(r.created_at))}</td>
+            <td>${r.resolved_at ? esc(formatIssueDate(r.resolved_at)) : ''}</td>
+            <td>${esc(r.person_in_charge || '')}</td>
+        </tr>`;
+    });
+    html += `</table>`;
+    return html;
 }
 
 /* ── Issue notifications ────────────────────────────────────────── */
@@ -13988,6 +14554,23 @@ function bindVpxFullscreenUi() {
         document.addEventListener('fullscreenchange', syncVpxFullscreenButtons);
     }
     syncVpxFullscreenButtons();
+}
+
+let _vpxViewToggleBound = false;
+/** Wires the VPX section's Matrix / Station Report view switch — same
+ *  segmented-control pattern as the Gantt's Unit/Process toggle. */
+function wireVpxViewToggle() {
+    if (_vpxViewToggleBound) return;
+    _vpxViewToggleBound = true;
+    const setMode = mode => {
+        if (_vpxViewMode === mode) return;
+        _vpxViewMode = mode;
+        document.getElementById('btnVpxViewMatrix')?.classList.toggle('gantt-view-seg-active', mode === 'matrix');
+        document.getElementById('btnVpxViewStation')?.classList.toggle('gantt-view-seg-active', mode === 'station');
+        if (_vpxLastData) renderVPX(_vpxLastData);
+    };
+    document.getElementById('btnVpxViewMatrix')?.addEventListener('click', () => setMode('matrix'));
+    document.getElementById('btnVpxViewStation')?.addEventListener('click', () => setMode('station'));
 }
 
 /* ── Table card fullscreen ──────────────────────────────────────── */

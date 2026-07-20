@@ -473,6 +473,45 @@ body {
     box-shadow: var(--shadow-card);
 }
 
+.filter-exec-report-item {
+    margin-left: auto;
+    justify-content: center;
+}
+
+.btn-exec-report {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: linear-gradient(135deg, var(--clr-accent), var(--clr-accent-dim));
+    color: #fff;
+    border: none;
+    border-radius: 999px;
+    padding: 10px 22px;
+    font-family: var(--ff-body);
+    font-size: .85rem;
+    font-weight: 700;
+    letter-spacing: .01em;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .2);
+    transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
+}
+
+.btn-exec-report svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.btn-exec-report:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, .28);
+    filter: brightness(1.08);
+}
+
+.btn-exec-report:active {
+    transform: translateY(0);
+}
+
 .filter-grid {
     display: flex;
     flex-wrap: wrap;
@@ -7717,6 +7756,7 @@ body {
     font-size: .875rem;
 }
 
+
 /* ── Table ────────────────────────────────────────────────────── */
 .vpx-table {
     border-collapse: collapse;
@@ -7967,6 +8007,74 @@ body {
 /* Corner cell spans both header rows — needs highest z-index */
 .vpx-group-row .vpx-th-vehicle {
     z-index: 60;
+}
+
+/* ── Delay column — Station Report view only ─────────────────────── */
+.vpx-th-delay {
+    position: sticky;
+    right: 0;
+    z-index: 45;
+    background: var(--clr-surface-2);
+    min-width: 100px;
+    white-space: nowrap;
+    border-left: 2px solid var(--clr-border);
+    box-shadow: -2px 0 5px rgba(0, 0, 0, .18);
+    font-size: .68rem;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--clr-text-muted);
+    vertical-align: middle;
+}
+
+.vpx-td-delay {
+    position: sticky;
+    right: 0;
+    z-index: 15;
+    background: var(--clr-surface);
+    border-left: 2px solid var(--clr-border);
+    box-shadow: -2px 0 5px rgba(0, 0, 0, .12);
+    text-align: center;
+    white-space: nowrap;
+    padding: 6px 8px;
+}
+
+.vpx-delay-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .02em;
+    white-space: nowrap;
+}
+
+.vpx-delay-pill svg {
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+}
+
+.vpx-delay-pill-ok {
+    background: rgba(34, 197, 94, .14);
+    color: #22c55e;
+}
+
+.vpx-delay-pill-late {
+    background: rgba(220, 38, 38, .16);
+    color: #f87171;
+}
+
+[data-theme="light"] .vpx-delay-pill-ok {
+    background: rgba(21, 128, 61, .12);
+    color: #15803d;
+}
+
+[data-theme="light"] .vpx-delay-pill-late {
+    background: rgba(220, 38, 38, .12);
+    color: #dc2626;
 }
 
 /* Column group colour accents.
@@ -8728,6 +8836,13 @@ th.vpx-grp-processing:first-of-type {
 .vpx-delay-reason-hint {
     margin-top: 10px;
     font-size: .78rem;
+    color: var(--clr-text-muted);
+}
+
+.exec-report-desc {
+    margin: 0;
+    font-size: .88rem;
+    line-height: 1.55;
     color: var(--clr-text-muted);
 }
 

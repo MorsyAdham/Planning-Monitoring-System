@@ -13,6 +13,24 @@ export function initFeature() {
                         <span class="vpx-subtitle" id="vpxSubtitle">Station-by-station planned vs actual · hover for details</span>
                     </div>
                     <div class="vpx-header-right">
+                        <div class="gantt-view-seg" id="vpxViewToggle" role="group" aria-label="VPX view mode">
+                            <button class="gantt-view-seg-btn gantt-view-seg-active" id="btnVpxViewMatrix" type="button" data-view="matrix">
+                                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" style="width:11px;height:11px">
+                                    <rect x="1" y="1" width="5" height="5" rx="1"/>
+                                    <rect x="8" y="1" width="5" height="5" rx="1"/>
+                                    <rect x="1" y="8" width="5" height="5" rx="1"/>
+                                    <rect x="8" y="8" width="5" height="5" rx="1"/>
+                                </svg>
+                                Matrix
+                            </button>
+                            <button class="gantt-view-seg-btn" id="btnVpxViewStation" type="button" data-view="station">
+                                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" style="width:11px;height:11px">
+                                    <rect x="1" y="1" width="12" height="12" rx="1"/>
+                                    <path d="M1 5.5h12M1 9h12M5.5 1v12"/>
+                                </svg>
+                                Station Report
+                            </button>
+                        </div>
                         <div id="vpxTypeTabs" class="vpx-type-tabs" hidden></div>
                         <div id="vpxCategoryTabs" class="vpx-type-tabs vpx-category-tabs" hidden></div>
                         <button class="btn btn-outline btn-sm" id="btnVpxReportModal" title="Generate a VPX report">
