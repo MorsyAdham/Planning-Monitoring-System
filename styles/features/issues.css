@@ -202,89 +202,43 @@
     overflow: hidden;
 }
 
-/* ── Toolbar — single flex row ──────────────────────────────────── */
+/* ── Toolbar — single flex row, filter items styled like the main
+   filter bar (.filter-item/.filter-label/.filter-control) ─────────── */
 .issues-toolbar {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
-    gap: 6px;
+    align-items: flex-end;
+    gap: 10px;
     padding: 9px 14px;
     border-bottom: 1px solid var(--clr-border-soft);
     background: var(--clr-surface-2);
     row-gap: 7px;
 }
-
-/* Thin vertical separator between search and filters */
-.issues-toolbar-sep {
-    width: 1px;
-    height: 20px;
-    background: var(--clr-border-soft);
-    flex-shrink: 0;
+/* Compact sizing — same look as the main filter bar, scaled down to fit
+   a toolbar row sitting directly above a dense table. */
+.issues-toolbar .filter-item {
+    min-width: 108px;
+    gap: 3px;
+}
+.issues-toolbar .filter-label {
+    font-size: .62rem;
+}
+.issues-toolbar .filter-control {
+    height: 30px;
+    padding: 0 10px;
+    font-size: .78rem;
+}
+.issues-toolbar .ms-trigger.filter-control {
+    padding-right: 26px;
+}
+.issues-toolbar .filter-actions {
+    padding-top: 0;
 }
 
 /* Spacer pushes actions to the right */
 .issues-toolbar-spacer {
     flex: 1;
     min-width: 8px;
-}
-
-/* Search */
-.issues-search-wrap {
-    position: relative;
-    flex: 0 0 180px;
-}
-
-.issues-search-icon {
-    position: absolute;
-    left: 9px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 13px;
-    height: 13px;
-    color: var(--clr-text-dim);
-    pointer-events: none;
-}
-
-.issues-search-input {
-    width: 100%;
-    height: 30px;
-    padding: 0 10px 0 30px;
-    font-size: .79rem;
-    font-family: var(--ff-body);
-    background: var(--clr-bg);
-    color: var(--clr-text);
-    border: 1px solid var(--clr-border);
-    border-radius: var(--radius-sm);
-    outline: none;
-    transition: border-color .15s;
-}
-.issues-search-input:focus { border-color: var(--clr-accent); }
-.issues-search-input::placeholder { color: var(--clr-text-dim); }
-
-/* Compact filter selects */
-.issues-filter-select {
-    height: 30px;
-    padding: 0 8px;
-    font-size: .74rem;
-    font-family: var(--ff-body);
-    background: var(--clr-bg);
-    color: var(--clr-text);
-    border: 1px solid var(--clr-border);
-    border-radius: var(--radius-sm);
-    outline: none;
-    transition: border-color .15s;
-    cursor: pointer;
-}
-.issues-filter-select:focus { border-color: var(--clr-accent); }
-input.issues-filter-select  { padding: 0 6px; width: 120px; }
-
-.issues-date-label {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: .73rem;
-    color: var(--clr-text-dim);
-    white-space: nowrap;
 }
 
 .issues-count {
@@ -643,16 +597,6 @@ input.issues-filter-select  { padding: 0 6px; width: 120px; }
 [data-theme="light"] .issues-toolbar {
     background: #f8fafc;
     border-bottom-color: #e2e8f0;
-}
-
-[data-theme="light"] .issues-search-input {
-    background: #ffffff;
-    color: #0f172a;
-    border-color: #cbd5e1;
-}
-
-[data-theme="light"] .issues-search-input:focus {
-    border-color: #2563eb;
 }
 
 [data-theme="light"] .issue-status--open {

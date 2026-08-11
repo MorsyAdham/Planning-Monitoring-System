@@ -61,35 +61,49 @@ export function initFeature() {
             <div class="issues-card">
                 <!-- Toolbar: single row — search, filters, actions -->
                 <div class="issues-toolbar">
-                    <div class="issues-search-wrap">
-                        <svg class="issues-search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
-                            <circle cx="6.5" cy="6.5" r="4.5"/>
-                            <path d="M10.5 10.5l3 3" stroke-linecap="round"/>
-                        </svg>
-                        <input id="issueSearch" class="issues-search-input" placeholder="Search…" type="search" autocomplete="off" />
+                    <div class="filter-item">
+                        <label class="filter-label" for="issueSearch">Search</label>
+                        <input id="issueSearch" class="filter-control" placeholder="Search..." type="search" autocomplete="off" />
                     </div>
-
-                    <div class="issues-toolbar-sep"></div>
-
-                    <div class="ms-filter" id="issueFilterCategoryWrap">
-                        <button type="button" class="ms-trigger issues-filter-select" id="issueFilterCategoryBtn">Category</button>
-                        <div class="ms-menu" id="issueFilterCategoryMenu" hidden></div>
+                    <div class="filter-item">
+                        <label class="filter-label">Category</label>
+                        <div class="ms-filter" id="issueFilterCategoryWrap">
+                            <button type="button" class="ms-trigger filter-control" id="issueFilterCategoryBtn">Category</button>
+                            <div class="ms-menu" id="issueFilterCategoryMenu" hidden></div>
+                        </div>
                     </div>
-                    <div class="ms-filter" id="issueFilterStatusWrap">
-                        <button type="button" class="ms-trigger issues-filter-select" id="issueFilterStatusBtn">Status</button>
-                        <div class="ms-menu" id="issueFilterStatusMenu" hidden></div>
+                    <div class="filter-item">
+                        <label class="filter-label">Status</label>
+                        <div class="ms-filter" id="issueFilterStatusWrap">
+                            <button type="button" class="ms-trigger filter-control" id="issueFilterStatusBtn">Status</button>
+                            <div class="ms-menu" id="issueFilterStatusMenu" hidden></div>
+                        </div>
                     </div>
-                    <div class="ms-filter" id="issueFilterPriorityWrap">
-                        <button type="button" class="ms-trigger issues-filter-select" id="issueFilterPriorityBtn">Priority</button>
-                        <div class="ms-menu" id="issueFilterPriorityMenu" hidden></div>
+                    <div class="filter-item">
+                        <label class="filter-label">Priority</label>
+                        <div class="ms-filter" id="issueFilterPriorityWrap">
+                            <button type="button" class="ms-trigger filter-control" id="issueFilterPriorityBtn">Priority</button>
+                            <div class="ms-menu" id="issueFilterPriorityMenu" hidden></div>
+                        </div>
                     </div>
-                    <div class="ms-filter" id="issueFilterReporterWrap">
-                        <button type="button" class="ms-trigger issues-filter-select" id="issueFilterReporterBtn">Reporter</button>
-                        <div class="ms-menu" id="issueFilterReporterMenu" hidden></div>
+                    <div class="filter-item">
+                        <label class="filter-label">Reporter</label>
+                        <div class="ms-filter" id="issueFilterReporterWrap">
+                            <button type="button" class="ms-trigger filter-control" id="issueFilterReporterBtn">Reporter</button>
+                            <div class="ms-menu" id="issueFilterReporterMenu" hidden></div>
+                        </div>
                     </div>
-                    <label class="issues-date-label">From<input type="date" id="issueFilterFrom" class="issues-filter-select" /></label>
-                    <label class="issues-date-label">To<input type="date" id="issueFilterTo" class="issues-filter-select" /></label>
-                    <button class="btn btn-ghost btn-sm" id="btnIssueReset" onclick="resetIssueFilters()">Reset</button>
+                    <div class="filter-item">
+                        <label class="filter-label" for="issueFilterFrom">From</label>
+                        <input type="date" id="issueFilterFrom" class="filter-control" />
+                    </div>
+                    <div class="filter-item">
+                        <label class="filter-label" for="issueFilterTo">To</label>
+                        <input type="date" id="issueFilterTo" class="filter-control" />
+                    </div>
+                    <div class="filter-item filter-actions">
+                        <button class="btn btn-ghost" id="btnIssueReset" onclick="resetIssueFilters()">Reset</button>
+                    </div>
 
                     <div class="issues-toolbar-spacer"></div>
 

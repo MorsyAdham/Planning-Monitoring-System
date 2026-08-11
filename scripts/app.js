@@ -159,6 +159,9 @@ async function sha256(str) {
 async function auditLog(action, table, recId, before, after) {
     const user = getCurrentUser();
     if (!user || !db) return;
+    // created_at is generated client-side (not read back from the insert) so this
+    // works even if the caller's role only has INSERT, not SELECT, on the table.
+    const createdAt = new Date().toISOString();
     try {
         await db.from('planning_audit_log').insert({
             user_id: user.id,
@@ -170,14 +173,17 @@ async function auditLog(action, table, recId, before, after) {
             data_before: before ? JSON.parse(JSON.stringify(before)) : null,
             data_after: after ? JSON.parse(JSON.stringify(after)) : null,
             ip_address: getCachedIP(),
+            created_at: createdAt,
         });
     } catch (e) {
         console.warn('Audit log write failed (non-fatal):', e.message);
     }
     // Notify other users — every audited action becomes a notification except
-    // system-seed events (BOOTSTRAP) which aren't real user activity.
+    // system-seed events (BOOTSTRAP) which aren't real user activity. Keys the
+    // broadcast by action+table+record+timestamp so it dedupes against the same
+    // event if the polling catch-up also picks it up.
     if (typeof _broadcastAuditEvent === 'function' && !AUDIT_NOTIF_EXCLUDED_ACTIONS.has(action)) {
-        _broadcastAuditEvent(action, table, recId, user);
+        _broadcastAuditEvent(action, table, recId, user, createdAt);
     }
 }
 
@@ -790,38 +796,85 @@ function getRowUnitMeta(row) {
     return code ? `<br><span class="unit-code-badge">${esc(code)}</span>` : '';
 }
 
-// Dynamic table filter definitions per module
+/** Same "On Time / +Nd / +Nd start / —" text the Delay column itself renders,
+ *  reused as the canonical filter value so the checkbox list reads the same way. */
+function _delayFilterValue(row) {
+    const status = calculateStatus(row);
+    const delay = delayDays(row);
+    if (delay > 0 && (status === 'Late Completion' || status === 'Overdue')) return `+${delay}d`;
+    if (delay > 0 && status === 'In Progress') return `+${delay}d start`;
+    if (status === 'Completed' || status === 'Late Completion') return delay === 0 ? 'On Time' : `+${delay}d`;
+    return '—';
+}
+function _commentsFilterValue(row) {
+    return Array.isArray(row.comments) && row.comments.length ? 'Has comments' : 'No comments';
+}
+
+// Dynamic table filter definitions per module — `value` is the single
+// canonical value used both to build each field's checkbox option list and
+// to test row membership (SIMS-style multi-select, like the main filter bar).
+// Every visible Plan Data column has an entry here.
 function getTableFilterFields() {
     if (isF100KD2Module()) return [
-        { field: 'vehicle',   label: 'Vehicle',   match: r => [r.vehicle_type] },
-        { field: 'unit',      label: 'Unit',      match: r => [r.unit_code, r.unit_name, String(r.serial_number ?? '')] },
-        { field: 'battalion', label: 'Battalion', match: r => [r.battalion_code] },
-        { field: 'part',      label: 'Part',      match: r => [r.part_name, r.part_number] },
-        { field: 'process',   label: 'Process',   match: r => [r.process_name] },
-        { field: 'status',    label: 'Status',    match: r => [calculateStatus(r)] },
+        { field: 'vehicle',     label: 'Vehicle',      value: r => r.vehicle_type },
+        { field: 'unit',        label: 'Unit',         value: r => r.unit_code || r.unit_name || String(r.serial_number ?? '') },
+        { field: 'battalion',   label: 'Battalion',    value: r => r.battalion_code },
+        { field: 'part',        label: 'Part',         value: r => r.part_name },
+        { field: 'step',        label: 'Step',         value: r => r.step_number != null ? `#${r.step_number}` : '?' },
+        { field: 'process',     label: 'Process',      value: r => r.process_name },
+        { field: 'plannedStart',label: 'Planned Start',value: r => formatDate(r.planned_start_date) },
+        { field: 'plannedEnd',  label: 'Planned End',  value: r => formatDate(r.planned_end_date) },
+        { field: 'actualStart', label: 'Actual Start', value: r => formatDate(r.actual_start_date) },
+        { field: 'actualEnd',   label: 'Actual End',   value: r => formatDate(r.actual_end_date) },
+        { field: 'status',      label: 'Status',       value: r => calculateStatus(r) },
+        { field: 'delay',       label: 'Delay',        value: r => _delayFilterValue(r) },
+        { field: 'comments',    label: 'Comments',     value: r => _commentsFilterValue(r) },
     ];
     return [
-        { field: 'vehicle',   label: 'Vehicle',   match: r => [r.vehicle] },
-        { field: 'unit',      label: 'Unit',      match: r => [r.vehicle_no, r.unit_label, getUnitCode(r.vehicle, r.vehicle_no)] },
-        { field: 'battalion', label: 'Battalion', match: r => [r.battalion_code] },
-        { field: 'week',      label: 'Week',      match: r => [r.week] },
-        { field: 'station',   label: 'Station',   match: r => [r.process_station] },
-        { field: 'code',      label: 'Code',      match: r => [getRowCode(r)] },
-        { field: 'status',    label: 'Status',    match: r => [calculateStatus(r)] },
+        { field: 'vehicle',     label: 'Vehicle',      value: r => r.vehicle },
+        { field: 'unit',        label: 'Unit',         value: r => r.vehicle_no },
+        { field: 'battalion',   label: 'Battalion',    value: r => r.battalion_code },
+        { field: 'week',        label: 'Week',         value: r => r.week },
+        { field: 'station',     label: 'Station',      value: r => r.process_station },
+        { field: 'code',        label: 'Code',         value: r => getRowCode(r) },
+        { field: 'plannedStart',label: 'Planned Start',value: r => formatDate(r.start_date) },
+        { field: 'plannedEnd',  label: 'Planned End',  value: r => formatDate(r.end_date) },
+        { field: 'actualStart', label: 'Actual Start', value: r => formatDate(r.progress?.actual_start_date) },
+        { field: 'completedOn', label: 'Completed On', value: r => formatDate(r.progress?.completion_date) },
+        { field: 'status',      label: 'Status',       value: r => calculateStatus(r) },
+        { field: 'delay',       label: 'Delay',        value: r => _delayFilterValue(r) },
+        { field: 'comments',    label: 'Comments',     value: r => _commentsFilterValue(r) },
     ];
 }
 
-// Apply all active dynamic filters on top of a base dataset
+/** Distinct, sorted values for one table-filter field across the full dataset. */
+function getTableFilterFieldValues(field) {
+    const def = getTableFilterFields().find(d => d.field === field);
+    if (!def) return [];
+    const values = new Set();
+    (currentData || []).forEach(row => {
+        const v = (def.value(row) ?? '').toString().trim();
+        if (v) values.add(v);
+    });
+    return [...values].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+// One Set of selected values per filterable field — { vehicle: Set, status: Set, ... }.
+// A missing/empty Set means "All" (no filtering) for that column, same convention as
+// the main filter bar's filterState.
+let _tblColumnFilters = {};
+
+// Apply all active column-header filters on top of a base dataset
 function applyTableSearchFilters(base) {
-    if (!_tableFilters.length) return base;
+    const activeFields = Object.keys(_tblColumnFilters).filter(f => _tblColumnFilters[f]?.size);
+    if (!activeFields.length) return base;
+    const fields = getTableFilterFields();
     return base.filter(row =>
-        _tableFilters.every(f => {
-            if (!f.value) return true;
-            const q = f.value.toLowerCase();
-            const fields = getTableFilterFields();
-            const def = fields.find(d => d.field === f.field);
+        activeFields.every(field => {
+            const def = fields.find(d => d.field === field);
             if (!def) return true;
-            return def.match(row).some(v => (v || '').toString().toLowerCase().includes(q));
+            const v = (def.value(row) ?? '').toString().trim();
+            return _tblColumnFilters[field].has(v);
         })
     );
 }
@@ -832,8 +885,6 @@ let lineChartInst = null;
 let currentData = [];      // flat merged rows
 let _f100TableView = 'vehicle'; // 'vehicle' | 'part' | 'process'
 let _kd2TableView  = 'unit'; // 'battalion' | 'vehicle' | 'unit' | 'station'
-let _tableFilters  = [];          // [{ id, field, fieldLabel, value }]
-let _filterSeq     = 0;           // unique id counter for filter chips
 let unitCodeMap = {};      // { 'K9||M1': 'EGY N25020', ... }
 let unitRegistryRows = [];
 let vpxDelayReasonMap = {}; // { 'K9||M1': { id: <kd2_vehicle_units.id>, reason: 'text' }, ... } — KD2 only
@@ -1180,6 +1231,13 @@ async function initializeApp() {
     }
 
     _loaderSetProgress(20, 'Preparing workspace…');
+    // Open the audit-notification channel before wireEvents() binds any click
+    // handlers, so the very first action a user takes can broadcast — previously
+    // this ran at the very end of initializeApp(), after loadFilters/loadData/
+    // refreshWorkspace, so an early edit could fire auditLog() before the
+    // channel existed and silently miss the broadcast.
+    startAuditNotifSync();
+    startAuditNotifPoll();
     wireEvents();
     _loadExportPermissions().then(() => _applyExportVisibility()).catch(() => {});
     getModuleRuntime()?.initialize?.(db, {
@@ -1213,8 +1271,6 @@ async function initializeApp() {
     startIssueNotifSync();
     startIssuesPoll();
     startExportPermSync();
-    startAuditNotifSync();
-    startAuditNotifPoll();
 
     _loaderHide();
 }
@@ -2485,26 +2541,25 @@ function updateTableRowInPlace(planId) {
 function renderF100Table(data) {
     document.getElementById('kd2TableViewBar')?.remove();
     const tbl = document.getElementById('mainTable');
-    const _f100TableCard = document.querySelector('.table-card');
-    if (_f100TableCard) renderTableFilterBar(_f100TableCard);
     if (tbl) tbl.classList.add('f100-table');
     const thead = document.querySelector('#mainTable thead');
     if (thead) {
         thead.innerHTML = `
         <tr>
-            <th>Vehicle</th>
-            <th>Unit</th>
-            <th>Part</th>
-            <th class="mono">Step</th>
-            <th>Process</th>
-            <th class="mono">Planned Start</th>
-            <th class="mono">Planned End</th>
-            <th>Actual Start</th>
-            <th>Actual End</th>
-            <th>Status</th>
-            <th>Delay</th>
-            <th>Comments</th>
+            ${_thCell('Vehicle', 'vehicle')}
+            ${_thCell('Unit', 'unit')}
+            ${_thCell('Part', 'part')}
+            ${_thCell('Step', 'step', 'mono')}
+            ${_thCell('Process', 'process')}
+            ${_thCell('Planned Start', 'plannedStart', 'mono')}
+            ${_thCell('Planned End', 'plannedEnd', 'mono')}
+            ${_thCell('Actual Start', 'actualStart')}
+            ${_thCell('Actual End', 'actualEnd')}
+            ${_thCell('Status', 'status')}
+            ${_thCell('Delay', 'delay')}
+            ${_thCell('Comments', 'comments')}
         </tr>`;
+        _wireColumnHeaderThFilters();
     }
 
     // Inject / update view-tab bar above the table card header
@@ -2951,89 +3006,119 @@ function _reapplyFilters() {
     const filtered = applyTableSearchFilters(applyActiveFilters(currentData));
     renderTable(filtered);
     const rc = document.getElementById('rowCount');
-    if (rc) rc.textContent = filtered.length + ' record' + (filtered.length !== 1 ? 's' : '') + (_tableFilters.length ? ' (filtered)' : '');
+    const activeCount = Object.values(_tblColumnFilters).filter(s => s?.size).length;
+    if (rc) rc.textContent = filtered.length + ' record' + (filtered.length !== 1 ? 's' : '') + (activeCount ? ' (filtered)' : '');
 }
 
-function renderTableFilterBar(tableCard) {
-    // Render into the inline placeholder in the table header (always present in DOM)
-    const bar = document.getElementById('tblFilterBarInline');
-    if (!bar) return;
-    const fields = getTableFilterFields();
+/** <th> cell — plain, or with an embedded checkbox-filter dropdown when `field` is given
+ *  (field must be one of getTableFilterFields()'s keys for the active module). */
+function _thCell(label, field, extraClass = '') {
+    if (!field) return `<th${extraClass ? ` class="${extraClass}"` : ''}>${esc(label)}</th>`;
+    const active = _tblColumnFilters[field]?.size > 0;
+    return `
+    <th class="th-filterable${extraClass ? ' ' + extraClass : ''}">
+        <span class="th-label">${esc(label)}</span>
+        <button type="button" class="th-filter-btn${active ? ' th-filter-btn--active' : ''}" data-filter-field="${field}" title="Filter ${esc(label)}" aria-label="Filter ${esc(label)}">
+            <svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M1.5 2.5h9M3.5 6h5M5.5 9.5h1" stroke-linecap="round"/></svg>
+        </button>
+        <div class="ms-menu th-filter-menu" data-filter-field="${field}" hidden></div>
+    </th>`;
+}
 
-    // Preserve focus so typing doesn't lose cursor position on re-render
-    const focusedId  = document.activeElement?.dataset?.filterId;
-    const focusedSel = document.activeElement instanceof HTMLInputElement
-        ? document.activeElement.selectionStart : null;
+let _thOpenFilterField = null; // which column header's filter menu is open (survives the table re-render a checkbox change triggers)
 
-    const chipsHtml = _tableFilters.map(f => `
-        <span class="tbl-filter-chip" data-filter-id="${f.id}">
-            <span class="tbl-filter-chip-label">${esc(f.fieldLabel)}:</span>
-            <input class="tbl-filter-chip-input" type="text" value="${esc(f.value)}"
-                placeholder="contains…" data-filter-id="${f.id}" autocomplete="off" />
-            <button class="tbl-filter-chip-remove" data-filter-id="${f.id}" title="Remove filter">✕</button>
-        </span>`).join('');
+/** (Re)build one column header's checkbox list from the full loaded dataset. */
+function _renderThFilterMenu(field) {
+    const menu = document.querySelector(`#mainTable thead .th-filter-menu[data-filter-field="${field}"]`);
+    if (!menu) return;
+    const selected = _tblColumnFilters[field] || new Set();
+    const options = getTableFilterFieldValues(field);
+    const allChecked = selected.size === 0;
+    menu.innerHTML = `
+        <label class="ms-option ms-option-all">
+            <input type="checkbox" data-value="all" ${allChecked ? 'checked' : ''} />
+            <span>All</span>
+        </label>
+        <div class="ms-option-divider"></div>
+        ${options.map(o => `
+            <label class="ms-option">
+                <input type="checkbox" data-value="${esc(o)}" ${(!allChecked && selected.has(o)) ? 'checked' : ''} />
+                <span>${esc(o)}</span>
+            </label>
+        `).join('') || '<div class="ms-option" style="opacity:.6;cursor:default">No values</div>'}`;
+}
 
-    const fieldOptions = fields.map(d =>
-        `<button class="tbl-filter-field-opt" data-field="${d.field}" data-label="${esc(d.label)}">${esc(d.label)}</button>`
-    ).join('');
+/** Wire every column-header filter button/menu in the current #mainTable thead.
+ *  Must be called again after any thead re-render (innerHTML swap wipes listeners). */
+function _wireColumnHeaderThFilters() {
+    const thead = document.querySelector('#mainTable thead');
+    if (!thead) return;
 
-    bar.innerHTML = `
-        <div class="tbl-filter-chips">${chipsHtml}</div>
-        <div class="tbl-filter-add-wrap">
-            <button class="tbl-filter-add-btn" id="tblAddFilterBtn">+ Add Filter</button>
-            <div class="tbl-filter-field-menu" id="tblFilterMenu" style="display:none">${fieldOptions}</div>
-        </div>`;
+    thead.querySelectorAll('.th-filter-btn').forEach(btn => {
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            const field = btn.dataset.filterField;
+            const menuEl = thead.querySelector(`.th-filter-menu[data-filter-field="${field}"]`);
+            if (!menuEl) return;
+            const opening = menuEl.hidden;
+            thead.querySelectorAll('.th-filter-menu').forEach(m => { m.hidden = true; });
+            _thOpenFilterField = null;
+            if (opening) {
+                _renderThFilterMenu(field);
+                menuEl.hidden = false;
+                _thOpenFilterField = field;
+            }
+        });
+    });
 
-    // Restore focus after re-render so typing continues uninterrupted
-    if (focusedId) {
-        const inp = bar.querySelector(`.tbl-filter-chip-input[data-filter-id="${focusedId}"]`);
-        if (inp) {
-            inp.focus();
-            if (focusedSel !== null) try { inp.setSelectionRange(focusedSel, focusedSel); } catch {}
+    thead.querySelectorAll('.th-filter-menu').forEach(menuEl => {
+        menuEl.addEventListener('change', e => {
+            const target = e.target;
+            if (!target.matches('input[type="checkbox"]')) return;
+            const field = menuEl.dataset.filterField;
+            const value = target.dataset.value;
+            const selected = _tblColumnFilters[field] || new Set();
+            if (value === 'all') selected.clear();
+            else if (target.checked) selected.add(value);
+            else selected.delete(value);
+            _tblColumnFilters[field] = selected;
+            _thOpenFilterField = field; // keep this menu open through the re-render
+            _reapplyFilters();
+        });
+    });
+
+    // Re-open whichever menu was open before this thead got rebuilt
+    if (_thOpenFilterField) {
+        const menuEl = thead.querySelector(`.th-filter-menu[data-filter-field="${_thOpenFilterField}"]`);
+        if (menuEl) {
+            _renderThFilterMenu(_thOpenFilterField);
+            menuEl.hidden = false;
         }
     }
 
-    // Wire chip inputs — live filter, focus-safe
-    bar.querySelectorAll('.tbl-filter-chip-input').forEach(inp => {
-        inp.addEventListener('input', () => {
-            const f = _tableFilters.find(x => String(x.id) === inp.dataset.filterId);
-            if (f) { f.value = inp.value; _reapplyFilters(); }
-        });
-    });
-
-    // Wire chip remove buttons
-    bar.querySelectorAll('.tbl-filter-chip-remove').forEach(btn => {
-        btn.addEventListener('click', () => {
-            _tableFilters = _tableFilters.filter(x => String(x.id) !== btn.dataset.filterId);
-            _reapplyFilters();
-        });
-    });
-
-    // Wire add-filter button / field picker
-    const addBtn = bar.querySelector('#tblAddFilterBtn');
-    const menu   = bar.querySelector('#tblFilterMenu');
-    addBtn?.addEventListener('click', e => {
-        e.stopPropagation();
-        menu.style.display = menu.style.display === 'none' ? 'flex' : 'none';
-    });
-    bar.querySelectorAll('.tbl-filter-field-opt').forEach(opt => {
-        opt.addEventListener('click', () => {
-            menu.style.display = 'none';
-            _tableFilters.push({ id: ++_filterSeq, field: opt.dataset.field, fieldLabel: opt.dataset.label, value: '' });
-            _reapplyFilters();
-            setTimeout(() => {
-                bar.querySelector(`.tbl-filter-chip-input[data-filter-id="${_filterSeq}"]`)?.focus();
-            }, 50);
-        });
-    });
-
-    // Close menu on outside click
+    // Close any open menu on outside click
     setTimeout(() => document.addEventListener('click', function h(ev) {
-        if (!menu?.contains(ev.target) && ev.target !== addBtn) {
-            if (menu) menu.style.display = 'none';
-            document.removeEventListener('click', h);
-        }
+        if (thead.contains(ev.target)) return;
+        thead.querySelectorAll('.th-filter-menu').forEach(m => { m.hidden = true; });
+        _thOpenFilterField = null;
+        document.removeEventListener('click', h);
     }), 0);
+
+    _renderClearFiltersBar();
+}
+
+/** Small "Clear column filters (N)" affordance in the table header, shown only when active. */
+function _renderClearFiltersBar() {
+    const bar = document.getElementById('tblFilterBarInline');
+    if (!bar) return;
+    const activeCount = Object.values(_tblColumnFilters).filter(s => s?.size).length;
+    if (!activeCount) { bar.innerHTML = ''; return; }
+    bar.innerHTML = `<button class="tbl-clear-filters-btn" id="tblClearFiltersBtn">Clear column filters (${activeCount})</button>`;
+    bar.querySelector('#tblClearFiltersBtn')?.addEventListener('click', () => {
+        _tblColumnFilters = {};
+        _thOpenFilterField = null;
+        _reapplyFilters();
+    });
 }
 
 function renderTable(data) {
@@ -3046,10 +3131,21 @@ function renderTable(data) {
     // Restore F200 table header if it was replaced by F100 headers
     const thead = document.querySelector('#mainTable thead');
     if (thead) {
-        const cols = ['Vehicle', 'Unit', 'Station / Process', 'Code', 'Week',
-            'Planned Start', 'Planned End', 'Actual Start', 'Completed On',
-            'Status', 'Delay', 'Comments'];
-        thead.innerHTML = `<tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>`;
+        thead.innerHTML = `<tr>${[
+            _thCell('Vehicle', 'vehicle'),
+            _thCell('Unit', 'unit'),
+            _thCell('Station / Process', 'station'),
+            _thCell('Code', 'code'),
+            _thCell('Week', 'week'),
+            _thCell('Planned Start', 'plannedStart'),
+            _thCell('Planned End', 'plannedEnd'),
+            _thCell('Actual Start', 'actualStart'),
+            _thCell('Completed On', 'completedOn'),
+            _thCell('Status', 'status'),
+            _thCell('Delay', 'delay'),
+            _thCell('Comments', 'comments'),
+        ].join('')}</tr>`;
+        _wireColumnHeaderThFilters();
     }
 
     const tbody = document.getElementById('tableBody');
@@ -3081,14 +3177,8 @@ function renderTable(data) {
                 btn.classList.toggle('f100-view-btn-active', btn.dataset.view === _kd2TableView);
             });
         }
-
-        // ── Dynamic filter bar ────────────────────────────────────
-        if (tableCard) renderTableFilterBar(tableCard);
     } else {
         viewBar?.remove();
-        const _inlineBar = document.getElementById('tblFilterBarInline');
-        if (_inlineBar) _inlineBar.innerHTML = '';
-        _tableFilters = [];
     }
 
     if (!data.length) {
@@ -6431,7 +6521,8 @@ function resetFilters() {
     document.getElementById('customDateEnd').style.display = 'none';
     const searchEl = document.getElementById('filterSearch');
     if (searchEl) searchEl.value = '';
-    _tableFilters = [];
+    _tblColumnFilters = {};
+    _thOpenFilterField = null;
     const _inlineBar = document.getElementById('tblFilterBarInline');
     if (_inlineBar) _inlineBar.innerHTML = '';
     // Restore full unit list with no vehicle scope
@@ -14634,10 +14725,17 @@ function _auditNotifSnapKey() {
     return `ppms_audit_notif_snap_${u?.email || 'anon'}`;
 }
 
-/** Record one audit event as a pending notification (dedup'd by audit row id). */
+/** Composite key so a notification delivered via broadcast and the same event
+ *  later seen by the polling catch-up (which reads the row back from
+ *  planning_audit_log) resolve to the same key instead of double-showing. */
+function _auditNotifKey(entry) {
+    return `audit::${entry.action}::${entry.table_name}::${entry.record_id ?? ''}::${entry.created_at}`;
+}
+
+/** Record one audit event as a pending notification (dedup'd via _auditNotifKey). */
 function _storeAuditNotification(entry) {
-    if (!entry?.id) return;
-    const key = `audit::${entry.id}`;
+    if (!entry?.action || !entry?.created_at) return;
+    const key = _auditNotifKey(entry);
     const readSet = _getReadSet();
     if (readSet.has(key)) return; // already dismissed
     const snapKey = _auditNotifSnapKey();
@@ -14647,7 +14745,6 @@ function _storeAuditNotification(entry) {
     snap.push({
         key, type: 'audit',
         audit: {
-            id: entry.id,
             action: entry.action,
             table: entry.table_name,
             userEmail: entry.user_email,
@@ -14660,18 +14757,20 @@ function _storeAuditNotification(entry) {
 
 let _auditNotifChannel = null;
 
-/** Broadcast one audit event to other connected clients. Fire-and-forget. */
-async function _broadcastAuditEvent(action, table, recId, user) {
+/** Broadcast one audit event to other connected clients. Fire-and-forget.
+ *  `createdAt` is generated by the caller (auditLog()) before the insert and
+ *  reused as-is, so this broadcast and the row the polling catch-up later
+ *  reads back from the DB share the exact same timestamp for _auditNotifKey. */
+async function _broadcastAuditEvent(action, table, recId, user, createdAt) {
     if (!_auditNotifChannel) return;
     try {
         await _auditNotifChannel.send({
             type: 'broadcast',
             event: 'audit:new',
             payload: {
-                id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 action, table_name: table, record_id: recId,
                 user_email: user?.email || '',
-                created_at: new Date().toISOString(),
+                created_at: createdAt || new Date().toISOString(),
             },
         });
     } catch {}
@@ -14684,7 +14783,7 @@ async function _auditNotifCatchup() {
     try {
         const since = _auditNotifGetSeen();
         const { data, error } = await db.from('planning_audit_log')
-            .select('id, action, table_name, user_email, created_at')
+            .select('action, table_name, record_id, user_email, created_at')
             .gt('created_at', since)
             .neq('user_email', u.email)
             .order('created_at', { ascending: true })
@@ -14720,11 +14819,13 @@ function startAuditNotifSync() {
     _auditNotifCatchup();
 }
 
-/* ── Polling fallback (60-second interval) — catches events missed by broadcast ── */
+/* ── Polling fallback (10-second interval) — catches events missed by broadcast,
+   so notifications still land close to real-time even if the broadcast channel
+   doesn't deliver for some reason. ──────────────────────────────────────── */
 let _auditNotifPollTimer = null;
 function startAuditNotifPoll() {
     if (_auditNotifPollTimer) clearInterval(_auditNotifPollTimer);
-    _auditNotifPollTimer = setInterval(_auditNotifCatchup, 60000);
+    _auditNotifPollTimer = setInterval(_auditNotifCatchup, 10000);
 }
 
 /* ================================================================

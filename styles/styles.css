@@ -3508,6 +3508,36 @@ body {
     vertical-align: middle;
 }
 
+/* Plan Data table is denser than other .data-table uses (Issues, Audit Log,
+   User Management) — every column now carries a header filter control, so
+   trim font size/padding/letter-spacing to keep it from needing to scroll. */
+#mainTable {
+    font-size: .78rem;
+}
+#mainTable th {
+    font-size: .64rem;
+    letter-spacing: .06em;
+    padding: 9px 8px;
+}
+#mainTable td {
+    padding: 8px 10px;
+}
+
+/* Plan Data table (F200 KD1/KD2 and F100-KD2 all render into #mainTable) —
+   column headers centered, data cells back to left-aligned except for
+   Vehicle/Week/Status, which stay centered (column positions differ between
+   the F200 layout and the F100 layout, which has no Week column). */
+#mainTable th {
+    text-align: center;
+}
+#mainTable:not(.f100-table) td:nth-child(1),  /* Vehicle */
+#mainTable:not(.f100-table) td:nth-child(5),  /* Week */
+#mainTable:not(.f100-table) td:nth-child(10), /* Status */
+#mainTable.f100-table td:nth-child(1),        /* Vehicle */
+#mainTable.f100-table td:nth-child(10) {      /* Status */
+    text-align: center;
+}
+
 .data-table tbody tr:last-child td {
     border-bottom: none;
 }
@@ -8914,128 +8944,76 @@ th.vpx-grp-processing:first-of-type {
     font-weight: 600;
 }
 
-/* ─── Dynamic table filter bar (inline in table header) ─────────── */
+/* ─── "Clear column filters" affordance (inline in table header) ────── */
 .tbl-filter-bar-inline {
     display: flex;
     align-items: center;
-    gap: 6px;
-    flex: 1;
-    min-width: 0;
-    overflow: visible;
-}
-.tbl-filter-chips {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
     flex: 1;
     min-width: 0;
 }
-.tbl-filter-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    height: 28px;
-    padding: 0 4px 0 8px;
-    border: 1px solid var(--clr-accent);
-    border-radius: 999px;
-    background: rgba(var(--clr-accent-rgb, 59,130,246), .08);
-    font-size: .74rem;
-}
-.tbl-filter-chip-label {
-    font-weight: 600;
-    color: var(--clr-accent);
-    white-space: nowrap;
-    font-size: .68rem;
-    letter-spacing: .03em;
-    text-transform: uppercase;
-}
-.tbl-filter-chip-input {
-    height: 20px;
-    border: none;
-    background: transparent;
-    color: var(--clr-text);
-    font-size: .78rem;
-    width: 100px;
-    outline: none;
-    padding: 0 2px;
-}
-.tbl-filter-chip-input::placeholder { color: var(--clr-text-dim); }
-.tbl-filter-chip-remove {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    border: none;
-    background: none;
-    color: var(--clr-text-muted);
-    cursor: pointer;
-    border-radius: 50%;
-    font-size: .75rem;
-    line-height: 1;
-    padding: 0;
-    transition: background .12s, color .12s;
-}
-.tbl-filter-chip-remove:hover {
-    background: rgba(239,68,68,.15);
-    color: #ef4444;
-}
-.tbl-filter-add-btn {
+.tbl-clear-filters-btn {
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    height: 28px;
+    height: 26px;
     padding: 0 12px;
-    border: 1px dashed var(--clr-border);
+    border: 1px solid var(--clr-accent);
     border-radius: 999px;
-    background: transparent;
-    color: var(--clr-text-muted);
-    font-size: .76rem;
+    background: rgba(var(--clr-accent-rgb, 59,130,246), .08);
+    color: var(--clr-accent);
+    font-size: .74rem;
+    font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
-    transition: border-color .12s, color .12s, background .12s;
+    transition: background .12s;
 }
-.tbl-filter-add-btn:hover {
-    border-color: var(--clr-accent);
-    color: var(--clr-accent);
-    background: rgba(var(--clr-accent-rgb, 59,130,246), .06);
+.tbl-clear-filters-btn:hover {
+    background: rgba(var(--clr-accent-rgb, 59,130,246), .16);
 }
-.tbl-filter-add-wrap {
+
+/* ─── Column-header filter (embedded in each <th>) ───────────────── */
+.th-filterable {
     position: relative;
-    flex-shrink: 0;
 }
-.tbl-filter-field-menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    z-index: 200;
-    background: var(--clr-surface);
-    border: 1px solid var(--clr-border);
-    border-radius: var(--radius-sm);
-    box-shadow: 0 4px 16px rgba(0,0,0,.18);
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 140px;
+.th-label {
+    vertical-align: middle;
 }
-.tbl-filter-field-opt {
-    display: block;
-    width: 100%;
-    padding: 6px 12px;
+.th-filter-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    margin-left: 4px;
+    padding: 0;
     border: none;
-    background: transparent;
-    color: var(--clr-text);
-    font-size: .8rem;
-    text-align: left;
-    cursor: pointer;
     border-radius: 4px;
-    transition: background .1s;
+    background: transparent;
+    color: var(--clr-text-dim);
+    cursor: pointer;
+    vertical-align: middle;
+    transition: background .12s, color .12s;
 }
-.tbl-filter-field-opt:hover {
-    background: var(--clr-surface-2);
+.th-filter-btn:hover {
+    background: var(--clr-accent-dim);
     color: var(--clr-accent);
+}
+.th-filter-btn--active {
+    color: var(--clr-accent);
+    background: var(--clr-accent-dim);
+}
+.th-filter-menu {
+    position: absolute;
+    top: 100%;
+    /* Anchored to the header cell's left edge (not centered under the button) —
+       centering pushed the leftmost column's (Vehicle) menu off the left edge
+       of the table/viewport, making it unreadable. */
+    left: 0;
+    margin-top: 4px;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+    z-index: 200;
 }
 
 /* ─── Gantt Export Schedule dropdown ────────────────────────────── */
