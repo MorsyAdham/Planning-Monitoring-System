@@ -13074,8 +13074,14 @@ async function _populateIssueReporterFilter() {
     } catch (_) {}
 }
 
+let _issuesRequestSeq = 0;
 async function loadIssues(reset = false, opts = {}) {
     const { silent = false } = opts;
+    // Overlapping calls can resolve out of order (e.g. a debounced filter-change
+    // request still in flight when Reset fires its own immediate one) — only the
+    // most recently *started* request is allowed to write its result to the DOM,
+    // so a stale response can't silently clobber a newer one.
+    const requestId = ++_issuesRequestSeq;
     if (reset) { _issuesOffset = 0; loadIssuesOverview().catch(() => {}); }
 
     const search   = (document.getElementById('issueSearch')?.value || '').trim();
@@ -13110,6 +13116,8 @@ async function loadIssues(reset = false, opts = {}) {
     if (to)   query = query.lte('created_at', to + 'T23:59:59');
 
     const { data, count, error } = await query;
+
+    if (requestId !== _issuesRequestSeq) return; // superseded by a newer call — discard
 
     if (error) {
         if (tbody) tbody.innerHTML = `<tr><td colspan="9" class="table-empty"><div class="empty-state"><p>Error: ${esc(error.message)}</p></div></td></tr>`;
@@ -13146,6 +13154,7 @@ async function loadIssues(reset = false, opts = {}) {
 }
 
 function resetIssueFilters() {
+    clearTimeout(_issuesLoadDebounceTimer); // drop any pending debounced call from a just-changed filter
     ['issueSearch', 'issueFilterFrom', 'issueFilterTo'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
