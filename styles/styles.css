@@ -9556,6 +9556,12 @@ th.vpx-grp-processing:first-of-type {
     border-left: 3px solid rgba(239, 68, 68, .4);
     padding-left: 8px;
 }
+.f100-notif-item--audit {
+    /* border-left-color and the tag's background/color are set inline per
+       action (create/update/delete/etc.) — see _auditNotifColor() in app.js */
+    border-left: 3px solid rgba(99, 102, 241, .4);
+    padding-left: 8px;
+}
 
 /* ─── Active Users indicator ────────────────────────────────── */
 .active-users-wrap {

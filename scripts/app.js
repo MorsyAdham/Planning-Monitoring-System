@@ -174,6 +174,11 @@ async function auditLog(action, table, recId, before, after) {
     } catch (e) {
         console.warn('Audit log write failed (non-fatal):', e.message);
     }
+    // Notify other users — every audited action becomes a notification except
+    // system-seed events (BOOTSTRAP) which aren't real user activity.
+    if (typeof _broadcastAuditEvent === 'function' && !AUDIT_NOTIF_EXCLUDED_ACTIONS.has(action)) {
+        _broadcastAuditEvent(action, table, recId, user);
+    }
 }
 
 window.__ppmsShared = {
@@ -849,6 +854,10 @@ const filterState = {
     f100Serial: new Set(['all']),
     f100Manufacturer: new Set(['all']),
     f100VehicleType: new Set(['all']),
+    issueCategory: new Set(['all']),
+    issueStatus: new Set(['all']),
+    issuePriority: new Set(['all']),
+    issueReporter: new Set(['all']),
 };
 
 const filterOptions = {
@@ -865,6 +874,39 @@ const filterOptions = {
     f100Serial: [],
     f100Manufacturer: [{ value: 'HAS', label: 'HAS' }, { value: 'DOOWON', label: 'DOOWON' }],
     f100VehicleType: [{ value: 'K9', label: 'K9' }, { value: 'K10', label: 'K10' }, { value: 'K11', label: 'K11' }],
+    issueCategory: [
+        { value: 'cutting', label: 'Cutting' },
+        { value: 'part_machining', label: 'Part Machining' },
+        { value: 'welding', label: 'Welding' },
+        { value: 'machining', label: 'Machining' },
+        { value: 'accessories', label: 'Accessories' },
+        { value: 'cables', label: 'Cables' },
+        { value: 'material', label: 'Material' },
+        { value: 'assembly', label: 'Assembly' },
+        { value: 'quality', label: 'Quality' },
+        { value: 'other', label: 'Other' },
+    ],
+    issueStatus: [
+        { value: 'open', label: 'Open' },
+        { value: 'in_progress', label: 'In Progress' },
+        { value: 'resolved', label: 'Resolved' },
+        { value: 'closed', label: 'Closed' },
+    ],
+    issuePriority: [
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'high', label: 'High' },
+        { value: 'critical', label: 'Critical' },
+    ],
+    issueReporter: [],
+};
+
+/** Default button text (instead of "All") for filters whose placeholder is the field name. */
+const filterAllLabels = {
+    issueCategory: 'Category',
+    issueStatus: 'Status',
+    issuePriority: 'Priority',
+    issueReporter: 'Reporter',
 };
 
 const filterConfig = {
@@ -879,7 +921,14 @@ const filterConfig = {
     f100Serial:        { btn: 'f100SerialBtn',             menu: 'f100SerialMenu' },
     f100Manufacturer:  { btn: 'f100ManufacturerBtn',       menu: 'f100ManufacturerMenu' },
     f100VehicleType:   { btn: 'f100VehicleTypeBtn',        menu: 'f100VehicleTypeMenu' },
+    issueCategory:     { btn: 'issueFilterCategoryBtn',    menu: 'issueFilterCategoryMenu' },
+    issueStatus:       { btn: 'issueFilterStatusBtn',      menu: 'issueFilterStatusMenu' },
+    issuePriority:     { btn: 'issueFilterPriorityBtn',    menu: 'issueFilterPriorityMenu' },
+    issueReporter:     { btn: 'issueFilterReporterBtn',    menu: 'issueFilterReporterMenu' },
 };
+
+/** Set of filterConfig keys that belong to the Production Issues table (vs. the main plan filter bar). */
+const ISSUE_FILTER_KEYS = new Set(['issueCategory', 'issueStatus', 'issuePriority', 'issueReporter']);
 
 /** Generic Set-membership matcher: true if "All" selected or value is in the set. */
 function matchesMultiSet(selected, rawValue) {
@@ -902,7 +951,7 @@ function updateMultiSelectButtonLabel(key) {
     const options = filterOptions[key];
 
     if (!selected || selected.has('all') || selected.size === 0) {
-        btn.textContent = 'All';
+        btn.textContent = filterAllLabels[key] || 'All';
         return;
     }
     if (selected.size === 1) {
@@ -1001,6 +1050,14 @@ function handleMultiSelectMenuChange(key, e, onApply) {
 
 function resetMultiSelectFilters() {
     Object.keys(filterConfig).forEach(key => {
+        if (ISSUE_FILTER_KEYS.has(key)) return;
+        filterState[key] = new Set(['all']);
+        renderMultiSelectMenu(key);
+    });
+}
+
+function resetIssueMultiSelectFilters() {
+    ISSUE_FILTER_KEYS.forEach(key => {
         filterState[key] = new Set(['all']);
         renderMultiSelectMenu(key);
     });
@@ -1033,12 +1090,65 @@ function applyActiveFilters(rows) {
 /* ──────────────────────────────────────────────────────────────────
    3. ENTRY POINT
    ────────────────────────────────────────────────────────────────── */
+/** Move the splash progress bar and status line. No-op once the loader has been removed. */
+function _loaderSetProgress(pct, label) {
+    const fill   = document.getElementById('appLoaderFill');
+    const status = document.getElementById('appLoaderStatusText');
+    const pctEl  = document.getElementById('appLoaderPct');
+    const clamped = Math.max(0, Math.min(100, pct));
+    if (fill)   fill.style.width = clamped + '%';
+    if (status && label) status.textContent = label;
+    if (pctEl)  pctEl.textContent = Math.round(clamped) + '%';
+}
+
+/** First name (or email local-part) in caps, for the HUD welcome line. */
+function _loaderSetWelcome() {
+    const el = document.getElementById('appLoaderWelcome');
+    if (!el) return;
+    const u = getCurrentUser();
+    const raw = (u?.name || u?.full_name || u?.email || '').split('@')[0].split(' ')[0];
+    el.textContent = raw ? `WELCOME, ${raw.toUpperCase()}` : 'WELCOME';
+}
+
+/** HUD corner readout — which module (F200-KD1 / F200-KD2 / F100-KD2) is being loaded. */
+function _loaderSetModule() {
+    const el = document.getElementById('appLoaderModule');
+    if (!el) return;
+    el.textContent = _moduleLabel(getActiveModuleId());
+}
+
+let _loaderClockTimer = null;
+/** HUD corner clock — purely cosmetic, ticks while the splash is on screen. */
+function _loaderStartClock() {
+    const el = document.getElementById('appLoaderClock');
+    if (!el) return;
+    const tick = () => { el.textContent = new Date().toLocaleTimeString('en-GB', { hour12: false }); };
+    tick();
+    _loaderClockTimer = setInterval(tick, 1000);
+}
+
+/** Fade out and remove the splash screen — called once data is loaded AND rendered, or on fatal error. */
+function _loaderHide() {
+    const el = document.getElementById('appLoader');
+    if (!el) return;
+    _loaderSetProgress(100, 'All systems ready');
+    const link = document.getElementById('appLoaderLink');
+    if (link) link.textContent = 'SECURE';
+    clearInterval(_loaderClockTimer);
+    el.classList.add('app-loader--hidden');
+    setTimeout(() => el.remove(), 550);
+}
+
 async function initializeApp() {
     // ── Auth guard — redirect to login if no valid session ───────────
     if (!getCurrentUser()) { window.location.replace(window.location.pathname.replace(/\/[^/]*$/, '/') + 'login.html'); return; }
     populateNavbar();
+    _loaderSetWelcome();
+    _loaderSetModule();
+    _loaderStartClock();
 
     startClock();
+    _loaderSetProgress(8, 'Connecting to database…');
 
     // Init Supabase client
     try {
@@ -1060,9 +1170,16 @@ async function initializeApp() {
         setConnStatus('error', 'Connection Error');
         showToast('Failed to initialise Supabase. Check your credentials.', 'error');
         console.error(err);
+        const link = document.getElementById('appLoaderLink');
+        if (link) link.textContent = 'FAILED';
+        _loaderSetProgress(100, 'Connection failed');
+        clearInterval(_loaderClockTimer);
+        document.getElementById('appLoader')?.classList.add('app-loader--hidden');
+        setTimeout(() => document.getElementById('appLoader')?.remove(), 550);
         return;
     }
 
+    _loaderSetProgress(20, 'Preparing workspace…');
     wireEvents();
     _loadExportPermissions().then(() => _applyExportVisibility()).catch(() => {});
     getModuleRuntime()?.initialize?.(db, {
@@ -1073,21 +1190,33 @@ async function initializeApp() {
     });
 
     applyUserTheme();          // restore this user's personal theme before first render
+
+    _loaderSetProgress(35, 'Loading filters…');
     await loadFilters();
+
+    _loaderSetProgress(60, 'Loading plan data…');
     await loadData();
+
+    _loaderSetProgress(85, 'Rendering workspace…');
     await getModuleRuntime()?.refreshWorkspace?.();
     startRealtimeSync();
     startCommentNotifSync();
     startPresenceTracking();
 
-    // Issues section — explicit init after app is fully ready
+    // Issues section — explicit init after app is fully ready. Awaited so the
+    // splash screen only disappears once this is on screen too.
     if (typeof initIssuesSection === 'function') {
+        _loaderSetProgress(95, 'Loading issues…');
         window._issuesSectionModule = getActiveModuleId();
-        initIssuesSection().catch(e => console.warn('initIssuesSection:', e));
+        await initIssuesSection().catch(e => console.warn('initIssuesSection:', e));
     }
     startIssueNotifSync();
     startIssuesPoll();
     startExportPermSync();
+    startAuditNotifSync();
+    startAuditNotifPoll();
+
+    _loaderHide();
 }
 
 let _realtimeChannel = null;
@@ -1376,10 +1505,14 @@ async function loadFilters() {
             populateMultiSelectOptions('vehicle', kd2Filters.vehicles);
             populateMultiSelectOptions('week', kd2Filters.weeks);
             populateCategorySelect(kd2Filters.categories || []);
-            await loadUnitCodes();
-            populateUnitFilter(null);
-            await loadXrayEligibleStations();
-            await getModuleRuntime().loadPlanningSnapshot?.(db);
+            // loadUnitCodes and loadXrayEligibleStations don't depend on each other —
+            // run them concurrently instead of stacking their round trips.
+            // (loadPlanningSnapshot is deliberately not called here — loadData(), which
+            // always runs right after loadFilters(), already calls it once.)
+            await Promise.all([
+                loadUnitCodes().then(() => populateUnitFilter(null)),
+                loadXrayEligibleStations(),
+            ]);
             return;
         }
 
@@ -1426,7 +1559,11 @@ async function loadUnitCodes() {
             // delay_reason may not exist yet on a not-yet-migrated database —
             // retry without it rather than losing unit codes entirely.
             const UNIT_COLS = 'id, battalion_id, vehicle_type, unit_serial, unit_label, unit_code, delay_reason';
-            let unitsResult = await db.from('kd2_vehicle_units').select(UNIT_COLS);
+            // Units and battalions are independent queries — fire them together.
+            let [unitsResult, battalionsResult] = await Promise.all([
+                db.from('kd2_vehicle_units').select(UNIT_COLS),
+                db.from('kd2_battalions').select('id, battalion_code'),
+            ]);
             if (unitsResult.error) {
                 const retryPayload = _stripUndefinedColumn({ delay_reason: null }, unitsResult.error);
                 if (retryPayload) {
@@ -1434,7 +1571,7 @@ async function loadUnitCodes() {
                 }
             }
             const { data: units, error: unitsError } = unitsResult;
-            const { data: battalions, error: battalionError } = await db.from('kd2_battalions').select('id, battalion_code');
+            const { data: battalions, error: battalionError } = battalionsResult;
             if (unitsError) throw unitsError;
             if (battalionError) throw battalionError;
             const battalionMap = Object.fromEntries((battalions || []).map(row => [row.id, row.battalion_code]));
@@ -2021,8 +2158,8 @@ async function loadData() {
             const _mod = getActiveModuleId();
             if (window._issuesSectionModule !== _mod) {
                 window._issuesSectionModule = _mod;
-                const _repSel = document.getElementById('issueFilterReporter');
-                if (_repSel) { while (_repSel.options.length > 1) _repSel.remove(1); }
+                filterOptions.issueReporter = [];
+                filterState.issueReporter = new Set(['all']);
                 _populateIssueReporterFilter().catch(() => {}).finally(() => loadIssues(true).catch(() => {}));
             }
         }
@@ -5555,6 +5692,10 @@ function getUnreadNotifications() {
             if (raw) JSON.parse(raw).forEach(n => allSnap.push(n));
         } catch {}
     });
+    try {
+        const raw = localStorage.getItem(_auditNotifSnapKey());
+        if (raw) JSON.parse(raw).forEach(n => allSnap.push(n));
+    } catch {}
     return allSnap.filter(n => !readSet.has(n.key));
 }
 
@@ -5603,6 +5744,22 @@ function openNotifDropdown() {
         const items = unread.map(n => {
             const isCrossModule = n.moduleId && n.moduleId !== currentModuleId;
             const modLabel = _moduleLabel(n.moduleId || currentModuleId);
+
+            if (n.type === 'audit') {
+                const verb = _auditNotifVerb(n.audit?.action);
+                const verbLabel = verb.charAt(0).toUpperCase() + verb.slice(1);
+                const tableLabel = _auditNotifTableLabel(n.audit?.table);
+                const color = _auditNotifColor(n.audit?.action);
+                return `
+                <div class="f100-notif-item f100-notif-item--audit" data-key="${esc(n.key)}" data-type="audit" style="border-left-color:${color}">
+                    <div class="f100-notif-item-meta">
+                        <span class="f100-notif-issue-tag" style="background:${color}26;color:${color}">${esc(verbLabel)}</span>
+                        <span class="f100-notif-item-time">${formatCommentTime(n.audit?.createdAt)}</span>
+                    </div>
+                    <div class="f100-notif-item-context">${esc(tableLabel)}</div>
+                    <div class="f100-notif-item-text">By ${esc(n.audit?.userEmail || '?')}</div>
+                </div>`;
+            }
 
             if (n.type === 'issue') {
                 const cat = ISSUE_CATEGORY_LABELS?.[n.issue?.category] || n.issue?.category || '';
@@ -5674,6 +5831,8 @@ function openNotifDropdown() {
             _saveReadSet(readSet);
             dropdown.remove();
             updateNotifBadge();
+
+            if (notifType === 'audit') return; // no per-record destination — mark-read only
 
             if (notifType === 'issue') {
                 const issueId = item.dataset.issueId;
@@ -6015,6 +6174,7 @@ function wireEvents() {
         });
         document.getElementById(cfg.menu)?.addEventListener('change', (e) => {
             handleMultiSelectMenuChange(key, e, () => {
+                if (ISSUE_FILTER_KEYS.has(key)) { loadIssuesDebounced(); return; }
                 if (key === 'vehicle') onVehicleFilterChange();
                 loadDataDebounced();
             });
@@ -6152,10 +6312,9 @@ function wireEvents() {
     document.addEventListener('visibilitychange', () => { if (document.hidden) _flushIssueDraft(); });
     wireIssueDraftsModal();
     _updateIssueDraftsBadge();
-    document.getElementById('btnIssueApply')?.addEventListener('click', () => loadIssues(true));
-    document.getElementById('issueSearch')?.addEventListener('keydown', e => {
-        if (e.key === 'Enter') loadIssues(true);
-    });
+    document.getElementById('issueSearch')?.addEventListener('input', () => loadIssuesDebounced());
+    document.getElementById('issueFilterFrom')?.addEventListener('change', () => loadIssues(true));
+    document.getElementById('issueFilterTo')?.addEventListener('change', () => loadIssues(true));
     // ── More menu toggle ──────────────────────────────────────────────
     const btnNavMore  = document.getElementById('btnNavMore');
     const moreDropdown = document.getElementById('navMoreDropdown');
@@ -12379,6 +12538,8 @@ const AL_TABLE_LABELS = {
     kd2_plan: 'KD2 Plan', kd2_progress: 'KD2 Progress', kd2_battalions: 'KD2 Battalions',
     assembly_plan: 'F100 Plan', assembly_progress: 'F100 Progress', f100_plans: 'F100 Plans',
     planning_app_users: 'Users',
+    production_issues: 'Production Issue', f100_parts: 'F100 Part', f100_processes: 'F100 Process',
+    ppms_export_permissions: 'Export Permissions',
 };
 
 function resetAuditFilters() {
@@ -12769,6 +12930,13 @@ async function loadIssuesOverview() {
     }
 }
 
+let _issuesLoadDebounceTimer = null;
+/** Debounce Production Issues filter/search changes into a single fetch. */
+function loadIssuesDebounced(delay = 350) {
+    clearTimeout(_issuesLoadDebounceTimer);
+    _issuesLoadDebounceTimer = setTimeout(() => { loadIssues(true); }, delay);
+}
+
 async function _populateReporterSelect(selectId) {
     const sel = document.getElementById(selectId);
     if (!sel || sel.options.length > 1) return;
@@ -12793,7 +12961,26 @@ async function _populateReporterSelect(selectId) {
     } catch (_) {}
 }
 async function _populateIssueReporterFilter() {
-    return _populateReporterSelect('issueFilterReporter');
+    try {
+        const { data } = await db
+            .from('production_issues')
+            .select('reporter_email, reporter_name')
+            .eq('module', getActiveModuleId())
+            .order('reporter_email')
+            .limit(1000);
+        const seen = new Set();
+        const pairs = [];
+        (data || []).forEach(r => {
+            if (!r.reporter_email || seen.has(r.reporter_email)) return;
+            seen.add(r.reporter_email);
+            pairs.push({
+                value: r.reporter_email,
+                label: r.reporter_name ? `${r.reporter_name} (${r.reporter_email})` : r.reporter_email,
+            });
+        });
+        filterOptions.issueReporter = pairs;
+        renderMultiSelectMenu('issueReporter');
+    } catch (_) {}
 }
 
 async function loadIssues(reset = false, opts = {}) {
@@ -12801,10 +12988,6 @@ async function loadIssues(reset = false, opts = {}) {
     if (reset) { _issuesOffset = 0; loadIssuesOverview().catch(() => {}); }
 
     const search   = (document.getElementById('issueSearch')?.value || '').trim();
-    const category = document.getElementById('issueFilterCategory')?.value || '';
-    const status   = document.getElementById('issueFilterStatus')?.value || '';
-    const priority = document.getElementById('issueFilterPriority')?.value || '';
-    const reporter = document.getElementById('issueFilterReporter')?.value || '';
     const from     = document.getElementById('issueFilterFrom')?.value || '';
     const to       = document.getElementById('issueFilterTo')?.value || '';
     const tbody    = document.getElementById('issuesTableBody');
@@ -12828,12 +13011,12 @@ async function loadIssues(reset = false, opts = {}) {
     if (search) {
         query = query.or(`title.ilike.%${search}%,description.ilike.%${search}%`);
     }
-    if (category) query = query.eq('category', category);
-    if (status)   query = query.eq('status', status);
-    if (priority) query = query.eq('priority', priority);
-    if (reporter) query = query.eq('reporter_email', reporter);
-    if (from)     query = query.gte('created_at', from + 'T00:00:00');
-    if (to)       query = query.lte('created_at', to + 'T23:59:59');
+    query = applyInFilter(query, 'category', filterState.issueCategory);
+    query = applyInFilter(query, 'status', filterState.issueStatus);
+    query = applyInFilter(query, 'priority', filterState.issuePriority);
+    query = applyInFilter(query, 'reporter_email', filterState.issueReporter);
+    if (from) query = query.gte('created_at', from + 'T00:00:00');
+    if (to)   query = query.lte('created_at', to + 'T23:59:59');
 
     const { data, count, error } = await query;
 
@@ -12872,12 +13055,11 @@ async function loadIssues(reset = false, opts = {}) {
 }
 
 function resetIssueFilters() {
-    ['issueSearch', 'issueFilterCategory', 'issueFilterStatus', 'issueFilterPriority', 'issueFilterReporter', 'issueFilterFrom', 'issueFilterTo'].forEach(id => {
+    ['issueSearch', 'issueFilterFrom', 'issueFilterTo'].forEach(id => {
         const el = document.getElementById(id);
-        if (!el) return;
-        if (el.tagName === 'SELECT') el.selectedIndex = 0;
-        else el.value = '';
+        if (el) el.value = '';
     });
+    resetIssueMultiSelectFilters();
     loadIssues(true);
 }
 
@@ -13202,8 +13384,6 @@ async function saveIssue() {
         }
 
         if (overlay) overlay.style.display = 'none';
-        const sel = document.getElementById('issueFilterReporter');
-        if (sel) { while (sel.options.length > 1) sel.remove(1); }
         await _populateIssueReporterFilter();
         await loadIssues(true, { silent: true });
     } catch (err) {
@@ -14397,6 +14577,154 @@ function startIssuesPoll() {
     if (_issuesPollTimer) clearInterval(_issuesPollTimer);
     _issuesPollLastCheck = new Date().toISOString(); // baseline — don't notify about existing issues
     _issuesPollTimer = setInterval(_issuesPollCheck, 30000);
+}
+
+/* ================================================================
+   AUDIT-LOG NOTIFICATIONS — every audited action (plan/task changes,
+   production issues, user management, export permissions, F100 parts
+   & processes) surfaces as a notification for every other user, feeding
+   the same bell/dropdown as comments and issues. Exports, login and
+   logout are intentionally never audit-logged, so they never appear here.
+   ================================================================ */
+const AUDIT_ACTION_VERBS = {
+    INSERT: 'created', UPDATE: 'updated', DELETE: 'deleted',
+    grant_export: 'granted export access', revoke_export: 'revoked export access',
+};
+// One color per action so the bell/dropdown reads at a glance (create vs. update vs. delete vs. permission changes).
+const AUDIT_ACTION_COLORS = {
+    INSERT:        '#22c55e', // green
+    UPDATE:        '#3b82f6', // blue
+    DELETE:        '#ef4444', // red
+    grant_export:  '#14b8a6', // teal
+    revoke_export: '#f59e0b', // amber
+};
+const AUDIT_ACTION_COLOR_DEFAULT = '#6366f1'; // indigo fallback for any future/unmapped action
+const AUDIT_NOTIF_EXCLUDED_ACTIONS = new Set(['BOOTSTRAP']);
+
+function _auditNotifVerb(action) {
+    return AUDIT_ACTION_VERBS[action] || (action || '').toLowerCase();
+}
+function _auditNotifTableLabel(table) {
+    return AL_TABLE_LABELS[table] || table || 'record';
+}
+function _auditNotifColor(action) {
+    return AUDIT_ACTION_COLORS[action] || AUDIT_ACTION_COLOR_DEFAULT;
+}
+
+function _auditNotifSeenKey() {
+    const u = getCurrentUser();
+    return `ppms_audit_notif_seen_${u?.email || 'anon'}`;
+}
+function _auditNotifGetSeen() {
+    // No stored cursor yet — this is the user's first session with audit notifications
+    // enabled. Baseline it to "now" so we never backfill the entire audit-log history.
+    try {
+        const existing = localStorage.getItem(_auditNotifSeenKey());
+        if (existing) return existing;
+        const now = new Date().toISOString();
+        localStorage.setItem(_auditNotifSeenKey(), now);
+        return now;
+    } catch { return new Date().toISOString(); }
+}
+function _auditNotifMarkSeen(iso) {
+    try { localStorage.setItem(_auditNotifSeenKey(), iso || new Date().toISOString()); } catch {}
+}
+function _auditNotifSnapKey() {
+    const u = getCurrentUser();
+    return `ppms_audit_notif_snap_${u?.email || 'anon'}`;
+}
+
+/** Record one audit event as a pending notification (dedup'd by audit row id). */
+function _storeAuditNotification(entry) {
+    if (!entry?.id) return;
+    const key = `audit::${entry.id}`;
+    const readSet = _getReadSet();
+    if (readSet.has(key)) return; // already dismissed
+    const snapKey = _auditNotifSnapKey();
+    let snap;
+    try { snap = JSON.parse(localStorage.getItem(snapKey) || '[]'); } catch { snap = []; }
+    if (snap.some(n => n.key === key)) return;
+    snap.push({
+        key, type: 'audit',
+        audit: {
+            id: entry.id,
+            action: entry.action,
+            table: entry.table_name,
+            userEmail: entry.user_email,
+            createdAt: entry.created_at,
+        },
+    });
+    if (snap.length > 300) snap = snap.slice(snap.length - 300); // cap growth
+    try { localStorage.setItem(snapKey, JSON.stringify(snap)); } catch {}
+}
+
+let _auditNotifChannel = null;
+
+/** Broadcast one audit event to other connected clients. Fire-and-forget. */
+async function _broadcastAuditEvent(action, table, recId, user) {
+    if (!_auditNotifChannel) return;
+    try {
+        await _auditNotifChannel.send({
+            type: 'broadcast',
+            event: 'audit:new',
+            payload: {
+                id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                action, table_name: table, record_id: recId,
+                user_email: user?.email || '',
+                created_at: new Date().toISOString(),
+            },
+        });
+    } catch {}
+}
+
+/** Catch up on audit events written while this client was offline/loading. */
+async function _auditNotifCatchup() {
+    const u = getCurrentUser();
+    if (!u || !db) return;
+    try {
+        const since = _auditNotifGetSeen();
+        const { data, error } = await db.from('planning_audit_log')
+            .select('id, action, table_name, user_email, created_at')
+            .gt('created_at', since)
+            .neq('user_email', u.email)
+            .order('created_at', { ascending: true })
+            .limit(200);
+        if (error || !data?.length) return;
+        data.forEach(entry => {
+            if (AUDIT_NOTIF_EXCLUDED_ACTIONS.has(entry.action)) return;
+            _storeAuditNotification(entry);
+        });
+        _auditNotifMarkSeen(data[data.length - 1].created_at);
+        updateNotifBadge();
+    } catch {}
+}
+
+function startAuditNotifSync() {
+    if (_auditNotifChannel) {
+        try { db.removeChannel(_auditNotifChannel); } catch {}
+        _auditNotifChannel = null;
+    }
+    const u = getCurrentUser();
+    if (!u || !db) return;
+
+    _auditNotifChannel = db.channel('ppms-audit-notif')
+        .on('broadcast', { event: 'audit:new' }, ({ payload }) => {
+            if (!payload || payload.user_email === u.email) return;
+            if (AUDIT_NOTIF_EXCLUDED_ACTIONS.has(payload.action)) return;
+            _storeAuditNotification(payload);
+            _auditNotifMarkSeen(payload.created_at);
+            updateNotifBadge();
+        })
+        .subscribe();
+
+    _auditNotifCatchup();
+}
+
+/* ── Polling fallback (60-second interval) — catches events missed by broadcast ── */
+let _auditNotifPollTimer = null;
+function startAuditNotifPoll() {
+    if (_auditNotifPollTimer) clearInterval(_auditNotifPollTimer);
+    _auditNotifPollTimer = setInterval(_auditNotifCatchup, 60000);
 }
 
 /* ================================================================

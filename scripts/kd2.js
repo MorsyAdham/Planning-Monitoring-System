@@ -766,14 +766,16 @@ window.PPMSModuleRuntime = (() => {
         const detailMap = new Map();
         if (rows.length) {
             const ids = rows.map(row => row.id).filter(Boolean);
-            for (const batch of chunk(ids, 500)) {
-                const detailRows = await queryAll(
+            // Chunks are independent — fetch them concurrently instead of one round
+            // trip at a time (this loop used to serialize N/500 sequential requests).
+            const batches = await Promise.all(chunk(ids, 500).map(batch =>
+                queryAll(
                     db.from('kd2_plan')
                         .select('id, battalion_id, vehicle_type, unit_serial, unit_label, category_code, station_code, planned_start_date, planned_end_date, planning_source, comments')
                         .in('id', batch)
-                );
-                detailRows.forEach(row => detailMap.set(row.id, row));
-            }
+                )
+            ));
+            batches.flat().forEach(row => detailMap.set(row.id, row));
         }
         return rows.map(row => ({
             ...row,
@@ -841,8 +843,16 @@ window.PPMSModuleRuntime = (() => {
             .replace(/"/g, '&quot;');
     }
 
-    async function loadWorkspaceData() {
+    let _lastWorkspaceLoadAt = 0;
+    // Called both from loadData()'s own "first load" guard and from refreshWorkspace()
+    // (which callers also invoke right after a load, e.g. app.js's initializeApp() and
+    // loadData() itself) — those back-to-back calls used to each re-fetch all 9 tables.
+    // Skip an immediate repeat fetch unless the caller explicitly forces one (e.g. the
+    // manual "Refresh" button, or after an edit that needs fresh data).
+    async function loadWorkspaceData({ force = false } = {}) {
         if (!dbRef || !isKD2()) return;
+        if (!force && Date.now() - _lastWorkspaceLoadAt < 3000) return;
+        _lastWorkspaceLoadAt = Date.now();
         const [battalions, planningInputs, categories, stations, routes, leadTimes, vehicleUnits] = await Promise.all([
             queryAll(dbRef.from('kd2_battalions').select('*').order('battalion_code')),
             queryAll(dbRef.from('kd2_planning_inputs').select('*').order('battalion_id')),
@@ -1501,7 +1511,7 @@ window.PPMSModuleRuntime = (() => {
             _processEditingKey = null;
             _processNewRowDraft = null;
             setProcessError('');
-            await refreshWorkspace();
+            await refreshWorkspace({ force: true });
             // Force template editor to rebuild from the refreshed station/route state so newly
             // added or updated processes appear immediately without a page reload.
             ensureTemplateEditorState(vehicle, { force: true });
@@ -1549,7 +1559,7 @@ window.PPMSModuleRuntime = (() => {
 
             toast(`"${station.station_name}" retired.`, 'success');
             if (_processEditingKey === vehicle + '||' + stationCode) _processEditingKey = null;
-            await refreshWorkspace();
+            await refreshWorkspace({ force: true });
             await helpers.reloadAll?.();
             renderProcessTable();
         } catch (error) {
@@ -1597,7 +1607,7 @@ window.PPMSModuleRuntime = (() => {
             }
 
             await writeAudit('UPDATE', 'kd2_process_stations', `${vehicle}:${stationCode}`, { [field]: stationVal }, { [field]: otherVal });
-            await refreshWorkspace();
+            await refreshWorkspace({ force: true });
             await helpers.reloadAll?.();
             renderProcessTable();
         } catch (error) {
@@ -1689,7 +1699,7 @@ window.PPMSModuleRuntime = (() => {
             await writeAudit('UPDATE', 'kd2_process_routes', vehicle, routeBefore, routeUpdates);
             closeLeadTimeModal();
             toast(`KD2 route and lead-time setup saved for ${vehicle}.`, 'success');
-            await refreshWorkspace();
+            await refreshWorkspace({ force: true });
             await helpers.reloadAll?.();
         } catch (error) {
             setLeadTimeError(error.message);
@@ -3433,7 +3443,7 @@ window.PPMSModuleRuntime = (() => {
                 data
             );
             resetNoWorkForm();
-            await refreshWorkspace();
+            await refreshWorkspace({ force: true });
             renderNoWorkDays();
             updatePlanCreateEndFromDuration();
             let rescheduledCount = 0;
@@ -3470,7 +3480,7 @@ window.PPMSModuleRuntime = (() => {
             }
         } catch (error) {
             setNoWorkError(error.message);
-            await refreshWorkspace();
+            await refreshWorkspace({ force: true });
             renderNoWorkDays();
             await helpers.reloadAll?.();
         }
@@ -3497,7 +3507,7 @@ window.PPMSModuleRuntime = (() => {
                 ? await recalculatePlanWindowsForNonWorkDayChange(previousOffDates, nextOffDates, `kd2-non-work-delete:${group.start}`)
                 : 0;
             if (parseNoWorkEditingIds().some(id => ids.includes(id))) resetNoWorkForm();
-            await refreshWorkspace();
+            await refreshWorkspace({ force: true });
             renderNoWorkDays();
             updatePlanCreateEndFromDuration();
             toast(rescheduledCount ? `KD2 no-work range deleted. ${rescheduledCount} plan block(s) recalculated.` : 'KD2 no-work range deleted.', 'success');
@@ -3523,7 +3533,7 @@ window.PPMSModuleRuntime = (() => {
             const previousActiveOffDates = new Set(
                 state.nonWorkDays.filter(row => row.is_active === true).map(row => row.off_date)
             );
-            await refreshWorkspace();
+            await refreshWorkspace({ force: true });
             renderNoWorkDays();
             const currentActiveOffDates = new Set(
                 state.nonWorkDays.filter(row => row.is_active === true).map(row => row.off_date)
@@ -5743,7 +5753,7 @@ window.PPMSModuleRuntime = (() => {
 
             toast('KD2 planning inputs saved.', 'success');
             closePlanningModal();
-            await refreshWorkspace();
+            await refreshWorkspace({ force: true });
             await helpers.reloadAll?.();
         } catch (error) {
             setPlanningError(error.message);
@@ -6222,7 +6232,7 @@ window.PPMSModuleRuntime = (() => {
             setText('kd2GenerationResult', result);
             toast(`KD2 plan generated for ${battalionCode}.`, 'success');
             await helpers.reloadAll?.();
-            await refreshWorkspace();
+            await refreshWorkspace({ force: true });
         } catch (error) {
             setText('kd2GenerationResult', `Generation failed: ${error.message}`);
             toast(`KD2 generation failed: ${error.message}`, 'error');
@@ -6280,7 +6290,7 @@ window.PPMSModuleRuntime = (() => {
             });
 
             toast(`Bootstrapped ${missing.length} battalion shells.`, 'success');
-            await refreshWorkspace();
+            await refreshWorkspace({ force: true });
             await helpers.reloadAll?.();
         } catch (error) {
             toast(`KD2 bootstrap failed: ${error.message}`, 'error');
@@ -6540,10 +6550,10 @@ window.PPMSModuleRuntime = (() => {
         }
     }
 
-    async function refreshWorkspace() {
+    async function refreshWorkspace({ force = false } = {}) {
         if (!isKD2() || !dbRef) return;
         try {
-            await loadWorkspaceData();
+            await loadWorkspaceData({ force });
             renderPlanningInputs();
             renderRouteFlow();
             if (document.getElementById('kd2LeadTimeOverlay')?.style.display === 'flex') renderLeadTimeEditor();
@@ -6574,7 +6584,7 @@ window.PPMSModuleRuntime = (() => {
         });
 
         document.getElementById('filterBattalionMenu')?.addEventListener('change', updateGenerationTarget);
-        document.getElementById('btnKd2RefreshInputs')?.addEventListener('click', refreshWorkspace);
+        document.getElementById('btnKd2RefreshInputs')?.addEventListener('click', () => refreshWorkspace({ force: true }));
         document.getElementById('btnKd2Bootstrap')?.addEventListener('click', bootstrapBattalions);
         document.getElementById('btnKd2NewBattalion')?.addEventListener('click', () => openPlanningModal(null));
         document.getElementById('btnKd2GeneratePlan')?.addEventListener('click', generatePlan);

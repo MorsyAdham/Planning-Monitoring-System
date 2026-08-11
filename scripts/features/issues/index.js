@@ -71,39 +71,24 @@ export function initFeature() {
 
                     <div class="issues-toolbar-sep"></div>
 
-                    <select id="issueFilterCategory" class="issues-filter-select">
-                        <option value="">Category</option>
-                        <option value="cutting">Cutting</option>
-                        <option value="part_machining">Part Machining</option>
-                        <option value="welding">Welding</option>
-                        <option value="machining">Machining</option>
-                        <option value="accessories">Accessories</option>
-                        <option value="cables">Cables</option>
-                        <option value="material">Material</option>
-                        <option value="assembly">Assembly</option>
-                        <option value="quality">Quality</option>
-                        <option value="other">Other</option>
-                    </select>
-                    <select id="issueFilterStatus" class="issues-filter-select">
-                        <option value="">Status</option>
-                        <option value="open">Open</option>
-                        <option value="in_progress">In Progress</option>
-                        <option value="resolved">Resolved</option>
-                        <option value="closed">Closed</option>
-                    </select>
-                    <select id="issueFilterPriority" class="issues-filter-select">
-                        <option value="">Priority</option>
-                        <option value="low">Low</option>
-                        <option value="medium">Medium</option>
-                        <option value="high">High</option>
-                        <option value="critical">Critical</option>
-                    </select>
-                    <select id="issueFilterReporter" class="issues-filter-select">
-                        <option value="">Reporter</option>
-                    </select>
+                    <div class="ms-filter" id="issueFilterCategoryWrap">
+                        <button type="button" class="ms-trigger issues-filter-select" id="issueFilterCategoryBtn">Category</button>
+                        <div class="ms-menu" id="issueFilterCategoryMenu" hidden></div>
+                    </div>
+                    <div class="ms-filter" id="issueFilterStatusWrap">
+                        <button type="button" class="ms-trigger issues-filter-select" id="issueFilterStatusBtn">Status</button>
+                        <div class="ms-menu" id="issueFilterStatusMenu" hidden></div>
+                    </div>
+                    <div class="ms-filter" id="issueFilterPriorityWrap">
+                        <button type="button" class="ms-trigger issues-filter-select" id="issueFilterPriorityBtn">Priority</button>
+                        <div class="ms-menu" id="issueFilterPriorityMenu" hidden></div>
+                    </div>
+                    <div class="ms-filter" id="issueFilterReporterWrap">
+                        <button type="button" class="ms-trigger issues-filter-select" id="issueFilterReporterBtn">Reporter</button>
+                        <div class="ms-menu" id="issueFilterReporterMenu" hidden></div>
+                    </div>
                     <label class="issues-date-label">From<input type="date" id="issueFilterFrom" class="issues-filter-select" /></label>
                     <label class="issues-date-label">To<input type="date" id="issueFilterTo" class="issues-filter-select" /></label>
-                    <button class="btn btn-primary btn-sm" id="btnIssueApply">Apply</button>
                     <button class="btn btn-ghost btn-sm" id="btnIssueReset" onclick="resetIssueFilters()">Reset</button>
 
                     <div class="issues-toolbar-spacer"></div>

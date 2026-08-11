@@ -27,6 +27,7 @@
     <link rel="stylesheet" href="styles/features/admin.css" />
     <link rel="stylesheet" href="styles/features/kd2.css" />
     <link rel="stylesheet" href="styles/features/issues.css" />
+    <link rel="stylesheet" href="styles/features/loader.css" />
     <script>
         (function () {
             try {
@@ -49,6 +50,42 @@
     </script>
 </head>
 <body>
+    <div id="appLoader" class="app-loader" role="status" aria-live="polite" aria-label="Loading">
+        <div class="app-loader-grid"></div>
+        <div class="app-loader-scanline"></div>
+        <div class="app-loader-vignette"></div>
+        <div class="app-loader-corner app-loader-corner--tl"></div>
+        <div class="app-loader-corner app-loader-corner--tr"></div>
+        <div class="app-loader-corner app-loader-corner--bl"></div>
+        <div class="app-loader-corner app-loader-corner--br"></div>
+        <div class="app-loader-tag app-loader-tag--tl">MODULE // <span id="appLoaderModule">—</span></div>
+        <div class="app-loader-tag app-loader-tag--tr" id="appLoaderClock">00:00:00</div>
+        <div class="app-loader-tag app-loader-tag--bl">SEC-CLR // AUTHORIZED</div>
+        <div class="app-loader-tag app-loader-tag--br">LINK STATUS: <span id="appLoaderLink">HANDSHAKE</span></div>
+
+        <div class="app-loader-inner">
+            <div class="app-loader-core">
+                <div class="app-loader-ring app-loader-ring--outer"></div>
+                <div class="app-loader-ring app-loader-ring--dashed"></div>
+                <div class="app-loader-ring app-loader-ring--mid"></div>
+                <div class="app-loader-ring app-loader-ring--ticks"></div>
+                <div class="app-loader-pulse"></div>
+                <div class="app-loader-mark">PPMS</div>
+            </div>
+
+            <div class="app-loader-welcome" id="appLoaderWelcome">SYSTEMS ONLINE</div>
+            <div class="app-loader-sub">Production Planning &amp; Monitoring System</div>
+
+            <div class="app-loader-bar-track">
+                <div class="app-loader-bar-fill" id="appLoaderFill"></div>
+                <div class="app-loader-bar-ticks"></div>
+            </div>
+            <div class="app-loader-statusrow">
+                <span class="app-loader-status" id="appLoaderStatus"><span id="appLoaderStatusText">Connecting&hellip;</span><span class="app-loader-cursor">&#9608;</span></span>
+                <span class="app-loader-pct" id="appLoaderPct">0%</span>
+            </div>
+        </div>
+    </div>
     <div id="pageRoot"></div>
     <script type="module" src="scripts/pages/index-page.js"></script>
 </body>
