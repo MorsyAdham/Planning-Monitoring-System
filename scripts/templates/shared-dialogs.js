@@ -1229,6 +1229,47 @@ export function renderSharedDialogs() {
             </div>
         </div>
 
+        <!-- ════════════════════════════ F100 PARTS & PROCESSES ADMIN MODAL -->
+        <div class="modal-overlay" id="f100ProcessOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="f100ProcessTitle">
+            <div class="modal modal-wide" style="max-width:1100px">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="f100ProcessTitle">F100 – KD2 Parts &amp; Process Maintenance</h4>
+                    <button class="modal-close" id="f100ProcessClose">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="kd2-create-mode-toggle" id="f100AdminTabToggle" style="margin-bottom:14px">
+                        <button type="button" class="kd2-create-mode-btn active" id="f100AdminPartsTab">Parts</button>
+                        <button type="button" class="kd2-create-mode-btn" id="f100AdminProcessesTab">Processes</button>
+                    </div>
+
+                    <div id="f100AdminPartsPanel">
+                        <div class="kd2-process-toolbar">
+                            <div class="modal-info" style="flex:1">Manage the master list of gun and vehicle parts.</div>
+                            <button class="btn btn-primary btn-sm" type="button" id="btnF100PartNew">+ New Part</button>
+                        </div>
+                        <div class="kd2-process-shell" id="f100AdminPartsBody"></div>
+                    </div>
+
+                    <div id="f100AdminProcessesPanel" style="display:none">
+                        <div class="kd2-process-toolbar">
+                            <div class="form-group" style="flex:1">
+                                <label class="form-label" for="f100AdminProcessPart">Part</label>
+                                <select id="f100AdminProcessPart" class="filter-control"></select>
+                            </div>
+                            <button class="btn btn-primary btn-sm" type="button" id="btnF100ProcessNew">+ New Process</button>
+                        </div>
+                        <div class="kd2-process-shell" id="f100AdminProcessesBody"></div>
+                    </div>
+
+                    <div class="ab-error" id="f100ProcessError" style="display:none"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-ghost" id="btnF100ProcessDone">Done</button>
+                </div>
+            </div>
+        </div>
+
         <!-- ════════════════════════════════════════ PRODUCTION ISSUE MODAL -->
         <div class="modal-overlay" id="issueModalOverlay" style="display:none" role="dialog" aria-modal="true"
             aria-labelledby="issueModalTitle">

@@ -12701,8 +12701,8 @@ function renderIssueCategoryBadge(category) {
 
 function renderIssueRow(issue, idx) {
     const u = getCurrentUser();
-    // Only the original reporter may edit — no exceptions for admins
-    const canEdit = !!(issue.reporter_email && u?.email && issue.reporter_email === u.email);
+    // Original reporter may edit; master_admin may edit any issue
+    const canEdit = isMasterAdmin() || !!(issue.reporter_email && u?.email && issue.reporter_email === u.email);
 
     return `
     <tr data-issue-id="${issue.id}">
@@ -13061,9 +13061,9 @@ async function openIssueModal(id = null, resumeDraft = null) {
         const { data, error } = await db.from('production_issues').select('*').eq('id', id).single();
         if (error || !data) { showToast('Failed to load issue.', 'error'); return; }
 
-        // Permission check — only the original reporter may edit
+        // Permission check — original reporter may edit; master_admin may edit any issue
         const u = getCurrentUser();
-        const canEdit = !!(data.reporter_email && u?.email && data.reporter_email === u.email);
+        const canEdit = isMasterAdmin() || !!(data.reporter_email && u?.email && data.reporter_email === u.email);
         if (!canEdit) { showToast('You can only edit issues you reported.', 'error'); return; }
 
         overlay.dataset.editId = id;
@@ -16405,6 +16405,8 @@ async function placeF100VisualBlock(track, plannedStart) {
 
 /* ── F100 Edit Block modal ────────────────────────────────────────── */
 function openF100EditBlockModal(planId) {
+    if (!canEditPlan()) { showToast('Only planners and admins can edit blocks.', 'error'); return; }
+
     const task = currentData.find(t => String(t.id) === String(planId));
     if (!task) return;
     document.getElementById('f100EbPlanId').value = String(planId);
@@ -16479,6 +16481,397 @@ async function saveF100EditBlock() {
     }
 }
 
+/* ── F100 Manage Parts & Processes admin panel ───────────────────── */
+function canManageF100() {
+    const role = getCurrentUser()?.role;
+    return ['master_admin', 'admin', 'planner'].includes(role);
+}
+
+let _f100AdminParts = [];
+let _f100AdminProcesses = [];
+let _f100AdminTab = 'parts';
+let _f100PartEditingId = null;   // id of part row being edited, or 'new'
+let _f100ProcessEditingId = null; // id of process row being edited, or 'new'
+let _f100ProcessPartId = null;   // part currently selected on the Processes tab
+
+function f100AdminError(message) {
+    const el = document.getElementById('f100ProcessError');
+    if (!el) return;
+    el.textContent = message || '';
+    el.style.display = message ? 'flex' : 'none';
+}
+
+async function loadF100AdminData() {
+    const { data: parts, error: partsErr } = await db.from('f100_parts').select('*').order('module').order('sort_order');
+    if (partsErr) throw partsErr;
+    const { data: procs, error: procErr } = await db.from('f100_processes').select('*').order('part_id').order('sort_order');
+    if (procErr) throw procErr;
+    _f100AdminParts = parts || [];
+    _f100AdminProcesses = procs || [];
+}
+
+function renderF100AdminTabs() {
+    document.getElementById('f100AdminPartsTab')?.classList.toggle('active', _f100AdminTab === 'parts');
+    document.getElementById('f100AdminProcessesTab')?.classList.toggle('active', _f100AdminTab === 'processes');
+    const partsPanel = document.getElementById('f100AdminPartsPanel');
+    const procPanel = document.getElementById('f100AdminProcessesPanel');
+    if (partsPanel) partsPanel.style.display = _f100AdminTab === 'parts' ? '' : 'none';
+    if (procPanel) procPanel.style.display = _f100AdminTab === 'processes' ? '' : 'none';
+}
+
+function f100PartViewRow(part) {
+    const vehicles = Array.isArray(part.vehicles) ? part.vehicles.join(', ') : (part.vehicles || '—');
+    return `
+        <tr>
+            <td>${esc(part.module)}</td>
+            <td>${esc(part.part_number)}</td>
+            <td><strong>${esc(part.part_name)}</strong></td>
+            <td>${esc(part.manufacturer || '—')}</td>
+            <td>${esc(vehicles || '—')}</td>
+            <td>${part.qty_per_vehicle ?? 1}</td>
+            <td>${part.sort_order ?? 0}</td>
+            <td>
+                <div class="kd2-process-actions">
+                    <button class="kd2-icon-action-btn" type="button" title="Edit" data-f100-part-edit="${part.id}">&#9998;</button>
+                    <button class="kd2-icon-action-btn kd2-icon-action-danger" type="button" title="Delete" data-f100-part-delete="${part.id}">&#128465;</button>
+                </div>
+            </td>
+        </tr>`;
+}
+
+function f100PartEditRow(part) {
+    const vehicles = Array.isArray(part.vehicles) ? part.vehicles.join(', ') : (part.vehicles || '');
+    return `
+        <tr class="kd2-process-row-editing">
+            <td>
+                <select id="fpModule" class="kd2-process-input">
+                    <option value="gun" ${part.module === 'gun' ? 'selected' : ''}>gun</option>
+                    <option value="vehicle" ${part.module === 'vehicle' ? 'selected' : ''}>vehicle</option>
+                </select>
+            </td>
+            <td><input type="text" id="fpNumber" class="kd2-process-input" value="${esc(part.part_number || '')}" /></td>
+            <td><input type="text" id="fpName" class="kd2-process-input" value="${esc(part.part_name || '')}" /></td>
+            <td><input type="text" id="fpManufacturer" class="kd2-process-input" value="${esc(part.manufacturer || '')}" placeholder="Optional" /></td>
+            <td><input type="text" id="fpVehicles" class="kd2-process-input" value="${esc(vehicles)}" placeholder="K9,K10,K11" /></td>
+            <td><input type="number" id="fpQty" class="kd2-process-input" min="1" step="1" value="${part.qty_per_vehicle ?? 1}" /></td>
+            <td><input type="number" id="fpSort" class="kd2-process-input" min="0" step="1" value="${part.sort_order ?? 0}" /></td>
+            <td>
+                <div class="kd2-process-actions">
+                    <button type="button" class="btn btn-primary btn-sm" data-f100-part-save="${part.id}">Save</button>
+                    <button type="button" class="btn btn-ghost btn-sm" data-f100-part-cancel>Cancel</button>
+                </div>
+            </td>
+        </tr>`;
+}
+
+function f100PartNewRow() {
+    return `
+        <tr class="kd2-process-row-editing">
+            <td>
+                <select id="fpModule" class="kd2-process-input">
+                    <option value="gun">gun</option>
+                    <option value="vehicle">vehicle</option>
+                </select>
+            </td>
+            <td><input type="text" id="fpNumber" class="kd2-process-input" placeholder="Part number" /></td>
+            <td><input type="text" id="fpName" class="kd2-process-input" placeholder="Part name" /></td>
+            <td><input type="text" id="fpManufacturer" class="kd2-process-input" placeholder="Optional" /></td>
+            <td><input type="text" id="fpVehicles" class="kd2-process-input" placeholder="K9,K10,K11" /></td>
+            <td><input type="number" id="fpQty" class="kd2-process-input" min="1" step="1" value="1" /></td>
+            <td><input type="number" id="fpSort" class="kd2-process-input" min="0" step="1" value="${_f100AdminParts.length}" /></td>
+            <td>
+                <div class="kd2-process-actions">
+                    <button type="button" class="btn btn-primary btn-sm" data-f100-part-save-new>Save</button>
+                    <button type="button" class="btn btn-ghost btn-sm" data-f100-part-cancel>Cancel</button>
+                </div>
+            </td>
+        </tr>`;
+}
+
+function renderF100PartsTable() {
+    const container = document.getElementById('f100AdminPartsBody');
+    if (!container) return;
+    const rows = [];
+    if (_f100PartEditingId === 'new') rows.push(f100PartNewRow());
+    _f100AdminParts.slice().sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)).forEach(part => {
+        rows.push(_f100PartEditingId === part.id ? f100PartEditRow(part) : f100PartViewRow(part));
+    });
+    container.innerHTML = `
+        <div class="kd2-process-table-wrap">
+            <table class="table kd2-process-table kd2-process-table-flat">
+                <thead>
+                    <tr><th>Module</th><th>Part No.</th><th>Part Name</th><th>Manufacturer</th><th>Vehicles</th><th>Qty/Vehicle</th><th>Sort</th><th>Actions</th></tr>
+                </thead>
+                <tbody>${rows.join('') || `<tr><td colspan="8" class="empty-state" style="padding:18px"><p>No parts defined yet.</p></td></tr>`}</tbody>
+            </table>
+        </div>`;
+}
+
+function f100ProcessViewRow(proc) {
+    return `
+        <tr>
+            <td>${proc.step_number}</td>
+            <td><strong>${esc(proc.process_name)}</strong></td>
+            <td>${proc.sort_order ?? 0}</td>
+            <td>
+                <div class="kd2-process-actions">
+                    <button class="kd2-icon-action-btn" type="button" title="Edit" data-f100-proc-edit="${proc.id}">&#9998;</button>
+                    <button class="kd2-icon-action-btn kd2-icon-action-danger" type="button" title="Delete" data-f100-proc-delete="${proc.id}">&#128465;</button>
+                </div>
+            </td>
+        </tr>`;
+}
+
+function f100ProcessEditRow(proc) {
+    return `
+        <tr class="kd2-process-row-editing">
+            <td><input type="number" id="fprStep" class="kd2-process-input" min="1" step="1" value="${proc.step_number}" /></td>
+            <td><input type="text" id="fprName" class="kd2-process-input" value="${esc(proc.process_name || '')}" /></td>
+            <td><input type="number" id="fprSort" class="kd2-process-input" min="0" step="1" value="${proc.sort_order ?? 0}" /></td>
+            <td>
+                <div class="kd2-process-actions">
+                    <button type="button" class="btn btn-primary btn-sm" data-f100-proc-save="${proc.id}">Save</button>
+                    <button type="button" class="btn btn-ghost btn-sm" data-f100-proc-cancel>Cancel</button>
+                </div>
+            </td>
+        </tr>`;
+}
+
+function f100ProcessNewRow() {
+    const existing = _f100AdminProcesses.filter(p => p.part_id === _f100ProcessPartId);
+    const nextStep = Math.max(0, ...existing.map(p => p.step_number || 0)) + 10;
+    return `
+        <tr class="kd2-process-row-editing">
+            <td><input type="number" id="fprStep" class="kd2-process-input" min="1" step="1" value="${nextStep}" /></td>
+            <td><input type="text" id="fprName" class="kd2-process-input" placeholder="Process name" /></td>
+            <td><input type="number" id="fprSort" class="kd2-process-input" min="0" step="1" value="${existing.length}" /></td>
+            <td>
+                <div class="kd2-process-actions">
+                    <button type="button" class="btn btn-primary btn-sm" data-f100-proc-save-new>Save</button>
+                    <button type="button" class="btn btn-ghost btn-sm" data-f100-proc-cancel>Cancel</button>
+                </div>
+            </td>
+        </tr>`;
+}
+
+function syncF100ProcessPartFilter() {
+    const select = document.getElementById('f100AdminProcessPart');
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = _f100AdminParts.slice()
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+        .map(p => `<option value="${p.id}">${esc(p.part_name)} (${esc(p.part_number)})</option>`).join('');
+    if (!select.innerHTML) { select.innerHTML = '<option value="">No parts yet — add one on the Parts tab</option>'; }
+    if ([...select.options].some(o => o.value === current)) select.value = current;
+    _f100ProcessPartId = select.value || null;
+}
+
+function renderF100ProcessesTable() {
+    syncF100ProcessPartFilter();
+    const container = document.getElementById('f100AdminProcessesBody');
+    if (!container) return;
+    if (!_f100ProcessPartId) {
+        container.innerHTML = `<div class="empty-state" style="padding:18px"><p>Add a part on the Parts tab first.</p></div>`;
+        return;
+    }
+    const rows = [];
+    if (_f100ProcessEditingId === 'new') rows.push(f100ProcessNewRow());
+    _f100AdminProcesses
+        .filter(p => p.part_id === _f100ProcessPartId)
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+        .forEach(proc => {
+            rows.push(_f100ProcessEditingId === proc.id ? f100ProcessEditRow(proc) : f100ProcessViewRow(proc));
+        });
+    container.innerHTML = `
+        <div class="kd2-process-table-wrap">
+            <table class="table kd2-process-table kd2-process-table-flat">
+                <thead><tr><th>Step</th><th>Process Name</th><th>Sort</th><th>Actions</th></tr></thead>
+                <tbody>${rows.join('') || `<tr><td colspan="4" class="empty-state" style="padding:18px"><p>No processes defined for this part.</p></td></tr>`}</tbody>
+            </table>
+        </div>`;
+}
+
+function renderF100AdminPanel() {
+    renderF100AdminTabs();
+    renderF100PartsTable();
+    renderF100ProcessesTable();
+}
+
+async function openF100ProcessModal() {
+    if (!canManageF100()) {
+        showToast('Only planners and admins can manage F100 parts and processes.', 'error');
+        return;
+    }
+    f100AdminError('');
+    _f100PartEditingId = null;
+    _f100ProcessEditingId = null;
+    _f100AdminTab = 'parts';
+    try {
+        await loadF100AdminData();
+    } catch (err) {
+        f100AdminError('Failed to load F100 parts/processes: ' + err.message);
+    }
+    renderF100AdminPanel();
+    const overlay = document.getElementById('f100ProcessOverlay');
+    if (overlay) overlay.style.display = 'flex';
+}
+
+function closeF100ProcessModal() {
+    document.getElementById('f100ProcessOverlay').style.display = 'none';
+}
+
+async function saveF100Part(id) {
+    const module = document.getElementById('fpModule')?.value || 'gun';
+    const partNumber = (document.getElementById('fpNumber')?.value || '').trim();
+    const partName = (document.getElementById('fpName')?.value || '').trim();
+    const manufacturer = (document.getElementById('fpManufacturer')?.value || '').trim() || null;
+    const vehicles = (document.getElementById('fpVehicles')?.value || '').split(',').map(v => v.trim()).filter(Boolean);
+    const qty = parseInt(document.getElementById('fpQty')?.value, 10) || 1;
+    const sort = parseInt(document.getElementById('fpSort')?.value, 10) || 0;
+
+    if (!partNumber || !partName) { f100AdminError('Part number and name are required.'); return; }
+
+    const payload = { module, part_number: partNumber, part_name: partName, manufacturer, vehicles, qty_per_vehicle: qty, sort_order: sort };
+    try {
+        if (id === 'new') {
+            const { data: inserted, error } = await db.from('f100_parts').insert(payload).select().single();
+            if (error) throw error;
+            await auditLog('INSERT', 'f100_parts', inserted.id, null, payload);
+            showToast('Part added.', 'success');
+        } else {
+            const { error } = await db.from('f100_parts').update(payload).eq('id', id);
+            if (error) throw error;
+            await auditLog('UPDATE', 'f100_parts', id, null, payload);
+            showToast('Part updated.', 'success');
+        }
+        _f100PartEditingId = null;
+        f100AdminError('');
+        await loadF100AdminData();
+        renderF100AdminPanel();
+        await loadData();
+    } catch (err) {
+        f100AdminError('Save failed: ' + err.message);
+    }
+}
+
+async function deleteF100Part(id) {
+    if (!confirm('Delete this part and all of its processes? This cannot be undone.')) return;
+    try {
+        const { error } = await db.from('f100_parts').delete().eq('id', id);
+        if (error) throw error;
+        await auditLog('DELETE', 'f100_parts', id, null, null);
+        showToast('Part deleted.', 'success');
+        await loadF100AdminData();
+        renderF100AdminPanel();
+        await loadData();
+    } catch (err) {
+        f100AdminError('Delete failed: ' + err.message);
+    }
+}
+
+async function saveF100Process(id) {
+    if (!_f100ProcessPartId) { f100AdminError('Select a part first.'); return; }
+    const step = parseInt(document.getElementById('fprStep')?.value, 10);
+    const name = (document.getElementById('fprName')?.value || '').trim();
+    const sort = parseInt(document.getElementById('fprSort')?.value, 10) || 0;
+
+    if (!step || !name) { f100AdminError('Step number and process name are required.'); return; }
+
+    const payload = { part_id: _f100ProcessPartId, step_number: step, process_name: name, sort_order: sort };
+    try {
+        if (id === 'new') {
+            const { data: inserted, error } = await db.from('f100_processes').insert(payload).select().single();
+            if (error) throw error;
+            await auditLog('INSERT', 'f100_processes', inserted.id, null, payload);
+            showToast('Process added.', 'success');
+        } else {
+            const { error } = await db.from('f100_processes').update(payload).eq('id', id);
+            if (error) throw error;
+            await auditLog('UPDATE', 'f100_processes', id, null, payload);
+            showToast('Process updated.', 'success');
+        }
+        _f100ProcessEditingId = null;
+        f100AdminError('');
+        await loadF100AdminData();
+        renderF100AdminPanel();
+        await loadData();
+    } catch (err) {
+        f100AdminError('Save failed: ' + err.message);
+    }
+}
+
+async function deleteF100Process(id) {
+    if (!confirm('Delete this process step? This cannot be undone.')) return;
+    try {
+        const { error } = await db.from('f100_processes').delete().eq('id', id);
+        if (error) throw error;
+        await auditLog('DELETE', 'f100_processes', id, null, null);
+        showToast('Process deleted.', 'success');
+        await loadF100AdminData();
+        renderF100AdminPanel();
+        await loadData();
+    } catch (err) {
+        f100AdminError('Delete failed: ' + err.message);
+    }
+}
+
+function wireF100ProcessModal() {
+    document.getElementById('f100ProcessClose')?.addEventListener('click', closeF100ProcessModal);
+    document.getElementById('btnF100ProcessDone')?.addEventListener('click', closeF100ProcessModal);
+    document.getElementById('f100ProcessOverlay')?.addEventListener('click', function (e) {
+        if (e.target === this) closeF100ProcessModal();
+    });
+
+    document.getElementById('f100AdminPartsTab')?.addEventListener('click', () => { _f100AdminTab = 'parts'; renderF100AdminTabs(); });
+    document.getElementById('f100AdminProcessesTab')?.addEventListener('click', () => { _f100AdminTab = 'processes'; renderF100AdminTabs(); });
+
+    document.getElementById('btnF100PartNew')?.addEventListener('click', () => {
+        _f100PartEditingId = 'new';
+        f100AdminError('');
+        renderF100PartsTable();
+    });
+
+    document.getElementById('f100AdminProcessPart')?.addEventListener('change', e => {
+        _f100ProcessPartId = e.target.value || null;
+        _f100ProcessEditingId = null;
+        renderF100ProcessesTable();
+    });
+
+    document.getElementById('btnF100ProcessNew')?.addEventListener('click', () => {
+        if (!_f100ProcessPartId) { f100AdminError('Select a part first.'); return; }
+        _f100ProcessEditingId = 'new';
+        f100AdminError('');
+        renderF100ProcessesTable();
+    });
+
+    document.getElementById('f100AdminPartsBody')?.addEventListener('click', e => {
+        const editBtn = e.target.closest('[data-f100-part-edit]');
+        const deleteBtn = e.target.closest('[data-f100-part-delete]');
+        const saveBtn = e.target.closest('[data-f100-part-save]');
+        const saveNewBtn = e.target.closest('[data-f100-part-save-new]');
+        const cancelBtn = e.target.closest('[data-f100-part-cancel]');
+        if (editBtn) { _f100PartEditingId = editBtn.dataset.f100PartEdit; f100AdminError(''); renderF100PartsTable(); }
+        else if (deleteBtn) { deleteF100Part(deleteBtn.dataset.f100PartDelete); }
+        else if (saveBtn) { saveF100Part(saveBtn.dataset.f100PartSave); }
+        else if (saveNewBtn) { saveF100Part('new'); }
+        else if (cancelBtn) { _f100PartEditingId = null; f100AdminError(''); renderF100PartsTable(); }
+    });
+
+    document.getElementById('f100AdminProcessesBody')?.addEventListener('click', e => {
+        const editBtn = e.target.closest('[data-f100-proc-edit]');
+        const deleteBtn = e.target.closest('[data-f100-proc-delete]');
+        const saveBtn = e.target.closest('[data-f100-proc-save]');
+        const saveNewBtn = e.target.closest('[data-f100-proc-save-new]');
+        const cancelBtn = e.target.closest('[data-f100-proc-cancel]');
+        if (editBtn) { _f100ProcessEditingId = editBtn.dataset.f100ProcEdit; f100AdminError(''); renderF100ProcessesTable(); }
+        else if (deleteBtn) { deleteF100Process(deleteBtn.dataset.f100ProcDelete); }
+        else if (saveBtn) { saveF100Process(saveBtn.dataset.f100ProcSave); }
+        else if (saveNewBtn) { saveF100Process('new'); }
+        else if (cancelBtn) { _f100ProcessEditingId = null; f100AdminError(''); renderF100ProcessesTable(); }
+    });
+}
+let _f100ProcessModalWired = false;
+
 /* ── Extend wireGanttControls with add/delete wiring ────────────── */
 const _origWireGanttFull = wireGanttControls;
 wireGanttControls = function () {
@@ -16528,6 +16921,13 @@ wireGanttControls = function () {
         await openF100AddBlockModal();
         _setF100AbMode('template');
     });
+
+    // F100 Manage Parts & Processes admin panel
+    if (!_f100ProcessModalWired) {
+        wireF100ProcessModal();
+        _f100ProcessModalWired = true;
+    }
+    document.getElementById('btnF100ManageProcesses')?.addEventListener('click', openF100ProcessModal);
 
     // Add Block modal
     document.getElementById('btnAddBlock')?.addEventListener('click', openAddBlockModal);

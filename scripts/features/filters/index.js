@@ -112,6 +112,10 @@ export function initFeature() {
                         <div class="ms-menu" id="f100VehicleTypeMenu" hidden></div>
                     </div>
                 </div>
+                <div class="filter-item" id="f100ManageProcessesGroup" style="display:none;">
+                    <label class="filter-label">&nbsp;</label>
+                    <button class="btn btn-outline btn-sm" id="btnF100ManageProcesses">Manage Parts &amp; Processes</button>
+                </div>
 
                 <div class="filter-item filter-actions">
                     <button class="btn btn-ghost" id="btnReset">Reset</button>

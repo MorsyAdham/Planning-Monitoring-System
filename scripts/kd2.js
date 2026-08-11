@@ -256,6 +256,7 @@ window.PPMSModuleRuntime = (() => {
         // F100 filter items — shown only when F100 is active
         setDisplay('f100BattalionGroup', f100);
         setDisplay('f100ModeGroup', f100);
+        setDisplay('f100ManageProcessesGroup', f100);
         // Secondary F100 filters: default state matches the 'gun' default option
         if (f100) {
             const currentMode = document.getElementById('f100Mode')?.value || 'gun';
