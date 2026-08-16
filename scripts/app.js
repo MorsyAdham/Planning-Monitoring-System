@@ -10766,18 +10766,22 @@ function _showGenericPreview({ title, kind, src, html, sheets, onDownload }) {
  *  streams on the same vehicle, not sequential phases, so a delay from one
  *  component must never carry into, or be blended with, another
  *  component's own delay/projection.
- *  The carried delay is sourced ONLY from real actual-vs-planned data — a
- *  station's actual completion date compared to its own planned end date.
- *  A not-yet-finished station never invents its own delay from
- *  today-vs-planned-end: `today` only measures elapsed calendar time, not
- *  real production slip, and recomputing it fresh at every station was the
- *  bug — it made the carried delay shrink or grow arbitrarily from one
- *  station to the next (even producing later stations with an EARLIER
- *  expected date than an earlier station). Instead, a not-yet-finished
- *  station simply inherits whatever delay was carried in from the last
- *  station that actually finished, unchanged, so `expected` dates for a
- *  whole unfinished tail all shift by the same real, known amount and stay
- *  in planned order.
+ *  The carried delay is sourced from real actual-vs-planned data — a
+ *  station's actual completion date compared to its own planned end date —
+ *  PLUS, for whichever station is the current unfinished bottleneck, its
+ *  own today-vs-planned-end lateness (a real, present-tense fact, since it
+ *  really is sitting there unfinished past its own planned end). A
+ *  not-yet-finished, NOT-YET-DUE station never invents delay from
+ *  today-vs-planned-end: recomputing that fresh at every station,
+ *  regardless of whether it had even become due yet, was the original bug
+ *  — it made the carried delay shrink or grow arbitrarily from one station
+ *  to the next (even producing later stations with an EARLIER expected
+ *  date than an earlier station). And a currently-overdue station always
+ *  takes the MAX of its own lateness and whatever was carried in — never a
+ *  plain replace — so an earlier station finishing EARLY (a negative
+ *  carried delay) can never mask this station genuinely running late right
+ *  now. The carry can therefore only ever grow, keeping `expected` dates
+ *  for a whole unfinished tail consistent and in planned order.
  *  A not-yet-finished station whose own planned end date has already
  *  passed is still flagged "overdue" — matches calculateStatus()'s Overdue
  *  rule — and highlighted red, showing its expected completion date
@@ -10815,12 +10819,22 @@ function _vpxProjectRow(vehicleRow, orderedCols, displayCols = orderedCols) {
             if (delay > maxDelay) maxDelay = delay;
             cellById.set(cid, { planned: plannedEnd, actual: actualEnd, projected: false, late: delay > 0, overdue: false });
         } else if (plannedEnd && today > plannedEnd) {
-            // Overdue but no actual data of its own — inherit the carried
-            // delay as-is rather than recomputing today-vs-planned (which
-            // has no bearing on real progress and broke ordering).
-            const expected = carriedDelay > 0 ? _addWorkingDays(plannedEnd, carriedDelay) : plannedEnd;
-            if (carriedDelay > maxDelay) maxDelay = carriedDelay;
-            cellById.set(cid, { planned: plannedEnd, actual: null, projected: false, late: carriedDelay > 0, overdue: true, expected });
+            // Overdue and no actual data of its own. Two signals exist here:
+            // the delay carried in from upstream, and this station's own
+            // current lateness — it's unfinished and already past its own
+            // planned end, which is a real, present-tense fact (not a
+            // forecast the way re-deriving today-vs-planned at every future
+            // station was). Take whichever is bigger, e.g. so an earlier
+            // station finishing EARLY (a negative carried delay) can't mask
+            // this station genuinely sitting overdue right now. Using the
+            // max (never a fresh replace) also keeps the carry monotonic
+            // for whatever comes after.
+            const ownDelay = daysBetween(plannedEnd, today);
+            const effectiveDelay = Math.max(carriedDelay, ownDelay);
+            const expected = effectiveDelay > 0 ? _addWorkingDays(plannedEnd, effectiveDelay) : plannedEnd;
+            carriedDelay = effectiveDelay;
+            if (effectiveDelay > maxDelay) maxDelay = effectiveDelay;
+            cellById.set(cid, { planned: plannedEnd, actual: null, projected: false, late: effectiveDelay > 0, overdue: true, expected });
         } else {
             const projectedDate = (plannedEnd && carriedDelay > 0) ? _addWorkingDays(plannedEnd, carriedDelay) : plannedEnd;
             cellById.set(cid, { planned: plannedEnd, actual: projectedDate, projected: !!plannedEnd, late: false, overdue: false });
