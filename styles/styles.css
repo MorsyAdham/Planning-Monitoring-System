@@ -6434,7 +6434,7 @@ body {
     background: #7c3aed;
 }
 
-.nav-role-badge.role-admin {
+.nav-role-badge.role-operator {
     background: #2563eb;
 }
 
@@ -6588,7 +6588,7 @@ body {
     color: #8b5cf6;
 }
 
-.role-pill.admin {
+.role-pill.operator {
     background: var(--clr-accent-dim);
     color: var(--clr-accent);
 }

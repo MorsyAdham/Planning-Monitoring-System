@@ -464,9 +464,9 @@ export function renderSharedDialogs() {
                                         <label class="form-label" for="umRole">Role</label>
                                         <select id="umRole" class="filter-control">
                                             <option value="viewer">Viewer — read only</option>
-                                            <option value="planner">Planner — edit plan schedule</option>
-                                            <option value="admin">Admin — edit data &amp; plan</option>
-                                            <option value="master_admin">Master Admin — full access</option>
+                                            <option value="operator">Operator — edit production data</option>
+                                            <option value="planner">Planner — edit data &amp; plan schedule</option>
+                                            <option value="master_admin">Master Admin — full access &amp; system settings</option>
                                         </select>
                                     </div>
                                     <div class="form-group" id="umPasswordGroup">
@@ -1915,7 +1915,7 @@ export function renderSharedDialogs() {
                             placeholder="e.g. Waiting on machining rework after a dimensional NCR…"></textarea>
                     </div>
                     <p class="vpx-delay-reason-hint" id="vpxDelayReasonViewerHint" style="display:none">
-                        Only planners and admins can edit this.</p>
+                        Only planners and master admins can edit this.</p>
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-ghost" id="vpxDelayReasonCancel">Cancel</button>

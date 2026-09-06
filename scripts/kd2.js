@@ -187,7 +187,7 @@ window.PPMSModuleRuntime = (() => {
 
     function canManageKD2() {
         const role = getCurrentUser()?.role;
-        return ['master_admin', 'admin', 'planner'].includes(role);
+        return ['master_admin', 'operator', 'planner'].includes(role);
     }
 
     function canUploadKD2Plan() {
@@ -1243,7 +1243,7 @@ window.PPMSModuleRuntime = (() => {
      *  main filter bar — no code change needed (state.categories/loadFilters
      *  read straight from kd2_process_categories, not a fixed list). */
     async function saveNewCategory() {
-        if (!canManageKD2()) { toast('Only planners and admins can add categories.', 'error'); return; }
+        if (!canManageKD2()) { toast('Only planners and operators can add categories.', 'error'); return; }
         setAddCategoryError('');
         const name = (document.getElementById('kd2NewCategoryName')?.value || '').trim();
         const vehicles = [...document.querySelectorAll('.kd2-new-category-vehicle:checked')].map(cb => cb.value);
@@ -1783,7 +1783,7 @@ window.PPMSModuleRuntime = (() => {
 
     async function openProcessModal(preferredVehicle = state.routeVehicle || 'K9') {
         if (!canManageKD2()) {
-            toast('Only planners and admins can edit KD2 processes.', 'error');
+            toast('Only planners and operators can edit KD2 processes.', 'error');
             return;
         }
         try {
@@ -1911,7 +1911,7 @@ window.PPMSModuleRuntime = (() => {
 
     async function openLeadTimeModal() {
         if (!canManageKD2()) {
-            toast('Only planners and admins can edit KD2 lead times.', 'error');
+            toast('Only planners and operators can edit KD2 lead times.', 'error');
             return;
         }
         try {
@@ -1964,7 +1964,7 @@ window.PPMSModuleRuntime = (() => {
     async function saveProcessStationRow(vehicle, originalStationCode) {
         if (!dbRef) return;
         if (!canManageKD2()) {
-            toast('Only planners and admins can edit KD2 processes.', 'error');
+            toast('Only planners and operators can edit KD2 processes.', 'error');
             return;
         }
 
@@ -2103,7 +2103,7 @@ window.PPMSModuleRuntime = (() => {
     async function deleteProcessStation(vehicle, stationCode) {
         if (!dbRef) return;
         if (!canManageKD2()) {
-            toast('Only planners and admins can edit KD2 processes.', 'error');
+            toast('Only planners and operators can edit KD2 processes.', 'error');
             return;
         }
         const station = state.stations.find(row => row.vehicle_type === vehicle && row.station_code === stationCode);
@@ -2152,7 +2152,7 @@ window.PPMSModuleRuntime = (() => {
     async function moveProcessStationOrder(vehicle, stationCode, direction, scope) {
         if (!dbRef) return;
         if (!canManageKD2()) {
-            toast('Only planners and admins can edit KD2 processes.', 'error');
+            toast('Only planners and operators can edit KD2 processes.', 'error');
             return;
         }
         const field = scope === 'route' ? 'route_sequence' : 'station_sequence_in_category';
@@ -2195,7 +2195,7 @@ window.PPMSModuleRuntime = (() => {
     async function saveLeadTimes() {
         if (!dbRef) return;
         if (!canManageKD2()) {
-            toast('Only planners and admins can edit KD2 lead times.', 'error');
+            toast('Only planners and operators can edit KD2 lead times.', 'error');
             return;
         }
 
@@ -3282,7 +3282,7 @@ window.PPMSModuleRuntime = (() => {
     async function placePlanBlockOnLane(lane, plannedStart) {
         if (!state.timelinePlacementActive) return false;
         if (!canManageKD2()) {
-            toast('Only planners and admins can add KD2 plan rows.', 'error');
+            toast('Only planners and operators can add KD2 plan rows.', 'error');
             return false;
         }
         if (!plannedStart) return false;
@@ -3520,7 +3520,7 @@ window.PPMSModuleRuntime = (() => {
             bar.addEventListener('pointerdown', event => {
                 if (!state.timelineEditMode) return;
                 if (!canManageKD2()) {
-                    toast('Only planners and admins can edit KD2 plan rows.', 'error');
+                    toast('Only planners and operators can edit KD2 plan rows.', 'error');
                     return;
                 }
                 if (event.target.closest('[data-kd2-select-id]')) return;
@@ -3877,7 +3877,7 @@ window.PPMSModuleRuntime = (() => {
 
     function openPlanEdit(planId) {
         if (!canManageKD2()) {
-            toast('Only planners and admins can edit KD2 plan rows.', 'error');
+            toast('Only planners and operators can edit KD2 plan rows.', 'error');
             return;
         }
         const row = state.timelineRows.find(item => item.id === planId);
@@ -3984,7 +3984,7 @@ window.PPMSModuleRuntime = (() => {
 
     function openNoWorkModal() {
         if (!canManageKD2()) {
-            toast('Only planners and admins can manage KD2 no-work days.', 'error');
+            toast('Only planners and operators can manage KD2 no-work days.', 'error');
             return;
         }
         setNoWorkError('');
@@ -4868,7 +4868,7 @@ window.PPMSModuleRuntime = (() => {
             return;
         }
         if (!canManageKD2()) {
-            toast('Only planners and admins can add KD2 plan rows.', 'error');
+            toast('Only planners and operators can add KD2 plan rows.', 'error');
             return;
         }
         try {
@@ -6525,7 +6525,7 @@ window.PPMSModuleRuntime = (() => {
 
     async function openPlanCreateModal() {
         if (!canManageKD2()) {
-            toast('Only planners and admins can add KD2 plan rows.', 'error');
+            toast('Only planners and operators can add KD2 plan rows.', 'error');
             return;
         }
         try {
@@ -6600,7 +6600,7 @@ window.PPMSModuleRuntime = (() => {
 
     function openPlanningModal(battalionId = null) {
         if (!canManageKD2()) {
-            toast('Only planners and admins can manage KD2 planning inputs.', 'error');
+            toast('Only planners and operators can manage KD2 planning inputs.', 'error');
             return;
         }
 
@@ -6635,7 +6635,7 @@ window.PPMSModuleRuntime = (() => {
     async function savePlanningInputs() {
         if (!dbRef) return;
         if (!canManageKD2()) {
-            toast('Only planners and admins can manage KD2 planning inputs.', 'error');
+            toast('Only planners and operators can manage KD2 planning inputs.', 'error');
             return;
         }
 
@@ -7087,7 +7087,7 @@ window.PPMSModuleRuntime = (() => {
     async function generatePlan() {
         if (!dbRef) return;
         if (!canManageKD2()) {
-            toast('Only planners and admins can generate KD2 plans.', 'error');
+            toast('Only planners and operators can generate KD2 plans.', 'error');
             return;
         }
 
@@ -7235,7 +7235,7 @@ window.PPMSModuleRuntime = (() => {
     async function bootstrapBattalions() {
         if (!dbRef) return;
         if (!canManageKD2()) {
-            toast('Only planners and admins can bootstrap KD2 battalions.', 'error');
+            toast('Only planners and operators can bootstrap KD2 battalions.', 'error');
             return;
         }
 
@@ -7293,7 +7293,7 @@ window.PPMSModuleRuntime = (() => {
     async function savePlanEdit() {
         if (!dbRef) return;
         if (!canManageKD2()) {
-            toast('Only planners and admins can edit KD2 plan rows.', 'error');
+            toast('Only planners and operators can edit KD2 plan rows.', 'error');
             return;
         }
 
@@ -7467,7 +7467,7 @@ window.PPMSModuleRuntime = (() => {
     async function savePlanCreate() {
         if (!dbRef) return;
         if (!canManageKD2()) {
-            toast('Only planners and admins can add KD2 plan rows.', 'error');
+            toast('Only planners and operators can add KD2 plan rows.', 'error');
             return;
         }
         if (currentPlanCreateMode() === 'template') {
@@ -7512,7 +7512,7 @@ window.PPMSModuleRuntime = (() => {
     async function deletePlanBlock() {
         if (!dbRef) return;
         if (!canManageKD2()) {
-            toast('Only planners and admins can delete KD2 plan rows.', 'error');
+            toast('Only planners and operators can delete KD2 plan rows.', 'error');
             return;
         }
 

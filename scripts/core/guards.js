@@ -21,16 +21,18 @@ export function isMasterAdmin() {
     return getCurrentUser()?.role === 'master_admin';
 }
 
-export function isAdmin() {
-    return ['master_admin', 'admin'].includes(getCurrentUser()?.role);
+// "operator" is the data-entry role (formerly "admin").
+export function isOperator() {
+    return ['master_admin', 'operator'].includes(getCurrentUser()?.role);
 }
 
 export function isPlanner() {
-    return ['master_admin', 'admin', 'planner'].includes(getCurrentUser()?.role);
+    return ['master_admin', 'operator', 'planner'].includes(getCurrentUser()?.role);
 }
 
+// planner ranks above operator: everything operator can edit, plus plan/schedule edits.
 export function canWrite() {
-    return isAdmin();
+    return isPlanner();
 }
 
 export function canEditPlan() {

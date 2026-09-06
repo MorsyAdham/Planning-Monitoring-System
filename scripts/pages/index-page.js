@@ -1,7 +1,7 @@
 import { bootstrapPage, exposeCoreGlobals, loadRuntimeScripts } from '../core/app-bootstrap.js';
 import { CDN_SCRIPTS, ROUTES } from '../core/config.js';
 import { byId } from '../core/dom.js';
-import { canEditPlan, canWrite, getCurrentUser, isAdmin, isMasterAdmin } from '../core/guards.js';
+import { canEditPlan, canWrite, getCurrentUser, isPlanner, isMasterAdmin } from '../core/guards.js';
 import { installToastGlobal } from '../core/notifications.js';
 import { applyTheme, applyStoredTheme, clearSession, toggleTheme } from '../core/session.js';
 import { initFeature as initFiltersFeature } from '../features/filters/index.js';
@@ -49,22 +49,24 @@ function populateShellSessionState() {
     if (role) {
         const labels = {
             master_admin: 'Master Admin',
-            admin: 'Admin',
+            operator: 'Operator',
             planner: 'Planner',
             viewer: 'Viewer',
         };
-        role.textContent = labels[user.role] || user.role || '—';
-        role.className = `nav-role-badge role-${String(user.role || 'viewer').replace('_', '-')}`;
+        // 'admin' is the legacy value for 'operator' (pre-migration 46).
+        const normRole = user.role === 'admin' ? 'operator' : (user.role || 'viewer');
+        role.textContent = labels[normRole] || normRole || '—';
+        role.className = `nav-role-badge role-${normRole.replace('_', '-')}`;
     }
 
     const logout = byId('btnLogout');
     if (logout) logout.style.display = 'flex';
 
     const unitCodes = byId('btnUnitCodes');
-    if (unitCodes && isAdmin()) unitCodes.style.display = 'flex';
+    if (unitCodes && isPlanner()) unitCodes.style.display = 'flex';
 
     const managePlanVersions = byId('btnManagePlanVersions');
-    if (managePlanVersions && isAdmin()) managePlanVersions.style.display = 'flex';
+    if (managePlanVersions && isPlanner()) managePlanVersions.style.display = 'flex';
 
     const auditLog = byId('btnAuditLog');
     const userMgmt = byId('btnUserMgmt');

@@ -109,7 +109,7 @@ export function renderPageChrome() {
                                 </svg>
                                 <span>Audit Log</span>
                             </button>
-                            <!-- Unit Codes (admin+) -->
+                            <!-- Unit Codes (operator+) -->
                             <button class="nav-more-btn" id="btnUnitCodes" role="menuitem" style="display:none">
                                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                                     <rect x="2" y="4" width="16" height="12" rx="2" />
@@ -135,7 +135,7 @@ export function renderPageChrome() {
                                 </svg>
                                 <span>Manage Processes</span>
                             </button>
-                            <!-- Manage Plan Versions (admin+) -->
+                            <!-- Manage Plan Versions (operator+) -->
                             <button class="nav-more-btn" id="btnManagePlanVersions" role="menuitem" style="display:none">
                                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                                     <path d="M4 3h9l3 3v11H4z" />

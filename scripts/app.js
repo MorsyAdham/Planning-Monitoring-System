@@ -22,10 +22,20 @@ function getCurrentUser() {
     try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)); } catch { return null; }
 }
 function isMasterAdmin() { return getCurrentUser()?.role === 'master_admin'; }
-function isAdmin() { return ['master_admin', 'admin'].includes(getCurrentUser()?.role); }
-function isPlanner() { return ['master_admin', 'admin', 'planner'].includes(getCurrentUser()?.role); }
-function canWrite() { return isAdmin(); }      // admin data edits (start/complete/notes)
+// "operator" is the data-entry role (formerly "admin"). Kept as isOperator().
+function isOperator() { return ['master_admin', 'operator'].includes(getCurrentUser()?.role); }
+function isPlanner() { return ['master_admin', 'operator', 'planner'].includes(getCurrentUser()?.role); }
+// Data edits (start/complete/notes, comments, X-ray, import). planner ranks
+// above operator — it can do everything operator can, plus plan/schedule edits.
+function canWrite() { return isPlanner(); }
 function canEditPlan() { return isMasterAdmin() || getCurrentUser()?.role === 'planner'; }  // Gantt plan edits
+
+// Role display — treats the legacy value 'admin' as an alias for 'operator'
+// so rows still stored as 'admin' (before migration 46) render correctly.
+const ROLE_LABELS = { master_admin: 'Master Admin', operator: 'Operator', planner: 'Planner', viewer: 'Viewer' };
+function normalizeRole(role) { return role === 'admin' ? 'operator' : role; }
+function roleLabel(role) { const r = normalizeRole(role); return ROLE_LABELS[r] || r || '—'; }
+function roleClass(role) { return normalizeRole(role) || 'viewer'; }
 function getCachedIP() { return getCurrentUser()?.ip || 'unknown'; }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -137,15 +147,14 @@ function populateNavbar() {
 
     const roleBadge = document.getElementById('navRoleBadge');
     if (roleBadge) {
-        const labels = { master_admin: 'Master Admin', admin: 'Admin', planner: 'Planner', viewer: 'Viewer' };
-        roleBadge.textContent = labels[user.role] || user.role;
-        roleBadge.className = `nav-role-badge role-${user.role.replace('_', '-')}`;
+        roleBadge.textContent = roleLabel(user.role);
+        roleBadge.className = `nav-role-badge role-${roleClass(user.role).replace('_', '-')}`;
     }
 
     const logoutBtn = document.getElementById('btnLogout');
     if (logoutBtn) logoutBtn.style.display = 'flex';
 
-    if (isAdmin()) {
+    if (isPlanner()) {
         const ucBtn = document.getElementById('btnUnitCodes');
         if (ucBtn) ucBtn.style.display = 'flex';
     }
@@ -1546,8 +1555,7 @@ function openActiveUsersDropdown() {
         <div style="max-height:300px;overflow-y:auto">
             ${users.map(u => {
                 const isMe = u.id === (me?.id || me?.email);
-                const roleLabels = { master_admin: 'Master Admin', admin: 'Admin', planner: 'Planner', viewer: 'Viewer' };
-                const roleLbl = roleLabels[u.role] || u.role || '';
+                const roleLbl = roleLabel(u.role);
                 const initials = (u.name || u.email || '?').charAt(0).toUpperCase();
                 const loginTime  = u.joined ? new Date(u.joined).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
                 const sessionDur = u.joined ? _fmtDuration(Date.now() - u.joined) : '';
@@ -11945,7 +11953,7 @@ async function saveVpxDelayReason() {
     const rowId = overlay?.dataset?.rowId;
     const category = overlay?.dataset?.category;
     if (!rowId || !category) return;
-    if (!canEditPlan()) { showToast('Only planners and admins can edit the delay reason.', 'error'); return; }
+    if (!canEditPlan()) { showToast('Only planners and master admins can edit the delay reason.', 'error'); return; }
 
     const text = document.getElementById('vpxDelayReasonText')?.value?.trim() || '';
     const saveBtn = document.getElementById('vpxDelayReasonSave');
@@ -12060,7 +12068,7 @@ function openXrayModal(planId) {
         } else if (stage === 'passed') {
             actionRow.innerHTML = `<p class="xray-passed-note">&#x2713; Passed X-ray on ${formatDate(row.progress.final_qa_date)} — no repair needed.</p>`;
         } else if (!canEdit) {
-            actionRow.innerHTML = `<p class="xray-viewer-hint">Only planners and admins can update X-ray/repair status.</p>`;
+            actionRow.innerHTML = `<p class="xray-viewer-hint">Only planners and operators can update X-ray/repair status.</p>`;
         } else {
             const actions = XRAY_ACTIONS_BY_STAGE[stage] || [];
             actionRow.innerHTML = `
@@ -12776,7 +12784,7 @@ async function loadUserList() {
     <tr>
       <td><strong>${esc(u.full_name)}</strong>${isMe ? ' <span style="font-size:.68rem;color:var(--clr-accent)">(you)</span>' : ''}</td>
       <td class="mono" style="font-size:.8rem">${esc(u.email)}</td>
-      <td><span class="role-pill ${u.role}">${u.role.replace('_', ' ')}</span></td>
+      <td><span class="role-pill ${roleClass(u.role)}">${esc(roleLabel(u.role))}</span></td>
       <td><div class="um-module-chips">${modulesHtml}</div></td>
       <td><span class="status-pill ${exportAllowed ? 'active' : 'inactive'}">${exportAllowed ? 'Yes' : 'No'}</span></td>
       <td><span class="status-pill ${u.is_active ? 'active' : 'inactive'}">${u.is_active ? 'Active' : 'Inactive'}</span></td>
@@ -13181,7 +13189,7 @@ async function loadAuditLog(reset = false) {
     <tr id="${rowId}">
       <td class="mono al-cell-date">${dt.toLocaleDateString('en-GB')} <span class="al-time">${dt.toLocaleTimeString('en-GB', { hour12: false })}</span></td>
       <td class="al-cell-user" title="${esc(entry.user_email || '')}">${esc(entry.user_email || '—')}</td>
-      <td><span class="role-pill ${role}">${role.replace(/_/g, ' ')}</span></td>
+      <td><span class="role-pill ${roleClass(role)}">${esc(roleLabel(role))}</span></td>
       <td><span class="al-action ${entry.action}">${entry.action}</span></td>
       <td class="al-cell-module">${esc(moduleLabel)}</td>
       <td class="mono al-cell-record" title="${esc(entry.record_id || '')}">${esc(entry.record_id || '—')}</td>
@@ -13841,7 +13849,7 @@ async function openIssueModal(id = null, resumeDraft = null) {
         overlay.dataset.editId = id;
         if (titleEl) titleEl.textContent = 'Edit Issue';
 
-        const canDel = ['master_admin', 'admin'].includes(u?.role);
+        const canDel = ['master_admin', 'operator'].includes(u?.role);
         if (deleteBtn) deleteBtn.style.display = canDel ? '' : 'none';
 
         _setIssueField('issueTitle',           data.title || '');
@@ -15191,6 +15199,21 @@ const AUDIT_ACTION_COLORS = {
 const AUDIT_ACTION_COLOR_DEFAULT = '#6366f1'; // indigo fallback for any future/unmapped action
 const AUDIT_NOTIF_EXCLUDED_ACTIONS = new Set(['BOOTSTRAP']);
 
+// System-management audit events (authentication, export permissions, user
+// administration) notify master_admin only. Every other role sees just data
+// updates and production-issue events.
+const AUDIT_NOTIF_SYSTEM_ACTIONS = new Set(['LOGIN', 'LOGOUT', 'grant_export', 'revoke_export']);
+const AUDIT_NOTIF_SYSTEM_TABLES = new Set(['planning_app_users', 'ppms_export_permissions']);
+
+/** Whether an audit event should surface as a notification for the current user.
+ *  master_admin gets everything; other roles are scoped to data / production. */
+function _auditNotifVisibleToCurrentUser(entry) {
+    if (isMasterAdmin()) return true;
+    if (AUDIT_NOTIF_SYSTEM_ACTIONS.has(entry.action)) return false;
+    if (AUDIT_NOTIF_SYSTEM_TABLES.has(entry.table_name)) return false;
+    return true;
+}
+
 function _auditNotifVerb(action) {
     return AUDIT_ACTION_VERBS[action] || (action || '').toLowerCase();
 }
@@ -15234,6 +15257,7 @@ function _auditNotifKey(entry) {
 /** Record one audit event as a pending notification (dedup'd via _auditNotifKey). */
 function _storeAuditNotification(entry) {
     if (!entry?.action || !entry?.created_at) return;
+    if (!_auditNotifVisibleToCurrentUser(entry)) return;
     const key = _auditNotifKey(entry);
     const readSet = _getReadSet();
     if (readSet.has(key)) return; // already dismissed
@@ -16156,7 +16180,7 @@ function wireGanttDragEdit(dayIndex, days) {
 
     function onBarPointerDown(e) {
         if (!_ganttEditMode) return;
-        if (!canEditPlan()) { showToast('Only planners and admins can edit the plan.', 'error'); return; }
+        if (!canEditPlan()) { showToast('Only planners and master admins can edit the plan.', 'error'); return; }
         // Let block menu controls handle their own clicks instead of starting a drag.
         if (e.target.closest('.gc-bar-menu') || e.target.closest('.gc-bar-menu-trigger') || e.target.closest('.gc-bar-select') || e.target.closest('.gc-bar-delete') || e.target.closest('.gc-bar-edit') || e.target.closest('.gc-bar-lane') || e.target.closest('.gc-bar-resize')) return;
 
@@ -16253,7 +16277,7 @@ function wireGanttDragEdit(dayIndex, days) {
 
     function onResizePointerDown(e) {
         if (!_ganttEditMode) return;
-        if (!canEditPlan()) { showToast('Only planners and admins can edit the plan.', 'error'); return; }
+        if (!canEditPlan()) { showToast('Only planners and master admins can edit the plan.', 'error'); return; }
         e.preventDefault();
         e.stopPropagation(); // don't also start the whole-bar move-drag
         const handle = e.currentTarget;
@@ -16598,7 +16622,7 @@ async function restoreGanttTaskSnapshots(tasks, auditLabel = 'restore') {
 
 /* ── Delete a block ──────────────────────────────────────────────── */
 async function deleteGanttBlock(planId) {
-    if (!canEditPlan()) { showToast('Only planners and admins can delete blocks.', 'error'); return; }
+    if (!canEditPlan()) { showToast('Only planners and master admins can delete blocks.', 'error'); return; }
 
     const task = currentData.find(t => String(t.id) === String(planId));
     if (!task) return;
@@ -16640,7 +16664,7 @@ async function deleteGanttBlock(planId) {
 }
 
 async function deleteSelectedGanttBlocks() {
-    if (!canEditPlan()) { showToast('Only planners and admins can delete blocks.', 'error'); return; }
+    if (!canEditPlan()) { showToast('Only planners and master admins can delete blocks.', 'error'); return; }
     const selectedTasks = currentData.filter(task => _selectedGanttPlanIds.has(String(task.id)));
     if (!selectedTasks.length) return;
     const confirmed = await showGanttConfirmDialog({
@@ -16846,7 +16870,7 @@ function _ganttBarClickHandler(e) {
 
 /* ── Add Block modal ─────────────────────────────────────────────── */
 function openAddBlockModal() {
-    if (!canEditPlan()) { showToast('Only planners and admins can add blocks.', 'error'); return; }
+    if (!canEditPlan()) { showToast('Only planners and master admins can add blocks.', 'error'); return; }
     if (isKD2Module()) {
         getModuleRuntime()?.openPlanCreateModal?.();
         return;
@@ -17461,7 +17485,7 @@ async function placeF100VisualBlock(track, plannedStart) {
 
 /* ── F100 Edit Block modal ────────────────────────────────────────── */
 function openF100EditBlockModal(planId) {
-    if (!canEditPlan()) { showToast('Only planners and admins can edit blocks.', 'error'); return; }
+    if (!canEditPlan()) { showToast('Only planners and master admins can edit blocks.', 'error'); return; }
 
     const task = currentData.find(t => String(t.id) === String(planId));
     if (!task) return;
@@ -17540,7 +17564,7 @@ async function saveF100EditBlock() {
 /* ── F100 Manage Parts & Processes admin panel ───────────────────── */
 function canManageF100() {
     const role = getCurrentUser()?.role;
-    return ['master_admin', 'admin', 'planner'].includes(role);
+    return ['master_admin', 'operator', 'planner'].includes(role);
 }
 
 let _f100AdminParts = [];
@@ -17755,7 +17779,7 @@ function renderF100AdminPanel() {
 
 async function openF100ProcessModal() {
     if (!canManageF100()) {
-        showToast('Only planners and admins can manage F100 parts and processes.', 'error');
+        showToast('Only planners and operators can manage F100 parts and processes.', 'error');
         return;
     }
     f100AdminError('');
@@ -18022,7 +18046,7 @@ wireGanttDragEdit = function (dayIndex, days) {
    ================================================================ */
 
 function openEditBlockModal(planId) {
-    if (!canEditPlan()) { showToast('Only planners and admins can edit blocks.', 'error'); return; }
+    if (!canEditPlan()) { showToast('Only planners and master admins can edit blocks.', 'error'); return; }
 
     const task = currentData.find(t => t.id === planId);
     if (!task) return;
