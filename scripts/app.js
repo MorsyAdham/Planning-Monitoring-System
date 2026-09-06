@@ -29,89 +29,12 @@ function canEditPlan() { return isMasterAdmin() || getCurrentUser()?.role === 'p
 function getCachedIP() { return getCurrentUser()?.ip || 'unknown'; }
 
 /* ──────────────────────────────────────────────────────────────────
-   EXPORT PERMISSIONS — only master_admin or allowed users can export
+   EXPORT PERMISSIONS — master_admin can always export; everyone else per
+   their own planning_app_users.can_export flag (set in User Management,
+   same table/row as their role and module access — no separate table).
    ────────────────────────────────────────────────────────────────── */
-let _exportAllowedEmails = null;
-
-async function _loadExportPermissions() {
-    if (!db) return;
-    try {
-        const { data } = await db.from('ppms_export_permissions').select('email');
-        _exportAllowedEmails = (data || []).map(r => r.email.trim().toLowerCase());
-    } catch { _exportAllowedEmails = []; }
-}
-
 async function canExport() {
-    if (isMasterAdmin()) return true;
-    if (_exportAllowedEmails === null) await _loadExportPermissions();
-    const email = getCurrentUser()?.email?.trim().toLowerCase();
-    return !!(email && _exportAllowedEmails?.includes(email));
-}
-
-/* Export Permissions Modal */
-/* Export permissions are shown inside the User Management modal — no standalone modal needed */
-async function loadExportPermList() {
-    const list = document.getElementById('exportPermList');
-    if (!list) return;
-    list.innerHTML = '<li class="exp-perm-empty">Loading…</li>';
-    try {
-        const { data, error } = await db.from('ppms_export_permissions')
-            .select('id, email, note, granted_by, created_at')
-            .order('created_at', { ascending: true });
-        if (error) throw error;
-        if (!data || !data.length) {
-            list.innerHTML = '<li class="exp-perm-empty">No users granted export access yet.</li>';
-            return;
-        }
-        list.innerHTML = data.map(r => `
-            <li class="exp-perm-item">
-                <span class="exp-perm-email">${r.email}</span>
-                ${r.note ? `<span class="exp-perm-note">${r.note}</span>` : ''}
-                <button class="exp-perm-del" data-id="${r.id}" title="Remove">&#x2715;</button>
-            </li>`).join('');
-        list.querySelectorAll('.exp-perm-del').forEach(btn => {
-            btn.addEventListener('click', () => removeExportPerm(Number(btn.dataset.id)));
-        });
-    } catch (e) {
-        list.innerHTML = `<li class="exp-perm-empty" style="color:var(--clr-overdue)">Error: ${e.message}</li>`;
-    }
-}
-async function addExportPerm() {
-    const selectEl = document.getElementById('exportPermUserSelect');
-    const noteEl   = document.getElementById('exportPermNote');
-    const errEl    = document.getElementById('exportPermError');
-    const email    = selectEl?.value.trim().toLowerCase();
-    if (!email) { if (errEl) { errEl.style.display = 'block'; errEl.textContent = 'Please select a user.'; } return; }
-    if (errEl) errEl.style.display = 'none';
-    try {
-        const u = getCurrentUser();
-        const { error } = await db.from('ppms_export_permissions').insert({
-            email, note: noteEl?.value.trim() || null, granted_by: u?.email || null,
-        });
-        if (error) { if (error.code === '23505') throw new Error('This user already has export access.'); throw error; }
-        await auditLog('grant_export', 'ppms_export_permissions', null, null, { email });
-        _exportAllowedEmails = null;
-        if (selectEl) selectEl.value = '';
-        if (noteEl)   noteEl.value   = '';
-        await loadExportPermList();
-        _broadcastExportPermChange();
-        showToast(`Export access granted to ${email}.`, 'success');
-    } catch (e) {
-        if (errEl) { errEl.style.display = 'block'; errEl.textContent = e.message; }
-    }
-}
-async function removeExportPerm(id) {
-    if (!id) return;
-    try {
-        const { data: row } = await db.from('ppms_export_permissions').select('email').eq('id', id).single();
-        const { error } = await db.from('ppms_export_permissions').delete().eq('id', id);
-        if (error) throw error;
-        await auditLog('revoke_export', 'ppms_export_permissions', id, { email: row?.email }, null);
-        _exportAllowedEmails = null;
-        await loadExportPermList();
-        _broadcastExportPermChange();
-        showToast('Export access revoked.', 'success');
-    } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+    return isMasterAdmin() || !!getCurrentUser()?.canExport;
 }
 
 function _applyExportVisibility() {
@@ -124,25 +47,31 @@ function _applyExportVisibility() {
     });
 }
 
-let _exportPermChannel = null;
-function startExportPermSync() {
-    if (!db) return;
-    if (_exportPermChannel) {
-        try { db.removeChannel(_exportPermChannel); } catch {}
-        _exportPermChannel = null;
+/** Re-pulls this user's own role/modules/can_export/is_active from
+ *  planning_app_users so an admin's change to another logged-in user's
+ *  permissions takes effect on that user's next reload, without requiring
+ *  a full logout/login. Deactivating a user while they're logged in signs
+ *  them out immediately. */
+async function refreshSessionFromServer() {
+    const user = getCurrentUser();
+    if (!user?.id || !db) return;
+    try {
+        const { data, error } = await db.from('planning_app_users')
+            .select('role, is_active, modules, can_export')
+            .eq('id', user.id)
+            .maybeSingle();
+        if (error || !data) return;
+        if (!data.is_active) { doLogout(); return; }
+        const patched = {
+            ...user,
+            role: data.role,
+            modules: Array.isArray(data.modules) && data.modules.length ? data.modules : ['kd1', 'kd2', 'f100kd2'],
+            canExport: !!data.can_export,
+        };
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify(patched));
+    } catch (e) {
+        console.warn('Session refresh skipped:', e.message);
     }
-    // Broadcast (not postgres_changes) — works regardless of table replication settings
-    _exportPermChannel = db.channel('ppms-export-perms')
-        .on('broadcast', { event: 'perm_changed' }, async () => {
-            _exportAllowedEmails = null;
-            await _loadExportPermissions();
-            _applyExportVisibility();
-        })
-        .subscribe();
-}
-
-function _broadcastExportPermChange() {
-    _exportPermChannel?.send({ type: 'broadcast', event: 'perm_changed', payload: {} }).catch(() => {});
 }
 
 async function sha256(str) {
@@ -503,6 +432,27 @@ function samePlanLane(a, b) {
     return a.vehicle === b.vehicle && a.vehicle_no === b.vehicle_no;
 }
 
+// "Lane" as visually represented on screen: in Process View a row is one
+// station (or one process step for F100), shared across every unit passing
+// through it — NOT one vehicle's whole route. In Unit View a row is one
+// vehicle/unit's whole schedule, so that's where samePlanLane() still applies.
+function sameGanttRowLane(a, b) {
+    if (!a || !b) return false;
+    const inProcessView = getModuleRuntime()?.currentTimelineViewMode?.() === 'process';
+    if (inProcessView) {
+        if (isF100KD2Module()) {
+            return (a.part_name || '') === (b.part_name || '') &&
+                   String(a.step_number ?? '') === String(b.step_number ?? '') &&
+                   (a.process_name || '') === (b.process_name || '');
+        }
+        if (isKD2Module()) {
+            return (a.vehicle || '') === (b.vehicle || '') &&
+                   (a.process_station || '') === (b.process_station || '');
+        }
+    }
+    return samePlanLane(a, b);
+}
+
 function buildVisibleGanttDays(startDate, endDate) {
     if (!startDate || !endDate || startDate > endDate) return [];
     return generateDateRange(startDate, endDate)
@@ -605,6 +555,19 @@ function getKd2ForwardMoveRows(anchorTask, rows = []) {
     return moveRows?.length ? moveRows : (anchorTask ? [anchorTask] : []);
 }
 
+// "From Block" scoped to the STATION (Process View's row/lane), not the
+// vehicle — everything else queued at this same station from this block's
+// date onward, across every unit, instead of this one unit's own remaining
+// route. Separate move mode from plain "From Block" since both are useful
+// for different reasons (this unit's downstream route vs. this station's
+// queue), not a replacement for it.
+function getKd2ForwardMoveRowsByStation(anchorTask, rows = []) {
+    const helper = getModuleRuntime()?.getPlanMoveRowsFromAnchorByStation;
+    if (typeof helper !== 'function') return anchorTask ? [anchorTask] : [];
+    const moveRows = helper(anchorTask, rows);
+    return moveRows?.length ? moveRows : (anchorTask ? [anchorTask] : []);
+}
+
 function getF100ForwardMoveRows(anchor, rows) {
     const laneKey = r => [r.battalion_code || '', r.vehicle_type || '', r.serial_number ?? '', String(r.part_id || '')].join('||');
     const anchorKey = laneKey(anchor);
@@ -638,6 +601,21 @@ async function fetchKd2LaneRowsForGantt(task) {
     return (data || []).map(normalizeKd2PlanRowForGantt);
 }
 
+// Same idea as fetchKd2LaneRowsForGantt, but scoped to every row sharing
+// this station (across all units) instead of every row for this one unit
+// — fetched straight from the DB so "From Block · Lane" isn't limited to
+// whatever happens to be inside the Gantt's currently visible date range.
+async function fetchKd2StationRowsForGantt(task) {
+    if (!db || !task?.station_code || !(task.vehicle_type || task.vehicle)) return [];
+    const { data, error } = await db
+        .from('kd2_plan')
+        .select('id, battalion_id, vehicle_type, unit_serial, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date')
+        .eq('vehicle_type', task.vehicle_type || task.vehicle)
+        .eq('station_code', task.station_code);
+    if (error) throw error;
+    return (data || []).map(normalizeKd2PlanRowForGantt);
+}
+
 async function resolveGanttMoveSet(task) {
     if (!task) return [];
     if (_ganttMoveMode === 'lane') {
@@ -646,6 +624,13 @@ async function resolveGanttMoveSet(task) {
             if (laneRows.length) return laneRows;
         }
         return currentData.filter(row => samePlanLane(row, task));
+    }
+    if (_ganttMoveMode === 'from-block-lane') {
+        if (isKD2Module()) {
+            const stationRows = await fetchKd2StationRowsForGantt(task);
+            if (stationRows.length) return getKd2ForwardMoveRowsByStation(task, stationRows);
+        }
+        return getKd2ForwardMoveRowsByStation(task, currentData);
     }
     if (_ganttMoveMode === 'from-block') {
         if (isF100KD2Module()) {
@@ -1230,6 +1215,20 @@ async function initializeApp() {
         return;
     }
 
+    // Pull this user's own role/modules/can_export fresh from the DB before
+    // anything reads them — an admin's change to another logged-in user's
+    // permissions should take effect on that user's next reload, not require
+    // a full logout/login. Re-run applyModuleShell() so the module selector
+    // (built once already at kd2.js's own DOMContentLoaded, with whatever
+    // was in sessionStorage at that point) reflects the fresh list before
+    // the loading screen ever comes down.
+    await refreshSessionFromServer();
+    getModuleRuntime()?.applyModuleShell?.();
+
+    // Plan version must be known before wireEvents() binds the selector and
+    // before loadFilters()/loadData() start querying version-scoped tables.
+    await refreshPlanVersions();
+
     _loaderSetProgress(20, 'Preparing workspace…');
     // Open the audit-notification channel before wireEvents() binds any click
     // handlers, so the very first action a user takes can broadcast — previously
@@ -1239,9 +1238,15 @@ async function initializeApp() {
     startAuditNotifSync();
     startAuditNotifPoll();
     wireEvents();
-    _loadExportPermissions().then(() => _applyExportVisibility()).catch(() => {});
+    _applyExportVisibility(); // reads getCurrentUser().canExport, already fresh from refreshSessionFromServer() above
     getModuleRuntime()?.initialize?.(db, {
         reloadAll: async () => {
+            // This is always called right after this tab's own write (station
+            // edit, flow reorder, retire, plan CRUD, …) already landed in the
+            // DB — mark it so the realtime listener below treats the change
+            // notification it's about to receive as an echo of its own save,
+            // not another user's edit, and skips the redundant reload + toast.
+            markLocalSave();
             await loadFilters();
             await loadData();
         },
@@ -1270,7 +1275,6 @@ async function initializeApp() {
     }
     startIssueNotifSync();
     startIssuesPoll();
-    startExportPermSync();
 
     _loaderHide();
 }
@@ -1287,42 +1291,76 @@ function startRealtimeSync() {
         _realtimeChannel = null;
     }
 
-    if (!isF100KD2Module()) return;
-
-    _realtimeChannel = db
-        .channel('f100_plans_realtime')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'f100_plans' }, (payload) => {
-            if (_realtimePending) return;
-            _realtimePending = true;
-            setTimeout(async () => {
-                _realtimePending = false;
-                const isEcho = (Date.now() - _lastLocalSaveMs) < 3000;
-                // Own saves: skip full reload — the in-memory data is already patched
-                if (isEcho) return;
-                // If a date input is focused, skip to avoid losing the user's input
-                const activeDateInput = document.activeElement?.matches?.('.inline-date-input, .inline-end-input');
-                if (activeDateInput) return;
-                // Try surgical update using the payload data — avoids full table rebuild
-                const record = payload?.new;
-                if (record?.id) {
-                    const idx = currentData.findIndex(r => String(r.id) === String(record.id));
-                    if (idx >= 0) {
-                        currentData[idx] = { ...currentData[idx], ...record };
-                        const surgicalOk = updateF100TableRowInPlace(record.id);
-                        if (surgicalOk) {
-                            showToast('Plan updated by another user.', 'info');
-                            return;
+    if (isF100KD2Module()) {
+        _realtimeChannel = db
+            .channel('f100_plans_realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'f100_plans' }, (payload) => {
+                if (_realtimePending) return;
+                _realtimePending = true;
+                setTimeout(async () => {
+                    _realtimePending = false;
+                    const isEcho = (Date.now() - _lastLocalSaveMs) < 3000;
+                    // Own saves: skip full reload — the in-memory data is already patched
+                    if (isEcho) return;
+                    // If a date input is focused, skip to avoid losing the user's input
+                    const activeDateInput = document.activeElement?.matches?.('.inline-date-input, .inline-end-input');
+                    if (activeDateInput) return;
+                    // Try surgical update using the payload data — avoids full table rebuild
+                    const record = payload?.new;
+                    if (record?.id) {
+                        const idx = currentData.findIndex(r => String(r.id) === String(record.id));
+                        if (idx >= 0) {
+                            currentData[idx] = { ...currentData[idx], ...record };
+                            const surgicalOk = updateF100TableRowInPlace(record.id);
+                            if (surgicalOk) {
+                                showToast('Plan updated by another user.', 'info');
+                                return;
+                            }
                         }
                     }
-                }
-                // Fallback: full reload with scroll preservation
+                    // Fallback: full reload with scroll preservation
+                    const pos = saveScrollPos();
+                    await loadData();
+                    restoreScrollPos(pos);
+                    showToast('Plan updated by another user.', 'info');
+                }, 800);
+            })
+            .subscribe();
+        return;
+    }
+
+    if (isKD2Module()) {
+        // KD2 has no cheap surgical patch path — a change can be a plan
+        // row edit (kd2_plan) or a process-definition edit made through
+        // Manage Processes / the Flow view (kd2_process_stations/
+        // categories/routes), and either kind can reshape what the Gantt,
+        // VPX, table and charts need to show. Debounce to one full reload
+        // covering every table any of those screens read from.
+        let pending = false;
+        const onChange = () => {
+            if (pending) return;
+            pending = true;
+            setTimeout(async () => {
+                pending = false;
+                const isEcho = (Date.now() - _lastLocalSaveMs) < 3000;
+                if (isEcho) return;
+                const activeDateInput = document.activeElement?.matches?.('.inline-date-input, .inline-end-input');
+                if (activeDateInput) return;
                 const pos = saveScrollPos();
+                await loadFilters();
                 await loadData();
                 restoreScrollPos(pos);
                 showToast('Plan updated by another user.', 'info');
             }, 800);
-        })
-        .subscribe();
+        };
+        _realtimeChannel = db
+            .channel('kd2_plan_realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'kd2_plan' }, onChange)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'kd2_process_stations' }, onChange)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'kd2_process_categories' }, onChange)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'kd2_process_routes' }, onChange)
+            .subscribe();
+    }
 }
 
 // ── Cross-module comment notification real-time sync ─────────────
@@ -1576,9 +1614,9 @@ async function loadFilters() {
         let plans = [];
         let fFrom = 0;
         while (true) {
-            const { data: page, error } = await db
+            const { data: page, error } = await window.PlanVersions.scoped(db
                 .from('assembly_plan')
-                .select('vehicle, vehicle_no, start_date, week')
+                .select('vehicle, vehicle_no, start_date, week'), 'kd1')
                 .range(fFrom, fFrom + 999);
             if (error) throw error;
             if (!page?.length) break;
@@ -1875,7 +1913,7 @@ async function loadF100Data() {
     (processes || []).forEach(p => { processMap[p.id] = p; });
 
     // 3. Load plans — filtered by battalion, vehicle type, and serial if selected
-    let plansQ = db.from('f100_plans').select('*').in('part_id', partIds);
+    let plansQ = window.PlanVersions.scoped(db.from('f100_plans').select('*'), 'f100kd2').in('part_id', partIds);
     plansQ = applyInFilter(plansQ, 'battalion_code', battalionSet);
     if (vehicleTypeSet) plansQ = applyInFilter(plansQ, 'vehicle_type', vehicleTypeSet);
     if (serialSet && !serialSet.has('all')) plansQ = plansQ.in('serial_number', [...serialSet].map(n => parseInt(n, 10)));
@@ -2021,10 +2059,11 @@ async function loadData() {
             });
 
             // kd2_plan_live (the view loadData() above queries) doesn't expose the
-            // X-ray/repair columns — fetch them separately for completed Welding
-            // rows only and stitch into each row's progress object.
+            // X-ray/repair columns — fetch them separately for every X-ray-eligible
+            // row that already has a progress record (cycles can be logged before
+            // the welding station itself is marked complete) and stitch them in.
             const xrayProgressIds = currentData
-                .filter(row => row.progress?.completed && row.progress?.id && isXrayEligible(row))
+                .filter(row => row.progress?.id && isXrayEligible(row))
                 .map(row => row.progress.id);
             if (xrayProgressIds.length) {
                 try {
@@ -2078,7 +2117,7 @@ async function loadData() {
         }
 
         // Build query
-        let query = db
+        let query = window.PlanVersions.scoped(db
             .from('assembly_plan')
             .select(`
         id, vehicle, vehicle_no, process_station, week,
@@ -2086,7 +2125,7 @@ async function loadData() {
         assembly_progress (
           id, completed, completion_date, actual_start_date, notes, updated_at
         )
-      `);
+      `), 'kd1');
 
         // Vehicle filter — also inherit from implied vehicle(s) when Vehicle is left on "All"
         // but specific Units are selected (each Unit option carries its own vehicle).
@@ -2268,6 +2307,7 @@ function calculateStatus(row) {
    ────────────────────────────────────────────────────────────────── */
 
 const XRAY_STAGE_META = {
+    not_started:           { label: 'X-ray',         cls: 'xray-marker-notstarted' },
     awaiting_xray:          { label: 'X-ray',         cls: 'xray-marker-awaiting' },
     in_xray:                { label: 'In X-ray',      cls: 'xray-marker-inxray' },
     failed_awaiting_repair: { label: 'Repair Needed', cls: 'xray-marker-failed' },
@@ -2307,7 +2347,10 @@ function isXrayEligible(row) {
 function getXrayStage(progress) {
     const cycles = Array.isArray(progress?.xray_cycles) ? progress.xray_cycles : [];
     if (!cycles.length) {
-        return progress?.completed ? { stage: 'awaiting_xray', cycle: null } : { stage: 'none', cycle: null };
+        // Eligible but nothing recorded yet. 'not_started' still renders a
+        // clickable marker (the welding station may not be complete yet) so
+        // X-ray/repair data can be logged straight from the table.
+        return progress?.completed ? { stage: 'awaiting_xray', cycle: null } : { stage: 'not_started', cycle: null };
     }
     if (progress.final_qa_date) return { stage: 'passed', cycle: null };
     const last = cycles[cycles.length - 1];
@@ -2331,13 +2374,18 @@ function applyXrayCompletionCoupling(progress, cycles) {
 }
 
 /** Small clickable marker for the current stage, or '' if not eligible / not completed yet. */
-function renderXrayMarker(planId, row) {
+function renderXrayMarker(planId, row, opts = {}) {
     if (!isXrayEligible(row)) return '';
     const { stage } = getXrayStage(row.progress);
-    if (stage === 'none') return '';
+    // In dense views (VPX matrix) only surface a marker once a cycle is under
+    // way — the always-on "not_started" prompt belongs in the main table.
+    if (stage === 'not_started' && opts.activeOnly) return '';
     const meta = XRAY_STAGE_META[stage];
     if (!meta) return '';
-    return `<button type="button" class="xray-marker ${meta.cls}" data-plan-id="${planId}" title="X-ray / repair status — click for details">${meta.label}</button>`;
+    const title = stage === 'not_started'
+        ? 'Requires X-ray — click to record X-ray / repair data'
+        : 'X-ray / repair status — click for details';
+    return `<button type="button" class="xray-marker ${meta.cls}" data-plan-id="${planId}" title="${title}">${meta.label}</button>`;
 }
 
 function ganttHighlightState(row) {
@@ -4670,7 +4718,7 @@ function renderVPX(data) {
                 + '<div class="vpx-dates">'
                 + '<span class="vpx-date-plan">' + planRange + '</span>'
                 + '<span class="vpx-date-act' + (actRange ? '' : ' vpx-date-none') + '">' + (actRange || '—') + '</span>'
-                + '</div>' + renderXrayMarker(task.id, task) + '</td>';
+                + '</div>' + renderXrayMarker(task.id, task, { activeOnly: true }) + '</td>';
         });
 
         if (stationMode) {
@@ -6215,7 +6263,7 @@ async function importPlan() {
         const end_date = parseDateStr(rawEnd);
         if (!start_date || !end_date) continue;
         const computedWeek = start_date ? weekLabel(start_date) : (week || null);
-        rows.push({ vehicle, vehicle_no, process_station, week: computedWeek, start_date, end_date, remark: remarkParts.join(',').trim() });
+        rows.push({ vehicle, vehicle_no, process_station, week: computedWeek, start_date, end_date, remark: remarkParts.join(',').trim(), plan_version_id: window.PlanVersions.getActiveId('kd1') });
     }
 
     if (!rows.length) { showToast('No valid rows found. Check format.', 'error'); return; }
@@ -6352,6 +6400,17 @@ function wireEvents() {
     document.getElementById('ucBattalion')?.addEventListener('change', populateUcUnits);
     document.getElementById('ucVehicle')?.addEventListener('change', populateUcUnits);
 
+    // Plan Version switcher (everyone — wired via CustomSelect.mount() in
+    // populatePlanVersionSelector(), planVersionSelectorWrap is a custom
+    // dropdown, not a native <select>) + Manage Plan Versions dialog (admin+)
+    document.getElementById('btnManagePlanVersions')?.addEventListener('click', openPlanVersionsDialog);
+    document.getElementById('planVersionsClose')?.addEventListener('click', closePlanVersionsDialog);
+    document.getElementById('planVersionsOverlay')?.addEventListener('click', function (e) {
+        if (e.target === this) closePlanVersionsDialog();
+    });
+    document.getElementById('btnPvCreate')?.addEventListener('click', createPlanVersionFromDialog);
+    document.getElementById('pvNewName')?.addEventListener('keydown', e => { if (e.key === 'Enter') createPlanVersionFromDialog(); });
+
     // User Management (master_admin only — button hidden for others)
     document.getElementById('btnUserMgmt')?.addEventListener('click', openUserMgmt);
     document.getElementById('userMgmtClose')?.addEventListener('click', closeUserMgmt);
@@ -6362,6 +6421,7 @@ function wireEvents() {
     document.getElementById('btnUmSave')?.addEventListener('click', saveUser);
     document.getElementById('btnUmCancel')?.addEventListener('click', closeUserForm);
     document.getElementById('umFormClose')?.addEventListener('click', closeUserForm);
+    document.getElementById('umRole')?.addEventListener('change', syncUserFormModulesVisibility);
 
     // Audit Log (master_admin only — button hidden for others)
     document.getElementById('btnAuditLog')?.addEventListener('click', openAuditLog);
@@ -6455,16 +6515,39 @@ function wireEvents() {
         });
     }
 
-    // ── Export Permissions (inside User Management modal) ─────────────
-    document.getElementById('btnExportPermAdd')?.addEventListener('click', addExportPerm);
-    document.getElementById('exportPermEmail')?.addEventListener('keydown', e => {
-        if (e.key === 'Enter') addExportPerm();
-    });
-
     // ── Section navigation ────────────────────────────────────────────
+    // One shared bar slides to whichever link is active instead of each
+    // link drawing its own static underline — see .section-nav-indicator.
+    const _navIndicator = document.getElementById('sectionNavIndicator');
+    function _moveNavIndicator(link) {
+        if (!_navIndicator) return;
+        if (!link) { _navIndicator.classList.remove('is-visible'); return; }
+        _navIndicator.style.transform = `translateX(${link.offsetLeft}px)`;
+        _navIndicator.style.width = link.offsetWidth + 'px';
+        _navIndicator.classList.add('is-visible');
+    }
+
+    // Clicking a link snaps the indicator there immediately, then the page
+    // smooth-scrolls to the section — which fires `scroll` many times along
+    // the way. Left unguarded, the scroll-spy below recomputes "active" from
+    // scroll position on every one of those events and re-jumps the
+    // indicator through whatever sections it passes en route, so instead of
+    // one clean glide you'd see it jump, jump, jump. This lock just tells
+    // the scroll-spy to sit out until scrolling has actually settled.
+    let _navScrollLocked = false;
+    let _navScrollLockTimer = null;
+    function _holdNavScrollLock() {
+        _navScrollLocked = true;
+        clearTimeout(_navScrollLockTimer);
+        _navScrollLockTimer = setTimeout(() => { _navScrollLocked = false; }, 700);
+    }
+
     document.querySelectorAll('.section-nav-link').forEach(link => {
         link.addEventListener('click', (e) => {
             e.preventDefault();
+            _navLinks?.forEach(l => l.classList.toggle('section-nav-link--active', l === link));
+            _moveNavIndicator(link);
+            _holdNavScrollLock();
             const targetId = link.dataset.target;
             const el = document.getElementById(targetId);
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -6476,17 +6559,25 @@ function wireEvents() {
     const _navSections = _navLinks.map(l => document.getElementById(l.dataset.target)).filter(Boolean);
     if (_navSections.length) {
         const _onScroll = () => {
+            if (_navScrollLocked) { _holdNavScrollLock(); return; } // still mid-flight from a click — keep sitting out, and keep extending the hold while scroll events keep arriving
             const scrollY = window.scrollY + 100;
             let active = _navSections[0];
             for (const sec of _navSections) {
                 if (sec.getBoundingClientRect().top + window.scrollY <= scrollY) active = sec;
             }
+            let activeLink = null;
             _navLinks.forEach(l => {
                 const isActive = l.dataset.target === active?.id;
                 l.classList.toggle('section-nav-link--active', isActive);
+                if (isActive) activeLink = l;
             });
+            _moveNavIndicator(activeLink);
         };
         window.addEventListener('scroll', _onScroll, { passive: true });
+        window.addEventListener('resize', () => {
+            const activeLink = _navLinks.find(l => l.classList.contains('section-nav-link--active'));
+            _moveNavIndicator(activeLink);
+        }, { passive: true });
         _onScroll();
     }
 
@@ -6919,6 +7010,16 @@ const GANTT_PALETTE = [
 const _stationColors = {};
 let _colorIdx = 0;
 
+// The Gantt's Process View row identity (unit/groupKey) can be a
+// disambiguated "Qualifying (Hull)" row key when two stations share a name
+// across K9's Hull/Turret split (see buildStationRowKeyMap in kd2.js) —
+// but getStationCategoryMap is deliberately still keyed by the plain
+// station name (other consumers like VPX depend on that). Strip the
+// suffix back off before looking a row up in that map.
+function kd2StripRowKeySuffix(rowKey) {
+    return String(rowKey || '').replace(/ \((Hull|Turret)\)$/, '');
+}
+
 function ganttStationColor(name) {
     if (!_stationColors[name]) {
         _stationColors[name] = GANTT_PALETTE[_colorIdx++ % GANTT_PALETTE.length];
@@ -7023,19 +7124,43 @@ function wireGanttControls() {
 }
 
 function setGanttRangeFromData(data) {
-    if (!data?.length) return;
+    const gsEl = document.getElementById('ganttStart');
+    const geEl = document.getElementById('ganttEnd');
     let minDate = '', maxDate = '';
-    for (const r of data) {
+    for (const r of (data || [])) {
         const s = r.start_date || '';
         const e = r.end_date || '';
         if (s && (!minDate || s < minDate)) minDate = s;
         if (e && (!maxDate || e > maxDate)) maxDate = e;
     }
-    if (!minDate || !maxDate) return;
-    const gsEl = document.getElementById('ganttStart');
-    const geEl = document.getElementById('ganttEnd');
-    if (gsEl) gsEl.value = minDate;
-    if (geEl) geEl.value = addDays(maxDate, 2);
+    if (minDate && maxDate) {
+        if (gsEl) gsEl.value = minDate;
+        if (geEl) geEl.value = addDays(maxDate, 2);
+        return;
+    }
+    // No plan blocks to derive a range from (brand-new plan, or everything
+    // was just deleted) — without this the date inputs stay blank forever,
+    // renderGantt() never gets past its "set a date range" empty state, and
+    // the row/track pre-population further down never even runs. Fall back
+    // to a working default window around today so there's always something
+    // to look at and place blocks into.
+    if (gsEl) gsEl.value = addDays(todayStr(), -7);
+    if (geEl) geEl.value = addDays(todayStr(), 60);
+}
+
+// A Gantt edit (delete, batch delete, drag-move, edge-resize) mutates
+// currentData directly and used to only call renderGantt() afterwards —
+// the Plan Data table, summary cards, charts and VPX matrix kept showing
+// whatever they last rendered until the page was reloaded. Every other
+// data-changing path (loadData, filter changes, Flow reorder → reloadAll)
+// re-renders all of these together; Gantt-side edits need the same thing,
+// just without a full re-fetch since currentData is already up to date.
+function syncDataViewsAfterGanttEdit() {
+    const displayData = applyActiveFilters(currentData);
+    renderTable(applyTableSearchFilters(displayData));
+    updateSummary(displayData);
+    renderCharts(displayData);
+    renderVPX(displayData);
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -7179,6 +7304,55 @@ function renderGantt(plans, startDate, endDate) {
                 };
             });
     }
+    // Process View groups rows by station name — two different stations
+    // that happen to share a name (K9's Hull/Turret split makes this a
+    // real case, not bad data: a "Qualifying" check on both lines) need to
+    // resolve to the SAME disambiguated row identity here as they do when
+    // seeded below, or a scheduled block would create a second, duplicate
+    // row instead of landing on the one already seeded for it.
+    const _kd2RowKeyMapCache = {};
+    const kd2RowKeyFor = (vehicle, stationCode) => {
+        if (!stationCode) return null;
+        if (!_kd2RowKeyMapCache[vehicle]) {
+            _kd2RowKeyMapCache[vehicle] = getModuleRuntime()?.getStationRowKeyMap?.(vehicle) || new Map();
+        }
+        return _kd2RowKeyMapCache[vehicle].get(stationCode) || null;
+    };
+    // Process View rows are otherwise only built from existing plan blocks
+    // (below), so a station with nothing scheduled at it yet has no row —
+    // and no track to click on to place its first block. Seed one empty
+    // row per active station of every vehicle in scope, straight from the
+    // station config (Manage Processes / Flow), same as Unit View already
+    // does from the unit registry above.
+    if (isKd2ProcessView) {
+        const vehiclesToSeed = effectiveVehicleSetG
+            ? [...effectiveVehicleSetG]
+            : filterOptions.vehicle.map(o => o.value);
+        vehiclesToSeed.forEach(vehicle => {
+            // Station *names* come from getActiveStationNames — every active
+            // station for this vehicle, full stop. getStationCategoryMap
+            // additionally requires each station's category_code to resolve
+            // against the category list, and silently drops any station
+            // whose category doesn't resolve (stale/mismatched category_code,
+            // a renamed category, etc.) — fine for a category *label*, not
+            // for whether the row exists at all. Using the names list as the
+            // source of truth for seeding means a station with an unresolved
+            // category still gets a row (just without the category tag on
+            // it) instead of no row at all.
+            const stationNames = getModuleRuntime()?.getActiveStationNames?.(vehicle);
+            if (!stationNames) return;
+            stationNames.forEach(stationName => {
+                ensureGroupLane(vehicle, stationName);
+                laneMetaMap[laneMetaKey(vehicle, stationName)] = {
+                    battalion_id: null,
+                    battalion_code: '',
+                    vehicle_type: vehicle,
+                    unit_serial: null,
+                    unit_label: '',
+                };
+            });
+        });
+    }
     visible.forEach(p => {
         const groupKey = isF100ProcessView
             ? (p.part_name || '—')
@@ -7188,7 +7362,7 @@ function renderGantt(plans, startDate, endDate) {
         const laneKey = isF100ProcessView
             ? `${p.step_number != null ? p.step_number + ' ' : ''}${p.process_name || '—'}`
             : isKd2ProcessView
-                ? (p.process_station || '—')
+                ? (kd2RowKeyFor(p.vehicle, p.station_code) || p.process_station || '—')
                 : isF100KD2Module()
                     ? `${p.vehicle_type}||${p.serial_number}`
                     : (isKD2Module() ? `${p.vehicle}||${p.vehicle_no}` : p.vehicle_no);
@@ -7253,7 +7427,24 @@ function renderGantt(plans, startDate, endDate) {
 
     if (!groupKeys.length) {
         clearGanttHoverGuide();
-        inner.innerHTML = `
+        // Two distinct empty cases: real data exists but none of it falls in
+        // the visible date window (keep pointing at the date range), vs. this
+        // plan has no blocks at all yet — nothing to click on to place one,
+        // so surface the same Add Block action the toolbar button opens
+        // instead of leaving the chart a dead void the user has to go
+        // hunting elsewhere to escape.
+        const trulyEmpty = !plans.length;
+        inner.innerHTML = trulyEmpty
+            ? `
+      <div class="gantt-empty-state">
+        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="6" y="6" width="36" height="36" rx="4"/>
+          <path d="M24 16v16M16 24h16"/>
+        </svg>
+        <p>This plan has no blocks yet, so there's nothing here to place one on.</p>
+        <button type="button" class="btn btn-primary" id="ganttEmptyAddBlock">+ Add Block</button>
+      </div>`
+            : `
       <div class="gantt-empty-state">
         <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
           <rect x="6" y="6" width="36" height="36" rx="4"/>
@@ -7351,9 +7542,13 @@ function renderGantt(plans, startDate, endDate) {
         const unitKeys = Object.keys(groups[groupKey]).sort((a, b) => {
             if (isF100ProcessView) return naturalSort(a, b);
             if (isKd2ProcessView) {
-                const routeOrder = getModuleRuntime()?.getStationRouteOrder?.(groupKey) || new Map();
-                const seqA = routeOrder.get(a) ?? 9999;
-                const seqB = routeOrder.get(b) ?? 9999;
+                // Grouped by line (Hull, Turret, then every other category) first,
+                // route_sequence only orders stations *within* one line — sorting
+                // by route_sequence alone interleaves Hull and Turret whenever they
+                // share a number, which they usually do since they run in parallel.
+                const laneOrder = getModuleRuntime()?.getStationLaneOrder?.(groupKey) || new Map();
+                const seqA = laneOrder.get(a)?.sortKey ?? 9999999;
+                const seqB = laneOrder.get(b)?.sortKey ?? 9999999;
                 if (seqA !== seqB) return seqA - seqB;
                 return a.localeCompare(b, undefined, { numeric: true });
             }
@@ -7403,22 +7598,35 @@ function renderGantt(plans, startDate, endDate) {
       </div>`;
             }
 
-            let _prevComponentLabel = null;
+            let _prevLineLabel = null;
             section.units.forEach(unit => {
-            // ── KD2 process view: inject component separator when group changes ──
+            // ── KD2 process view: always separate lines (Hull, Turret, then every
+            // other category) — a separator on every line change, not just the
+            // ones into Hull/Turret, so Assembly/Processing/Final Test get split
+            // apart from each other too, not left running together undivided. ──
             if (isKd2ProcessView && _kd2CatMap) {
-                const catInfo = _kd2CatMap.get(unit);
+                const catInfo = _kd2CatMap.get(unit) || _kd2CatMap.get(kd2StripRowKeySuffix(unit));
                 if (catInfo) {
-                    const compLabel = catInfo.component_group;
-                    if (compLabel && compLabel !== _prevComponentLabel) {
-                        _prevComponentLabel = compLabel;
+                    // unit itself carries "(Hull)"/"(Turret)" when it's a
+                    // disambiguated row (two stations sharing a name across
+                    // the split) — that's the row's own real line. Falling
+                    // through to catInfo.component_group here would use
+                    // whichever of the two same-named stations won the
+                    // plain-name lookup, which can be the *other* one.
+                    const rowKeySuffix = /\((Hull|Turret)\)$/.exec(unit)?.[1];
+                    const lineLabel = rowKeySuffix
+                        || ((catInfo.component_group === 'Hull' || catInfo.component_group === 'Turret')
+                            ? catInfo.component_group
+                            : catInfo.category_name);
+                    if (lineLabel !== _prevLineLabel) {
+                        _prevLineLabel = lineLabel;
                         bodyHtml += `
       <div class="gr gr-process-cat-sep" style="min-height:34px">
         <div class="gr-label gr-process-cat-label" style="width:${GANTT_LABEL_W}px;align-items:center;flex-wrap:wrap;line-height:1.3">
           <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" style="width:10px;height:10px;flex-shrink:0;opacity:.7">
             <path d="M3 4h8M3 7h8M3 10h8" stroke-dasharray="2 1.5"/>
           </svg>
-          ${esc(compLabel)}
+          ${esc(lineLabel)}
         </div>
         <div class="gr-track gr-process-cat-track" style="width:${totalW}px">${trackZonesHtml}${bgCells}</div>
       </div>`;
@@ -7434,7 +7642,7 @@ function renderGantt(plans, startDate, endDate) {
                 ? (() => {
                     const fromTasks = [...new Set(tasks.map(t => t.work_center).filter(Boolean))];
                     if (fromTasks.length) return fromTasks.join(', ');
-                    return _kd2CatMap?.get(unit)?.work_centers_combined || '';
+                    return (_kd2CatMap?.get(unit) || _kd2CatMap?.get(kd2StripRowKeySuffix(unit)))?.work_centers_combined || '';
                 })()
                 : '';
             const laneMeta = laneMetaMap[laneMetaKey(groupKey, unit)] || {};
@@ -7536,6 +7744,13 @@ function renderGantt(plans, startDate, endDate) {
           title="${esc(tip)}">
           ${actualStartMarker}
           <span class="gc-bar-text">${esc(isF100ProcessView ? `${task.vehicle_type || '—'} #${task.serial_number ?? task.vehicle_no}` : isF100KD2Module() ? `${task.part_name || ''} · ${task.process_station}` : isKd2ProcessView ? `${task.battalion_code || '—'} · ${task.vehicle_no}` : isKD2Module() ? `${getRowCode(task)} · ${task.process_station}` : task.process_station)}</span>
+          ${_ganttEditMode ? `
+          <span class="gc-bar-resize gc-bar-resize-left" data-plan-id="${task.id}" data-resize-edge="start" title="Drag to change the start date">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 3 4.5 7l4 4"/></svg>
+          </span>
+          <span class="gc-bar-resize gc-bar-resize-right" data-plan-id="${task.id}" data-resize-edge="end" title="Drag to change the end date">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 3l4 4-4 4"/></svg>
+          </span>` : ''}
           ${blockMenu}
         </div>`;
             }).join('');
@@ -7543,7 +7758,7 @@ function renderGantt(plans, startDate, endDate) {
             const rowMenuOpen = _ganttEditMode && positioned.some(item => String(item.task.id) === _openGanttBlockMenuPlanId);
             const anchorTask = positioned[0]?.task || null;
             const laneSelected = anchorTask
-                ? currentData.filter(row => samePlanLane(row, anchorTask)).every(row => _selectedGanttPlanIds.has(String(row.id)))
+                ? currentData.filter(row => sameGanttRowLane(row, anchorTask)).every(row => _selectedGanttPlanIds.has(String(row.id)))
                 : false;
             const _f100UnitComp = (isF100KD2Module() && !isF100ProcessView)
                 ? unitCompMap[`${tasks[0]?.battalion_code || groupKey}||${laneVehicle}||${laneUnit}`] || null
@@ -8098,9 +8313,14 @@ async function exportGanttSchedule(exportView = 'process') {
                 let prevCompLabel = null;
                 unitKeys.forEach(unit => {
                     if (_exportCatMap) {
-                        const catInfo = _exportCatMap.get(unit);
+                        const catInfo = _exportCatMap.get(unit) || _exportCatMap.get(kd2StripRowKeySuffix(unit));
                         if (catInfo) {
-                            const compLabel = catInfo.component_group;
+                            // Same reasoning as the on-screen Gantt: unit's own
+                            // "(Hull)"/"(Turret)" suffix (when present) is this
+                            // row's real line — catInfo.component_group can
+                            // belong to whichever same-named station won the
+                            // plain-name lookup instead.
+                            const compLabel = /\((Hull|Turret)\)$/.exec(unit)?.[1] || catInfo.component_group;
                             if (compLabel && compLabel !== prevCompLabel) {
                                 prevCompLabel = compLabel;
                                 writeCatSepRow(compLabel);
@@ -11766,6 +11986,7 @@ function wireVpxDelayReasonModal() {
 /* ─── X-ray / repair cycle — click the marker on a Welding-station row (main
    table or VPX cell) to see the cycle history and advance to the next step. ── */
 const XRAY_ACTIONS_BY_STAGE = {
+    not_started:           [{ action: 'start_xray',    label: 'Start X-ray' }],
     awaiting_xray:          [{ action: 'start_xray',    label: 'Start X-ray' }],
     in_xray:                [{ action: 'xray_pass',     label: 'No Issues — Pass' }, { action: 'xray_fail', label: 'Issues Found — Fail' }],
     failed_awaiting_repair: [{ action: 'start_repair',  label: 'Start Repair' }],
@@ -11861,7 +12082,37 @@ async function saveXrayAction(planId, action, dateValue) {
     if (!canWrite()) { showToast('Viewer accounts cannot edit data.', 'error'); return; }
     const row = currentData.find(t => String(t.id) === String(planId));
     if (!row || !isXrayEligible(row)) return;
-    if (!row.progress?.id) { showToast('No progress record found for this task yet.', 'error'); return; }
+
+    // X-ray can be logged before the welding station is marked complete — in
+    // that case there's no kd2_progress row yet to hang xray_cycles on, so
+    // create one (or adopt an existing one) before continuing.
+    if (!row.progress?.id) {
+        try {
+            const { data: existing } = await db.from('kd2_progress')
+                .select('*').eq('plan_id', planId).order('updated_at', { ascending: false }).limit(1);
+            let prog = existing?.[0];
+            if (!prog) {
+                const { data: created, error } = await db.from('kd2_progress')
+                    .insert({ plan_id: planId, completed: false, updated_at: new Date().toISOString() })
+                    .select('*').single();
+                if (error) throw error;
+                prog = created;
+                auditLog('INSERT', 'kd2_progress', prog.id, null, prog);
+                markLocalSave();
+            }
+            row.progress = {
+                ...row.progress,
+                id: prog.id,
+                completed: !!prog.completed,
+                completion_date: prog.completion_date || null,
+                xray_cycles: Array.isArray(prog.xray_cycles) ? prog.xray_cycles : [],
+                final_qa_date: prog.final_qa_date || null,
+            };
+        } catch (e) {
+            showToast('Could not create a progress record for this task: ' + (e.message || e), 'error');
+            return;
+        }
+    }
 
     const valueToSave = dateValue || todayStr();
     const cycles = (Array.isArray(row.progress.xray_cycles) ? row.progress.xray_cycles : []).map(c => ({ ...c }));
@@ -12475,40 +12726,35 @@ async function deleteUnitCode(id) {
 function openUserMgmt() {
     document.getElementById('userMgmtOverlay').style.display = 'flex';
     loadUserList();
-    loadExportPermList();
-    _populateExportPermUserSelect();
 }
 
-async function _populateExportPermUserSelect() {
-    const sel = document.getElementById('exportPermUserSelect');
-    if (!sel || !db) return;
-    try {
-        const { data } = await db.from('planning_app_users')
-            .select('email, full_name')
-            .eq('is_active', true)
-            .order('full_name', { ascending: true });
-        sel.innerHTML = '<option value="">— Select a user —</option>' +
-            (data || []).map(u =>
-                `<option value="${u.email}">${u.full_name ? `${u.full_name} (${u.email})` : u.email}</option>`
-            ).join('');
-    } catch { /* silently skip */ }
-}
 function closeUserMgmt() {
     document.getElementById('userMgmtOverlay').style.display = 'none';
     closeUserForm();
 }
 
+const MODULE_LABELS = { kd1: 'KD1', kd2: 'KD2', f100kd2: 'F100' };
+
 async function loadUserList() {
     const tbody = document.getElementById('umTableBody');
-    tbody.innerHTML = `<tr><td colspan="6" class="table-empty"><div class="empty-state"><span class="spinner"></span><p>Loading…</p></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="table-empty"><div class="empty-state"><span class="spinner"></span><p>Loading…</p></div></td></tr>`;
 
-    const { data: users, error } = await db
+    let { data: users, error } = await db
         .from('planning_app_users')
-        .select('id,email,full_name,role,is_active,created_at')
+        .select('id,email,full_name,role,is_active,created_at,modules,can_export')
         .order('created_at', { ascending: true });
 
+    // Migration 44 (modules / can_export / export permissions folded into
+    // this table) not applied yet — retry without those columns.
+    if (error?.code === '42703') {
+        ({ data: users, error } = await db
+            .from('planning_app_users')
+            .select('id,email,full_name,role,is_active,created_at')
+            .order('created_at', { ascending: true }));
+    }
+
     if (error) {
-        tbody.innerHTML = `<tr><td colspan="6" class="table-empty"><div class="empty-state"><p>Error loading users.</p></div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="table-empty"><div class="empty-state"><p>Error loading users.</p></div></td></tr>`;
         return;
     }
 
@@ -12519,11 +12765,20 @@ async function loadUserList() {
 
     tbody.innerHTML = users.map(u => {
         const isMe = u.id === currentUserId;
+        const modules = Array.isArray(u.modules) && u.modules.length ? u.modules : ['kd1', 'kd2', 'f100kd2'];
+        const modulesHtml = u.role === 'master_admin'
+            ? '<span class="um-module-chip um-module-chip--all">All</span>'
+            : (modules.length
+                ? modules.map(m => `<span class="um-module-chip">${esc(MODULE_LABELS[m] || m)}</span>`).join('')
+                : '<span class="um-module-chip um-module-chip--none">None</span>');
+        const exportAllowed = u.role === 'master_admin' || !!u.can_export;
         return `
     <tr>
       <td><strong>${esc(u.full_name)}</strong>${isMe ? ' <span style="font-size:.68rem;color:var(--clr-accent)">(you)</span>' : ''}</td>
       <td class="mono" style="font-size:.8rem">${esc(u.email)}</td>
       <td><span class="role-pill ${u.role}">${u.role.replace('_', ' ')}</span></td>
+      <td><div class="um-module-chips">${modulesHtml}</div></td>
+      <td><span class="status-pill ${exportAllowed ? 'active' : 'inactive'}">${exportAllowed ? 'Yes' : 'No'}</span></td>
       <td><span class="status-pill ${u.is_active ? 'active' : 'inactive'}">${u.is_active ? 'Active' : 'Inactive'}</span></td>
       <td class="mono" style="font-size:.75rem;color:var(--clr-text-muted)">${new Date(u.created_at).toLocaleDateString('en-GB')}</td>
       <td>
@@ -12534,6 +12789,17 @@ async function loadUserList() {
       </td>
     </tr>`;
     }).join('');
+}
+
+function setUserFormModules(modules) {
+    const list = Array.isArray(modules) ? modules : ['kd1', 'kd2', 'f100kd2'];
+    document.querySelectorAll('.um-module-check').forEach(cb => { cb.checked = list.includes(cb.value); });
+}
+
+function syncUserFormModulesVisibility() {
+    const role = document.getElementById('umRole')?.value;
+    const group = document.getElementById('umModulesGroup');
+    if (group) group.style.display = role === 'master_admin' ? 'none' : '';
 }
 
 async function openUserForm(userId) {
@@ -12547,6 +12813,9 @@ async function openUserForm(userId) {
     document.getElementById('umPassword').value = '';
     document.getElementById('umActive').value = 'true';
     document.getElementById('umFormError').textContent = '';
+    setUserFormModules(['kd1', 'kd2', 'f100kd2']);
+    const canExportEl = document.getElementById('umCanExport');
+    if (canExportEl) canExportEl.checked = false;
 
     const hint = document.getElementById('umPasswordHint');
     if (hint) hint.style.display = userId ? 'inline' : 'none';
@@ -12558,9 +12827,12 @@ async function openUserForm(userId) {
             document.getElementById('umEmail').value = data.email;
             document.getElementById('umRole').value = data.role;
             document.getElementById('umActive').value = String(data.is_active);
+            setUserFormModules(data.modules);
+            if (canExportEl) canExportEl.checked = !!data.can_export;
         }
     }
 
+    syncUserFormModulesVisibility();
     form.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -12581,22 +12853,45 @@ async function saveUser() {
     if (!fullName || !email) { errEl.textContent = 'Name and email are required.'; return; }
     if (!userId && !password) { errEl.textContent = 'Password is required for new users.'; return; }
 
-    const payload = { full_name: fullName, email, role, is_active: isActive, updated_at: new Date().toISOString() };
+    const modules = [...document.querySelectorAll('.um-module-check:checked')].map(cb => cb.value);
+    const canExportChecked = !!document.getElementById('umCanExport')?.checked;
+
+    const payload = {
+        full_name: fullName, email, role, is_active: isActive, updated_at: new Date().toISOString(),
+        // master_admin ignores `modules` entirely (see isModuleAllowed() in
+        // kd2.js) — store whatever's checked anyway so it's there if the role
+        // is later downgraded, but never leave it empty and lock a non-admin out.
+        modules: modules.length ? modules : ['kd1', 'kd2', 'f100kd2'],
+        can_export: canExportChecked,
+    };
     if (password) payload.password_hash = await sha256(password);
 
     try {
         if (userId) {
             const { data: before } = await db.from('planning_app_users').select('*').eq('id', userId).maybeSingle();
-            const { error } = await db.from('planning_app_users').update(payload).eq('id', userId);
+            let { error } = await db.from('planning_app_users').update(payload).eq('id', userId);
+            if (error) {
+                // Migration 44 not applied yet — drop modules/can_export and retry
+                // rather than losing the rest of the edit.
+                let retryPayload = payload;
+                while (error && (retryPayload = _stripUndefinedColumn(retryPayload, error))) {
+                    ({ error } = await db.from('planning_app_users').update(retryPayload).eq('id', userId));
+                }
+            }
             if (error) throw error;
-            const { data: after } = await db.from('planning_app_users').select('id,email,full_name,role,is_active').eq('id', userId).maybeSingle();
+            const { data: after } = await db.from('planning_app_users').select('id,email,full_name,role,is_active,modules,can_export').eq('id', userId).maybeSingle();
             const safeBefore = { ...before }; delete safeBefore.password_hash;
             const safeAfter = { ...after }; delete safeAfter.password_hash;
             await auditLog('UPDATE', 'planning_app_users', userId, safeBefore, safeAfter);
             showToast('User updated.', 'success');
         } else {
             payload.created_at = new Date().toISOString();
-            const { data: inserted, error } = await db.from('planning_app_users').insert(payload).select('id,email,full_name,role').single();
+            let insertResult = await db.from('planning_app_users').insert(payload).select('id,email,full_name,role').single();
+            let retryPayload = payload;
+            while (insertResult.error && (retryPayload = _stripUndefinedColumn(retryPayload, insertResult.error))) {
+                insertResult = await db.from('planning_app_users').insert(retryPayload).select('id,email,full_name,role').single();
+            }
+            const { data: inserted, error } = insertResult;
             if (error) throw error;
             await auditLog('INSERT', 'planning_app_users', inserted.id, null,
                 { email: inserted.email, full_name: inserted.full_name, role: inserted.role });
@@ -12618,6 +12913,176 @@ async function deleteUser(userId, name) {
     await auditLog('DELETE', 'planning_app_users', userId, before, null);
     showToast(`User "${name}" deleted.`, 'success');
     loadUserList();
+}
+
+/* ================================================================
+   PLAN VERSIONS  (revisions of the active module's plan — admin+ manage,
+   everyone can view/switch)
+   ================================================================ */
+
+/** Which module a plan_version row belongs to — kd1 rows use assembly_plan,
+ *  kd2 rows use kd2_plan, f100kd2 rows use its own f100_plans table. */
+function planVersionsModuleId() {
+    return getActiveModuleId();
+}
+
+/** Repopulates the header's Plan Version dropdown (a CustomSelect, not a
+ *  native <select>) from the cached version list — call after
+ *  PlanVersions.load() (fresh page load) or after any create/rename/archive
+ *  so the selector stays in sync with the dialog. */
+function populatePlanVersionSelector() {
+    if (!window.CustomSelect || !window.PlanVersions) return;
+    const moduleId = planVersionsModuleId();
+    const versions = window.PlanVersions.getVersions(moduleId);
+    const activeId = window.PlanVersions.getActiveId(moduleId);
+    window.CustomSelect.mount('planVersionSelectorWrap', { onChange: onPlanVersionSelectorChange });
+    window.CustomSelect.setOptions('planVersionSelectorWrap', versions
+        .filter(v => v.status === 'active' || v.id === activeId) // keep the current selection visible even if archived
+        .map(v => ({
+            value: v.id,
+            label: v.name + (v.is_baseline ? ' (Baseline)' : '') + (v.status === 'archived' ? ' — Archived' : ''),
+        })));
+    if (activeId) window.CustomSelect.setValue('planVersionSelectorWrap', activeId);
+}
+
+async function refreshPlanVersions() {
+    if (!db || !window.PlanVersions) return;
+    try {
+        await window.PlanVersions.load(db, planVersionsModuleId());
+    } catch (e) {
+        console.warn('Failed to load plan versions:', e.message);
+    }
+    populatePlanVersionSelector();
+}
+
+function onPlanVersionSelectorChange(value) {
+    const versionId = parseInt(value, 10);
+    if (!versionId || !window.PlanVersions) return;
+    window.PlanVersions.setActiveId(planVersionsModuleId(), versionId);
+    window.location.reload();
+}
+
+function openPlanVersionsDialog() {
+    document.getElementById('planVersionsOverlay').style.display = 'flex';
+    document.getElementById('pvNewName').value = '';
+    document.getElementById('pvError').style.display = 'none';
+    renderPlanVersionsTable();
+}
+function closePlanVersionsDialog() {
+    document.getElementById('planVersionsOverlay').style.display = 'none';
+}
+
+async function renderPlanVersionsTable() {
+    const tbody = document.getElementById('pvTableBody');
+    tbody.innerHTML = '<tr><td colspan="5" class="table-empty"><span class="spinner"></span> Loading…</td></tr>';
+    try {
+        const moduleId = planVersionsModuleId();
+        const versions = await window.PlanVersions.load(db, moduleId);
+        const activeId = window.PlanVersions.getActiveId(moduleId);
+        document.getElementById('pvCount').textContent = versions.length + ' version' + (versions.length === 1 ? '' : 's');
+        if (!versions.length) {
+            tbody.innerHTML = '<tr><td colspan="5" class="table-empty">No plan versions yet.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = versions.map(v => `
+      <tr>
+        <td>${esc(v.name)}${v.is_baseline ? ' <span class="pv-baseline-badge">Baseline</span>' : ''}${v.id === activeId ? ' <span class="pv-active-badge">Active</span>' : ''}</td>
+        <td>${v.status === 'archived' ? 'Archived' : 'Active'}</td>
+        <td>${v.created_at ? new Date(v.created_at).toLocaleDateString() : '—'}</td>
+        <td>${esc(v.created_by || '—')}</td>
+        <td>
+          ${v.id === activeId ? '' : `<button class="btn btn-xs btn-ghost" onclick="setActivePlanVersionFromDialog(${v.id})">Set Active</button>`}
+          <button class="btn btn-xs btn-ghost" onclick="renamePlanVersionFromDialog(${v.id})">Rename</button>
+          ${v.is_baseline ? '' : `<button class="btn btn-xs ${v.status === 'archived' ? 'btn-ghost' : 'btn-danger'}" onclick="togglePlanVersionArchive(${v.id}, '${v.status}')">${v.status === 'archived' ? 'Restore' : 'Archive'}</button>`}
+          ${!v.is_baseline && isMasterAdmin() ? `<button class="btn btn-xs btn-danger" onclick="deletePlanVersionFromDialog(${v.id}, '${esc(v.name).replace(/'/g, "\\'")}')">Delete</button>` : ''}
+        </td>
+      </tr>`).join('');
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5" class="table-empty">Error loading plan versions.</td></tr>';
+        console.error(e);
+    }
+}
+
+async function createPlanVersionFromDialog() {
+    const nameEl = document.getElementById('pvNewName');
+    const errEl = document.getElementById('pvError');
+    const name = nameEl.value.trim();
+    const mode = document.querySelector('input[name="pvMode"]:checked')?.value === 'empty' ? 'empty' : 'copy';
+    errEl.style.display = 'none';
+    if (!name) { errEl.textContent = 'Enter a name for the new revision.'; errEl.style.display = 'block'; return; }
+    try {
+        const moduleId = planVersionsModuleId();
+        const newVersion = await window.PlanVersions.createRevision(db, moduleId, name, {
+            userEmail: getCurrentUser()?.email,
+            auditFn: auditLog,
+            mode,
+        });
+        showToast(`Revision "${name}" created${mode === 'empty' ? ' (empty)' : ''}.`, 'success');
+        nameEl.value = '';
+        await renderPlanVersionsTable();
+        populatePlanVersionSelector();
+        if (confirm(`Switch to "${name}" now? The page will reload.`)) {
+            window.PlanVersions.setActiveId(moduleId, newVersion.id);
+            window.location.reload();
+        }
+    } catch (e) {
+        errEl.textContent = e.message || 'Failed to create revision.';
+        errEl.style.display = 'block';
+    }
+}
+
+function setActivePlanVersionFromDialog(versionId) {
+    window.PlanVersions.setActiveId(planVersionsModuleId(), versionId);
+    window.location.reload();
+}
+
+async function renamePlanVersionFromDialog(versionId) {
+    const versions = window.PlanVersions.getVersions(planVersionsModuleId());
+    const current = versions.find(v => v.id === versionId);
+    const name = prompt('Rename plan version:', current?.name || '');
+    if (!name || !name.trim() || name.trim() === current?.name) return;
+    try {
+        await window.PlanVersions.renameVersion(db, versionId, name.trim(), auditLog);
+        showToast('Plan version renamed.', 'success');
+        await renderPlanVersionsTable();
+        populatePlanVersionSelector();
+    } catch (e) {
+        showToast('Rename failed: ' + e.message, 'error');
+    }
+}
+
+async function togglePlanVersionArchive(versionId, currentStatus) {
+    const nextStatus = currentStatus === 'archived' ? 'active' : 'archived';
+    if (nextStatus === 'archived' && !confirm('Archive this plan version? It stays intact and can be restored later, but will be hidden from the version selector.')) return;
+    try {
+        await window.PlanVersions.setStatus(db, versionId, nextStatus, auditLog);
+        showToast(nextStatus === 'archived' ? 'Plan version archived.' : 'Plan version restored.', 'success');
+        await renderPlanVersionsTable();
+        populatePlanVersionSelector();
+    } catch (e) {
+        showToast('Failed: ' + e.message, 'error');
+    }
+}
+
+/** Master-admin only — permanently deletes a plan version and all its plan rows. */
+async function deletePlanVersionFromDialog(versionId, name) {
+    if (!isMasterAdmin()) return;
+    const moduleId = planVersionsModuleId();
+    const wasActive = window.PlanVersions.getActiveId(moduleId) === versionId;
+    if (!confirm(`Permanently delete "${name}"? This deletes every plan row in this revision and cannot be undone.`)) return;
+    try {
+        await window.PlanVersions.deleteVersion(db, versionId, moduleId, auditLog);
+        showToast(`Plan version "${name}" deleted.`, 'success');
+        if (wasActive) {
+            // The active version is gone — reload so every query falls back to the baseline.
+            window.location.reload();
+            return;
+        }
+        await renderPlanVersionsTable();
+        populatePlanVersionSelector();
+    } catch (e) {
+        showToast('Delete failed: ' + e.message, 'error');
+    }
 }
 
 /* ================================================================
@@ -15239,7 +15704,7 @@ function _syncSelectedBlockUi() {
         const planId = btn.dataset.ganttLaneSelect;
         const anchor = currentData.find(row => String(row.id) === planId);
         if (!anchor) return;
-        const laneRows = currentData.filter(row => samePlanLane(row, anchor));
+        const laneRows = currentData.filter(row => sameGanttRowLane(row, anchor));
         const allSelected = laneRows.length > 0 && laneRows.every(row => _selectedGanttPlanIds.has(String(row.id)));
         btn.textContent = allSelected ? 'Clear lane' : 'Select lane';
         btn.setAttribute('aria-pressed', allSelected ? 'true' : 'false');
@@ -15248,7 +15713,7 @@ function _syncSelectedBlockUi() {
 
 function toggleGanttLaneSelection(task, forceSelect = null) {
     if (!task) return;
-    const laneRows = currentData.filter(row => samePlanLane(row, task));
+    const laneRows = currentData.filter(row => sameGanttRowLane(row, task));
     if (!laneRows.length) return;
     const shouldSelect = forceSelect === null
         ? !laneRows.every(row => _selectedGanttPlanIds.has(String(row.id)))
@@ -15278,15 +15743,22 @@ function syncGanttModuleEditControls() {
     const kd2Tools = document.getElementById('ganttKd2EditTools');
     const planBtn = document.getElementById('gmtPlan');
     const fromBlockBtn = document.getElementById('gmtFromBlock');
+    const fromBlockLaneBtn = document.getElementById('gmtFromBlockLane');
     const satWrap = document.getElementById('ganttSatToggleWrap');
     const visualAddShell = document.getElementById('ganttVisualAddShell');
     const viewToggleWrap = document.getElementById('ganttViewToggleWrap');
     const templateBtn = document.getElementById('btnF100AddTemplate');
+    // "From Block · Lane" only makes sense in Process View — its whole point
+    // is moving everyone else queued at the same station, and a Unit View
+    // row already IS a single unit's whole route (that's what plain "From
+    // Block" already covers there).
+    const isKd2ProcessView = isKD2Module() && getModuleRuntime()?.currentTimelineViewMode?.() === 'process';
     if (kd2Tools) kd2Tools.style.display = _ganttEditMode && isKd2 ? 'inline-flex' : 'none';
     if (visualAddShell) visualAddShell.style.display = _ganttEditMode && isKd2 ? 'inline-flex' : 'none';
     if (templateBtn) templateBtn.style.display = _ganttEditMode && isF100 ? '' : 'none';
     if (planBtn) planBtn.style.display = isKd2 ? 'none' : '';
     if (fromBlockBtn) fromBlockBtn.style.display = isKd2 ? '' : 'none';
+    if (fromBlockLaneBtn) fromBlockLaneBtn.style.display = isKd2ProcessView ? '' : 'none';
     if (satWrap) satWrap.style.display = isKd2 ? 'none' : '';
     if (viewToggleWrap) viewToggleWrap.style.display = isKd2 ? '' : 'none';
     if ((!_ganttEditMode || !isKd2) && getModuleRuntime()?.toggleTimelineVisualMenu) {
@@ -15294,6 +15766,7 @@ function syncGanttModuleEditControls() {
     }
     if (isKd2 && _ganttMoveMode === 'plan') _ganttMoveMode = 'single';
     if (!isKd2 && _ganttMoveMode === 'from-block') _ganttMoveMode = 'single';
+    if (!isKd2ProcessView && _ganttMoveMode === 'from-block-lane') _ganttMoveMode = 'from-block';
     if (!isKd2) _ganttSelectLaneMode = false;
     const moveToggle = document.getElementById('ganttMoveToggle');
     if (moveToggle) {
@@ -15685,7 +16158,7 @@ function wireGanttDragEdit(dayIndex, days) {
         if (!_ganttEditMode) return;
         if (!canEditPlan()) { showToast('Only planners and admins can edit the plan.', 'error'); return; }
         // Let block menu controls handle their own clicks instead of starting a drag.
-        if (e.target.closest('.gc-bar-menu') || e.target.closest('.gc-bar-menu-trigger') || e.target.closest('.gc-bar-select') || e.target.closest('.gc-bar-delete') || e.target.closest('.gc-bar-edit') || e.target.closest('.gc-bar-lane')) return;
+        if (e.target.closest('.gc-bar-menu') || e.target.closest('.gc-bar-menu-trigger') || e.target.closest('.gc-bar-select') || e.target.closest('.gc-bar-delete') || e.target.closest('.gc-bar-edit') || e.target.closest('.gc-bar-lane') || e.target.closest('.gc-bar-resize')) return;
 
         e.preventDefault();
         const bar = e.currentTarget;
@@ -15695,11 +16168,13 @@ function wireGanttDragEdit(dayIndex, days) {
 
         const previewMoveSet = _ganttMoveMode === 'lane'
             ? currentData.filter(row => samePlanLane(row, task))
-            : _ganttMoveMode === 'from-block'
-                ? (isF100KD2Module() ? getF100ForwardMoveRows(task, currentData) : getKd2ForwardMoveRows(task, currentData))
-                : _selectedGanttPlanIds.has(planId) && _selectedGanttPlanIds.size > 1 && _ganttMoveMode === 'single'
-                    ? currentData.filter(row => _selectedGanttPlanIds.has(String(row.id)))
-                    : [task];
+            : _ganttMoveMode === 'from-block-lane'
+                ? getKd2ForwardMoveRowsByStation(task, currentData)
+                : _ganttMoveMode === 'from-block'
+                    ? (isF100KD2Module() ? getF100ForwardMoveRows(task, currentData) : getKd2ForwardMoveRows(task, currentData))
+                    : _selectedGanttPlanIds.has(planId) && _selectedGanttPlanIds.size > 1 && _ganttMoveMode === 'single'
+                        ? currentData.filter(row => _selectedGanttPlanIds.has(String(row.id)))
+                        : [task];
         const selectedDragIds = new Set(previewMoveSet.map(row => String(row.id)));
         const dragBars = [...document.querySelectorAll('.gc-bar[data-plan-id]')]
             .filter(item => selectedDragIds.has(item.dataset.planId));
@@ -15763,10 +16238,93 @@ function wireGanttDragEdit(dayIndex, days) {
             const gsEl = document.getElementById('ganttStart');
             const geEl = document.getElementById('ganttEnd');
             renderGantt(currentData, gsEl?.value, geEl?.value);
+            syncDataViewsAfterGanttEdit();
         }
 
         bar.addEventListener('pointermove', onMove);
         bar.addEventListener('pointerup', onUp);
+    }
+
+    // ── Edge resize — drag a bar's left/right edge to change only its start
+    // or only its end date, directly, without opening the Edit modal. ──
+    document.querySelectorAll('.gc-bar-resize').forEach(handle => {
+        handle.addEventListener('pointerdown', onResizePointerDown);
+    });
+
+    function onResizePointerDown(e) {
+        if (!_ganttEditMode) return;
+        if (!canEditPlan()) { showToast('Only planners and admins can edit the plan.', 'error'); return; }
+        e.preventDefault();
+        e.stopPropagation(); // don't also start the whole-bar move-drag
+        const handle = e.currentTarget;
+        const edge = handle.dataset.resizeEdge; // 'start' | 'end'
+        const planId = handle.dataset.planId;
+        const bar = handle.closest('.gc-bar');
+        const task = currentData.find(t => String(t.id) === planId);
+        if (!bar || !task) return;
+
+        const origLeft = parseInt(bar.style.left, 10) || 0;
+        const origWidth = parseInt(bar.style.width, 10) || GANTT_DAY_W;
+        handle.setPointerCapture(e.pointerId);
+        bar.style.transition = 'none';
+        bar.style.zIndex = '999';
+        bar.style.boxShadow = '0 8px 32px rgba(0,0,0,.6), 0 0 0 2px #4f8ef7';
+
+        const startX = e.clientX;
+        let deltaDays = 0;
+        const minWidthDays = 1; // never let a drag collapse the bar past 1 day
+
+        function onMove(ev) {
+            const rawDelta = Math.round((ev.clientX - startX) / GANTT_DAY_W);
+            const widthDays = Math.round(origWidth / GANTT_DAY_W);
+            if (edge === 'start') {
+                // Dragging left grows the bar (negative delta), dragging right
+                // shrinks it — clamp so it can't eat past its own end date.
+                deltaDays = Math.min(rawDelta, widthDays - minWidthDays);
+                bar.style.left = (origLeft + deltaDays * GANTT_DAY_W) + 'px';
+                bar.style.width = (origWidth - deltaDays * GANTT_DAY_W) + 'px';
+            } else {
+                deltaDays = Math.max(rawDelta, -(widthDays - minWidthDays));
+                bar.style.width = (origWidth + deltaDays * GANTT_DAY_W) + 'px';
+            }
+        }
+
+        async function onUp() {
+            handle.releasePointerCapture(e.pointerId);
+            handle.removeEventListener('pointermove', onMove);
+            handle.removeEventListener('pointerup', onUp);
+            bar.style.transition = '';
+            bar.style.zIndex = '';
+            bar.style.boxShadow = '';
+
+            if (!deltaDays) return;
+
+            let newStart = task.start_date;
+            let newEnd = task.end_date;
+            // A single-day block has start === end — that's the valid minimum,
+            // not an invalid range. Using >=/<= here treated "shrunk down to
+            // exactly 1 day" the same as "inverted past its own other end",
+            // so resizing to 1 day always got bumped back up to 2. Only a
+            // genuinely inverted range (start after end) should trigger the
+            // safety net.
+            if (edge === 'start') {
+                newStart = shiftDateByVisibleGanttColumns(task.start_date, deltaDays);
+                if (newStart > newEnd) newStart = newEnd; // safety net, shouldn't hit given the clamp above
+            } else {
+                newEnd = shiftDateByVisibleGanttColumns(task.end_date, deltaDays);
+                if (newEnd < newStart) newEnd = newStart;
+            }
+
+            await savePlanChanges([{ id: task.id, newStart, newEnd, oldStart: task.start_date, oldEnd: task.end_date }]);
+
+            const gsEl = document.getElementById('ganttStart');
+            const geEl = document.getElementById('ganttEnd');
+            renderGantt(currentData, gsEl?.value, geEl?.value);
+            syncDataViewsAfterGanttEdit();
+        }
+
+        handle.addEventListener('pointermove', onMove);
+        handle.addEventListener('pointerup', onUp);
     }
 }
 
@@ -15844,7 +16402,15 @@ renderGantt = function (plans, startDate, endDate) {
 
     // data-plan-id is now baked directly into each bar's HTML, so no
     // post-render tagging is needed.  We only need to attach drag handlers.
-    if (!plans?.length || !startDate || !endDate) return;
+    // NOTE: this used to also bail out when plans is empty — but that skips
+    // wireGanttDragEdit()/wireBarDeleteButtons() entirely, which is what
+    // attaches the delegated click listener that click-to-place relies on.
+    // On a brand-new plan (zero blocks yet) that listener would then never
+    // get attached at all, so clicking a seeded empty station row to place
+    // the first block silently did nothing. Both wire functions already
+    // handle an empty bar/button set fine (they query the DOM and no-op),
+    // so only the date range genuinely needs to gate this.
+    if (!startDate || !endDate) return;
 
     const days2 = generateDateRange(startDate, endDate)
         .filter(d => new Date(d + 'T00:00:00').getDay() !== 5);   // exclude Fridays
@@ -16065,6 +16631,7 @@ async function deleteGanttBlock(planId) {
         const gsEl = document.getElementById('ganttStart');
         const geEl = document.getElementById('ganttEnd');
         renderGantt(currentData, gsEl?.value, geEl?.value);
+        syncDataViewsAfterGanttEdit();
 
     } catch (err) {
         showToast('Delete failed: ' + err.message, 'error');
@@ -16103,6 +16670,7 @@ async function deleteSelectedGanttBlocks() {
         const gsEl = document.getElementById('ganttStart');
         const geEl = document.getElementById('ganttEnd');
         renderGantt(currentData, gsEl?.value, geEl?.value);
+        syncDataViewsAfterGanttEdit();
     } catch (err) {
         showToast('Delete failed: ' + err.message, 'error');
         console.error(err);
@@ -16141,6 +16709,10 @@ function _ganttClickOutsideHandler(e) {
 }
 
 function _ganttBarClickHandler(e) {
+    if (e.target.closest('#ganttEmptyAddBlock')) {
+        openAddBlockModal();
+        return;
+    }
     const placementTrack = e.target.closest('.gr-track[data-kd2-track="true"]');
     const clickedBar = e.target.closest('.gc-bar');
     if (placementTrack && !clickedBar) {
@@ -16159,6 +16731,20 @@ function _ganttBarClickHandler(e) {
             if (plannedStart && isKD2Module() && getModuleRuntime()?.isPlacementActive?.()) {
                 e.stopPropagation();
                 getModuleRuntime()?.placePlanBlockFromGanttTrack?.(placementTrack, plannedStart);
+                return;
+            }
+            // Placement mode was opened but nothing's active yet — clicking a
+            // track otherwise did nothing with no feedback at all, which reads
+            // as "it's broken" rather than "pick something from the palette
+            // first". Surface that instead of silently swallowing the click.
+            if (plannedStart && isKD2Module() && getModuleRuntime()?.isPlacementMenuOpen?.()) {
+                e.stopPropagation();
+                showToast(
+                    getModuleRuntime()?.isTimelineProcessView?.()
+                        ? 'Pick a unit from the Add Visual Block palette first, then click a station row to place it.'
+                        : 'Pick a station from the Add Visual Block palette first, then click a matching lane to place it.',
+                    'info'
+                );
                 return;
             }
         }
@@ -16415,6 +17001,7 @@ async function saveAddBlock() {
         end_date: endStr,
         week: weekLabel(adjStart),   // auto-computed from start date
         remark: remark || null,
+        plan_version_id: window.PlanVersions.getActiveId('kd1'),
     };
 
     try {
@@ -16465,6 +17052,9 @@ function _setF100AbMode(mode) {
     document.getElementById('f100AbStartGroup').style.display = isTemplate ? 'none' : '';
     document.getElementById('f100AbEndGroup').style.display = isTemplate ? 'none' : '';
     document.getElementById('f100AbTemplateWrap').style.display = isTemplate ? '' : 'none';
+    // Block mode is a short form — only widen the modal for Template mode.
+    document.querySelector('#f100AddBlockOverlay .kd2-plan-create-modal')
+        ?.classList.toggle('kd2-plan-create-modal--wide', isTemplate);
     if (isTemplate) {
         const startEl = document.getElementById('f100AbTplStart');
         if (startEl && !startEl.value) startEl.value = todayStr();
@@ -16621,6 +17211,7 @@ async function saveF100AddBlock() {
         planned_start_date: startDate,
         planned_end_date: endDate,
         status: 'Planned',
+        plan_version_id: window.PlanVersions.getActiveId('f100kd2'),
     };
 
     try {
@@ -16684,6 +17275,7 @@ async function _saveF100Template() {
             planned_start_date: cursor,
             planned_end_date: endDate,
             status: 'Planned',
+            plan_version_id: window.PlanVersions.getActiveId('f100kd2'),
         });
         cursor = addDays(endDate, 1);
     }
@@ -16853,6 +17445,7 @@ async function placeF100VisualBlock(track, plannedStart) {
         planned_start_date: plannedStart,
         planned_end_date: endDate,
         status: 'Planned',
+        plan_version_id: window.PlanVersions.getActiveId('f100kd2'),
     };
     try {
         markLocalSave();

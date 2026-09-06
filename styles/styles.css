@@ -306,123 +306,274 @@ body {
     max-width: 90%;
     margin: 0 auto;
     padding: 0 18px;
-    height: 64px;
+    height: 58px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
-}
-
-.header-brand {
-    display: flex;
-    align-items: center;
     gap: 14px;
 }
 
-.brand-badge {
-    background: var(--clr-accent);
-    color: #fff;
-    font-family: var(--ff-display);
-    font-size: 1.2rem;
-    font-weight: 700;
-    letter-spacing: .12em;
-    padding: 4px 12px;
-    border-radius: var(--radius-sm);
-    line-height: 1;
-}
-
-.brand-text {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.brand-title {
-    font-family: var(--ff-display);
-    font-size: .95rem;
-    font-weight: 800;
-    letter-spacing: .1em;
-    color: var(--clr-text);
-    line-height: 1;
-    text-transform: uppercase;
-}
-
-.brand-sub {
-    font-size: .55rem;
-    color: var(--clr-text-muted);
-    letter-spacing: .05em;
-    text-transform: uppercase;
-}
-
-.header-meta {
+/* ─── Brand — the PPMS mark, not a masthead ─────────────────────── */
+.header-brand {
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-shrink: 0;
 }
 
-/* Vertical separator between groups */
+.brand-mark {
+    width: 26px;
+    height: 26px;
+    display: block;
+    flex-shrink: 0;
+    object-fit: contain;
+}
+
+.brand-word {
+    font-family: var(--ff-display);
+    font-size: 1.1rem;
+    font-weight: 800;
+    letter-spacing: .16em;
+    color: var(--clr-text);
+    line-height: 1;
+}
+
+/* ─── Right-side controls — four clusters, not one long row ────────
+   [plan context] [icon rail] [status]  |  [user]
+   flex-shrink:0 throughout: these clusters keep their size and the
+   scrollable section-nav (flex:1) absorbs the squeeze on narrow
+   screens, instead of clusters overlapping each other. */
+.header-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+    min-width: 0;
+}
+
+/* Vertical separator — used once, between the utility clusters and identity */
 .header-meta-sep {
     width: 1px;
     height: 22px;
     background: var(--clr-border-soft);
     flex-shrink: 0;
-    margin: 0 2px;
 }
 
-/* Stacked clock + date */
-.header-clock-date {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 1px;
-    min-width: 72px;
-}
-
-.module-switch {
+/* Plan context: module + version as one segmented control */
+.context-switch {
     display: flex;
     align-items: center;
-    min-width: 110px;
+    background: var(--clr-surface-2);
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
 }
 
-.module-switch-label {
-    font-size: .62rem;
+/* Custom dropdown — trigger + floating menu, replacing the native <select>
+   whose <option> list can't be restyled to match the rest of the app. */
+.context-select {
+    position: relative;
+    flex-shrink: 0;
+    /* Flex items default to min-width:auto, which would let the trigger's
+       own content override `width` and spill into its sibling — this is
+       what caused the overlap with the native selects. min-width:0 makes
+       the fixed width (+ ellipsis on the value) win instead. */
+    min-width: 0;
 }
 
-.module-switch-control {
-    min-width: 110px;
-    padding: 6px 10px;
-    margin: 0;
+.context-select-trigger {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: transparent;
+    border: none;
+    color: var(--clr-text);
+    font-family: var(--ff-body);
+    font-size: .74rem;
+    font-weight: 600;
+    padding: 7px 8px;
+    outline: none;
+    cursor: pointer;
+    width: 96px;
+    border-radius: var(--radius-sm);
+    transition: background .15s, color .15s;
 }
 
-.header-clock {
-    font-family: var(--ff-mono);
-    font-size: 1.1rem;
+.context-select-trigger:hover {
+    background: var(--clr-surface);
     color: var(--clr-accent);
-    letter-spacing: .1em;
 }
 
-.header-date {
-    font-size: .8rem;
+.context-select-trigger:focus-visible {
+    box-shadow: 0 0 0 2px var(--clr-accent-dim) inset;
+}
+
+.context-select-trigger[aria-expanded="true"] {
+    color: var(--clr-accent);
+}
+
+.context-select-trigger[aria-expanded="true"] .context-select-caret {
+    transform: rotate(180deg);
+}
+
+/* Plan version names run longer than module labels ("Revision 2 – Sep
+   2026") — give that one more room. */
+#planVersionSelectorWrap .context-select-trigger {
+    width: 150px;
+}
+
+.context-select-value {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
+
+.context-select-caret {
+    width: 9px;
+    height: 9px;
+    flex-shrink: 0;
+    color: var(--clr-text-dim);
+    transition: transform .18s;
+}
+
+.context-select-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    min-width: 100%;
+    width: max-content;
+    max-width: 280px;
+    max-height: 320px;
+    overflow-y: auto;
+    background: var(--clr-surface);
+    border: 1px solid var(--clr-border);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, .32);
+    padding: 6px;
+    z-index: 1100;
+}
+
+.context-select-menu--wide {
+    min-width: 220px;
+}
+
+.context-select-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 10px;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
     color: var(--clr-text-muted);
-    letter-spacing: .04em;
+    font-size: .82rem;
+    font-family: var(--ff-body);
+    text-align: left;
+    cursor: pointer;
+    transition: background .12s, color .12s;
+}
+
+.context-select-option:hover {
+    background: var(--clr-surface-2);
+    color: var(--clr-text);
+}
+
+.context-select-option.active {
+    color: var(--clr-accent);
+    background: var(--clr-accent-dim);
+    font-weight: 600;
+}
+
+.context-select-check {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    color: var(--clr-accent);
+    opacity: 0;
+    transition: opacity .12s;
+}
+
+.context-select-option.active .context-select-check {
+    opacity: 1;
+}
+
+.context-select-empty {
+    padding: 10px;
+    font-size: .78rem;
+    color: var(--clr-text-dim);
+    text-align: center;
+}
+
+[data-theme="light"] .context-select-menu {
+    background: #fff;
+    border-color: #cbd5e1;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, .14);
+}
+
+.context-switch-divider {
+    width: 1px;
+    align-self: stretch;
+    margin: 7px 0;
+    background: var(--clr-border);
+    flex-shrink: 0;
+}
+
+/* Icon rail — each icon keeps its own bordered button */
+.icon-rail {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+/* Status: clock + date + connection, one compact line. The clock/date pair
+   is the first thing to give way on a narrower screen (see responsive
+   below) — the connection dot always stays, it's the one operationally
+   important signal in this cluster. */
+.status-strip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.status-clock {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.status-time {
+    font-family: var(--ff-mono);
+    font-size: .86rem;
+    color: var(--clr-accent);
+    letter-spacing: .06em;
+}
+
+.status-date {
+    font-size: .72rem;
+    color: var(--clr-text-dim);
+    letter-spacing: .02em;
 }
 
 .conn-indicator {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 7px;
-    background: var(--clr-surface-2);
-    border: 1px solid var(--clr-border);
-    border-radius: 20px;
-    padding: 5px 12px;
+    gap: 5px;
 }
 
 .conn-dot {
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
     background: var(--clr-text-dim);
     transition: background .4s;
+    flex-shrink: 0;
 }
 
 .conn-indicator.connected .conn-dot {
@@ -448,8 +599,15 @@ body {
 }
 
 .conn-label {
-    font-size: .75rem;
-    color: var(--clr-text-muted);
+    font-size: .7rem;
+    color: var(--clr-text-dim);
+}
+
+/* User zone: chip + sign-out read as one unit */
+.user-zone {
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
 
 /* ─── Main ──────────────────────────────────────────────────────── */
@@ -1009,8 +1167,14 @@ body {
     gap: 14px 18px;
 }
 
+/* Block mode is a short, single-station form — it doesn't need anywhere
+   near the width Template mode's route editor does. Sizing the whole modal
+   for Template mode by default is what made Block mode look stretched out:
+   a handful of fields spread thin across ~1240px. Default to a compact
+   width and only widen when Template mode is actually active (class
+   toggled in syncPlanCreateUiState() / _setF100AbMode()). */
 .modal.kd2-plan-create-modal {
-    width: min(1240px, calc(100vw - 40px));
+    width: min(640px, calc(100vw - 40px));
     max-width: none;
     border-radius: 20px;
     border-color: color-mix(in srgb, var(--clr-border) 78%, rgba(96, 165, 250, .24) 22%);
@@ -1020,28 +1184,60 @@ body {
         var(--clr-surface);
     box-shadow: 0 24px 64px rgba(2, 6, 23, .34);
     overflow: hidden;
+    transition: width .18s ease;
+}
+
+.modal.kd2-plan-create-modal.kd2-plan-create-modal--wide {
+    width: min(1240px, calc(100vw - 40px));
 }
 
 .kd2-plan-create-toolbar {
     grid-column: 1 / -1;
     display: grid;
-    grid-template-columns:
-        minmax(220px, 1.2fr)
-        minmax(140px, .8fr)
-        minmax(220px, 1.15fr)
-        minmax(190px, .9fr);
-    gap: 16px 20px;
+    /* A clean 2x2 fits Block mode's ~640px shell; Template mode's wide
+       modal restores the original 4-across spread below, since it has the
+       room to use it. Context is secondary to the route itself, so it's
+       deliberately compact either way — smaller labels/inputs, tighter
+       gaps — rather than matching the rest of the form's full size. */
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 12px;
     align-items: end;
-    padding: 16px 18px 18px;
-    border: 1px solid color-mix(in srgb, var(--clr-border-soft) 84%, rgba(96, 165, 250, .16) 16%);
-    border-radius: 18px;
-    background:
-        linear-gradient(180deg, rgba(59, 130, 246, .08), rgba(59, 130, 246, .02)),
-        var(--clr-surface-2);
+}
+
+.kd2-plan-create-modal--wide .kd2-plan-create-toolbar {
+    grid-template-columns:
+        minmax(160px, 1.2fr)
+        minmax(110px, .8fr)
+        minmax(160px, 1.15fr)
+        minmax(140px, .9fr);
+    gap: 10px 14px;
+}
+
+.kd2-template-group-dates {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--clr-border-soft);
+}
+
+.kd2-template-group-dates .form-group {
+    flex: 1 1 160px;
 }
 
 .kd2-plan-create-toolbar .form-group {
     min-width: 0;
+    gap: 3px;
+}
+
+.kd2-plan-create-toolbar .form-label {
+    font-size: .62rem;
+}
+
+.kd2-plan-create-toolbar .filter-control {
+    padding: 6px 9px;
+    font-size: .78rem;
 }
 
 .kd2-plan-create-modal .modal-header {
@@ -1057,8 +1253,8 @@ body {
 }
 
 .kd2-plan-create-modal .modal-body {
-    padding: 24px 28px 26px;
-    gap: 18px;
+    padding: 18px 22px 20px;
+    gap: 12px;
 }
 
 .kd2-plan-create-modal .modal-footer {
@@ -1098,7 +1294,6 @@ body {
     background: linear-gradient(180deg, rgba(248, 250, 252, .92), #ffffff);
 }
 
-[data-theme="light"] .kd2-plan-create-toolbar,
 [data-theme="light"] .kd2-plan-create-modal .kd2-template-editor-wrap {
     background:
         linear-gradient(180deg, rgba(219, 234, 254, .4), rgba(255, 255, 255, .96)),
@@ -1140,34 +1335,131 @@ body {
     color: #14532d;
 }
 
+.kd2-plan-create-modewrap {
+    margin-bottom: 4px;
+}
+
 .kd2-create-mode-toggle {
-    display: inline-flex;
-    border: 1px solid var(--clr-border);
-    border-radius: 6px;
-    overflow: hidden;
-    background: var(--clr-surface-2);
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
 }
 
 .kd2-create-mode-btn {
-    min-width: 92px;
-    background: transparent;
-    border: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    background: var(--clr-surface-2);
+    border: 1px solid var(--clr-border);
+    border-radius: 12px;
     color: var(--clr-text-muted);
     cursor: pointer;
     font: inherit;
-    font-size: .78rem;
-    font-weight: 700;
-    padding: 8px 12px;
+    padding: 10px 14px;
+    text-align: left;
+    transition: border-color .15s ease, background .15s ease;
 }
 
-.kd2-create-mode-btn + .kd2-create-mode-btn {
-    border-left: 1px solid var(--clr-border);
+.kd2-create-mode-btn-title {
+    font-size: .85rem;
+    font-weight: 700;
+}
+
+.kd2-create-mode-btn-desc {
+    color: var(--clr-text-dim);
+    font-size: .72rem;
+    font-weight: 500;
 }
 
 .kd2-create-mode-btn.active {
     background: var(--clr-accent-dim);
+    border-color: var(--clr-accent);
     color: var(--clr-accent);
 }
+
+.kd2-create-mode-btn.active .kd2-create-mode-btn-desc {
+    color: inherit;
+    opacity: .82;
+}
+
+.kd2-modal-section {
+    border: 1px solid var(--clr-border-soft);
+    border-radius: 12px;
+    padding: 10px 12px 12px;
+    background: var(--clr-surface-2);
+}
+
+.kd2-modal-section + .kd2-modal-section {
+    margin-top: 10px;
+}
+
+.kd2-modal-section-title {
+    align-items: center;
+    color: var(--clr-text-dim);
+    display: flex;
+    font-size: .66rem;
+    font-weight: 700;
+    gap: 6px;
+    letter-spacing: .06em;
+    margin: 0 0 8px;
+    text-transform: uppercase;
+}
+
+.kd2-modal-section-num {
+    align-items: center;
+    background: var(--clr-accent-dim);
+    border-radius: 999px;
+    color: var(--clr-accent);
+    display: inline-flex;
+    font-size: .6rem;
+    height: 15px;
+    justify-content: center;
+    width: 15px;
+}
+
+.kd2-template-group-tabs {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid var(--clr-border);
+    border-radius: 999px;
+    background: var(--clr-surface);
+    margin-right: 6px;
+}
+
+.kd2-template-group-tabs:empty {
+    display: none;
+}
+
+.kd2-template-group-tab {
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--clr-text-dim);
+    cursor: pointer;
+    font: inherit;
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    padding: 6px 10px;
+    text-transform: uppercase;
+    transition: background .15s ease, color .15s ease;
+}
+
+.kd2-template-group-tab.active {
+    background: color-mix(in srgb, var(--kd2-group-color, var(--clr-accent)) 16%, transparent);
+    color: var(--kd2-group-color, var(--clr-accent));
+}
+
+/* One accent per structural branch, reused for the active tab, the card list's
+   left rail, and the route pill — reuses the app's existing semantic tokens
+   (already tuned per theme) instead of inventing a new palette. */
+[data-active-group="Hull"] { --kd2-group-color: var(--clr-planned); }
+[data-active-group="Turret"] { --kd2-group-color: var(--clr-xray-active); }
+[data-active-group="Structure"] { --kd2-group-color: var(--clr-late); }
+[data-active-group="Assembly & Processing"] { --kd2-group-color: var(--clr-completed); }
 
 .kd2-template-editor-wrap {
     border: 1px solid var(--clr-border-soft);
@@ -1223,7 +1515,7 @@ body {
 .kd2-template-editor {
     display: grid;
     gap: 10px;
-    max-height: 420px;
+    max-height: min(58vh, 620px);
     overflow: auto;
     padding-right: 4px;
 }
@@ -1253,7 +1545,12 @@ body {
 }
 
 .kd2-template-preview-bar {
-    cursor: default;
+    cursor: grab;
+}
+
+.kd2-template-preview-bar-dragging {
+    opacity: .5;
+    cursor: grabbing;
 }
 
 .kd2-template-gantt-preview-wrap {
@@ -1365,7 +1662,29 @@ body {
 }
 
 .kd2-template-gantt-preview .gc-bar {
-    cursor: default;
+    cursor: grab;
+}
+
+.kd2-template-gantt-preview .gr-process-cat-sep {
+    position: sticky;
+    top: 78px;
+}
+
+.gantt-legend-toggle-row {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.kd2-template-gantt-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.kd2-template-gantt-toolbar .gantt-legend-toggle-row {
+    margin-left: auto;
 }
 
 .kd2-template-gantt-row {
@@ -1444,50 +1763,10 @@ body {
     text-transform: uppercase;
 }
 
-.kd2-template-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 10px;
-    align-items: flex-start;
-    padding: 10px;
-    border: 1px solid var(--clr-border);
-    border-radius: 10px;
-    background: var(--clr-surface);
-}
-
-.kd2-template-row + .kd2-template-row {
-    margin-top: 10px;
-}
-
-.kd2-template-row-new,
-.kd2-template-row-space {
-    background:
-        linear-gradient(180deg, rgba(59, 130, 246, .06), rgba(59, 130, 246, 0)),
-        var(--clr-surface);
-}
-
-.kd2-template-row-space {
-    border-style: dashed;
-    background:
-        linear-gradient(180deg, rgba(16, 185, 129, .08), rgba(16, 185, 129, 0)),
-        var(--clr-surface);
-}
-
-.kd2-template-row-fields {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 10px;
-}
-
-.kd2-template-row-actions {
-    display: inline-flex;
-    align-items: flex-start;
-    gap: 6px;
-}
-
 .kd2-template-remove {
-    width: 26px;
-    height: 26px;
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1496,7 +1775,7 @@ body {
     border-radius: 5px;
     color: #ef4444;
     cursor: pointer;
-    font-size: 1rem;
+    font-size: .9rem;
     line-height: 1;
     padding: 0;
 }
@@ -1506,9 +1785,10 @@ body {
     border-color: rgba(239, 68, 68, .45);
 }
 
-.kd2-template-shift {
-    width: 26px;
-    height: 26px;
+.kd2-template-edit-btn {
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1517,35 +1797,48 @@ body {
     border-radius: 5px;
     color: var(--clr-text-dim);
     cursor: pointer;
-    font-size: .82rem;
-    line-height: 1;
     padding: 0;
 }
 
-.kd2-template-shift:hover:not(:disabled) {
-    background: rgba(59, 130, 246, .12);
-    border-color: rgba(59, 130, 246, .45);
-    color: #bfdbfe;
+.kd2-template-edit-btn svg {
+    width: 13px;
+    height: 13px;
 }
 
-.kd2-template-shift:disabled {
-    opacity: .45;
-    cursor: not-allowed;
+.kd2-template-edit-btn:hover {
+    background: var(--clr-accent-dim);
+    border-color: var(--clr-accent);
+    color: var(--clr-accent);
 }
 
-.kd2-template-new-rows {
-    display: grid;
-    gap: 10px;
+.kd2-template-edit-btn.active {
+    background: var(--clr-accent-dim);
+    border-color: var(--clr-accent);
+    color: var(--clr-accent);
 }
 
+/* Flowchart layout: nodes flow left-to-right (wrapping to a new row when
+   the modal isn't wide enough for the whole route), each pair joined by a
+   connector arrow (.kd2-template-insert-slot, redesigned below) instead of
+   sitting in a plain top-to-bottom list — that flat stack read as a form,
+   not a process. */
+/* A fixed 3-across grid, not flex-wrap's greedy packing — flex-wrap fits
+   as many (arrow + card) pairs as happen to have room left on a row,
+   which is exactly what produced "3 on one row, 4 on the next": however
+   many cards are showing extra fields at that moment changes how much
+   room is left. A grid with an explicit column count seats exactly 3
+   cards per row every time (bar a shorter final row when the route's
+   total count isn't a multiple of 3, which is normal for any wrapping
+   layout) regardless of what any individual card is showing. Each pair is
+   two tracks — the connector arrow, then the card — repeated 3 times. */
 .kd2-template-visual {
     display: grid;
-    gap: 12px;
-}
-
-.kd2-template-visual-note {
-    color: var(--clr-text-dim);
-    font-size: .72rem;
+    /* 1fr card columns — cards stretch to fill the section's actual width
+       (still exactly 3 per row) instead of sitting at a fixed size with
+       leftover space to the right. */
+    grid-template-columns: repeat(3, 40px minmax(0, 1fr));
+    align-items: start;
+    gap: 10px 0;
 }
 
 .kd2-template-insert-slot {
@@ -1553,16 +1846,42 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 14px;
+    flex: 0 0 auto;
+    width: 40px;
+    align-self: center;
 }
 
+/* The connector itself — a persistent arrow so the sequence reads as a
+   flow even before you hover anything, with an arrowhead so direction is
+   unambiguous when a row wraps and the visual left-to-right order breaks. */
 .kd2-template-insert-slot::before {
     content: "";
     position: absolute;
-    inset: 50% 0 auto;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(148, 163, 184, .34), transparent);
+    inset: 50% 6px auto;
+    height: 2px;
+    background: color-mix(in srgb, var(--kd2-group-color, var(--clr-accent)) 30%, var(--clr-border) 70%);
     transform: translateY(-50%);
+}
+
+.kd2-template-insert-slot::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: 5px;
+    width: 7px;
+    height: 7px;
+    border-top: 2px solid color-mix(in srgb, var(--kd2-group-color, var(--clr-accent)) 40%, var(--clr-border) 60%);
+    border-right: 2px solid color-mix(in srgb, var(--kd2-group-color, var(--clr-accent)) 40%, var(--clr-border) 60%);
+    transform: translateY(-50%) rotate(45deg);
+}
+
+/* First/last slot (route start/end) don't connect two nodes — just an
+   insert affordance, no arrow implying a predecessor/successor. */
+.kd2-template-insert-slot:first-child::before,
+.kd2-template-insert-slot:first-child::after,
+.kd2-template-insert-slot:last-child::before,
+.kd2-template-insert-slot:last-child::after {
+    display: none;
 }
 
 .kd2-template-insert-btn {
@@ -1575,7 +1894,7 @@ body {
     justify-content: center;
     border: 1px solid rgba(59, 130, 246, .26);
     border-radius: 999px;
-    background: color-mix(in srgb, var(--clr-surface) 88%, #2563eb 12%);
+    background: var(--clr-surface);
     color: #bfdbfe;
     cursor: pointer;
     font-size: 1rem;
@@ -1590,6 +1909,14 @@ body {
 .kd2-template-insert-slot.is-open .kd2-template-insert-btn {
     opacity: 1;
     transform: scale(1);
+    background: color-mix(in srgb, var(--clr-surface) 88%, #2563eb 12%);
+}
+
+/* Hovering the connector to insert something hides the arrowhead so it
+   doesn't fight visually with the + button sitting on top of it. */
+.kd2-template-insert-slot:hover::after,
+.kd2-template-insert-slot.is-open::after {
+    opacity: 0;
 }
 
 .kd2-template-insert-btn:hover,
@@ -1733,14 +2060,32 @@ body {
 
 .kd2-template-card {
     display: grid;
-    gap: 10px;
+    align-content: start;
+    gap: 8px;
+    /* Fills its grid column (see .kd2-template-visual) instead of a fixed
+       width — every card, space blocks included, is exactly the same size
+       as its row-mates and the row itself spans the section edge-to-edge. */
+    width: auto;
+    min-width: 0;
     border: 1px solid var(--clr-border);
-    border-radius: 12px;
-    background:
-        linear-gradient(180deg, rgba(59, 130, 246, .08), rgba(59, 130, 246, 0)),
-        var(--clr-surface);
-    padding: 12px;
+    border-top: 3px solid color-mix(in srgb, var(--kd2-group-color, var(--clr-accent)) 55%, var(--clr-border) 45%);
+    border-radius: 10px;
+    background: var(--clr-surface);
+    padding: 10px 12px;
     cursor: grab;
+    transition: border-color .15s ease, box-shadow .15s ease;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .06);
+    /* Hard guarantee, on top of the min-width:0 chain above — nothing can
+       render past the card's own column width, which is also what keeps
+       the row wrap consistent (a card that manages to render wider than
+       its column throws off how many fit per row). A <select>'s own
+       dropdown list is browser-native chrome, not a normal overflow
+       child, so this doesn't clip it. */
+    overflow: hidden;
+}
+
+.kd2-template-card:hover {
+    border-color: color-mix(in srgb, var(--kd2-group-color, var(--clr-accent)) 40%, var(--clr-border) 60%);
 }
 
 .kd2-template-card.kd2-template-card-dragging {
@@ -1748,7 +2093,31 @@ body {
     cursor: grabbing;
 }
 
+.kd2-template-card[data-new="true"] {
+    border-top-color: var(--clr-accent);
+    border-top-width: 4px;
+}
+
+.kd2-template-new-badge {
+    display: inline-flex;
+    align-items: center;
+    background: var(--clr-accent-dim);
+    border-radius: 5px;
+    color: var(--clr-accent);
+    font-size: .62rem;
+    font-weight: 800;
+    letter-spacing: .06em;
+    margin-right: 6px;
+    padding: 1px 6px;
+    text-transform: uppercase;
+    vertical-align: middle;
+}
+
 .kd2-template-space-card {
+    /* Same footprint as every other node — only the dashed top edge and
+       tint mark it as a gap rather than a process step. */
+    border-top-style: dashed;
+    border-color: rgba(16, 185, 129, .34);
     background:
         linear-gradient(180deg, rgba(16, 185, 129, .12), rgba(16, 185, 129, 0)),
         var(--clr-surface);
@@ -1758,87 +2127,114 @@ body {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 10px;
+    gap: 8px;
+    min-width: 0;
 }
 
 .kd2-template-card-copy {
     min-width: 0;
+    flex: 1 1 auto;
 }
 
-.kd2-template-card-copy strong,
+/* The station name wraps instead of ellipsis-truncating — a cut-off process
+   name with no way to see the rest was the actual complaint; the card just
+   grows a little taller for a long one instead. The meta line (category ·
+   component · work center) stays single-line since it's secondary
+   information, with the full text still reachable via its title tooltip. */
+.kd2-template-card-copy strong {
+    display: block;
+    min-width: 0;
+    color: var(--clr-text);
+    font-size: .84rem;
+    line-height: 1.25;
+    overflow-wrap: break-word;
+}
+
 .kd2-template-card-copy span {
     display: block;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-.kd2-template-card-copy strong {
-    color: var(--clr-text);
-    font-size: .84rem;
-}
-
-.kd2-template-card-copy span {
     color: var(--clr-text-dim);
     font-size: .7rem;
     margin-top: 2px;
 }
 
 .kd2-template-card-tools {
-    display: inline-flex;
+    display: flex;
     align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
+    gap: 4px;
+    flex: 0 0 auto;
 }
 
+/* Compact number badge, not a text pill — "Route 3 · Parallel" was the
+   single biggest thing forcing these tools wider than the card, since pill
+   text can't wrap. A small circular step number carries the position;
+   "runs in parallel" becomes a dashed ring instead of appended text. */
 .kd2-template-route-pill {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 5px 9px;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+    border: 1px solid transparent;
     border-radius: 999px;
-    background: rgba(59, 130, 246, .12);
-    color: #93c5fd;
-    font-size: .7rem;
+    background: color-mix(in srgb, var(--kd2-group-color, var(--clr-accent)) 16%, transparent);
+    color: var(--kd2-group-color, var(--clr-accent));
+    font-size: .68rem;
     font-weight: 800;
-    letter-spacing: .05em;
-    text-transform: uppercase;
+}
+
+.kd2-template-route-pill.is-parallel {
+    border-style: dashed;
+    border-color: var(--kd2-group-color, var(--clr-accent));
 }
 
 .kd2-template-drag-handle {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 34px;
-    height: 30px;
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
     border: 1px dashed var(--clr-border);
-    border-radius: 8px;
+    border-radius: 6px;
     color: var(--clr-text-dim);
-    font-size: .88rem;
+    font-size: .76rem;
     line-height: 1;
 }
 
+/* One field per row, full card width — not a wrapping flex row of
+   130px-minimum fields. That row kept forcing the card wider than its
+   fixed width (a <select>'s content resists shrinking below a certain
+   point no matter how many min-width:0s are chained above it), and the
+   card count per line shifted depending on which cards happened to be
+   showing extra fields. A single column can never do that: every field
+   gets the card's actual full width, so the card's own width — and the
+   number of cards per row — stays fixed no matter what a card is showing. */
 .kd2-template-card-fields {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 10px;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    min-width: 0;
 }
 
 .kd2-template-space-body {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 10px;
+    display: flex;
+    align-items: flex-end;
 }
 
 .kd2-template-card-field {
     display: grid;
-    gap: 6px;
+    min-width: 0;
+    gap: 4px;
 }
 
-.kd2-template-card-field-span2 {
-    grid-column: span 2;
+.kd2-template-card-field-duration {
+    max-width: 90px;
+    min-width: 0;
 }
 
 .kd2-template-card-field label {
@@ -1849,38 +2245,17 @@ body {
     text-transform: uppercase;
 }
 
-.kd2-template-card-field-value {
-    min-height: 40px;
-    display: flex;
-    align-items: center;
-    padding: 0 12px;
-    border: 1px solid var(--clr-border);
-    border-radius: 8px;
-    background: rgba(148, 163, 184, .08);
-    color: var(--clr-text);
-    font-size: .82rem;
-}
-
-.kd2-template-space-summary {
-    font-weight: 700;
-    color: #bbf7d0;
-}
-
-.kd2-template-card-foot {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    flex-wrap: wrap;
-}
-
 .kd2-template-parallel-toggle {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    align-self: center;
+    gap: 6px;
+    margin-left: auto;
+    padding-bottom: 2px;
     color: var(--clr-text-dim);
-    font-size: .74rem;
-    font-weight: 600;
+    font-size: .72rem;
+    font-weight: 700;
+    white-space: nowrap;
 }
 
 .kd2-template-parallel-toggle input {
@@ -1889,8 +2264,8 @@ body {
 }
 
 .kd2-template-space-pill {
-    background: rgba(16, 185, 129, .14);
-    color: #86efac;
+    background: color-mix(in srgb, var(--clr-completed) 18%, transparent);
+    color: var(--clr-completed);
 }
 
 .kd2-table-wrap {
@@ -2100,6 +2475,7 @@ body {
 
 .kd2-process-toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: end;
     justify-content: space-between;
     gap: 16px;
@@ -2109,6 +2485,259 @@ body {
 .kd2-process-toolbar .form-group {
     min-width: 180px;
     margin-bottom: 0;
+}
+
+/* ─── Manage Processes: Flow (drag-to-reorder) view ─────────────────── */
+.kd2-process-view-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+.kd2-process-flow-hint {
+    flex: 1 1 260px;
+    margin: 0;
+}
+
+/* Flow reads top-to-bottom, like the route it represents. */
+.kd2-process-flow-row {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0 8px;
+    margin-top: 4px;
+    width: 100%;
+}
+
+.kd2-process-flow-card {
+    width: 100%;
+    max-width: 240px;
+    flex: 0 0 auto;
+}
+
+/* The station's category, since the flow is one continuous route across
+   all of them — a unit can go Welding → Machining → back to Welding, so
+   grouping cards by category would misrepresent the actual sequence. This
+   tag is what lets you still read which category you're in at a glance. */
+.kd2-process-flow-card-category {
+    display: inline-block;
+    margin-bottom: 6px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--kd2-group-color, var(--clr-accent)) 16%, transparent);
+    color: var(--kd2-group-color, var(--clr-accent));
+    font-size: .6rem;
+    font-weight: 800;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.kd2-process-flow-card.kd2-process-flow-dragging {
+    opacity: .5;
+}
+
+.kd2-process-flow-card.kd2-process-flow-drop-before {
+    box-shadow: -3px 0 0 var(--clr-accent);
+}
+.kd2-process-flow-card.kd2-process-flow-drop-after {
+    box-shadow: 3px 0 0 var(--clr-accent);
+}
+/* Dropped on the middle third of a card — joins it as a parallel step
+   instead of landing before/after it in the sequence. */
+.kd2-process-flow-card.kd2-process-flow-drop-join {
+    box-shadow: 0 0 0 2px var(--clr-accent);
+}
+
+/* One step = one flowchart node. A lone station is just its card; two or
+   more sharing a route_sequence sit side by side inside a labeled group so
+   they read as happening at once, not as a leg of the sequence. */
+.kd2-process-flow-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+}
+.kd2-process-flow-step-parallel {
+    position: relative;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    padding: 14px 8px 8px;
+    border: 1px dashed color-mix(in srgb, var(--kd2-group-color, var(--clr-accent)) 45%, var(--clr-border) 55%);
+    border-radius: 12px;
+    background: var(--clr-surface-2);
+    width: auto;
+    max-width: 100%;
+}
+.kd2-process-flow-step-parallel .kd2-process-flow-card {
+    width: 200px;
+}
+.kd2-process-flow-step-parallel::before {
+    content: "Parallel";
+    position: absolute;
+    top: -8px;
+    left: 10px;
+    padding: 0 6px;
+    background: var(--clr-surface);
+    color: var(--clr-text-dim);
+    font-size: .58rem;
+    font-weight: 800;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+/* Downward connector between steps in the vertical flow. */
+.kd2-process-flow-arrow {
+    position: relative;
+    width: 22px;
+    height: 24px;
+    flex: 0 0 auto;
+    align-self: center;
+}
+.kd2-process-flow-arrow::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 2px;
+    bottom: 4px;
+    width: 2px;
+    background: var(--clr-border);
+    transform: translateX(-50%);
+}
+.kd2-process-flow-arrow::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: 2px;
+    width: 6px;
+    height: 6px;
+    border-bottom: 2px solid var(--clr-border);
+    border-right: 2px solid var(--clr-border);
+    transform: translateX(-50%) rotate(45deg);
+}
+
+/* K9's Hull/Turret lanes — two parallel physical lines, Hull on the left
+   and Turret on the right, each flowing top-to-bottom on its own before
+   converging into the shared flow below. */
+.kd2-process-flow-lanes {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 28px;
+    padding: 14px 12px;
+    border: 1px dashed var(--clr-border-soft);
+    border-radius: 12px;
+}
+
+.kd2-process-flow-lane {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 280px;
+}
+
+.kd2-process-flow-lane-label {
+    color: var(--clr-text-dim);
+    font-size: .66rem;
+    font-weight: 800;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    text-align: center;
+    margin-bottom: 4px;
+}
+
+/* Hull and Turret each end in a short stub that bends inward and meets at
+   a shared point, continuing on as one arrow down into the merged flow —
+   the two-lines-become-one shape of an actual flowchart merge. */
+.kd2-process-flow-merge {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    margin: 0 0 6px;
+}
+.kd2-process-flow-merge-arrow {
+    position: relative;
+    width: 100%;
+    max-width: 420px;
+    height: 26px;
+    border-top: 2px solid var(--clr-border);
+}
+.kd2-process-flow-merge-arrow::before {
+    /* stem continuing down from the bar's midpoint */
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 2px;
+    height: 18px;
+    background: var(--clr-border);
+    transform: translateX(-50%);
+}
+.kd2-process-flow-merge-arrow::after {
+    /* chevron at the foot of the stem, matching .kd2-process-flow-arrow */
+    content: "";
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    width: 6px;
+    height: 6px;
+    border-bottom: 2px solid var(--clr-border);
+    border-right: 2px solid var(--clr-border);
+    transform: translateX(-50%) rotate(45deg);
+}
+.kd2-process-flow-merge-label {
+    color: var(--clr-text-dim);
+    font-size: .64rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+/* ─── Add Category (inline panel inside KD2 Process Maintenance) ───── */
+.kd2-add-category-form {
+    background: var(--clr-surface-2);
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-top: 12px;
+}
+
+.kd2-add-category-grid {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 16px;
+}
+
+.kd2-add-category-grid .form-group {
+    margin-bottom: 0;
+    min-width: 220px;
+}
+
+.kd2-add-category-vehicles {
+    display: flex;
+    gap: 14px;
+    padding: 8px 0;
+}
+
+.kd2-add-category-actions {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.kd2-add-category-form .modal-info {
+    margin-top: 10px;
+    font-size: .78rem;
 }
 
 .kd2-process-form {
@@ -2201,43 +2830,52 @@ body {
 
 .kd2-xray-chip {
     display: inline-block;
+    margin-top: 5px;
     margin-left: 6px;
-    padding: 1px 6px;
-    border-radius: 10px;
-    font-size: .62rem;
+    padding: 1px 7px;
+    border-radius: 5px;
+    font-size: .6rem;
     font-weight: 700;
-    letter-spacing: .05em;
+    letter-spacing: .06em;
     background: rgba(168, 85, 247, .14);
     color: var(--clr-xray-active);
     vertical-align: middle;
 }
 
 .kd2-process-reorder {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
 }
 
 .kd2-process-reorder-arrows {
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: 2px;
 }
 
 .kd2-reorder-btn {
-    background: var(--clr-surface);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--clr-surface-2);
     border: 1px solid var(--clr-border-soft);
-    border-radius: 3px;
+    border-radius: 4px;
     color: var(--clr-text-muted);
     cursor: pointer;
-    font-size: .58rem;
+    font-size: .5rem;
     line-height: 1;
-    padding: 1px 4px;
+    width: 18px;
+    height: 14px;
+    transition: color .12s, border-color .12s, background .12s;
 }
 
 .kd2-reorder-btn:hover:not(:disabled) {
     color: var(--clr-accent);
     border-color: var(--clr-accent);
+    background: var(--clr-accent-dim);
 }
 
 .kd2-reorder-btn:disabled {
@@ -2246,13 +2884,17 @@ body {
 }
 
 .kd2-icon-action-btn {
-    background: var(--clr-surface);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--clr-surface-2);
     border: 1px solid var(--clr-border-soft);
     border-radius: var(--radius-sm);
     color: var(--clr-text-muted);
     cursor: pointer;
-    font-size: .9rem;
-    padding: 5px 9px;
+    font-size: .85rem;
+    padding: 6px 9px;
+    transition: color .12s, border-color .12s, background .12s;
 }
 
 .kd2-icon-action-btn:hover {
@@ -2292,53 +2934,109 @@ body {
 
 .kd2-process-table-wrap {
     overflow: auto; /* table-level scrolling to contain table height and keep headers inside table */
-    max-height: calc(50vh); /* reasonable max so tables don't overflow modal; responsive */
+    max-height: 52vh; /* reasonable max so tables don't overflow modal; responsive */
     position: relative;
-}
-
-.kd2-process-table thead th {
-    position: sticky;
-    top: 0; /* stick to top of the table scroll container */
-    z-index: 5;
-    background: var(--clr-surface-2);
-}
-
-.kd2-process-table th,
-.kd2-process-table td {
-    overflow-wrap: anywhere;
-    word-break: break-word;
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-md, 10px);
+    background: var(--clr-surface);
 }
 
 .kd2-process-table {
     min-width: 980px;
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: .84rem;
 }
 
-.kd2-process-table th,
-.kd2-process-table td {
-    padding: 12px 16px;
+.kd2-process-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--clr-surface-2);
+    color: var(--clr-text-muted);
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    text-align: left;
+    white-space: nowrap;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--clr-border);
+}
+
+.kd2-process-table tbody td {
+    padding: 11px 16px;
     vertical-align: middle;
-    font-size: .92rem;
-    white-space: normal; /* allow text wrapping for readability */
+    line-height: 1.4;
+    color: var(--clr-text);
+    border-bottom: 1px solid var(--clr-border-soft);
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.kd2-process-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.kd2-process-table tbody tr {
+    transition: background .12s ease;
+}
+
+.kd2-process-table tbody tr:nth-child(even) td {
+    background: color-mix(in srgb, var(--clr-surface-2) 45%, transparent);
+}
+
+.kd2-process-table tbody tr:hover td {
+    background: var(--clr-accent-dim);
+}
+
+/* Station column — name leads, code sits under it as a mono chip */
+.kd2-process-table tbody td:nth-child(3) strong {
+    display: block;
+    font-weight: 650;
+    font-size: .88rem;
+    color: var(--clr-text);
+    letter-spacing: -.005em;
+}
+
+.kd2-process-code {
+    display: inline-block;
+    margin-top: 5px;
+    padding: 1px 7px;
+    font-family: var(--ff-mono, ui-monospace, monospace);
+    font-size: .66rem;
+    line-height: 1.5;
+    letter-spacing: .02em;
+    color: var(--clr-text-muted);
+    background: var(--clr-surface-2);
+    border: 1px solid var(--clr-border-soft);
+    border-radius: 5px;
+}
+
+/* Numeric columns: Order, Route, Lead Time */
+.kd2-process-table tbody td:nth-child(6),
+.kd2-process-table tbody td:nth-child(7),
+.kd2-process-table tbody td:nth-child(8) {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.kd2-process-table tbody td:nth-child(8),
+.kd2-process-table tbody td:nth-child(9),
+.kd2-process-table tbody td:nth-child(10) {
+    color: var(--clr-text-muted);
 }
 
 .kd2-process-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     justify-content: flex-end;
     white-space: nowrap;
 }
 
-.kd2-process-code {
-    display: block;
-    margin-top: 4px;
-    font-size: .68rem;
-    color: var(--clr-text-dim);
-    letter-spacing: .04em;
-}
-
-.kd2-route-sequence-input,
-.kd2-template-route-input {
+.kd2-route-sequence-input {
     text-align: center;
 }
 
@@ -3097,25 +3795,13 @@ body {
 }
 
 [data-theme="light"] .kd2-template-card {
-    background:
-        linear-gradient(180deg, rgba(59, 130, 246, .08), rgba(59, 130, 246, 0)),
-        #ffffff;
+    background: #ffffff;
 }
 
-[data-theme="light"] .kd2-template-space-card,
-[data-theme="light"] .kd2-template-row-space {
+[data-theme="light"] .kd2-template-space-card {
     background:
         linear-gradient(180deg, rgba(16, 185, 129, .12), rgba(16, 185, 129, 0)),
         #ffffff;
-}
-
-[data-theme="light"] .kd2-template-route-pill {
-    color: #1d4ed8;
-}
-
-[data-theme="light"] .kd2-template-space-pill,
-[data-theme="light"] .kd2-template-space-summary {
-    color: #166534;
 }
 
 [data-theme="light"] .kd2-template-insert-menu {
@@ -3628,6 +4314,19 @@ body {
     white-space: nowrap;
 }
 
+.xray-marker-notstarted {
+    background: transparent;
+    color: var(--clr-xray-active);
+    border: 1px dashed var(--clr-xray-active);
+    padding: 2px 8px;
+    opacity: .78;
+}
+
+.xray-marker-notstarted:hover {
+    opacity: 1;
+    background: rgba(168, 85, 247, .1);
+}
+
 .xray-marker-awaiting {
     background: rgba(59, 130, 246, .12);
     color: var(--clr-planned);
@@ -3735,6 +4434,118 @@ body {
 .kd2-process-row-editing .kd2-process-actions {
     flex-wrap: wrap;
     justify-content: flex-start;
+}
+
+/* ── Manage Processes: edit / add form panel (replaces the cramped inline row) ── */
+.kd2-process-edit-panel {
+    background: var(--clr-surface);
+    border: 1px solid var(--clr-border);
+    border-left: 3px solid var(--clr-accent);
+    border-radius: var(--radius-md, 10px);
+    padding: 16px 18px 14px;
+    margin-bottom: 16px;
+    box-shadow: 0 8px 26px rgba(2, 6, 23, 0.08);
+}
+
+.kd2-pep-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--clr-border-soft);
+}
+
+.kd2-pep-head h5 {
+    margin: 0;
+    font-size: .95rem;
+    font-weight: 700;
+    color: var(--clr-text);
+}
+
+.kd2-pep-head .kd2-process-code {
+    margin: 0;
+    font-size: .7rem;
+}
+
+.kd2-process-form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 12px 16px;
+}
+
+.kd2-pf-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+}
+
+.kd2-pf-field-wide {
+    grid-column: 1 / -1;
+}
+
+.kd2-pf-label {
+    font-size: .72rem;
+    font-weight: 600;
+    letter-spacing: .02em;
+    text-transform: uppercase;
+    color: var(--clr-text-muted);
+}
+
+.kd2-process-edit-panel .kd2-process-input {
+    padding: 7px 9px;
+    font-size: .86rem;
+}
+
+.kd2-process-edit-panel .kd2-process-input:disabled {
+    opacity: .6;
+    cursor: not-allowed;
+}
+
+.kd2-pf-toggle {
+    margin-top: 2px;
+    padding: 10px 12px;
+    background: var(--clr-surface-2);
+    border: 1px solid var(--clr-border-soft);
+    border-radius: var(--radius-sm);
+}
+
+.kd2-pf-toggle .form-check {
+    align-items: flex-start;
+}
+
+.kd2-pf-toggle .form-check > span {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: .86rem;
+    font-weight: 600;
+    color: var(--clr-text);
+}
+
+.kd2-pf-toggle .form-check small {
+    font-weight: 400;
+    font-size: .74rem;
+    color: var(--clr-text-muted);
+}
+
+.kd2-pep-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--clr-border-soft);
+}
+
+.kd2-process-row-active > td {
+    background: var(--clr-accent-dim);
+}
+
+.kd2-icon-action-btn.is-active {
+    color: var(--clr-accent);
+    border-color: var(--clr-accent);
+    background: var(--clr-accent-dim);
 }
 
 .xray-cycle-edit-actions {
@@ -4130,6 +4941,15 @@ body {
 }
 
 /* ─── Responsive ────────────────────────────────────────────────── */
+/* Header controls shed weight before they'd ever overlap: clock/date first
+   (least essential — status-strip keeps just the connection dot), then the
+   plan-context labels shrink, then brand text drops to icon-only. */
+@media (max-width: 1180px) {
+    .status-clock {
+        display: none;
+    }
+}
+
 @media (max-width: 900px) {
     .charts-grid {
         grid-template-columns: 1fr;
@@ -4144,8 +4964,12 @@ body {
         padding: 0 12px;
     }
 
-    .header-clock {
-        display: none;
+    .context-select-trigger {
+        width: 76px;
+    }
+
+    #planVersionSelectorWrap .context-select-trigger {
+        width: 110px;
     }
 }
 
@@ -4154,11 +4978,11 @@ body {
         grid-template-columns: 1fr 1fr;
     }
 
-    .brand-sub {
+    .brand-word {
         display: none;
     }
 
-    .header-date {
+    .conn-label {
         display: none;
     }
 
@@ -4683,6 +5507,63 @@ body {
 .gc-bar:hover {
     filter: brightness(1.15);
     z-index: 5;
+}
+
+/* Edge resize handles — hover a block in edit mode and a chevron tab lights
+   up just past each end; drag it to change that end's date directly, no
+   Edit modal needed. Outside the bar (not inside it): the bar is only
+   22px tall and its own corner controls (.gc-bar-select, .gc-bar-menu-
+   trigger) already claim nearly all of that, so an inside handle always
+   collided with one of them. A flat -14px offset (the handle's own width)
+   puts it flush against the bar with nothing overlapping.
+   The actual bug that made every earlier attempt land wrong: .gc-bar > *
+   (further down this file — lifts the bar's own text/icons above its
+   ::before tint overlay) sets position:relative + z-index:1 on EVERY
+   direct child of .gc-bar. Same specificity as a plain .gc-bar-resize
+   rule, declared later in the file, so it silently downgraded
+   position:absolute back to relative — which keeps an element in normal
+   flow and only nudges it by left/right from there, instead of taking it
+   out of flow entirely. That's why the handles kept landing inline next
+   to the bar's text instead of at its edges, no matter how the rest of
+   this rule was tuned. Fix: .gc-bar > .gc-bar-resize is more specific
+   than .gc-bar > *, so it always wins regardless of source order — no
+   !important needed. */
+.gc-bar > .gc-bar-resize {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: ew-resize;
+    z-index: 6;
+    opacity: 0;
+    background: var(--clr-surface-2);
+    border: 1px solid var(--clr-border);
+    color: var(--clr-text-dim);
+    transition: opacity .12s, background .12s, border-color .12s, color .12s;
+}
+.gc-bar-resize svg {
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+}
+.gc-bar-resize-left {
+    left: -14px;
+    border-radius: 4px 0 0 4px;
+}
+.gc-bar-resize-right {
+    right: -14px;
+    border-radius: 0 4px 4px 0;
+}
+.gc-bar:hover .gc-bar-resize {
+    opacity: 1;
+}
+.gc-bar-resize:hover {
+    background: var(--clr-accent);
+    border-color: var(--clr-accent);
+    color: #fff;
 }
 
 .gc-bar::before {
@@ -5465,8 +6346,8 @@ body {
     border-radius: var(--radius-sm);
     color: var(--clr-text-muted);
     cursor: pointer;
-    width: 34px;
-    height: 34px;
+    width: 32px;
+    height: 32px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -5531,36 +6412,38 @@ body {
     white-space: nowrap;
 }
 
+/* Solid fill + white text, on purpose: these fixed colors don't derive from
+   theme tokens because a translucent tint over --clr-surface-2 landed at
+   very different contrast on each of the 6 themes (unreadable on light and
+   on the pastel Catppuccin surface especially). White-on-solid stays legible
+   everywhere the same way, and keeps each role's identity color constant
+   regardless of theme. */
 .nav-role-badge {
     font-size: .62rem;
     font-weight: 700;
     letter-spacing: .08em;
     text-transform: uppercase;
     border-radius: 20px;
-    padding: 1px 7px;
-    background: var(--clr-accent-dim);
-    color: var(--clr-accent);
+    padding: 2px 8px;
+    background: #2563eb;
+    color: #fff;
     white-space: nowrap;
 }
 
 .nav-role-badge.role-master-admin {
-    background: rgba(139, 92, 246, .15);
-    color: #8b5cf6;
+    background: #7c3aed;
 }
 
 .nav-role-badge.role-admin {
-    background: var(--clr-accent-dim);
-    color: var(--clr-accent);
+    background: #2563eb;
 }
 
 .nav-role-badge.role-planner {
-    background: rgba(245, 158, 11, .12);
-    color: #f59e0b;
+    background: #b45309;
 }
 
 .nav-role-badge.role-viewer {
-    background: rgba(34, 197, 94, .1);
-    color: var(--clr-completed);
+    background: #15803d;
 }
 
 /* ─── Wide modal ────────────────────────────────────────────────── */
@@ -5737,6 +6620,46 @@ body {
 .status-pill.inactive {
     background: rgba(239, 68, 68, .1);
     color: var(--clr-overdue);
+}
+
+/* ─── Module access chips (User Management table + form) ───────────── */
+.um-module-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.um-module-chip {
+    display: inline-flex;
+    align-items: center;
+    background: var(--clr-surface-2);
+    border: 1px solid var(--clr-border);
+    border-radius: 6px;
+    color: var(--clr-text-muted);
+    font-size: .64rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    padding: 2px 6px;
+    white-space: nowrap;
+}
+
+.um-module-chip--all {
+    background: var(--clr-accent-dim);
+    border-color: var(--clr-accent);
+    color: var(--clr-accent);
+}
+
+.um-module-chip--none {
+    color: var(--clr-text-dim);
+    font-style: italic;
+    font-weight: 500;
+}
+
+.um-modules-check-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    padding-top: 4px;
 }
 
 /* ─── Audit Log ─────────────────────────────────────────────────── */
@@ -6869,15 +7792,20 @@ body {
 
 .gantt-lane-select-btn {
     flex-shrink: 0;
+    align-self: center;
+    height: 20px;
+    line-height: 18px;
     border: 1px solid rgba(79, 142, 247, .28);
     background: rgba(79, 142, 247, .08);
     color: var(--clr-accent);
-    border-radius: var(--radius-sm);
-    padding: 4px 8px;
-    font-size: .66rem;
-    letter-spacing: .04em;
+    border-radius: 999px;
+    padding: 0 8px;
+    font-size: .6rem;
+    font-weight: 600;
+    letter-spacing: .03em;
     text-transform: uppercase;
     cursor: pointer;
+    white-space: nowrap;
 }
 
 .gantt-lane-select-btn:hover {
@@ -8697,22 +9625,9 @@ th.vpx-grp-processing:first-of-type {
         flex-direction: column;
     }
 
-    .kd2-template-card-head,
-    .kd2-template-card-foot {
+    .kd2-template-card-head {
         flex-direction: column;
         align-items: stretch;
-    }
-
-    .kd2-template-row {
-        grid-template-columns: 1fr;
-    }
-
-    .kd2-template-row-actions {
-        justify-content: flex-end;
-    }
-
-    .kd2-template-card-field-span2 {
-        grid-column: auto;
     }
 
     .kd2-timeline-palette-items {
@@ -9725,10 +10640,11 @@ th.vpx-grp-processing:first-of-type {
    SECTION NAVIGATION — centered in header row
    ════════════════════════════════════════════════════════ */
 .section-nav {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 2px;
+    gap: 4px;
     flex: 1;                /* fills space between brand and right controls */
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
@@ -9737,32 +10653,57 @@ th.vpx-grp-processing:first-of-type {
 }
 .section-nav::-webkit-scrollbar { display: none; }
 
+/* Underline tabs, not a row of separate buttons: no per-item background —
+   the whole strip reads as one navigation bar. The current section is
+   marked by one shared indicator bar that slides between links (below),
+   not by each link drawing its own border — that's what kept the group
+   reading as separate buttons rather than one control. */
 .section-nav-link {
     display: inline-flex;
     align-items: center;
-    padding: 5px 12px;
+    padding: 7px 12px 6px;
     font-size: .74rem;
     font-weight: 500;
     color: var(--clr-text-dim);
     text-decoration: none;
-    border-radius: var(--radius-sm);
     white-space: nowrap;
     flex-shrink: 0;
-    transition: color .15s, background .15s;
+    transition: color .15s, transform .15s;
 }
 .section-nav-link:hover {
     color: var(--clr-text);
-    background: var(--clr-surface-2);
+    transform: translateY(-1px);
 }
 .section-nav-link--active {
     color: var(--clr-accent);
-    background: var(--clr-accent-dim);
     font-weight: 600;
 }
 
-[data-theme="light"] .section-nav-link { color: #94a3b8; }
-[data-theme="light"] .section-nav-link:hover { color: #1e293b; background: #f1f5f9; }
-[data-theme="light"] .section-nav-link--active { color: #2563eb; background: #dbeafe; }
+/* One shared bar that slides to the active link's measured position
+   (see wireEvents()'s scroll-spy in app.js) instead of every link owning
+   its own static border — that continuous motion is what reads as one
+   navigation control rather than a row of buttons flicking on and off. */
+.section-nav-indicator {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 2px;
+    width: 0;
+    background: var(--clr-accent);
+    border-radius: 2px;
+    /* transform, not left, for the actual slide — GPU-composited, no layout
+       recalc per frame, which is what made the old left-based version feel
+       stepped instead of fluid. Width still has to animate via layout (it's
+       a size change), but that alone is cheap for a 2px bar. */
+    transform: translateX(0);
+    transition: transform .3s cubic-bezier(.4, 0, .2, 1), width .3s cubic-bezier(.4, 0, .2, 1), opacity .15s;
+    opacity: 0;
+    pointer-events: none;
+    will-change: transform, width;
+}
+.section-nav-indicator.is-visible {
+    opacity: 1;
+}
 
 /* ════════════════════════════════════════════════════════
    SCROLL-TO-TOP BUTTON (fixed, bottom-right)
@@ -9803,79 +10744,52 @@ th.vpx-grp-processing:first-of-type {
 }
 [data-theme="light"] .scroll-top-btn:hover { background: #1d4ed8; }
 
-/* ════════════════════════════════════════════════════════
-   EXPORT PERMISSIONS (inside User Management modal)
-   ════════════════════════════════════════════════════════ */
-.um-export-perm-section {
-    border-top: 2px solid var(--clr-border-soft);
-    margin-top: 4px;
+/* ─── Plan Versions dialog ───────────────────────────────────────── */
+.pv-toolbar {
+    flex-wrap: wrap;
+    gap: 10px;
 }
-.um-export-perm-header {
+.pv-new-row {
     display: flex;
+    gap: 10px;
     align-items: center;
-    justify-content: space-between;
-    padding: 14px 18px 10px;
+    flex-wrap: wrap;
 }
-.um-export-perm-title {
-    display: block;
-    font-size: .9rem;
-    font-weight: 700;
-    color: var(--clr-text);
-    margin-bottom: 2px;
-}
-.um-export-perm-sub {
-    display: block;
-    font-size: .75rem;
+.pv-mode-toggle {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    font-size: .78rem;
     color: var(--clr-text-muted);
 }
-.um-export-perm-body {
-    padding: 0 18px 18px;
-}
-
-/* ════════════════════════════════════════════════════════
-   EXPORT PERMISSIONS LIST ITEMS
-   ════════════════════════════════════════════════════════ */
-.exp-perm-list {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    max-height: 260px;
-    overflow-y: auto;
-    border: 1px solid var(--clr-border-soft);
-    border-radius: var(--radius-sm);
-    margin-bottom: 14px;
-}
-.exp-perm-item {
+.pv-mode-option {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 9px 13px;
-    border-bottom: 1px solid var(--clr-border-soft);
-    font-size: .82rem;
-}
-.exp-perm-item:last-child { border-bottom: none; }
-.exp-perm-email { flex: 1; font-family: var(--ff-mono); font-size: .8rem; color: var(--clr-text); }
-.exp-perm-note  { font-size: .74rem; color: var(--clr-text-muted); }
-.exp-perm-del {
-    background: none;
-    border: none;
+    gap: 5px;
     cursor: pointer;
-    color: var(--clr-text-dim);
-    padding: 3px 6px;
-    border-radius: 4px;
-    transition: color .12s, background .12s;
-    font-size: .8rem;
+    white-space: nowrap;
 }
-.exp-perm-del:hover { color: var(--clr-overdue); background: rgba(239,68,68,.1); }
-.exp-perm-add-row {
-    display: flex;
-    gap: 8px;
-    align-items: center;
+.pv-mode-option input {
+    accent-color: var(--clr-accent);
 }
-.exp-perm-empty {
-    padding: 18px;
-    text-align: center;
-    color: var(--clr-text-dim);
-    font-size: .82rem;
-    font-style: italic;
+.pv-baseline-badge,
+.pv-active-badge {
+    display: inline-block;
+    font-size: .68rem;
+    font-weight: 600;
+    letter-spacing: .03em;
+    padding: 1px 7px;
+    border-radius: 10px;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+.pv-baseline-badge {
+    background: var(--clr-surface-3, var(--clr-surface-2));
+    color: var(--clr-text-muted);
+    border: 1px solid var(--clr-border-soft);
+}
+.pv-active-badge {
+    background: rgba(34, 197, 94, .14);
+    color: var(--clr-accent-green, #22c55e);
+    border: 1px solid rgba(34, 197, 94, .3);
 }

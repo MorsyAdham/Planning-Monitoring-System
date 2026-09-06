@@ -1,6 +1,11 @@
 'use strict';
 
 window.PPMSModuleRuntime = (() => {
+    // Captured once here (not read as window.PlanVersions inline) because several
+    // functions below shadow the `window` identifier with a local `const window`
+    // (a date-range object from buildForwardWindow/etc.) — using the alias avoids
+    // accidentally reading `.PlanVersions` off that shadowed local instead.
+    const PlanVersions = window.PlanVersions;
     const MODULE_KEY = 'ppms_active_module';
     const SESSION_KEY = 'kd1_session';
     const VEHICLES = ['K9', 'K10', 'K11'];
@@ -41,7 +46,6 @@ window.PPMSModuleRuntime = (() => {
             categories: [],   // F100 uses part-level grouping, not station categories
         },
     };
-    const KD2_CATEGORY_CODES = new Set(['welding', 'machining', 'shot_blasting_painting', 'assembly', 'processing', 'final_test']);
     const NON_WORK_MODULE_ID = 'kd2';
     const KD2_IMPORT_COLUMNS = [
         'battalion_code',
@@ -84,6 +88,12 @@ window.PPMSModuleRuntime = (() => {
         timelinePlacementVehicle: 'K9',
         timelinePlacementStationCode: '',
         timelinePlacementQuery: '',
+        // Process View's unit palette groups by battalion already — this
+        // narrows that list to one battalion when there are several, rather
+        // than scrolling through all of them to find the right unit. Not the
+        // same as timelinePlacementBattalionId below, which is the battalion
+        // of whichever *unit* has actually been selected for placement.
+        timelinePlacementBattalionFilter: '',
         timelinePlacementBattalionId: null,
         timelinePlacementUnitSerial: null,
         timelinePlacementUnitLabel: '',
@@ -95,6 +105,11 @@ window.PPMSModuleRuntime = (() => {
         templateEditorVehicle: '',
         templateEditorBlocks: [],
         templateInsertIndex: null,
+        templatePreviewLegendOpen: false,
+        templateEditorGroupFilter: '',
+        templateEditingBlockId: null,   // editor_id of an existing (non-new) card currently showing its editable station/category fields
+        processView: 'table',           // 'table' | 'flow' — Manage Processes' Table vs. drag-to-reorder Flow view
+        templateGanttMoveMode: 'from-block',
     };
     const placementPointer = { x: 0, y: 0, ready: false };
     let placementGhostEl = null;
@@ -116,9 +131,31 @@ window.PPMSModuleRuntime = (() => {
         } catch { return MODULE_KEY; }
     }
 
+    const ALL_MODULE_IDS = ['kd1', 'kd2', 'f100kd2'];
+
+    /** Which modules the current session's user may switch into. master_admin
+     *  always gets all three regardless of their own `modules` value — that
+     *  column can restrict everyone else, but it can never lock out the top
+     *  admin. An empty/misconfigured list also falls back to all three rather
+     *  than hard-locking a user out of the whole app. */
+    function getAllowedModules() {
+        const user = getCurrentUser();
+        if (!user || user.role === 'master_admin') return ALL_MODULE_IDS;
+        const modules = Array.isArray(user.modules) ? user.modules.filter(m => ALL_MODULE_IDS.includes(m)) : [];
+        return modules.length ? modules : ALL_MODULE_IDS;
+    }
+
+    function isModuleAllowed(moduleId) {
+        return getAllowedModules().includes(moduleId);
+    }
+
     function getActiveModule() {
         const stored = localStorage.getItem(_userModuleKey());
-        return MODULES[stored] ? stored : 'kd1';
+        const allowed = getAllowedModules();
+        if (MODULES[stored] && allowed.includes(stored)) return stored;
+        // Stored module isn't allowed anymore (or nothing stored yet) — land
+        // on the first module this user actually has access to.
+        return allowed[0] || 'kd1';
     }
 
     function isKD2() {
@@ -135,7 +172,9 @@ window.PPMSModuleRuntime = (() => {
     }
 
     function setActiveModule(moduleId) {
-        localStorage.setItem(_userModuleKey(), MODULES[moduleId] ? moduleId : 'kd1');
+        const allowed = getAllowedModules();
+        const safe = (MODULES[moduleId] && allowed.includes(moduleId)) ? moduleId : (allowed[0] || 'kd1');
+        localStorage.setItem(_userModuleKey(), safe);
     }
 
     function getActiveConfig() {
@@ -180,14 +219,155 @@ window.PPMSModuleRuntime = (() => {
 
     function stationAllowedForVehicle(row) {
         if (!row || !stationCodeMatchesVehicle(row.vehicle_type, row.station_code)) return false;
-        if (row.category_code !== 'assembly') return true;
-        // K9 filters by work center to separate hull-side from turret-side assembly tracks.
-        // K10/K11 have a single sequential assembly route — all stations pass regardless of work center.
-        if (row.vehicle_type !== 'K9') return true;
-        const tokens = workCenterTokens(row.work_center);
-        if (!tokens.length) return false;
-        const allowed = new Set(['A01', 'A02', 'A03', 'A04', 'A05', 'A06', 'A07', 'A08', 'A09', 'A10', 'A11']);
-        return tokens.some(token => allowed.has(token));
+        // Used to also hard-block K9 "assembly" stations whose work center
+        // wasn't in a fixed A01-A11 allowlist — a leftover from before the
+        // Hull/Turret split was properly tagged via component_group. Any
+        // new K9 assembly station added since (e.g. Qualifying, Foam
+        // Molding) with a different work-center code got silently dropped
+        // from state.stations entirely — invisible everywhere (Gantt, VPX,
+        // plan generation), not just hard to find. is_active (already
+        // filtered in the query that feeds this) is what should gate
+        // whether a station is real; component_group already carries the
+        // Hull/Turret distinction this was trying to reconstruct from
+        // work-center codes. Same fix already applied to K10/K11 for this
+        // exact failure mode (see "Fix stationAllowedForVehicle" commit).
+        return true;
+    }
+
+    // Process View groups rows by station name — fine until two genuinely
+    // different stations happen to share one (K9's Hull/Turret split makes
+    // this easy: a "Qualifying" check that exists on both lines is a
+    // legitimate real-world case, not bad data). Without this, they'd
+    // silently collapse into a single row whose identity (category, line,
+    // sort position) is decided by array order, not anything meaningful —
+    // which reads as "the other one is just missing".
+    // Returns Map<station_code, rowKey>: the plain station name normally
+    // (same as before — parallel same-line stations sharing a name, like
+    // multiple work centers running the identical process, still merge
+    // into one row, unchanged), disambiguated with "(Hull)"/"(Turret)"
+    // only when a name is shared *across* those two lines.
+    function buildStationRowKeyMap(vehicle) {
+        const stations = (state.stations || []).filter(s => !vehicle || s.vehicle_type === vehicle);
+        const groupsByName = new Map(); // name -> Set of component_group values seen for it
+        stations.forEach(s => {
+            const name = s.station_name || s.station_code;
+            if (!name) return;
+            if (!groupsByName.has(name)) groupsByName.set(name, new Set());
+            groupsByName.get(name).add(s.component_group || '');
+        });
+        const map = new Map(); // station_code -> rowKey
+        stations.forEach(s => {
+            const name = s.station_name || s.station_code;
+            if (!name) return;
+            const grp = s.component_group || '';
+            const crossesLines = groupsByName.get(name).size > 1 && (grp === 'Hull' || grp === 'Turret');
+            map.set(s.station_code, crossesLines ? `${name} (${grp})` : name);
+        });
+        return map;
+    }
+
+    // Template grouping: matches the actual production plan's Gantt split — K9
+    // separates Hull and Turret (tagged per-station via component_group, same
+    // field VPX uses for its Hull/Turret tabs) with everything downstream of
+    // structure combined into one "Assembly & Processing" group; K10/K11 don't
+    // split Hull/Turret so they only ever get "Structure" + "Assembly & Processing".
+    const TEMPLATE_GROUP_ORDER = {
+        K9: ['Hull', 'Turret', 'Assembly & Processing'],
+        K10: ['Structure', 'Assembly & Processing'],
+        K11: ['Structure', 'Assembly & Processing'],
+    };
+
+    function templateGroupOf(vehicleType, categoryCode, componentGroup) {
+        if (vehicleType === 'K9') {
+            if (componentGroup === 'Hull' || componentGroup === 'Turret') return componentGroup;
+            return 'Assembly & Processing';
+        }
+        if (categoryCode === 'assembly' || categoryCode === 'processing' || categoryCode === 'final_test') {
+            return 'Assembly & Processing';
+        }
+        return 'Structure';
+    }
+
+    function templateGroupOrder(vehicleType) {
+        return TEMPLATE_GROUP_ORDER[vehicleType] || TEMPLATE_GROUP_ORDER.K10;
+    }
+
+    // The last group in the order is always the downstream "Assembly & Processing"
+    // work — it depends on every upstream line finishing. Everything before it
+    // (Hull/Turret for K9; Structure for K10/K11) is an independent line that can
+    // run in parallel and gets its own planned-start date.
+    function templateDownstreamGroup(vehicleType) {
+        const order = templateGroupOrder(vehicleType);
+        return order[order.length - 1];
+    }
+
+    function templateUpstreamGroups(vehicleType) {
+        return templateGroupOrder(vehicleType).slice(0, -1);
+    }
+
+    // A space block has no category of its own — it inherits whichever group its
+    // neighboring process block belongs to, so it stays with that group's items
+    // when a tab filter is active (falls back to the previous process block for
+    // a trailing space).
+    function templateBlockGroup(blocks, index, vehicleType) {
+        const block = blocks[index];
+        if (!block) return null;
+        if (isTemplateProcessBlock(block)) {
+            return templateGroupOf(vehicleType, block.category_code, block.component_group);
+        }
+        for (let i = index + 1; i < blocks.length; i += 1) {
+            if (isTemplateProcessBlock(blocks[i])) {
+                return templateGroupOf(vehicleType, blocks[i].category_code, blocks[i].component_group);
+            }
+        }
+        for (let i = index - 1; i >= 0; i -= 1) {
+            if (isTemplateProcessBlock(blocks[i])) {
+                return templateGroupOf(vehicleType, blocks[i].category_code, blocks[i].component_group);
+            }
+        }
+        return null;
+    }
+
+    // Visual/Form editing shows one group at a time (VPX-style tabs) instead of
+    // every station mixed together — filters the full block list down to the
+    // active tab while keeping a map back to each block's real position so
+    // move/insert operations still land in the right place in the full template.
+    function templateFilteredBlocks(blocks, vehicleType, groupFilter) {
+        if (!groupFilter) return { visible: blocks, indexMap: blocks.map((_, i) => i) };
+        const visible = [];
+        const indexMap = [];
+        blocks.forEach((block, i) => {
+            if (templateBlockGroup(blocks, i, vehicleType) === groupFilter) {
+                visible.push(block);
+                indexMap.push(i);
+            }
+        });
+        return { visible, indexMap };
+    }
+
+    function ensureTemplateEditorGroupFilter(vehicleType) {
+        const tabs = templateGroupOrder(vehicleType);
+        if (!tabs.includes(state.templateEditorGroupFilter)) {
+            state.templateEditorGroupFilter = tabs[0] || '';
+        }
+    }
+
+    function templateActiveGroupAppendIndex(vehicleType, groupFilter) {
+        const blocks = state.templateEditorBlocks;
+        if (!groupFilter) return blocks.length;
+        let lastIndex = -1;
+        blocks.forEach((_, i) => {
+            if (templateBlockGroup(blocks, i, vehicleType) === groupFilter) lastIndex = i;
+        });
+        return lastIndex >= 0 ? lastIndex + 1 : blocks.length;
+    }
+
+    function renderTemplateGroupTabButtonsHtml(vehicleType) {
+        const tabs = templateGroupOrder(vehicleType);
+        if (tabs.length < 2) return '';
+        return tabs.map(tab => `
+            <button type="button" class="kd2-template-group-tab ${tab === state.templateEditorGroupFilter ? 'active' : ''}" data-kd2-template-group-tab="${escapeHtml(tab)}" role="tab" aria-selected="${tab === state.templateEditorGroupFilter ? 'true' : 'false'}">${escapeHtml(tab)}</button>
+        `).join('');
     }
 
     function setText(id, text) {
@@ -235,8 +415,21 @@ window.PPMSModuleRuntime = (() => {
         setText('filterUnitLabel', config.unitLabel);
         populateCategoryFilter(config.categories);
 
-        const selector = document.getElementById('moduleSelector');
-        if (selector) selector.value = config.id;
+        if (window.CustomSelect) {
+            window.CustomSelect.mount('moduleSelectorWrap', {
+                onChange: value => {
+                    setActiveModule(value);
+                    applyModuleShell();
+                    window.location.reload();
+                },
+            });
+            window.CustomSelect.setOptions('moduleSelectorWrap', [
+                { value: 'kd1', label: 'F200 – KD1' },
+                { value: 'kd2', label: 'F200 – KD2' },
+                { value: 'f100kd2', label: 'F100 – KD2' },
+            ].filter(opt => isModuleAllowed(opt.value)));
+            window.CustomSelect.setValue('moduleSelectorWrap', config.id);
+        }
 
         // F200-KD2-specific workspace sections — hidden for F100
         setDisplay('filterBattalionGroup', kd2);
@@ -273,6 +466,7 @@ window.PPMSModuleRuntime = (() => {
         setDisplay('btnImport', !kd2 && !f100);
         setDisplay('btnKd2DownloadTemplate', kd2 && canUploadKD2Plan());
         setDisplay('btnKd2UploadPlan', kd2 && canUploadKD2Plan());
+        setDisplay('btnManageKd2Processes', kd2 && canManageKD2());
 
         // Hide F200 import panels when not relevant
         if (kd2 || f100) {
@@ -698,18 +892,24 @@ window.PPMSModuleRuntime = (() => {
 
     async function loadFilters(db) {
         const [rows, categoryRows, battalions] = await Promise.all([
-            queryAll(db.from('kd2_plan_live').select('vehicle, vehicle_no, week, category')),
+            queryAll(PlanVersions.scoped(db.from('kd2_plan_live').select('vehicle, vehicle_no, week, category'), 'kd2')),
             queryAll(db.from('kd2_process_categories').select('category_code, category_name, category_sequence').eq('is_active', true).order('category_sequence')),
             queryAll(db.from('kd2_battalions').select('battalion_code').order('battalion_code')),
         ]);
-        const activeCategoryNames = new Set(categoryRows
-            .filter(row => KD2_CATEGORY_CODES.has(row.category_code))
-            .map(row => row.category_name)
-            .filter(Boolean));
-        const categories = MODULES.kd2.categories.filter(category => activeCategoryNames.has(category));
+        // Category names, in kd2_process_categories' own category_sequence order,
+        // deduped (the same category_code/name exists once per vehicle type) —
+        // not filtered against a fixed list, so a newly-added category shows up
+        // in the filter bar immediately.
+        const categories = [...new Set(categoryRows.map(row => row.category_name).filter(Boolean))];
         return {
             battalions: battalions.map(row => row.battalion_code).filter(Boolean),
-            vehicles: [...new Set(rows.map(row => row.vehicle).filter(Boolean))].sort(),
+            // Always includes every supported vehicle type, not just ones with
+            // existing plan rows — otherwise a brand-new plan (zero kd2_plan
+            // rows yet) has an empty vehicle filter, which cascades into an
+            // empty Gantt with nothing to select and nowhere to place a first
+            // block, even though the stations to schedule against already
+            // exist in Manage Processes.
+            vehicles: [...new Set([...VEHICLES, ...rows.map(row => row.vehicle).filter(Boolean)])].sort(),
             units: [...new Set(rows.map(row => row.vehicle_no).filter(Boolean))].sort(),
             weeks: [...new Set(rows.map(row => row.week).filter(Boolean))].sort((a, b) => {
                 const aNum = parseInt(String(a).replace(/\D/g, ''), 10) || 0;
@@ -733,7 +933,7 @@ window.PPMSModuleRuntime = (() => {
 
     async function loadData(db, filters) {
         if (!state.stations.length) await loadWorkspaceData();
-        let query = db.from('kd2_plan_live').select('*');
+        let query = PlanVersions.scoped(db.from('kd2_plan_live').select('*'), 'kd2');
         // battalion/vehicle/unit/k9Component/weekRanges are arrays (possibly empty,
         // meaning "all") — the filter bar supports multi-select on these fields.
         if (filters.battalion && filters.battalion.length) query = query.in('battalion_code', filters.battalion);
@@ -890,16 +1090,14 @@ window.PPMSModuleRuntime = (() => {
         }
         state.battalions = battalions;
         state.planningInputs = planningInputs;
-        state.categories = categories.filter(row => KD2_CATEGORY_CODES.has(row.category_code));
-        state.stations = stations.filter(row =>
-            KD2_CATEGORY_CODES.has(row.category_code) &&
-            stationAllowedForVehicle(row)
-        );
+        // Categories come straight from kd2_process_categories (already scoped
+        // to is_active in the query above) — not filtered against a fixed code
+        // list, so a category added via "+ Add Category" shows up immediately
+        // without a code change.
+        state.categories = categories;
+        state.stations = stations.filter(row => stationAllowedForVehicle(row));
         const validStationKeys = new Set(state.stations.map(row => `${row.vehicle_type}||${row.station_code}`));
-        state.routes = routes.filter(row =>
-            KD2_CATEGORY_CODES.has(row.category_code) &&
-            validStationKeys.has(`${row.vehicle_type}||${row.station_code}`)
-        );
+        state.routes = routes.filter(row => validStationKeys.has(`${row.vehicle_type}||${row.station_code}`));
         state.leadTimes = leadTimes;
         state.vehicleUnits = vehicleUnits;
         state.templateLayouts = templateLayouts;
@@ -1003,6 +1201,88 @@ window.PPMSModuleRuntime = (() => {
         setProcessError('');
     }
 
+    /** category_code slug — mirrors slugifyStationName so codes stay in the
+     *  same lowercase_snake_case style as the seeded categories. */
+    function slugifyCategoryName(value) {
+        return String(value || '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '_')
+            .replace(/^_+|_+$/g, '')
+            .slice(0, 42) || 'custom_category';
+    }
+
+    function setAddCategoryError(message) {
+        const el = document.getElementById('kd2AddCategoryError');
+        if (!el) return;
+        el.textContent = message || '';
+        el.style.display = message ? 'flex' : 'none';
+    }
+
+    function openAddCategoryForm() {
+        const form = document.getElementById('kd2AddCategoryForm');
+        if (!form) return;
+        setAddCategoryError('');
+        const nameEl = document.getElementById('kd2NewCategoryName');
+        if (nameEl) nameEl.value = '';
+        document.querySelectorAll('.kd2-new-category-vehicle').forEach(cb => { cb.checked = true; });
+        form.style.display = 'block';
+        nameEl?.focus();
+    }
+
+    function closeAddCategoryForm() {
+        const form = document.getElementById('kd2AddCategoryForm');
+        if (form) form.style.display = 'none';
+        setAddCategoryError('');
+    }
+
+    /** Adds a brand-new process category (e.g. a step alongside Welding /
+     *  Machining) for one or more vehicle types, appended at the end of each
+     *  selected vehicle's route (category_sequence = current max + 1). Once
+     *  saved it's immediately available everywhere categories are listed —
+     *  the Process Maintenance station editor, the template editor, and the
+     *  main filter bar — no code change needed (state.categories/loadFilters
+     *  read straight from kd2_process_categories, not a fixed list). */
+    async function saveNewCategory() {
+        if (!canManageKD2()) { toast('Only planners and admins can add categories.', 'error'); return; }
+        setAddCategoryError('');
+        const name = (document.getElementById('kd2NewCategoryName')?.value || '').trim();
+        const vehicles = [...document.querySelectorAll('.kd2-new-category-vehicle:checked')].map(cb => cb.value);
+        if (!name) { setAddCategoryError('Enter a category name.'); return; }
+        if (!vehicles.length) { setAddCategoryError('Select at least one vehicle.'); return; }
+
+        const code = slugifyCategoryName(name);
+        const existingForVehicle = vehicle => state.categories.some(c => c.vehicle_type === vehicle && c.category_code === code);
+        if (vehicles.some(existingForVehicle)) {
+            setAddCategoryError(`A category with code "${code}" already exists for ${vehicles.find(existingForVehicle)}.`);
+            return;
+        }
+
+        const rows = vehicles.map(vehicle => {
+            const maxSeq = Math.max(0, ...state.categories.filter(c => c.vehicle_type === vehicle).map(c => c.category_sequence || 0));
+            return {
+                vehicle_type: vehicle,
+                category_code: code,
+                category_name: name,
+                category_sequence: maxSeq + 1,
+                is_active: true,
+            };
+        });
+
+        try {
+            const { data, error } = await dbRef.from('kd2_process_categories').insert(rows).select('*');
+            if (error) throw error;
+            await writeAudit('INSERT', 'kd2_process_categories', code, null, data || rows);
+            toast(`Category "${name}" added.`, 'success');
+            closeAddCategoryForm();
+            await loadWorkspaceData({ force: true });
+            syncProcessFilterCategoryOptions();
+            renderProcessTable();
+            await helpers.reloadAll?.(); // refresh the main filter bar's Category options too
+        } catch (error) {
+            setAddCategoryError(error.message || 'Failed to add category.');
+        }
+    }
+
     function processCategoriesForVehicle(vehicle) {
         return state.categories
             .filter(row => row.vehicle_type === vehicle)
@@ -1060,10 +1340,10 @@ window.PPMSModuleRuntime = (() => {
         if ([...select.options].some(o => o.value === current)) select.value = current;
     }
 
-    function renderProcessViewRow(station) {
+    function renderProcessViewRow(station, isActive = false) {
         const lead = leadTimeRecord(station.vehicle_type, 'station', station.category_code, station.station_code);
         return `
-            <tr>
+            <tr class="${isActive ? 'kd2-process-row-active' : ''}">
                 <td>${escapeHtml(station.vehicle_type)}</td>
                 <td>${escapeHtml(categoryNameFor(station.vehicle_type, station.category_code))}</td>
                 <td>
@@ -1072,6 +1352,7 @@ window.PPMSModuleRuntime = (() => {
                     ${station.requires_xray ? '<span class="kd2-xray-chip" title="Requires X-ray inspection">X-RAY</span>' : ''}
                 </td>
                 <td>${escapeHtml(station.work_center || '—')}</td>
+                <td>${station.vehicle_type === 'K9' ? escapeHtml(station.component_group || '—') : '—'}</td>
                 <td>
                     <div class="kd2-process-reorder">
                         <span>${station.station_sequence_in_category}</span>
@@ -1095,79 +1376,100 @@ window.PPMSModuleRuntime = (() => {
                 <td>${escapeHtml(station.notes || '—')}</td>
                 <td>
                     <div class="kd2-process-actions">
-                        <button class="kd2-icon-action-btn" type="button" title="Edit" data-kd2-process-edit="${escapeHtml(station.station_code)}" data-kd2-process-edit-vehicle="${escapeHtml(station.vehicle_type)}">&#9998;</button>
+                        <button class="kd2-icon-action-btn${isActive ? ' is-active' : ''}" type="button" title="${isActive ? 'Editing…' : 'Edit'}" data-kd2-process-edit="${escapeHtml(station.station_code)}" data-kd2-process-edit-vehicle="${escapeHtml(station.vehicle_type)}">&#9998;</button>
                         <button class="kd2-icon-action-btn kd2-icon-action-danger" type="button" title="Retire" data-kd2-process-delete="${escapeHtml(station.station_code)}" data-kd2-process-delete-vehicle="${escapeHtml(station.vehicle_type)}">&#128465;</button>
                     </div>
                 </td>
             </tr>`;
     }
 
-    function renderProcessEditRow(station) {
-        const lead = leadTimeRecord(station.vehicle_type, 'station', station.category_code, station.station_code);
-        const categories = processCategoriesForVehicle(station.vehicle_type);
-        return `
-            <tr class="kd2-process-row-editing">
-                <td>${escapeHtml(station.vehicle_type)}</td>
-                <td>
-                    <select id="peCategory" class="kd2-process-input">
-                        ${categories.map(c => `<option value="${escapeHtml(c.category_code)}" ${c.category_code === station.category_code ? 'selected' : ''}>${escapeHtml(c.category_name)}</option>`).join('')}
-                    </select>
-                </td>
-                <td><input type="text" id="peName" class="kd2-process-input" value="${escapeHtml(station.station_name)}" /></td>
-                <td><input type="text" id="peWorkCenter" class="kd2-process-input" value="${escapeHtml(station.work_center || '')}" /></td>
-                <td><input type="number" id="peSequence" class="kd2-process-input" min="1" step="1" value="${station.station_sequence_in_category}" /></td>
-                <td><input type="number" id="peRoute" class="kd2-process-input" min="1" step="1" value="${station.route_sequence}" /></td>
-                <td><input type="number" id="peLeadTime" class="kd2-process-input" min="0.25" step="0.25" value="${lead?.lead_time_days ?? ''}" placeholder="Blank = pending" /></td>
-                <td><input type="text" id="peLeadSource" class="kd2-process-input" value="${escapeHtml(lead?.lead_time_source || '')}" /></td>
-                <td><input type="text" id="peNotes" class="kd2-process-input" value="${escapeHtml(station.notes || '')}" /></td>
-                <td>
-                    <div class="kd2-process-actions">
-                        <label class="form-check" style="padding:0"><input type="checkbox" id="peRequiresXray" ${station.requires_xray ? 'checked' : ''} /><span>X-ray</span></label>
-                        <button type="button" class="btn btn-primary btn-sm" data-kd2-process-save="${escapeHtml(station.station_code)}" data-kd2-process-save-vehicle="${escapeHtml(station.vehicle_type)}">Save</button>
-                        <button type="button" class="btn btn-ghost btn-sm" data-kd2-process-cancel>Cancel</button>
-                    </div>
-                </td>
-            </tr>`;
+    /** The station currently in edit mode (matched from _processEditingKey), or null. */
+    function stationForEditingKey() {
+        if (!_processEditingKey) return null;
+        return state.stations.find(s => (s.vehicle_type + '||' + s.station_code) === _processEditingKey) || null;
     }
 
-    function renderProcessNewRow(draft) {
-        const categories = processCategoriesForVehicle(draft.vehicle);
-        const categoryCode = categories.some(c => c.category_code === draft.categoryCode) ? draft.categoryCode : (categories[0]?.category_code || '');
+    /** Full-width edit/add form panel shown above the process table. Keeps the same
+     *  input ids (peCategory, peName, …) and data-kd2-process-save* / -cancel hooks
+     *  the delegated #kd2ProcessBody click/change handlers already rely on — only
+     *  the layout changed (cramped inline <tr> → a proper labelled form grid). */
+    function renderProcessFormPanel(station, draft) {
+        const isNew = !!draft;
+        const vehicle = isNew ? draft.vehicle : station.vehicle_type;
+        const categories = processCategoriesForVehicle(vehicle);
+        const categoryCode = isNew
+            ? (categories.some(c => c.category_code === draft.categoryCode) ? draft.categoryCode : (categories[0]?.category_code || ''))
+            : station.category_code;
+        const lead = isNew ? null : leadTimeRecord(vehicle, 'station', station.category_code, station.station_code);
+        const isK9 = vehicle === 'K9';
+
+        const vehicleControl = isNew
+            ? `<select id="peNewVehicle" class="kd2-process-input">${VEHICLES.map(v => `<option value="${v}" ${v === vehicle ? 'selected' : ''}>${v}</option>`).join('')}</select>`
+            : `<input type="text" class="kd2-process-input" value="${escapeHtml(vehicle)}" disabled />`;
+
+        const saveAttrs = isNew
+            ? 'data-kd2-process-save-new'
+            : `data-kd2-process-save="${escapeHtml(station.station_code)}" data-kd2-process-save-vehicle="${escapeHtml(vehicle)}"`;
+
+        const field = (label, control, opts = {}) => `
+            <div class="kd2-pf-field${opts.wide ? ' kd2-pf-field-wide' : ''}">
+                <label class="kd2-pf-label"${opts.htmlFor ? ` for="${opts.htmlFor}"` : ''}>${escapeHtml(label)}</label>
+                ${control}
+            </div>`;
+
         return `
-            <tr class="kd2-process-row-editing">
-                <td>
-                    <select id="peNewVehicle" class="kd2-process-input">
-                        ${VEHICLES.map(v => `<option value="${v}" ${v === draft.vehicle ? 'selected' : ''}>${v}</option>`).join('')}
-                    </select>
-                </td>
-                <td>
-                    <select id="peCategory" class="kd2-process-input">
-                        ${categories.map(c => `<option value="${escapeHtml(c.category_code)}" ${c.category_code === categoryCode ? 'selected' : ''}>${escapeHtml(c.category_name)}</option>`).join('')}
-                    </select>
-                </td>
-                <td><input type="text" id="peName" class="kd2-process-input" placeholder="Station name" /></td>
-                <td><input type="text" id="peWorkCenter" class="kd2-process-input" placeholder="Optional" /></td>
-                <td><input type="number" id="peSequence" class="kd2-process-input" min="1" step="1" value="${categoryCode ? nextProcessCategorySequence(draft.vehicle, categoryCode) : 1}" /></td>
-                <td><input type="number" id="peRoute" class="kd2-process-input" min="1" step="1" value="${nextProcessRouteSequence(draft.vehicle)}" /></td>
-                <td><input type="number" id="peLeadTime" class="kd2-process-input" min="0.25" step="0.25" placeholder="Blank = pending" /></td>
-                <td><input type="text" id="peLeadSource" class="kd2-process-input" placeholder="Optional" /></td>
-                <td><input type="text" id="peNotes" class="kd2-process-input" placeholder="Optional" /></td>
-                <td>
-                    <div class="kd2-process-actions">
-                        <label class="form-check" style="padding:0"><input type="checkbox" id="peRequiresXray" /><span>X-ray</span></label>
-                        <button type="button" class="btn btn-primary btn-sm" data-kd2-process-save-new>Save</button>
-                        <button type="button" class="btn btn-ghost btn-sm" data-kd2-process-cancel>Cancel</button>
-                    </div>
-                </td>
-            </tr>`;
+        <div class="kd2-process-edit-panel">
+            <div class="kd2-pep-head">
+                <h5>${isNew ? 'Add Process Station' : `Edit Process — ${escapeHtml(station.station_name)}`}</h5>
+                ${isNew ? '' : `<span class="kd2-process-code">${escapeHtml(station.station_code)}</span>`}
+            </div>
+            <div class="kd2-process-form-grid">
+                ${field('Vehicle', vehicleControl)}
+                ${field('Category', `<select id="peCategory" class="kd2-process-input">${categories.map(c => `<option value="${escapeHtml(c.category_code)}" ${c.category_code === categoryCode ? 'selected' : ''}>${escapeHtml(c.category_name)}</option>`).join('')}</select>`, { htmlFor: 'peCategory' })}
+                ${field('Station Name', `<input type="text" id="peName" class="kd2-process-input" value="${isNew ? '' : escapeHtml(station.station_name)}" placeholder="Station name" />`, { htmlFor: 'peName', wide: true })}
+                ${field('Work Center', `<input type="text" id="peWorkCenter" class="kd2-process-input" value="${isNew ? '' : escapeHtml(station.work_center || '')}" placeholder="Optional" />`, { htmlFor: 'peWorkCenter' })}
+                ${isK9 ? field('Component', `<select id="peComponent" class="kd2-process-input">${templateComponentOptions(isNew ? '' : station.component_group)}</select>`, { htmlFor: 'peComponent' }) : ''}
+                ${field('Order in Category', `<input type="number" id="peSequence" class="kd2-process-input" min="1" step="1" value="${isNew ? (categoryCode ? nextProcessCategorySequence(vehicle, categoryCode) : 1) : station.station_sequence_in_category}" />`, { htmlFor: 'peSequence' })}
+                ${field('Route Sequence', `<input type="number" id="peRoute" class="kd2-process-input" min="1" step="1" value="${isNew ? nextProcessRouteSequence(vehicle) : station.route_sequence}" />`, { htmlFor: 'peRoute' })}
+                ${field('Lead Time (days)', `<input type="number" id="peLeadTime" class="kd2-process-input" min="0.25" step="0.25" value="${lead?.lead_time_days ?? ''}" placeholder="Blank = pending" />`, { htmlFor: 'peLeadTime' })}
+                ${field('Lead Source', `<input type="text" id="peLeadSource" class="kd2-process-input" value="${escapeHtml(lead?.lead_time_source || '')}" placeholder="e.g. Time study, Engineering estimate" title="Where the duration estimate came from — for reference only, not used in scheduling" />`, { htmlFor: 'peLeadSource' })}
+                ${field('Notes', `<input type="text" id="peNotes" class="kd2-process-input" value="${isNew ? '' : escapeHtml(station.notes || '')}" placeholder="Optional" />`, { htmlFor: 'peNotes', wide: true })}
+                <div class="kd2-pf-field kd2-pf-field-wide kd2-pf-toggle">
+                    <label class="form-check" style="padding:0">
+                        <input type="checkbox" id="peRequiresXray" ${(!isNew && station.requires_xray) ? 'checked' : ''} />
+                        <span>Requires X-ray inspection<small>Adds an X-ray marker to this station's unit rows for logging X-ray / repair cycles</small></span>
+                    </label>
+                </div>
+            </div>
+            <div class="kd2-pep-actions">
+                <button type="button" class="btn btn-primary" ${saveAttrs}>${isNew ? 'Add Station' : 'Save Changes'}</button>
+                <button type="button" class="btn btn-ghost" data-kd2-process-cancel>Cancel</button>
+            </div>
+        </div>`;
     }
 
     function renderProcessTable() {
         const container = document.getElementById('kd2ProcessBody');
+        const flowContainer = document.getElementById('kd2ProcessFlow');
         const summary = document.getElementById('kd2ProcessSummary');
         if (!container || !summary) return;
 
         syncProcessFilterCategoryOptions();
+
+        // Category/Search only make sense against the flat table — Flow view
+        // already groups by category and shows every station in one view.
+        setDisplay('kd2ProcessCategoryFilterGroup', state.processView !== 'flow');
+        setDisplay('kd2ProcessSearchGroup', state.processView !== 'flow');
+        setDisplay('kd2ProcessFlowHint', state.processView === 'flow');
+
+        if (state.processView === 'flow') {
+            container.style.display = 'none';
+            if (flowContainer) flowContainer.style.display = '';
+            renderProcessFlow();
+            return;
+        }
+        container.style.display = '';
+        if (flowContainer) flowContainer.style.display = 'none';
 
         const vehicleFilter = document.getElementById('kd2ProcessVehicleFilter')?.value || '';
         const categoryFilter = document.getElementById('kd2ProcessCategoryFilter')?.value || '';
@@ -1190,26 +1492,293 @@ window.PPMSModuleRuntime = (() => {
             (vehicleFilter ? ` · ${vehicleFilter}` : '') +
             (categoryFilter ? ` · ${categoryNameFor(vehicleFilter || (stations[0]?.vehicle_type || 'K9'), categoryFilter)}` : '') + '.';
 
-        const rowsHtml = [];
-        if (_processNewRowDraft) rowsHtml.push(renderProcessNewRow(_processNewRowDraft));
-        stations.forEach(station => {
-            const key = station.vehicle_type + '||' + station.station_code;
-            rowsHtml.push(_processEditingKey === key ? renderProcessEditRow(station) : renderProcessViewRow(station));
-        });
+        const editingStation = stationForEditingKey();
+        const panelHtml = _processNewRowDraft
+            ? renderProcessFormPanel(null, _processNewRowDraft)
+            : (editingStation ? renderProcessFormPanel(editingStation, null) : '');
 
-        container.innerHTML = `
+        const rowsHtml = stations.map(station =>
+            renderProcessViewRow(station, (station.vehicle_type + '||' + station.station_code) === _processEditingKey));
+
+        container.innerHTML = panelHtml + `
             <div class="kd2-process-table-wrap">
                 <table class="table kd2-process-table kd2-process-table-flat">
                     <thead>
                         <tr>
-                            <th>Vehicle</th><th>Category</th><th>Station</th><th>Work Center</th>
-                            <th>Order</th><th>Route</th><th>Lead Time</th><th>Lead Source</th>
+                            <th>Vehicle</th><th>Category</th><th>Station</th><th>Work Center</th><th>Component</th>
+                            <th>Order</th><th>Route</th><th>Lead Time</th><th title="Where the duration estimate came from — for reference only, not used in scheduling">Lead Source</th>
                             <th>Notes</th><th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody>${rowsHtml.join('') || `<tr><td colspan="10" class="empty-state" style="padding:18px"><p>No process stations match these filters.</p></td></tr>`}</tbody>
+                    <tbody>${rowsHtml.join('') || `<tr><td colspan="11" class="empty-state" style="padding:18px"><p>No process stations match these filters.</p></td></tr>`}</tbody>
                 </table>
             </div>`;
+
+        const panelEl = panelHtml ? container.querySelector('.kd2-process-edit-panel') : null;
+        if (panelEl) {
+            panelEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            // Autofocus the name field only on a fresh open — not on the re-render
+            // triggered while the user is mid-interaction inside the panel.
+            if (!panelEl.contains(document.activeElement)) panelEl.querySelector('#peName')?.focus({ preventScroll: true });
+        }
+    }
+
+    // Deterministic color per category (not the fixed 4-slot Hull/Turret/
+    // Structure/Assembly palette the Template editor uses — categories are
+    // open-ended now that "+ Add Category" exists, so this hashes whatever
+    // category_code shows up to a slot in a wider palette, stable across
+    // renders/sessions without needing a lookup table to maintain.
+    const KD2_CATEGORY_FLOW_PALETTE = ['#3b82f6', '#f97316', '#22c55e', '#a855f7', '#ec4899', '#06b6d4', '#eab308', '#ef4444', '#14b8a6', '#6366f1'];
+    function categoryFlowColor(categoryCode) {
+        const str = String(categoryCode || '');
+        let hash = 0;
+        for (let i = 0; i < str.length; i += 1) hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+        return KD2_CATEGORY_FLOW_PALETTE[hash % KD2_CATEGORY_FLOW_PALETTE.length];
+    }
+
+    function renderFlowCard(station, stepIndex, totalSteps, vehicle, laneKey) {
+        const category = state.categories.find(c => c.vehicle_type === vehicle && c.category_code === station.category_code);
+        return `
+            <article class="kd2-template-card kd2-process-flow-card" draggable="true"
+                style="--kd2-group-color:${categoryFlowColor(station.category_code)}"
+                data-process-flow-card data-vehicle="${escapeHtml(vehicle)}" data-lane="${escapeHtml(laneKey)}"
+                data-category-code="${escapeHtml(station.category_code)}" data-station-code="${escapeHtml(station.station_code)}">
+                <div class="kd2-process-flow-card-category">${escapeHtml(category?.category_name || station.category_code)}</div>
+                <div class="kd2-template-card-head">
+                    <div class="kd2-template-card-copy">
+                        <strong title="${escapeHtml(station.station_name)}">${escapeHtml(station.station_name)}</strong>
+                        <span title="${escapeHtml(station.work_center || station.station_code)}">${escapeHtml(station.work_center || station.station_code)}</span>
+                    </div>
+                    <div class="kd2-template-card-tools">
+                        <span class="kd2-template-route-pill" title="Position ${stepIndex + 1} of ${totalSteps} in this lane">${stepIndex + 1}</span>
+                        <span class="kd2-template-drag-handle" title="Drag to reorder">::</span>
+                    </div>
+                </div>
+            </article>`;
+    }
+
+    /** Consecutive stations sharing a route_sequence are one "step" — the
+     *  parallel group they represent. Order is already route_sequence-then-
+     *  station_sequence_in_category, so equal route_sequence values are
+     *  always adjacent going in. */
+    function groupStationsIntoSteps(stations) {
+        const steps = [];
+        stations.forEach(station => {
+            const last = steps[steps.length - 1];
+            if (last && last[0].route_sequence === station.route_sequence) last.push(station);
+            else steps.push([station]);
+        });
+        return steps;
+    }
+
+    /** One step (parallel group) as a single flowchart node — one card if
+     *  it's a solo station, a stack of cards if several run in parallel,
+     *  so they read as one thing happening at once rather than a sequence
+     *  of separate steps joined by a "some other" connector. */
+    function renderFlowStep(stepStations, stepIndex, totalSteps, vehicle, laneKey) {
+        const cardsHtml = stepStations.map(station => renderFlowCard(station, stepIndex, totalSteps, vehicle, laneKey)).join('');
+        return `<div class="kd2-process-flow-step${stepStations.length > 1 ? ' kd2-process-flow-step-parallel' : ''}" data-process-flow-step data-lane="${escapeHtml(laneKey)}">${cardsHtml}</div>`;
+    }
+
+    /** One lane's row: steps joined by arrows. */
+    function renderFlowLaneRow(stations, vehicle, laneKey) {
+        const steps = groupStationsIntoSteps(stations);
+        if (!steps.length) return '<div class="empty-state" style="padding:10px"><p>No stations in this lane yet.</p></div>';
+        return steps.map((step, i) => `
+            ${i > 0 ? '<span class="kd2-process-flow-arrow" aria-hidden="true"></span>' : ''}
+            ${renderFlowStep(step, i, steps.length, vehicle, laneKey)}
+        `).join('');
+    }
+
+    /** Drag-to-reorder view — the numeric Order field in Table view was the
+     *  actual complaint ("very hard to change and causes issues and
+     *  confusion"). Ordered (and, on drop, renumbered) by route_sequence,
+     *  the actual field the Gantt lane order, VPX columns, and Plan Data
+     *  table all sort by. Not grouped by category — the real route isn't
+     *  linear by category (a unit can go Welding → Machining → back to
+     *  Welding) — each card just carries a color-coded category tag so
+     *  that's still readable. Stations sharing a route_sequence (parallel)
+     *  stack together as one node, not a sequence of separate cards, so
+     *  they visibly read as happening at once. K9 is the one real
+     *  exception beyond that: Hull and Turret are two separate physical
+     *  lines that run in parallel and converge into the shared Assembly/
+     *  Processing/Final Test flow, so those get their own lanes instead of
+     *  being interleaved. */
+    function renderProcessFlow() {
+        const flowContainer = document.getElementById('kd2ProcessFlow');
+        const summary = document.getElementById('kd2ProcessSummary');
+        if (!flowContainer) return;
+
+        const vehicle = document.getElementById('kd2ProcessVehicleFilter')?.value || '';
+        if (!VEHICLES.includes(vehicle)) {
+            flowContainer.innerHTML = `<div class="empty-state"><p>Pick a single vehicle above to see its route as a flow.</p></div>`;
+            if (summary) summary.textContent = 'Select a vehicle to reorder its route.';
+            return;
+        }
+
+        const bySeq = (a, b) => (a.route_sequence || 0) - (b.route_sequence || 0) || (a.station_sequence_in_category || 0) - (b.station_sequence_in_category || 0);
+        const allStations = state.stations.filter(s => s.vehicle_type === vehicle);
+
+        if (!allStations.length) {
+            flowContainer.innerHTML = `<div class="empty-state"><p>No stations defined for ${escapeHtml(vehicle)} yet.</p></div>`;
+            if (summary) summary.textContent = `Select a vehicle to reorder its route.`;
+            return;
+        }
+
+        if (vehicle === 'K9') {
+            const hull = allStations.filter(s => s.component_group === 'Hull').sort(bySeq);
+            const turret = allStations.filter(s => s.component_group === 'Turret').sort(bySeq);
+            const downstream = allStations.filter(s => s.component_group !== 'Hull' && s.component_group !== 'Turret').sort(bySeq);
+            if (summary) summary.textContent = `${allStations.length} process stations shown · K9 · Hull and Turret run in parallel and converge into the shared flow below — drag within a lane to reorder it, or onto another card there to run them in parallel.`;
+            flowContainer.innerHTML = `
+                <div class="kd2-process-flow-lanes">
+                    <div class="kd2-process-flow-lane">
+                        <span class="kd2-process-flow-lane-label">Hull</span>
+                        <div class="kd2-process-flow-row" data-process-flow-vehicle="${escapeHtml(vehicle)}">${renderFlowLaneRow(hull, vehicle, 'hull')}</div>
+                    </div>
+                    <div class="kd2-process-flow-lane">
+                        <span class="kd2-process-flow-lane-label">Turret</span>
+                        <div class="kd2-process-flow-row" data-process-flow-vehicle="${escapeHtml(vehicle)}">${renderFlowLaneRow(turret, vehicle, 'turret')}</div>
+                    </div>
+                </div>
+                ${downstream.length ? `
+                <div class="kd2-process-flow-merge">
+                    <span class="kd2-process-flow-merge-arrow" aria-hidden="true"></span>
+                    <span class="kd2-process-flow-merge-label">Converges into</span>
+                </div>
+                <div class="kd2-process-flow-row" data-process-flow-vehicle="${escapeHtml(vehicle)}">${renderFlowLaneRow(downstream, vehicle, 'downstream')}</div>
+                ` : ''}`;
+            return;
+        }
+
+        const stations = allStations.slice().sort(bySeq);
+        if (summary) summary.textContent = `${stations.length} process station${stations.length === 1 ? '' : 's'} shown · ${vehicle} · drag a card anywhere in the sequence to reorder the route, or onto another card to run them in parallel.`;
+        flowContainer.innerHTML = `<div class="kd2-process-flow-row" data-process-flow-vehicle="${escapeHtml(vehicle)}">${renderFlowLaneRow(stations, vehicle, 'all')}</div>`;
+    }
+
+    let _processFlowDrag = null; // { stationCode, lane }
+
+    function wireProcessFlowDrag() {
+        const flowContainer = document.getElementById('kd2ProcessFlow');
+        if (!flowContainer || flowContainer.dataset.dragWired === 'true') return;
+        flowContainer.dataset.dragWired = 'true';
+
+        flowContainer.addEventListener('dragstart', e => {
+            const card = e.target.closest('[data-process-flow-card]');
+            if (!card) return;
+            _processFlowDrag = { stationCode: card.dataset.stationCode, vehicle: card.dataset.vehicle, lane: card.dataset.lane };
+            card.classList.add('kd2-process-flow-dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        });
+        flowContainer.addEventListener('dragend', () => {
+            flowContainer.querySelectorAll('.kd2-process-flow-dragging').forEach(el => el.classList.remove('kd2-process-flow-dragging'));
+            flowContainer.querySelectorAll('.kd2-process-flow-drop-before, .kd2-process-flow-drop-after, .kd2-process-flow-drop-join')
+                .forEach(el => el.classList.remove('kd2-process-flow-drop-before', 'kd2-process-flow-drop-after', 'kd2-process-flow-drop-join'));
+            _processFlowDrag = null;
+        });
+        flowContainer.addEventListener('dragover', e => {
+            const card = e.target.closest('[data-process-flow-card]');
+            // Reordering only ever happens within one lane — Hull, Turret, and
+            // the downstream flow are separate physical/logical sequences.
+            if (!card || !_processFlowDrag || card.dataset.lane !== _processFlowDrag.lane || card.dataset.stationCode === _processFlowDrag.stationCode) return;
+            e.preventDefault();
+            flowContainer.querySelectorAll('.kd2-process-flow-drop-before, .kd2-process-flow-drop-after, .kd2-process-flow-drop-join')
+                .forEach(el => el.classList.remove('kd2-process-flow-drop-before', 'kd2-process-flow-drop-after', 'kd2-process-flow-drop-join'));
+            // Middle third of the card = join it (run in parallel); outer
+            // thirds = land as a new step before/after it in the sequence.
+            const frac = (e.clientX - card.getBoundingClientRect().left) / card.offsetWidth;
+            if (frac < 1 / 3) card.classList.add('kd2-process-flow-drop-before');
+            else if (frac > 2 / 3) card.classList.add('kd2-process-flow-drop-after');
+            else card.classList.add('kd2-process-flow-drop-join');
+        });
+        flowContainer.addEventListener('drop', async e => {
+            const row = e.target.closest('[data-process-flow-vehicle]');
+            const targetCard = e.target.closest('[data-process-flow-card]');
+            if (!row || !_processFlowDrag || !targetCard || targetCard.dataset.lane !== _processFlowDrag.lane) return;
+            e.preventDefault();
+            if (targetCard.dataset.stationCode === _processFlowDrag.stationCode) return;
+
+            const mode = targetCard.classList.contains('kd2-process-flow-drop-before') ? 'before'
+                : targetCard.classList.contains('kd2-process-flow-drop-after') ? 'after' : 'join';
+            const draggedCard = row.querySelector(`[data-station-code="${CSS.escape(_processFlowDrag.stationCode)}"]`);
+            if (!draggedCard) return;
+            const oldStep = draggedCard.closest('[data-process-flow-step]');
+            const targetStep = targetCard.closest('[data-process-flow-step]');
+
+            if (mode === 'join') {
+                draggedCard.remove();
+                if (oldStep && !oldStep.querySelector('[data-process-flow-card]')) oldStep.remove();
+                targetStep.appendChild(draggedCard);
+                targetStep.classList.add('kd2-process-flow-step-parallel');
+            } else {
+                draggedCard.remove();
+                if (oldStep && !oldStep.querySelector('[data-process-flow-card]')) oldStep.remove();
+                const newStep = document.createElement('div');
+                newStep.className = 'kd2-process-flow-step';
+                newStep.setAttribute('data-process-flow-step', '');
+                newStep.setAttribute('data-lane', _processFlowDrag.lane);
+                newStep.appendChild(draggedCard);
+                targetStep.insertAdjacentElement(mode === 'before' ? 'beforebegin' : 'afterend', newStep);
+            }
+
+            await persistFlowOrder(_processFlowDrag.vehicle);
+        });
+    }
+
+    /** Renumbers route_sequence to match the Flow view's current DOM —
+     *  every card inside one step shares that step's new number, so
+     *  reordering a step that isn't itself a parallel group leaves any
+     *  *other* parallel groups in the lane untouched (unlike a flat
+     *  per-card renumber, which would silently break every existing
+     *  parallel pair on any drag, not just the one being moved). K9 Hull
+     *  and Turret each number their steps 1..N independently (that's the
+     *  parallel portion of the route) and the downstream flow starts right
+     *  after whichever lane has more steps. Writes both
+     *  kd2_process_stations and kd2_process_routes — the same two tables
+     *  moveProcessStationOrder()'s 'route' scope keeps in sync. No temp-
+     *  offset trick needed — route_sequence has no uniqueness constraint,
+     *  parallel stations sharing a value is intentional. */
+    async function persistFlowOrder(vehicle) {
+        if (!dbRef || !canManageKD2()) return;
+        const flowContainer = document.getElementById('kd2ProcessFlow');
+        if (!flowContainer) return;
+
+        const stepsIn = lane => [...flowContainer.querySelectorAll('[data-process-flow-step]')].filter(el => el.dataset.lane === lane);
+        const assign = (steps, offset, assignments) => steps.forEach((step, i) => {
+            step.querySelectorAll('[data-process-flow-card]').forEach(card => assignments.push({ code: card.dataset.stationCode, seq: offset + i + 1 }));
+        });
+
+        const assignments = [];
+        if (flowContainer.querySelector('.kd2-process-flow-lanes')) {
+            const hullSteps = stepsIn('hull');
+            const turretSteps = stepsIn('turret');
+            const downstreamSteps = stepsIn('downstream');
+            const span = Math.max(hullSteps.length, turretSteps.length);
+            assign(hullSteps, 0, assignments);
+            assign(turretSteps, 0, assignments);
+            assign(downstreamSteps, span, assignments);
+        } else {
+            assign(stepsIn('all'), 0, assignments);
+        }
+        if (!assignments.length) return;
+
+        const before = state.stations
+            .filter(s => s.vehicle_type === vehicle)
+            .map(s => ({ station_code: s.station_code, route_sequence: s.route_sequence }));
+        try {
+            await Promise.all(assignments.map(({ code, seq }) => Promise.all([
+                dbRef.from('kd2_process_stations').update({ route_sequence: seq }).eq('vehicle_type', vehicle).eq('station_code', code),
+                dbRef.from('kd2_process_routes').update({ route_sequence: seq }).eq('vehicle_type', vehicle).eq('station_code', code),
+            ])));
+            await writeAudit('UPDATE', 'kd2_process_stations', `${vehicle}:route-reorder`, before,
+                assignments.map(a => ({ station_code: a.code, route_sequence: a.seq })));
+            await refreshWorkspace({ force: true });
+            await helpers.reloadAll?.();
+            renderProcessTable();
+        } catch (error) {
+            setProcessError('Failed to reorder: ' + error.message);
+            renderProcessTable(); // snap back to the last saved order
+        }
     }
 
     async function openProcessModal(preferredVehicle = state.routeVehicle || 'K9') {
@@ -1227,12 +1796,18 @@ window.PPMSModuleRuntime = (() => {
         _processEditingKey = null;
         _processNewRowDraft = null;
         setProcessError('');
+        closeAddCategoryForm();
         const vehicleFilterEl = document.getElementById('kd2ProcessVehicleFilter');
         if (vehicleFilterEl) vehicleFilterEl.value = VEHICLES.includes(preferredVehicle) ? preferredVehicle : '';
         const categoryFilterEl = document.getElementById('kd2ProcessCategoryFilter');
         if (categoryFilterEl) categoryFilterEl.value = '';
         const searchEl = document.getElementById('kd2ProcessSearch');
         if (searchEl) searchEl.value = '';
+        state.processView = 'table';
+        document.querySelectorAll('#kd2ProcessViewToggle .kd2-template-view-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.processView === 'table');
+        });
+        wireProcessFlowDrag();
         renderProcessTable();
         const overlay = document.getElementById('kd2ProcessOverlay');
         // Use the wide overlay layout so the modal aligns to top and can
@@ -1396,6 +1971,7 @@ window.PPMSModuleRuntime = (() => {
         const categoryCode = document.getElementById('peCategory')?.value || '';
         const stationName = document.getElementById('peName')?.value?.trim() || '';
         const workCenter = document.getElementById('peWorkCenter')?.value?.trim() || '';
+        const componentGroup = vehicle === 'K9' ? (document.getElementById('peComponent')?.value || '') : '';
         const stationNotes = document.getElementById('peNotes')?.value?.trim() || '';
         const leadSource = document.getElementById('peLeadSource')?.value?.trim() || '';
         const stationSequence = parseRouteSequenceValue(document.getElementById('peSequence')?.value || '');
@@ -1449,6 +2025,7 @@ window.PPMSModuleRuntime = (() => {
             station_code: stationCode,
             station_name: stationName,
             work_center: workCenter || null,
+            component_group: componentGroup || null,
             station_sequence_in_category: stationSequence,
             route_sequence: routeSequence,
             is_active: true,
@@ -2166,6 +2743,11 @@ window.PPMSModuleRuntime = (() => {
         syncTimelinePlacementUi();
     }
 
+    function setTimelinePlacementBattalionFilter(battalionCode) {
+        state.timelinePlacementBattalionFilter = String(battalionCode || '');
+        syncTimelinePlacementUi();
+    }
+
     function setTimelinePlacementMenuOpen(on) {
         state.timelinePlacementMenuOpen = !!on;
         const timelineMenu = document.getElementById('kd2TimelineVisualMenu');
@@ -2185,25 +2767,48 @@ window.PPMSModuleRuntime = (() => {
         const query = String(state.timelinePlacementQuery || '').trim().toLowerCase();
 
         if (isTimelineProcessView()) {
+            // Sourced from the battalions' configured unit count (required_quantity
+            // in KD2 Planning Inputs) and the vehicle_units registry — NOT from
+            // existing plan rows (state.timelineRows) — a unit with zero blocks
+            // scheduled yet is still a real, placeable unit, and using plan rows
+            // here made this picker permanently empty for any vehicle/battalion
+            // that hadn't already been given blocks through Unit View, blocking
+            // Process View from ever bootstrapping a brand-new plan on its own.
+            // Mirrors buildUnitTimelineLaneDefinitions()'s quantity+registry merge.
             const battalionMap = new Map();
-            (state.timelineRows || [])
-                .filter(r => (r.vehicle_type || r.vehicle) === vehicle && r.battalion_id != null && r.unit_serial != null)
-                .forEach(r => {
-                    const unitKey = `${r.battalion_id}||${r.unit_serial}`;
-                    if (!battalionMap.has(r.battalion_id)) {
-                        battalionMap.set(r.battalion_id, { battalion_id: r.battalion_id, battalion_code: r.battalion_code || String(r.battalion_id), units: new Map() });
-                    }
-                    const batGroup = battalionMap.get(r.battalion_id);
-                    if (!batGroup.units.has(unitKey)) {
-                        const label = r.unit_label || r.vehicle_no || `${vehicle}-${String(r.unit_serial).padStart(2, '0')}`;
-                        if (!query || label.toLowerCase().includes(query) || batGroup.battalion_code.toLowerCase().includes(query)) {
-                            batGroup.units.set(unitKey, { battalion_id: r.battalion_id, unit_serial: r.unit_serial, unit_label: label });
-                        }
+            state.battalions.forEach(battalion => {
+                if (state.timelinePlacementBattalionFilter && battalion.battalion_code !== state.timelinePlacementBattalionFilter) return;
+                const configuredUnitRows = state.vehicleUnits.filter(row => row.battalion_id === battalion.id && row.vehicle_type === vehicle);
+                const quantity = Math.max(
+                    parseInt(inputFor(battalion.id, vehicle)?.required_quantity, 10) || 0,
+                    ...configuredUnitRows.map(row => parseInt(row.unit_serial, 10)).filter(Number.isFinite),
+                    0
+                );
+                if (quantity < 1) return;
+
+                const units = new Map();
+                for (let serial = 1; serial <= quantity; serial += 1) {
+                    const configured = configuredUnitRows.find(row => parseInt(row.unit_serial, 10) === serial);
+                    units.set(serial, { unit_serial: serial, unit_label: formatUnitLabel(vehicle, serial, configured?.unit_label || '') });
+                }
+                configuredUnitRows.forEach(row => {
+                    const serial = parseInt(row.unit_serial, 10);
+                    if (!Number.isFinite(serial) || serial < 1) return;
+                    units.set(serial, { unit_serial: serial, unit_label: formatUnitLabel(vehicle, serial, row.unit_label || '') });
+                });
+
+                const battalionCode = battalion.battalion_code || String(battalion.id);
+                const batGroup = { battalion_id: battalion.id, battalion_code: battalionCode, units: new Map() };
+                [...units.values()].forEach(unit => {
+                    if (!query || unit.unit_label.toLowerCase().includes(query) || battalionCode.toLowerCase().includes(query)) {
+                        batGroup.units.set(`${battalion.id}||${unit.unit_serial}`, { battalion_id: battalion.id, unit_serial: unit.unit_serial, unit_label: unit.unit_label });
                     }
                 });
+                if (batGroup.units.size) battalionMap.set(battalion.id, batGroup);
+            });
             const batGroups = [...battalionMap.values()].filter(g => g.units.size > 0);
             if (!batGroups.length) {
-                container.innerHTML = `<div class="empty-state"><p>${query ? 'No units match the current filter.' : 'No units available. Load plan data first.'}</p></div>`;
+                container.innerHTML = `<div class="empty-state"><p>${(query || state.timelinePlacementBattalionFilter) ? 'No units match the current filter.' : `No ${escapeHtml(vehicle)} units are set up for any battalion yet — set a required quantity in KD2 Planning Inputs first.`}</p></div>`;
                 return;
             }
             container.innerHTML = batGroups.map(group => `
@@ -2357,11 +2962,32 @@ window.PPMSModuleRuntime = (() => {
         const ganttVehicle = document.getElementById('ganttVisualPlacementVehicle');
         const timelineFilter = document.getElementById('kd2TimelinePlacementFilter');
         const ganttFilter = document.getElementById('ganttVisualPlacementFilter');
+        const timelineBattalion = document.getElementById('kd2TimelinePlacementBattalion');
+        const ganttBattalion = document.getElementById('ganttVisualPlacementBattalion');
+        const timelineBattalionGroup = document.getElementById('kd2TimelinePlacementBattalionGroup');
+        const ganttBattalionGroup = document.getElementById('ganttVisualPlacementBattalionGroup');
         const processView = isTimelineProcessView();
         if (timelineVehicle && timelineVehicle.value !== state.timelinePlacementVehicle) timelineVehicle.value = state.timelinePlacementVehicle;
         if (ganttVehicle && ganttVehicle.value !== state.timelinePlacementVehicle) ganttVehicle.value = state.timelinePlacementVehicle;
         if (timelineFilter && timelineFilter.value !== state.timelinePlacementQuery) timelineFilter.value = state.timelinePlacementQuery;
         if (ganttFilter && ganttFilter.value !== state.timelinePlacementQuery) ganttFilter.value = state.timelinePlacementQuery;
+        // Battalion only means anything in Process View — Unit View lanes are
+        // already one specific battalion+unit each, picked by clicking the
+        // lane itself, so the filter would have nothing to do there.
+        [timelineBattalionGroup, ganttBattalionGroup].forEach(group => {
+            if (group) group.style.display = processView ? '' : 'none';
+        });
+        [timelineBattalion, ganttBattalion].forEach(select => {
+            if (!select) return;
+            const optionsHtml = ['<option value="">All battalions</option>']
+                .concat(state.battalions.map(b => `<option value="${escapeHtml(b.battalion_code)}">${escapeHtml(b.battalion_code)}</option>`))
+                .join('');
+            if (select.dataset.optionsSig !== String(state.battalions.length)) {
+                select.innerHTML = optionsHtml;
+                select.dataset.optionsSig = String(state.battalions.length);
+            }
+            if (select.value !== state.timelinePlacementBattalionFilter) select.value = state.timelinePlacementBattalionFilter;
+        });
 
         const station = currentPlacementStation();
         const unit = currentPlacementUnit();
@@ -2782,9 +3408,9 @@ window.PPMSModuleRuntime = (() => {
         if (!['lane', 'from-block'].includes(state.timelineMoveMode) || !anchorRow.battalion_id || !(anchorRow.vehicle_type || anchorRow.vehicle)) {
             return rowsToMove;
         }
-        let query = dbRef
+        let query = PlanVersions.scoped(dbRef
             .from('kd2_plan')
-            .select('id, battalion_id, vehicle_type, unit_serial, unit_label, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date')
+            .select('id, battalion_id, vehicle_type, unit_serial, unit_label, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date'), 'kd2')
             .eq('battalion_id', anchorRow.battalion_id)
             .eq('vehicle_type', anchorRow.vehicle_type || anchorRow.vehicle);
         query = anchorRow.unit_serial === null
@@ -2815,9 +3441,9 @@ window.PPMSModuleRuntime = (() => {
         const stationCodes = [...new Set(rowsToMove.map(row => row.station_code).filter(Boolean))];
         if (!stationCodes.length) return;
 
-        let query = dbRef
+        let query = PlanVersions.scoped(dbRef
             .from('kd2_plan')
-            .select('id, station_code')
+            .select('id, station_code'), 'kd2')
             .eq('battalion_id', destinationLane.battalion_id)
             .eq('vehicle_type', destinationLane.vehicle_type)
             .in('station_code', stationCodes);
@@ -3779,6 +4405,7 @@ window.PPMSModuleRuntime = (() => {
                         planned_end_date: window.end,
                         planning_source: 'import',
                         remark: String(row.remark || '').trim() || null,
+                        plan_version_id: PlanVersions.getActiveId('kd2'),
                     });
                 }
             });
@@ -3791,14 +4418,14 @@ window.PPMSModuleRuntime = (() => {
 
             const battalionIds = [...new Set(payloads.map(row => row.battalion_id))];
             const existingRows = battalionIds.length
-                ? await queryAll(dbRef.from('kd2_plan').select('*').in('battalion_id', battalionIds))
+                ? await queryAll(PlanVersions.scoped(dbRef.from('kd2_plan').select('*'), 'kd2').in('battalion_id', battalionIds))
                 : [];
             const beforeMap = new Map(existingRows.map(row => [buildImportKey(row), row]));
             const upsertedRows = [];
             for (const batch of chunk(payloads, 200)) {
                 const { data, error } = await dbRef
                     .from('kd2_plan')
-                    .upsert(batch, { onConflict: 'battalion_id,vehicle_type,unit_serial,station_code' })
+                    .upsert(batch, { onConflict: 'plan_version_id,battalion_id,vehicle_type,unit_serial,station_code' })
                     .select('*');
                 if (error) throw error;
                 upsertedRows.push(...(data || []));
@@ -4021,10 +4648,71 @@ window.PPMSModuleRuntime = (() => {
         return document.querySelector('#kd2PlanCreateModeToggle .kd2-create-mode-btn.active')?.dataset.mode || 'block';
     }
 
+    function templateGroupDateFieldId(group) {
+        return `kd2TemplateStart_${group.replace(/[^A-Za-z0-9]+/g, '')}`;
+    }
+
+    // K9's Hull and Turret lines run in parallel on the shop floor — each needs
+    // its own planned start. K10/K11 only have one upstream line (Structure), so
+    // the single Planned Start field already covers it and no extra fields show.
+    function renderTemplateGroupDatesHtml(vehicle) {
+        return templateUpstreamGroups(vehicle).map(group => `
+            <div class="form-group">
+                <label class="form-label" for="${templateGroupDateFieldId(group)}">${escapeHtml(group)} Start</label>
+                <input type="date" id="${templateGroupDateFieldId(group)}" class="filter-control" data-kd2-template-group-date="${escapeHtml(group)}" />
+            </div>
+        `).join('');
+    }
+
+    function syncTemplateStartDateFields() {
+        const vehicle = selectedTemplateVehicle();
+        const isTemplate = currentPlanCreateMode() === 'template';
+        const groups = templateUpstreamGroups(vehicle);
+        const useGroupDates = isTemplate && groups.length >= 2;
+        const wrap = document.getElementById('kd2TemplateGroupDates');
+        const singleGroup = document.getElementById('kd2PlanCreateStart')?.closest('.form-group');
+        if (wrap) {
+            if (useGroupDates) {
+                const priorValues = new Map(
+                    [...wrap.querySelectorAll('[data-kd2-template-group-date]')]
+                        .map(input => [input.dataset.kd2TemplateGroupDate, input.value])
+                );
+                const fallbackDate = document.getElementById('kd2PlanCreateStart')?.value || '';
+                wrap.innerHTML = renderTemplateGroupDatesHtml(vehicle);
+                wrap.querySelectorAll('[data-kd2-template-group-date]').forEach(input => {
+                    input.value = priorValues.get(input.dataset.kd2TemplateGroupDate) || fallbackDate;
+                });
+            } else {
+                wrap.innerHTML = '';
+            }
+            wrap.style.display = useGroupDates ? '' : 'none';
+        }
+        if (singleGroup) singleGroup.style.display = useGroupDates ? 'none' : '';
+    }
+
+    // Map<groupName, dateStr> for each of the vehicle's upstream (independent)
+    // lines. K9 reads its two dedicated date fields; K10/K11 falls back to the
+    // single Planned Start field for its one upstream line (Structure).
+    function getTemplateGroupStartDates(vehicle) {
+        const groups = templateUpstreamGroups(vehicle);
+        const map = new Map();
+        if (groups.length >= 2) {
+            groups.forEach(group => {
+                const value = document.getElementById(templateGroupDateFieldId(group))?.value || '';
+                if (value) map.set(group, value);
+            });
+        } else {
+            const value = document.getElementById('kd2PlanCreateStart')?.value || '';
+            groups.forEach(group => { if (value) map.set(group, value); });
+        }
+        return map;
+    }
+
     function syncPlanCreateUiState() {
         const mode = currentPlanCreateMode();
         const isTemplate = mode === 'template';
         const modeGroup = document.getElementById('kd2PlanCreateModeGroup');
+        const blockSection = document.getElementById('kd2PlanCreateBlockSection');
         const stationGroup = document.getElementById('kd2PlanCreateStation')?.closest('.form-group');
         const categoryGroup = document.getElementById('kd2PlanCreateCategory')?.closest('.form-group');
         const durationGroup = document.getElementById('kd2PlanCreateDuration')?.closest('.form-group');
@@ -4033,17 +4721,23 @@ window.PPMSModuleRuntime = (() => {
         const editorWrap = document.getElementById('kd2TemplateEditorWrap');
         const title = document.getElementById('kd2PlanCreateTitle');
         const saveBtn = document.getElementById('btnKd2PlanCreateSave');
+        // Block mode is a short form — only widen the modal for Template mode's
+        // route editor, which actually needs the room.
+        document.querySelector('#kd2PlanCreateOverlay .kd2-plan-create-modal')
+            ?.classList.toggle('kd2-plan-create-modal--wide', isTemplate);
 
         document.querySelectorAll('[data-kd2-plan-create-form]').forEach(node => {
             node.style.display = '';
         });
         if (modeGroup) modeGroup.style.display = '';
+        if (blockSection) blockSection.style.display = isTemplate ? 'none' : '';
         if (stationGroup) stationGroup.style.display = isTemplate ? 'none' : '';
         if (categoryGroup) categoryGroup.style.display = isTemplate ? 'none' : '';
         if (durationGroup) durationGroup.style.display = isTemplate ? 'none' : '';
         if (endGroup) endGroup.style.display = isTemplate ? 'none' : '';
         if (remarkGroup) remarkGroup.style.display = isTemplate ? 'none' : '';
         if (editorWrap) editorWrap.style.display = isTemplate ? 'block' : 'none';
+        syncTemplateStartDateFields();
         if (title) {
             title.textContent = isTemplate ? 'Add KD2 Template' : 'Add KD2 Plan Block';
         }
@@ -4082,9 +4776,9 @@ window.PPMSModuleRuntime = (() => {
             throw new Error('Battalion, vehicle, unit, station, planned start, and duration are required.');
         }
 
-        let duplicateQuery = dbRef
+        let duplicateQuery = PlanVersions.scoped(dbRef
             .from('kd2_plan')
-            .select('id')
+            .select('id'), 'kd2')
             .eq('battalion_id', battalion.id)
             .eq('vehicle_type', vehicle)
             .eq('station_code', station.station_code);
@@ -4113,6 +4807,7 @@ window.PPMSModuleRuntime = (() => {
             planned_end_date: window.end,
             planning_source: planningSource,
             remark: remark || null,
+            plan_version_id: PlanVersions.getActiveId('kd2'),
         };
         const { data, error } = await dbRef
             .from('kd2_plan')
@@ -4242,6 +4937,7 @@ window.PPMSModuleRuntime = (() => {
             isNew: overrides.isNew === true,
             vehicle_type: overrides.vehicle_type || vehicle,
             category_code: overrides.category_code || 'assembly',
+            component_group: overrides.component_group || null,
             station_code: overrides.station_code || null,
             station_name: overrides.station_name || '',
             work_center: overrides.work_center || '',
@@ -4288,6 +4984,7 @@ window.PPMSModuleRuntime = (() => {
             isNew: false,
             vehicle_type: vehicle,
             category_code: item.route.category_code,
+            component_group: item.station.component_group || null,
             station_code: item.route.station_code,
             station_name: item.station.station_name,
             work_center: item.station.work_center || '',
@@ -4330,8 +5027,23 @@ window.PPMSModuleRuntime = (() => {
             }).filter(Boolean);
             if (blocks.length) return normalizeTemplateEditorBlocks(blocks);
         }
+        // No saved layout yet: default the template's initial arrangement to the
+        // Hull/Turret/Assembly/Processing (K9) or Structure/Assembly/Processing
+        // (K10/K11) grouping so it reads the same way as the VPX matrix, rather
+        // than the raw category/route order the stations happen to load in.
+        const order = templateGroupOrder(vehicle);
+        const items = templateRowsForVehicle(vehicle);
+        const groupIndex = new Map(items.map(item => [
+            item.route.station_code,
+            order.indexOf(templateGroupOf(vehicle, item.route.category_code, item.station.component_group || null)),
+        ]));
+        items.sort((a, b) => {
+            const ga = groupIndex.get(a.route.station_code);
+            const gb = groupIndex.get(b.route.station_code);
+            return (ga < 0 ? order.length : ga) - (gb < 0 ? order.length : gb);
+        });
         let previousRoute = null;
-        return templateRowsForVehicle(vehicle).map(item => {
+        return items.map(item => {
             const block = buildTemplateProcessBlockFromRouteItem(vehicle, item, previousRoute);
             previousRoute = block.route_sequence;
             return block;
@@ -4359,6 +5071,35 @@ window.PPMSModuleRuntime = (() => {
             .sort((a, b) => a.category_sequence - b.category_sequence)
             .map(row => `<option value="${escapeHtml(row.category_code)}" ${row.category_code === selected ? 'selected' : ''}>${escapeHtml(row.category_name)}</option>`)
             .join('');
+    }
+
+    function templateComponentOptions(selected = '') {
+        return ['', 'Hull', 'Turret']
+            .map(value => `<option value="${escapeHtml(value)}" ${value === (selected || '') ? 'selected' : ''}>${value ? escapeHtml(value) : 'Assembly / General'}</option>`)
+            .join('');
+    }
+
+    // Existing stations available to pick for a new template block, scoped to the
+    // chosen category (and, for K9, the chosen Hull/Turret component) so picking a
+    // station name is a lookup instead of free text. Stations already used
+    // elsewhere in the template are excluded to avoid duplicate route rows.
+    function templateStationPickOptions(block) {
+        const usedCodes = new Set(
+            state.templateEditorBlocks
+                .filter(item => isTemplateProcessBlock(item) && item.editor_id !== block.editor_id && item.station_code)
+                .map(item => item.station_code)
+        );
+        const candidates = state.stations
+            .filter(row => row.vehicle_type === block.vehicle_type && row.category_code === block.category_code)
+            .filter(row => !usedCodes.has(row.station_code))
+            .filter(row => block.vehicle_type !== 'K9' || !block.component_group ||
+                (row.component_group || '') === block.component_group)
+            .sort((a, b) => (a.station_sequence_in_category || 0) - (b.station_sequence_in_category || 0));
+        const options = candidates
+            .map(row => `<option value="${escapeHtml(row.station_code)}" ${row.station_code === block.station_code ? 'selected' : ''}>${escapeHtml(row.station_name)}${row.work_center ? ` · ${escapeHtml(row.work_center)}` : ''}</option>`)
+            .join('');
+        const customSelected = !block.station_code || !candidates.some(row => row.station_code === block.station_code);
+        return `<option value="__custom__" ${customSelected ? 'selected' : ''}>+ New custom station&hellip;</option>${options}`;
     }
 
     function nextTemplateRoute(vehicle) {
@@ -4403,13 +5144,10 @@ window.PPMSModuleRuntime = (() => {
     }
 
     function templateEditorHintText() {
-        if (state.templateEditorView === 'visual') {
-            return 'Drag blocks and spaces to reorder the template. Hover between cards to insert a Process Block or Space. Spaces skip working days before the next process group.';
-        }
         if (state.templateEditorView === 'preview') {
             return 'Preview how the template will land on the KD2 Gantt using the selected battalion, vehicle, unit, and planned start date.';
         }
-        return 'Keep rows in the intended order. Adjacent process rows with the same route number run in parallel, and any space row starts the next process on a new route group.';
+        return 'Drag cards or spaces to reorder. Hover between cards to insert a process block or a space. Cards with the same route number run in parallel.';
     }
 
     function syncTemplateEditorChrome() {
@@ -4434,29 +5172,59 @@ window.PPMSModuleRuntime = (() => {
         }
 
         const isNew = node.dataset.new === 'true' || existingBlock.isNew;
+        // An existing card mid-edit (Edit button toggled on) renders the exact
+        // same station/category/component fields a new card does — read them
+        // the same way, but keep `isNew` itself meaning "not yet in the DB",
+        // which the save path still relies on to decide insert vs. reuse.
+        const showsPickerFields = isNew || node.dataset.editing === 'true';
         const duration = parseLeadTimeValue(node.querySelector('[data-field="duration"]')?.value);
         const routeSequence = parseRouteSequenceValue(node.querySelector('[data-field="routeSequence"]')?.value);
-        const stationName = isNew
-            ? node.querySelector('[data-field="stationName"]')?.value?.trim() || ''
-            : existingBlock.station_name || '';
-        const workCenter = isNew
-            ? node.querySelector('[data-field="workCenter"]')?.value?.trim() || ''
-            : existingBlock.work_center || '';
-        const categoryCode = isNew
+        const categoryCode = showsPickerFields
             ? node.querySelector('[data-field="categoryCode"]')?.value || ''
             : existingBlock.category_code || node.dataset.categoryCode || '';
+
+        let stationName = existingBlock.station_name || '';
+        let workCenter = existingBlock.work_center || '';
+        let stationCode = existingBlock.station_code || node.dataset.stationCode || null;
+        let componentGroup = existingBlock.component_group ?? null;
+        let stationSequenceInCategory = existingBlock.station_sequence_in_category;
+
+        if (showsPickerFields) {
+            const pick = node.querySelector('[data-field="stationPick"]')?.value || '__custom__';
+            const picked = pick && pick !== '__custom__'
+                ? state.stations.find(row => row.vehicle_type === vehicle && row.station_code === pick)
+                : null;
+            // Ignore a stale pick left over from a since-changed category (the
+            // dropdown options haven't re-rendered yet at read time).
+            if (picked && picked.category_code === categoryCode) {
+                stationCode = pick;
+                stationName = picked.station_name || '';
+                workCenter = picked.work_center || '';
+                componentGroup = picked.component_group || null;
+                stationSequenceInCategory = picked.station_sequence_in_category;
+            } else {
+                stationCode = null;
+                stationName = node.querySelector('[data-field="stationName"]')?.value?.trim() || '';
+                workCenter = node.querySelector('[data-field="workCenter"]')?.value?.trim() || '';
+                componentGroup = vehicle === 'K9'
+                    ? (node.querySelector('[data-field="componentGroup"]')?.value || null)
+                    : null;
+            }
+        }
+
         return createTemplateProcessBlock(vehicle, {
             ...existingBlock,
             editor_id: node.dataset.editorId || existingBlock.editor_id,
             isNew,
             vehicle_type: vehicle,
             category_code: categoryCode,
-            station_code: existingBlock.station_code || node.dataset.stationCode || null,
+            component_group: componentGroup,
+            station_code: stationCode,
             station_name: stationName,
             work_center: workCenter,
             route_sequence: Number.isNaN(routeSequence) ? existingBlock.route_sequence : routeSequence,
             lead_time_days: duration,
-            station_sequence_in_category: existingBlock.station_sequence_in_category,
+            station_sequence_in_category: stationSequenceInCategory,
         });
     }
 
@@ -4469,46 +5237,53 @@ window.PPMSModuleRuntime = (() => {
             // data-rendered attribute set by renderTemplateEditor). Without this guard,
             // calling syncTemplateEditorStateFromDom before the editor renders wipes the
             // in-memory state loaded by ensureTemplateEditorState, causing the intermittent
-            // "No template rows are available to save" error.
-            if (container.dataset.rendered === 'true') {
+            // "No template rows are available to save" error. A group tab showing zero
+            // items is also a legitimate empty DOM, not "not rendered yet" — never wipe
+            // the other (hidden) tabs' blocks for that.
+            if (container.dataset.rendered === 'true' && !state.templateEditorGroupFilter) {
                 state.templateEditorBlocks = [];
             }
             return;
         }
         const previousBlocks = new Map(state.templateEditorBlocks.map(block => [block.editor_id, block]));
-        let blocks = cards.map(node => {
+        const domOrderIds = cards.map(node => node.dataset.editorId || '');
+        const domBlocksById = new Map();
+        cards.forEach(node => {
             const editorId = node.dataset.editorId || '';
             const existingBlock = previousBlocks.get(editorId) || {};
             const block = readTemplateBlockFields(node, existingBlock);
             if (state.templateEditorView === 'visual' && isTemplateProcessBlock(block)) {
                 block.parallel_with_previous = Boolean(node.querySelector('[data-kd2-template-parallel]')?.checked);
             }
-            return block;
+            domBlocksById.set(editorId, block);
         });
 
-        if (state.templateEditorView === 'visual') {
-            blocks = normalizeTemplateEditorBlocks(blocks);
-        } else {
-            let previousProcessRoute = null;
-            let previousWasProcess = false;
-            blocks = blocks.map(block => {
-                if (isTemplateSpaceBlock(block)) {
-                    previousWasProcess = false;
-                    previousProcessRoute = null;
-                    return createTemplateSpaceBlock(block.vehicle_type || selectedTemplateVehicle(), block);
+        // Only the blocks actually present in the DOM belong to the active group tab
+        // (or "all", when unfiltered). Merge their new values/order back into the
+        // full template in place — where the first visible block used to sit — so
+        // blocks hidden by the tab filter are carried over untouched instead of
+        // being dropped.
+        const domIdSet = new Set(domOrderIds);
+        let spliced = false;
+        let blocks = [];
+        state.templateEditorBlocks.forEach(block => {
+            if (domIdSet.has(block.editor_id)) {
+                if (!spliced) {
+                    domOrderIds.forEach(id => blocks.push(domBlocksById.get(id) || previousBlocks.get(id)));
+                    spliced = true;
                 }
-                const routeSequence = parseRouteSequenceValue(block.route_sequence);
-                const parallelWithPrevious = previousWasProcess && !Number.isNaN(routeSequence) && routeSequence === previousProcessRoute;
-                previousWasProcess = true;
-                previousProcessRoute = routeSequence;
-                return createTemplateProcessBlock(block.vehicle_type || selectedTemplateVehicle(), {
-                    ...block,
-                    route_sequence: Number.isNaN(routeSequence) ? block.route_sequence : routeSequence,
-                    parallel_with_previous: parallelWithPrevious,
-                });
-            });
-            if (normalizeForVisual) blocks = normalizeTemplateEditorBlocks(blocks);
+            } else {
+                blocks.push(block);
+            }
+        });
+        if (!spliced) {
+            domOrderIds.forEach(id => blocks.push(domBlocksById.get(id) || previousBlocks.get(id)));
         }
+
+        // The editor only ever renders "visual" cards now (Form view is gone), so
+        // route numbers/parallel flags always come from card position + the
+        // parallel toggle, recomputed across the whole template.
+        blocks = normalizeTemplateEditorBlocks(blocks);
 
         state.templateEditorBlocks = blocks;
     }
@@ -4521,92 +5296,40 @@ window.PPMSModuleRuntime = (() => {
         );
         return [
             category?.category_name || block.category_code || 'No category',
+            block.vehicle_type === 'K9' && block.component_group ? block.component_group : null,
             block.work_center || block.station_code || 'No work center',
-        ].join(' · ');
+        ].filter(Boolean).join(' · ');
     }
 
-    function renderTemplateEditorForm(blocks) {
-        if (!blocks.length) {
-            return '<div class="empty-state"><p>No route template is available for this vehicle. Add a process block or space to start one.</p></div>';
-        }
-        return blocks.map((block, index) => {
-            const controls = `
-                <div class="kd2-template-row-actions">
-                    <button type="button" class="kd2-template-shift" data-kd2-template-move="-1" data-editor-id="${escapeHtml(block.editor_id)}" title="Move up" ${index === 0 ? 'disabled' : ''}>↑</button>
-                    <button type="button" class="kd2-template-shift" data-kd2-template-move="1" data-editor-id="${escapeHtml(block.editor_id)}" title="Move down" ${index === blocks.length - 1 ? 'disabled' : ''}>↓</button>
-                    <button type="button" class="kd2-template-remove" data-kd2-template-remove-id="${escapeHtml(block.editor_id)}" title="Remove item">&times;</button>
-                </div>
-            `;
-
-            if (isTemplateSpaceBlock(block)) {
-                return `
-                    <div class="kd2-template-row kd2-template-row-space" data-kd2-template-block data-kind="space" data-editor-id="${escapeHtml(block.editor_id)}">
-                        <div class="kd2-template-row-fields">
-                            <div class="kd2-template-card-field">
-                                <label>Type</label>
-                                <select class="filter-control" data-field="kind">${templateTypeOptions('space')}</select>
-                            </div>
-                            <div class="kd2-template-card-field">
-                                <label>Gap Days</label>
-                                <input type="number" min="1" step="1" class="filter-control kd2-template-gap-days" data-field="gapDays" value="${block.gap_days || ''}" placeholder="days" />
-                            </div>
-                            <div class="kd2-template-card-field kd2-template-card-field-span2">
-                                <label>Summary</label>
-                                <div class="kd2-template-card-field-value kd2-template-space-summary">${escapeHtml(gapSummaryText(block.gap_days))}</div>
-                            </div>
-                        </div>
-                        ${controls}
-                    </div>
-                `;
-            }
-
-            return `
-                <div class="kd2-template-row ${block.isNew ? 'kd2-template-row-new' : ''}" data-kd2-template-block data-kind="process" data-new="${block.isNew ? 'true' : 'false'}" data-editor-id="${escapeHtml(block.editor_id)}" data-category-code="${escapeHtml(block.category_code || '')}" data-station-code="${escapeHtml(block.station_code || '')}">
-                    <div class="kd2-template-row-fields">
-                        <div class="kd2-template-card-field">
-                            <label>Type</label>
-                            <select class="filter-control" data-field="kind">${templateTypeOptions('process')}</select>
-                        </div>
-                        ${block.isNew ? `
-                            <div class="kd2-template-card-field">
-                                <label>Station Name</label>
-                                <input type="text" class="filter-control kd2-template-name-input" data-field="stationName" value="${escapeHtml(block.station_name || '')}" placeholder="Station name" />
-                            </div>
-                            <div class="kd2-template-card-field">
-                                <label>Category</label>
-                                <select class="filter-control kd2-template-category-input" data-field="categoryCode">${templateCategoryOptions(block.vehicle_type, block.category_code || 'assembly')}</select>
-                            </div>
-                            <div class="kd2-template-card-field">
-                                <label>Work Center</label>
-                                <input type="text" class="filter-control kd2-template-workcenter-input" data-field="workCenter" value="${escapeHtml(block.work_center || '')}" placeholder="Work center" />
-                            </div>
-                        ` : `
-                            <div class="kd2-template-card-field kd2-template-card-field-span2">
-                                <label>Station</label>
-                                <div class="kd2-template-card-field-value">${escapeHtml(block.station_name)}</div>
-                            </div>
-                            <div class="kd2-template-card-field">
-                                <label>Category</label>
-                                <div class="kd2-template-card-field-value">${escapeHtml(state.categories.find(item => item.vehicle_type === block.vehicle_type && item.category_code === block.category_code)?.category_name || block.category_code)}</div>
-                            </div>
-                            <div class="kd2-template-card-field">
-                                <label>Work Center</label>
-                                <div class="kd2-template-card-field-value">${escapeHtml(block.work_center || block.station_code || 'No work center')}</div>
-                            </div>
-                        `}
-                        <div class="kd2-template-card-field">
-                            <label>Route</label>
-                            <input type="number" min="1" step="1" class="filter-control kd2-template-route-input" data-field="routeSequence" value="${block.route_sequence || ''}" title="Same route number as the previous process = parallel" />
-                        </div>
-                        <div class="kd2-template-card-field">
-                            <label>Duration</label>
-                            <input type="number" min="1" step="1" class="filter-control kd2-template-duration" data-field="duration" value="${block.lead_time_days || ''}" placeholder="days" />
-                        </div>
-                    </div>
-                    ${controls}
-                </div>
-            `;
-        }).join('');
+    // Fields shown for a brand-new template block: station is chosen from a
+    // category-scoped dropdown of existing stations by default (item 3 of the
+    // request — no more free-typed names for stations that already exist), with
+    // a "New custom station" option that reveals the name/work-center inputs.
+    function renderTemplateIsNewFieldsHtml(block) {
+        const isCustom = !block.station_code;
+        return `
+            <div class="kd2-template-card-field">
+                <label>Station</label>
+                <select class="filter-control kd2-template-station-pick" data-field="stationPick">${templateStationPickOptions(block)}</select>
+            </div>
+            <div class="kd2-template-card-field" data-kd2-template-custom-field ${isCustom ? '' : 'style="display:none"'}>
+                <label>New Station Name</label>
+                <input type="text" class="filter-control kd2-template-name-input" data-field="stationName" value="${escapeHtml(block.station_name || '')}" placeholder="Station name" />
+            </div>
+            <div class="kd2-template-card-field">
+                <label>Category</label>
+                <select class="filter-control kd2-template-category-input" data-field="categoryCode">${templateCategoryOptions(block.vehicle_type, block.category_code || 'assembly')}</select>
+            </div>
+            ${block.vehicle_type === 'K9' ? `
+            <div class="kd2-template-card-field">
+                <label>Component</label>
+                <select class="filter-control kd2-template-component-input" data-field="componentGroup">${templateComponentOptions(block.component_group)}</select>
+            </div>` : ''}
+            <div class="kd2-template-card-field" data-kd2-template-custom-field ${isCustom ? '' : 'style="display:none"'}>
+                <label>Work Center</label>
+                <input type="text" class="filter-control kd2-template-workcenter-input" data-field="workCenter" value="${escapeHtml(block.work_center || '')}" placeholder="Work center" />
+            </div>
+        `;
     }
 
     function renderTemplateInsertSlot(index) {
@@ -4643,11 +5366,21 @@ window.PPMSModuleRuntime = (() => {
         `;
     }
 
-    function renderTemplateEditorVisual(blocks) {
-        const normalizedBlocks = normalizeTemplateEditorBlocks(blocks);
+    function renderTemplateEditorVisual(allBlocks, vehicleType, groupFilter) {
+        // Normalize the FULL route first so route numbers/parallel flags stay
+        // canonical across the whole template, then filter down to the active
+        // group tab — insert slots carry the block's real (whole-template) index
+        // so inserting/reordering within one tab lands in the right place overall.
+        const normalizedAll = normalizeTemplateEditorBlocks(allBlocks);
+        const { visible: normalizedBlocks, indexMap } = templateFilteredBlocks(normalizedAll, vehicleType, groupFilter);
+        const realIndexAt = i => {
+            if (i < indexMap.length) return indexMap[i];
+            if (indexMap.length) return indexMap[indexMap.length - 1] + 1;
+            return templateActiveGroupAppendIndex(vehicleType, groupFilter);
+        };
         const nodes = [];
         for (let i = 0; i <= normalizedBlocks.length; i += 1) {
-            nodes.push(renderTemplateInsertSlot(i));
+            nodes.push(renderTemplateInsertSlot(realIndexAt(i)));
             if (i >= normalizedBlocks.length) continue;
             const block = normalizedBlocks[i];
             if (isTemplateSpaceBlock(block)) {
@@ -4659,19 +5392,14 @@ window.PPMSModuleRuntime = (() => {
                                 <span>${escapeHtml(gapSummaryText(block.gap_days))}</span>
                             </div>
                             <div class="kd2-template-card-tools">
-                                <span class="kd2-template-route-pill kd2-template-space-pill">Space</span>
                                 <span class="kd2-template-drag-handle" title="Drag to reorder">::</span>
                                 <button type="button" class="kd2-template-remove" data-kd2-template-remove-id="${escapeHtml(block.editor_id)}" title="Remove space">&times;</button>
                             </div>
                         </div>
                         <div class="kd2-template-space-body">
-                            <div class="kd2-template-card-field">
-                                <label>Gap Days</label>
+                            <div class="kd2-template-card-field kd2-template-card-field-duration">
+                                <label>Skip working days</label>
                                 <input type="number" min="1" step="1" class="filter-control kd2-template-gap-days" data-field="gapDays" value="${block.gap_days || ''}" placeholder="days" />
-                            </div>
-                            <div class="kd2-template-card-field">
-                                <label>Summary</label>
-                                <div class="kd2-template-card-field-value kd2-template-space-summary">${escapeHtml(gapSummaryText(block.gap_days))}</div>
                             </div>
                         </div>
                     </article>
@@ -4680,69 +5408,62 @@ window.PPMSModuleRuntime = (() => {
             }
             const previousBlock = i > 0 ? normalizedBlocks[i - 1] : null;
             const canParallel = previousBlock && isTemplateProcessBlock(previousBlock);
+            // Existing stations show their identity in the header meta line
+            // (templateCardMeta) by default — the fields row only needs Duration,
+            // repeating Station/Category/Work Center a second time was pure
+            // clutter. New (custom) blocks always need their editable identity
+            // fields here; an existing block gets the same fields back the
+            // moment its Edit button is clicked (isEditing), pre-filled with its
+            // current station, so it can be reassigned without deleting and
+            // re-adding it.
+            const isEditing = !block.isNew && block.editor_id === state.templateEditingBlockId;
+            const showFields = block.isNew || isEditing;
+            const fullName = block.isNew ? (block.station_name || 'Untitled station') : block.station_name;
             nodes.push(`
-                <article class="kd2-template-card" draggable="true" data-kd2-template-block data-kind="process" data-new="${block.isNew ? 'true' : 'false'}" data-editor-id="${escapeHtml(block.editor_id)}" data-category-code="${escapeHtml(block.category_code || '')}" data-station-code="${escapeHtml(block.station_code || '')}">
+                <article class="kd2-template-card" draggable="true" data-kd2-template-block data-kind="process" data-new="${block.isNew ? 'true' : 'false'}" data-editing="${isEditing ? 'true' : 'false'}" data-group="${escapeHtml(groupFilter)}" data-editor-id="${escapeHtml(block.editor_id)}" data-category-code="${escapeHtml(block.category_code || '')}" data-station-code="${escapeHtml(block.station_code || '')}">
                     <div class="kd2-template-card-head">
                         <div class="kd2-template-card-copy">
-                            <strong>${escapeHtml(block.isNew ? (block.station_name || 'New Block') : block.station_name)}</strong>
-                            <span>${escapeHtml(templateCardMeta(block))}</span>
+                            <strong title="${escapeHtml(fullName)}">${block.isNew ? '<span class="kd2-template-new-badge">New</span> ' : ''}${escapeHtml(fullName)}</strong>
+                            ${block.isNew ? '' : `<span title="${escapeHtml(templateCardMeta(block))}">${escapeHtml(templateCardMeta(block))}</span>`}
                         </div>
                         <div class="kd2-template-card-tools">
-                            <span class="kd2-template-route-pill">Route ${block.route_sequence}${block.parallel_with_previous ? ' · Parallel' : ''}</span>
+                            <span class="kd2-template-route-pill${block.parallel_with_previous ? ' is-parallel' : ''}" title="Route ${block.route_sequence}${block.parallel_with_previous ? ' · runs in parallel with the previous step' : ''}">${block.route_sequence}</span>
+                            ${block.isNew ? '' : `
+                                <button type="button" class="kd2-template-edit-btn${isEditing ? ' active' : ''}" data-kd2-template-edit-id="${escapeHtml(block.editor_id)}" title="${isEditing ? 'Done editing' : 'Edit station'}">
+                                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 2l3 3-8 8-3.5 1 1-3.5z"/></svg>
+                                </button>
+                            `}
                             <span class="kd2-template-drag-handle" title="Drag to reorder">::</span>
                             <button type="button" class="kd2-template-remove" data-kd2-template-remove-id="${escapeHtml(block.editor_id)}" title="Remove block">&times;</button>
                         </div>
                     </div>
                     <div class="kd2-template-card-fields">
-                        ${block.isNew ? `
-                            <div class="kd2-template-card-field">
-                                <label>Station Name</label>
-                                <input type="text" class="filter-control" data-field="stationName" value="${escapeHtml(block.station_name || '')}" placeholder="Station name" />
-                            </div>
-                            <div class="kd2-template-card-field">
-                                <label>Category</label>
-                                <select class="filter-control" data-field="categoryCode">${templateCategoryOptions(block.vehicle_type, block.category_code || 'assembly')}</select>
-                            </div>
-                            <div class="kd2-template-card-field">
-                                <label>Work Center</label>
-                                <input type="text" class="filter-control" data-field="workCenter" value="${escapeHtml(block.work_center || '')}" placeholder="Work center" />
-                            </div>
-                        ` : `
-                            <div class="kd2-template-card-field">
-                                <label>Station</label>
-                                <div class="kd2-template-card-field-value">${escapeHtml(block.station_name)}</div>
-                            </div>
-                            <div class="kd2-template-card-field">
-                                <label>Category</label>
-                                <div class="kd2-template-card-field-value">${escapeHtml(state.categories.find(item => item.vehicle_type === block.vehicle_type && item.category_code === block.category_code)?.category_name || block.category_code)}</div>
-                            </div>
-                            <div class="kd2-template-card-field">
-                                <label>Work Center</label>
-                                <div class="kd2-template-card-field-value">${escapeHtml(block.work_center || block.station_code || 'No work center')}</div>
-                            </div>
-                        `}
-                        <div class="kd2-template-card-field">
+                        ${showFields ? renderTemplateIsNewFieldsHtml(block) : ''}
+                        <div class="kd2-template-card-field kd2-template-card-field-duration">
                             <label>Duration</label>
                             <input type="number" min="1" step="1" class="filter-control kd2-template-duration" data-field="duration" value="${block.lead_time_days || ''}" placeholder="days" />
                         </div>
-                    </div>
-                    <div class="kd2-template-card-foot">
-                        <label class="kd2-template-parallel-toggle">
-                            <input type="checkbox" data-kd2-template-parallel ${canParallel && block.parallel_with_previous ? 'checked' : ''} ${canParallel ? '' : 'disabled'} />
-                            <span>${canParallel ? 'Parallel with previous process block' : (i === 0 ? 'First process starts the route' : 'Space above forces a new route')}</span>
-                        </label>
+                        ${canParallel ? `
+                            <label class="kd2-template-parallel-toggle">
+                                <input type="checkbox" data-kd2-template-parallel ${block.parallel_with_previous ? 'checked' : ''} />
+                                <span>Parallel</span>
+                            </label>
+                        ` : ''}
                     </div>
                 </article>
             `);
         }
         return `
-            <div class="kd2-template-visual-note">Direct block editing is active. Route order comes from card position, and spaces skip working days before the next process group.</div>
-            <div class="kd2-template-visual">
-                ${normalizedBlocks.length ? '' : '<div class="empty-state"><p>No route template is available for this vehicle yet. Use the insert slot to add a Process Block or Space.</p></div>'}
+            <div class="kd2-template-visual" data-group="${escapeHtml(groupFilter)}">
+                ${normalizedBlocks.length ? '' : '<div class="empty-state"><p>No blocks in this group yet. Use the insert slot to add a process block or a space.</p></div>'}
                 ${nodes.join('')}
             </div>
         `;
     }
+
+    // Shared with the pointer-drag handlers below so a dragged pixel distance
+    // converts to the same day-column width the bars are actually laid out at.
+    const TEMPLATE_GANTT_DAY_W = 30;
 
     const TEMPLATE_PREVIEW_GANTT_PALETTE = [
         '#06b6d4', '#f97316', '#84cc16', '#6366f1', '#e11d48',
@@ -4805,8 +5526,9 @@ window.PPMSModuleRuntime = (() => {
 
     function buildTemplatePreviewModel(blocks) {
         const battalionId = parseInt(document.getElementById('kd2PlanCreateBattalion')?.value || '', 10);
-        const startDate = document.getElementById('kd2PlanCreateStart')?.value || '';
         const vehicle = selectedTemplateVehicle();
+        const upstreamGroups = templateUpstreamGroups(vehicle);
+        const groupStartDates = getTemplateGroupStartDates(vehicle);
         const unitSelect = document.getElementById('kd2PlanCreateUnit');
         const normalizedBlocks = normalizeTemplateEditorBlocks(blocks || []);
         if (!normalizedBlocks.length) {
@@ -4815,8 +5537,12 @@ window.PPMSModuleRuntime = (() => {
         if (!battalionId) {
             return { emptyMessage: 'Select a battalion to build the Gantt preview.' };
         }
-        if (!startDate) {
-            return { emptyMessage: 'Choose a planned start date to build the Gantt preview.' };
+        if (groupStartDates.size < upstreamGroups.length) {
+            return {
+                emptyMessage: upstreamGroups.length >= 2
+                    ? `Choose a planned start for each of ${upstreamGroups.join(' and ')} to build the Gantt preview.`
+                    : 'Choose a planned start date to build the Gantt preview.',
+            };
         }
 
         const rules = planningRulesFor(battalionId, vehicle);
@@ -4830,9 +5556,11 @@ window.PPMSModuleRuntime = (() => {
         let currentGroup = null;
 
         normalizedBlocks.forEach((block, index) => {
+            const group = templateBlockGroup(normalizedBlocks, index, vehicle);
             if (isTemplateSpaceBlock(block)) {
                 segments.push({
                     kind: 'space',
+                    group,
                     gap_days: parseGapDaysValue(block.gap_days),
                     applies_to_next_process: normalizedBlocks.slice(index + 1).some(isTemplateProcessBlock),
                 });
@@ -4841,7 +5569,7 @@ window.PPMSModuleRuntime = (() => {
             }
 
             const duration = parseLeadTimeValue(block.lead_time_days);
-            if (currentGroup && block.parallel_with_previous) {
+            if (currentGroup && block.parallel_with_previous && currentGroup.group === group) {
                 currentGroup.items.push({
                     block,
                     duration,
@@ -4853,6 +5581,7 @@ window.PPMSModuleRuntime = (() => {
 
             currentGroup = {
                 kind: 'process_group',
+                group,
                 sequence: block.route_sequence,
                 items: [{
                     block,
@@ -4872,43 +5601,34 @@ window.PPMSModuleRuntime = (() => {
             return { emptyMessage: `Set a valid duration before previewing ${invalidBlock.station_name}.` };
         }
 
-        let currentStart = localDateStr(normalizeWorkingDateForward(startDate, rules));
-        const rows = [];
-
-        segments.forEach(segment => {
-            if (segment.kind === 'space') {
-                if (!segment.applies_to_next_process) return;
-                const gapDays = Math.max(parseInt(segment.gap_days, 10) || 0, 0);
-                if (gapDays < 1) return;
-                currentStart = shiftWorkingDateForward(currentStart, gapDays, rules);
-                return;
-            }
-
-            const groupRows = segment.items.map(item => {
-                const window = buildForwardWindow(currentStart, item.duration, rules);
-                return {
-                    battalion_id: battalionId,
-                    battalion_code: battalion?.battalion_code || '',
-                    vehicle_type: vehicle,
-                    vehicle,
-                    unit_serial: unitSerial,
-                    unit_label: unitLabel,
-                    vehicle_no: unitLabel,
-                    category: item.category_name,
-                    category_code: item.block.category_code || '',
-                    station_code: item.block.station_code || '',
-                    route_sequence: item.block.route_sequence,
-                    work_center: item.block.work_center || item.block.station_code || '',
-                    process_station: item.station_name,
-                    station_name: item.station_name,
-                    start_date: window.start,
-                    end_date: window.end,
-                    duration: item.duration,
-                };
-            });
-            rows.push(...groupRows);
-            currentStart = nextWorkingDate(maxDateStr(groupRows.map(row => row.end_date)), rules);
-        });
+        const scheduled = scheduleTemplateSegments(
+            segments,
+            vehicle,
+            groupStartDates,
+            rules,
+            (item, cursor) => buildForwardWindow(cursor, item.duration, rules)
+        );
+        const rows = scheduled.map(({ item, window }) => ({
+            battalion_id: battalionId,
+            battalion_code: battalion?.battalion_code || '',
+            vehicle_type: vehicle,
+            vehicle,
+            unit_serial: unitSerial,
+            unit_label: unitLabel,
+            vehicle_no: unitLabel,
+            category: item.category_name,
+            category_code: item.block.category_code || '',
+            component_group: item.block.component_group || null,
+            station_code: item.block.station_code || '',
+            editor_id: item.block.editor_id || '',
+            route_sequence: item.block.route_sequence,
+            work_center: item.block.work_center || item.block.station_code || '',
+            process_station: item.station_name,
+            station_name: item.station_name,
+            start_date: window.start,
+            end_date: window.end,
+            duration: item.duration,
+        }));
 
         if (!rows.length) {
             return { emptyMessage: 'No preview rows are available for the selected template.' };
@@ -4946,7 +5666,7 @@ window.PPMSModuleRuntime = (() => {
         }
 
         const PREVIEW_LABEL_W = 198;
-        const PREVIEW_DAY_W = 30;
+        const PREVIEW_DAY_W = TEMPLATE_GANTT_DAY_W;
         const PREVIEW_ROW_H = 36;
         const PREVIEW_GROUP_H = 26;
         const PREVIEW_SUBGROUP_H = 22;
@@ -5062,11 +5782,10 @@ window.PPMSModuleRuntime = (() => {
             zonesHtml += `<div class="gc-today-line" style="left:${todayLeft}px"></div>`;
         }
 
-        const positioned = buildTemplatePreviewPackedBars(preview.rows, preview.viewStart, preview.viewEnd, dayIndex, days.length);
-        const numLanes = positioned.length ? Math.max(...positioned.map(item => item.lane)) + 1 : 1;
-        const rowH = Math.max(PREVIEW_ROW_H, numLanes * PREVIEW_LANE_H + PREVIEW_BAR_GAP * 2);
-
-        const barsHtml = positioned.map(({ task, si, ei, lane }) => {
+        // One track per Hull/Turret/Assembly/Processing (or Structure/Assembly/
+        // Processing) group — same split as the Visual and Form editor views —
+        // instead of packing every station into a single combined lane.
+        const renderPreviewBar = ({ task, si, ei, lane }) => {
             const left = si * PREVIEW_DAY_W;
             const width = Math.max((ei - si + 1) * PREVIEW_DAY_W - 3, 6);
             const top = PREVIEW_BAR_GAP + lane * PREVIEW_LANE_H + Math.floor((PREVIEW_LANE_H - PREVIEW_BAR_H) / 2);
@@ -5079,16 +5798,70 @@ window.PPMSModuleRuntime = (() => {
             return `
                 <div
                     class="gc-bar kd2-template-preview-bar"
+                    data-kd2-template-preview-bar
+                    data-editor-id="${escapeHtml(task.editor_id || '')}"
                     style="left:${left}px;width:${width}px;height:${PREVIEW_BAR_H}px;top:${top}px;transform:none;background:${templatePreviewStationColor(task.process_station || task.station_name)}"
-                    title="${escapeHtml(title)}">
+                    title="${escapeHtml(title)}&#10;Drag to reschedule (${state.templateGanttMoveMode === 'lane' ? 'shifts the whole line' : 'shifts this block and everything after it in its line'})">
                     <span class="gc-bar-text">${escapeHtml(`${task.work_center || task.station_code || task.category_code || '—'} · ${task.process_station || task.station_name || 'Block'}`)}</span>
+                </div>
+            `;
+        };
+
+        const rowsByGroup = new Map();
+        preview.rows.forEach(row => {
+            const group = templateGroupOf(preview.vehicle, row.category_code, row.component_group);
+            if (!rowsByGroup.has(group)) rowsByGroup.set(group, []);
+            rowsByGroup.get(group).push(row);
+        });
+        const presentGroups = templateGroupOrder(preview.vehicle).filter(group => rowsByGroup.has(group));
+
+        // Same category-separator styling the main KD2 process Gantt uses to split
+        // Hull/Turret/Assembly rows (.gr-process-cat-sep), reused here so the
+        // template preview reads the same way.
+        const groupRowsHtml = presentGroups.map(group => {
+            const groupRows = rowsByGroup.get(group);
+            const positioned = buildTemplatePreviewPackedBars(groupRows, preview.viewStart, preview.viewEnd, dayIndex, days.length);
+            const numLanes = positioned.length ? Math.max(...positioned.map(item => item.lane)) + 1 : 1;
+            const rowH = Math.max(PREVIEW_ROW_H, numLanes * PREVIEW_LANE_H + PREVIEW_BAR_GAP * 2);
+            return `
+                <div class="gr gr-process-cat-sep" style="min-height:${PREVIEW_SUBGROUP_H}px">
+                    <div class="gr-label gr-process-cat-label" style="width:${PREVIEW_LABEL_W}px;align-items:center">
+                        <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" style="width:10px;height:10px;flex-shrink:0;opacity:.7">
+                            <path d="M3 4h8M3 7h8M3 10h8" stroke-dasharray="2 1.5"></path>
+                        </svg>
+                        ${escapeHtml(group)}
+                    </div>
+                    <div class="gr-track gr-process-cat-track" style="width:${totalW}px">${bgCells}</div>
+                </div>
+                <div class="gr" style="height:${rowH}px">
+                    <div class="gr-label" style="width:${PREVIEW_LABEL_W}px"></div>
+                    <div class="gr-track" style="width:${totalW}px;height:${rowH}px">
+                        ${bgCells}
+                        ${positioned.map(renderPreviewBar).join('')}
+                    </div>
                 </div>
             `;
         }).join('');
 
+        const moveMode = state.templateGanttMoveMode === 'lane' ? 'lane' : 'from-block';
+        const moveToggleHtml = `
+            <div class="gantt-move-toggle" id="kd2TemplateGanttMoveToggle" role="group" aria-label="Drag move mode">
+                <button type="button" class="gmt-btn ${moveMode === 'from-block' ? 'gmt-active' : ''}" data-kd2-template-gantt-move-mode="from-block" title="Drag a block: also shifts everything after it in its own line">From Block</button>
+                <button type="button" class="gmt-btn ${moveMode === 'lane' ? 'gmt-active' : ''}" data-kd2-template-gantt-move-mode="lane" title="Drag a block: shifts its entire line (Hull/Turret/etc.)">Lane</button>
+            </div>
+        `;
+
         const legendStations = [...new Set(preview.rows.map(row => String(row.process_station || row.station_name || '').trim()).filter(Boolean))]
             .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-        const legendHtml = legendStations.length ? `
+        const legendOpen = state.templatePreviewLegendOpen;
+        const legendToggleHtml = legendStations.length ? `
+            <div class="gantt-legend-toggle-row">
+                <button type="button" class="btn btn-ghost btn-sm gantt-legend-toggle-btn" data-kd2-template-legend-toggle aria-expanded="${legendOpen ? 'true' : 'false'}">
+                    ${legendOpen ? 'Hide Legend' : 'Show Legend'}
+                </button>
+            </div>
+        ` : '';
+        const legendGridHtml = legendStations.length && legendOpen ? `
             <div class="gantt-legend">
                 <div class="gantt-legend-head">
                     <span class="gantt-legend-title">Visible Stations</span>
@@ -5115,7 +5888,11 @@ window.PPMSModuleRuntime = (() => {
 
         return `
             <div class="kd2-template-gantt-preview">
-                ${legendHtml}
+                <div class="kd2-template-gantt-toolbar">
+                    ${moveToggleHtml}
+                    ${legendToggleHtml}
+                </div>
+                ${legendGridHtml}
                 ${zoneKeyHtml}
                 <div class="gantt-scroll-root kd2-template-gantt-scroll">
                     <div class="gantt-wrap" style="min-width:${innerW}px">
@@ -5142,16 +5919,14 @@ window.PPMSModuleRuntime = (() => {
                                 </div>
                                 <div class="gr-track gr-track-subgroup" style="width:${totalW}px">${bgCells}</div>
                             </div>
-                            <div class="gr" style="height:${rowH}px">
+                            <div class="gr" style="height:${PREVIEW_SUBGROUP_H}px">
                                 <div class="gr-label gr-unit-label" style="width:${PREVIEW_LABEL_W}px">
                                     <span class="gr-unit-dot"></span>
                                     <span class="gr-unit-name">${escapeHtml(`${preview.vehicle || '—'} · ${preview.unit_label || '—'}`)}</span>
                                 </div>
-                                <div class="gr-track" style="width:${totalW}px;height:${rowH}px">
-                                    ${bgCells}
-                                    ${barsHtml}
-                                </div>
+                                <div class="gr-track" style="width:${totalW}px">${bgCells}</div>
                             </div>
+                            ${groupRowsHtml}
                         </div>
                     </div>
                 </div>
@@ -5164,20 +5939,53 @@ window.PPMSModuleRuntime = (() => {
         if (!container) return;
         const vehicle = selectedTemplateVehicle();
         ensureTemplateEditorState(vehicle);
+        ensureTemplateEditorGroupFilter(vehicle);
         if (state.templateInsertIndex !== null && state.templateInsertIndex > state.templateEditorBlocks.length) {
             state.templateInsertIndex = state.templateEditorBlocks.length;
         }
         syncTemplateEditorChrome();
         container.classList.toggle('kd2-template-editor-preview', state.templateEditorView === 'preview');
-        container.innerHTML = state.templateEditorView === 'visual'
-            ? renderTemplateEditorVisual(state.templateEditorBlocks)
-            : state.templateEditorView === 'preview'
-                ? renderTemplateEditorPreview(state.templateEditorBlocks)
-                : renderTemplateEditorForm(state.templateEditorBlocks);
+
+        const showTabs = state.templateEditorView !== 'preview';
+        // Set on the shared wrap (ancestor of both the tabs row and the card list)
+        // so one CSS custom property colors the active tab and its cards to match.
+        const wrap = document.getElementById('kd2TemplateEditorWrap');
+        if (wrap) wrap.dataset.activeGroup = showTabs ? state.templateEditorGroupFilter : '';
+
+        const tabsContainer = document.getElementById('kd2TemplateGroupTabs');
+        if (tabsContainer) {
+            tabsContainer.style.display = showTabs ? '' : 'none';
+            tabsContainer.innerHTML = showTabs ? renderTemplateGroupTabButtonsHtml(vehicle) : '';
+        }
+
+        const bodyHtml = state.templateEditorView === 'preview'
+            ? renderTemplateEditorPreview(state.templateEditorBlocks)
+            : renderTemplateEditorVisual(state.templateEditorBlocks, vehicle, state.templateEditorGroupFilter);
+        container.innerHTML = bodyHtml;
         container.dataset.rendered = 'true';
     }
 
-    function createNewTemplateItem(kind, vehicle) {
+    /** First not-yet-used existing station for this vehicle/category(/component),
+     *  same candidate set templateStationPickOptions offers — lets a brand-new
+     *  block default to picking an existing station instead of always opening
+     *  on "+ New custom station…", which is what a template with real stations
+     *  left to add wants most of the time. Returns null when every matching
+     *  station is already placed (or none exist), so the picker still opens on
+     *  the custom option for genuinely new stations. */
+    function firstAvailableStationFor(vehicle, categoryCode, componentGroup) {
+        const usedCodes = new Set(
+            state.templateEditorBlocks
+                .filter(item => isTemplateProcessBlock(item) && item.station_code)
+                .map(item => item.station_code)
+        );
+        return state.stations
+            .filter(row => row.vehicle_type === vehicle && row.category_code === categoryCode)
+            .filter(row => !usedCodes.has(row.station_code))
+            .filter(row => vehicle !== 'K9' || !componentGroup || (row.component_group || '') === componentGroup)
+            .sort((a, b) => (a.station_sequence_in_category || 0) - (b.station_sequence_in_category || 0))[0] || null;
+    }
+
+    function createNewTemplateItem(kind, vehicle, groupHint = '') {
         state.templateNewRowCounter += 1;
         if (kind === 'space') {
             return createTemplateSpaceBlock(vehicle, {
@@ -5185,18 +5993,25 @@ window.PPMSModuleRuntime = (() => {
                 gap_days: 1,
             });
         }
+        // Default the new block to match whichever group tab it was added from,
+        // so it lands under that same tab immediately instead of needing a
+        // manual category/component fix-up.
+        const componentGroup = (groupHint === 'Hull' || groupHint === 'Turret') ? groupHint : null;
+        const categoryCode = groupHint === 'Structure' ? 'welding' : 'assembly';
+        const defaultStation = firstAvailableStationFor(vehicle, categoryCode, componentGroup);
         return createTemplateProcessBlock(vehicle, {
             editor_id: `new_${state.templateNewRowCounter}`,
             isNew: true,
             vehicle_type: vehicle,
-            category_code: 'assembly',
-            station_code: null,
-            station_name: '',
-            work_center: '',
+            category_code: categoryCode,
+            component_group: componentGroup,
+            station_code: defaultStation?.station_code || null,
+            station_name: defaultStation?.station_name || '',
+            work_center: defaultStation?.work_center || '',
             route_sequence: nextTemplateRoute(vehicle),
             lead_time_days: null,
             notes: 'Editable route template default',
-            station_sequence_in_category: null,
+            station_sequence_in_category: defaultStation?.station_sequence_in_category ?? null,
             parallel_with_previous: false,
         });
     }
@@ -5205,8 +6020,10 @@ window.PPMSModuleRuntime = (() => {
         syncTemplateEditorStateFromDom({ normalizeForVisual: state.templateEditorView === 'visual' });
         const vehicle = selectedTemplateVehicle();
         ensureTemplateEditorState(vehicle);
-        const safeIndex = Number.isInteger(insertIndex) ? Math.max(0, Math.min(insertIndex, state.templateEditorBlocks.length)) : state.templateEditorBlocks.length;
-        state.templateEditorBlocks.splice(safeIndex, 0, createNewTemplateItem(kind, vehicle));
+        ensureTemplateEditorGroupFilter(vehicle);
+        const fallbackIndex = templateActiveGroupAppendIndex(vehicle, state.templateEditorGroupFilter);
+        const safeIndex = Number.isInteger(insertIndex) ? Math.max(0, Math.min(insertIndex, state.templateEditorBlocks.length)) : fallbackIndex;
+        state.templateEditorBlocks.splice(safeIndex, 0, createNewTemplateItem(kind, vehicle, state.templateEditorGroupFilter));
         if (state.templateEditorView === 'visual') {
             state.templateEditorBlocks = normalizeTemplateEditorBlocks(state.templateEditorBlocks);
         }
@@ -5222,14 +6039,112 @@ window.PPMSModuleRuntime = (() => {
 
     function moveTemplateEditorBlock(editorId, delta) {
         syncTemplateEditorStateFromDom({ normalizeForVisual: state.templateEditorView === 'visual' });
-        const index = state.templateEditorBlocks.findIndex(block => block.editor_id === editorId);
+        const blocks = state.templateEditorBlocks;
+        const index = blocks.findIndex(block => block.editor_id === editorId);
         if (index < 0) return;
-        const nextIndex = index + delta;
-        if (nextIndex < 0 || nextIndex >= state.templateEditorBlocks.length) return;
-        const [moved] = state.templateEditorBlocks.splice(index, 1);
-        state.templateEditorBlocks.splice(nextIndex, 0, moved);
-        state.templateEditorBlocks = normalizeTemplateEditorBlocks(state.templateEditorBlocks);
+        const vehicle = blocks[index].vehicle_type || selectedTemplateVehicle();
+        // Move relative to the block's own group-tab neighbors rather than its raw
+        // array neighbor, so "up"/"down" still does something visible while a
+        // different tab's blocks are interleaved and hidden.
+        const group = templateBlockGroup(blocks, index, vehicle);
+        const sameGroupIndices = blocks
+            .map((_, i) => i)
+            .filter(i => templateBlockGroup(blocks, i, vehicle) === group);
+        const posInGroup = sameGroupIndices.indexOf(index);
+        const targetPos = posInGroup + delta;
+        if (targetPos < 0 || targetPos >= sameGroupIndices.length) return;
+        const neighborIndex = sameGroupIndices[targetPos];
+        [blocks[index], blocks[neighborIndex]] = [blocks[neighborIndex], blocks[index]];
+        state.templateEditorBlocks = normalizeTemplateEditorBlocks(blocks);
         state.templateInsertIndex = null;
+        renderTemplateEditor();
+    }
+
+    // Drag-reorder from the Gantt tab: drop one block's bar onto another to move
+    // it next to that block in the underlying route order (before/after depends
+    // on which side of the target bar it was dropped). The schedule recomputes
+    // from the new order, so this works regardless of which structural line
+    // (Hull/Turret/Assembly & Processing) either block belongs to — each line's
+    // own relative order is preserved wherever its blocks land in the array.
+    // Grows/shrinks the space immediately before `index` by `deltaDays` working
+    // days (creating one if none exists and delta is positive; removing it if
+    // shrunk to zero). Because a space's group is always "whichever process
+    // item follows it" (see templateBlockGroup), the space right before a
+    // given item always belongs to that item's own line — this can never
+    // reach into a different lane's timing.
+    function applyGapDeltaBeforeIndex(blocks, index, deltaDays) {
+        const prev = blocks[index - 1];
+        if (prev && isTemplateSpaceBlock(prev)) {
+            const current = parseGapDaysValue(prev.gap_days) || 0;
+            const next = Math.max(0, current + deltaDays);
+            if (next === current) return;
+            if (next === 0) {
+                blocks.splice(index - 1, 1);
+            } else {
+                blocks[index - 1] = createTemplateSpaceBlock(prev.vehicle_type, { ...prev, gap_days: next });
+            }
+            return;
+        }
+        if (deltaDays > 0) {
+            state.templateNewRowCounter += 1;
+            blocks.splice(index, 0, createTemplateSpaceBlock(blocks[index].vehicle_type, {
+                editor_id: `space_${state.templateNewRowCounter}`,
+                gap_days: deltaDays,
+            }));
+        }
+        // deltaDays <= 0 with no existing gap: already as early as it can be.
+    }
+
+    // "Lane" drag: shift a whole structural line at once. Upstream lines
+    // (Hull/Turret, or Structure) each have their own Start date field, so
+    // shifting the lane just moves that date. The downstream line (Assembly &
+    // Processing) has no date field of its own — it's derived from whichever
+    // upstream line finishes last — so shifting it works the same way as
+    // "From Block" anchored to its first item, which cascades through the
+    // whole line exactly the same way.
+    function shiftTemplateGroupStartDate(vehicle, group, deltaDays) {
+        const upstream = templateUpstreamGroups(vehicle);
+        if (upstream.includes(group)) {
+            const battalionId = parseInt(document.getElementById('kd2PlanCreateBattalion')?.value || '', 10);
+            const rules = planningRulesFor(battalionId, vehicle);
+            const fieldId = upstream.length >= 2 ? templateGroupDateFieldId(group) : 'kd2PlanCreateStart';
+            const input = document.getElementById(fieldId);
+            if (!input?.value) return;
+            input.value = shiftWorkingDateByOffset(input.value, deltaDays, rules);
+            return;
+        }
+        const blocks = state.templateEditorBlocks;
+        const firstIndex = blocks.findIndex((block, i) =>
+            isTemplateProcessBlock(block) && templateBlockGroup(blocks, i, vehicle) === group);
+        if (firstIndex < 0) return;
+        applyGapDeltaBeforeIndex(blocks, firstIndex, deltaDays);
+        state.templateEditorBlocks = normalizeTemplateEditorBlocks(blocks);
+    }
+
+    // Drag-to-reschedule from the Gantt tab, matching the live plan Gantt's
+    // "Lane" and "From Block" move modes (single-block-only movement isn't
+    // offered here — a template is durations + sequence, not independently
+    // pinned dates, so an isolated single-block shift has no stable meaning
+    // without silently borrowing time from a gap that may not exist).
+    function shiftTemplateBlockDate(vehicle, editorId, mode, deltaDays) {
+        if (!deltaDays) return;
+        const blocks = state.templateEditorBlocks;
+        const index = blocks.findIndex(block => block.editor_id === editorId);
+        if (index < 0 || isTemplateSpaceBlock(blocks[index])) return;
+        const group = templateBlockGroup(blocks, index, vehicle);
+
+        const isFirstOfGroup = !blocks.slice(0, index).some((b, i) => templateBlockGroup(blocks, i, vehicle) === group);
+        if (mode === 'lane' || (isFirstOfGroup && templateUpstreamGroups(vehicle).includes(group))) {
+            // Dragging the very first block of an upstream line always moves the
+            // whole line, in either mode — keeps its Start date field showing
+            // what's actually on screen instead of going stale behind a hidden gap.
+            shiftTemplateGroupStartDate(vehicle, group, deltaDays);
+            renderTemplateEditor();
+            return;
+        }
+
+        applyGapDeltaBeforeIndex(blocks, index, deltaDays);
+        state.templateEditorBlocks = normalizeTemplateEditorBlocks(blocks);
         renderTemplateEditor();
     }
 
@@ -5287,10 +6202,12 @@ window.PPMSModuleRuntime = (() => {
         let currentGroup = null;
 
         layoutBlocks.forEach((block, index) => {
+            const group = templateBlockGroup(layoutBlocks, index, vehicle);
             if (isTemplateSpaceBlock(block)) {
                 const hasFollowingProcess = layoutBlocks.slice(index + 1).some(isTemplateProcessBlock);
                 segments.push({
                     kind: 'space',
+                    group,
                     gap_days: parseGapDaysValue(block.gap_days),
                     applies_to_next_process: hasFollowingProcess,
                 });
@@ -5307,9 +6224,10 @@ window.PPMSModuleRuntime = (() => {
                 category: routeItem.category,
                 duration: block.lead_time_days ?? routeItem.duration ?? defaultDurationForStation(vehicle, routeItem.route.category_code, routeItem.route.station_code),
             };
-            if (!currentGroup || !block.parallel_with_previous) {
+            if (!currentGroup || !block.parallel_with_previous || currentGroup.group !== group) {
                 currentGroup = {
                     kind: 'process_group',
+                    group,
                     sequence: block.route_sequence,
                     items: [],
                 };
@@ -5323,6 +6241,54 @@ window.PPMSModuleRuntime = (() => {
             segments,
             processItems: segments.flatMap(segment => segment.kind === 'process_group' ? segment.items : []),
         };
+    }
+
+    // Schedules a template's segments per structural line instead of one shared
+    // cursor: each upstream group (Hull/Turret, or Structure) runs from its own
+    // start date in `groupStartDates` (Map<groupName, dateStr>), and the
+    // downstream "Assembly & Processing" group starts the working day after
+    // every upstream line has finished — matching how the lines actually run in
+    // the shop (Hull and Turret build in parallel, Assembly waits on both).
+    // `readWindow(item)` returns { start, end } for one scheduled process item.
+    function scheduleTemplateSegments(segments, vehicle, groupStartDates, rules, readWindow) {
+        const downstreamGroup = templateDownstreamGroup(vehicle);
+        const upstreamGroups = templateUpstreamGroups(vehicle);
+        const byGroup = new Map(templateGroupOrder(vehicle).map(g => [g, []]));
+        segments.forEach(seg => {
+            const key = byGroup.has(seg.group) ? seg.group : downstreamGroup;
+            byGroup.get(key).push(seg);
+        });
+
+        const scheduled = [];
+
+        function runGroup(groupName, startDateStr) {
+            if (!startDateStr) return null;
+            let cursor = localDateStr(normalizeWorkingDateForward(startDateStr, rules));
+            let lastEnd = null;
+            (byGroup.get(groupName) || []).forEach(seg => {
+                if (seg.kind === 'space') {
+                    if (seg.applies_to_next_process) {
+                        cursor = shiftWorkingDateForward(cursor, seg.gap_days || 0, rules);
+                    }
+                    return;
+                }
+                const rows = seg.items.map(item => ({ item, window: readWindow(item, cursor) }));
+                scheduled.push(...rows);
+                const groupEnd = maxDateStr(rows.map(row => row.window.end));
+                cursor = nextWorkingDate(groupEnd, rules);
+                lastEnd = groupEnd;
+            });
+            return lastEnd;
+        }
+
+        const upstreamEnds = upstreamGroups
+            .map(group => runGroup(group, groupStartDates.get(group)))
+            .filter(Boolean);
+        const fallbackStart = groupStartDates.get(downstreamGroup) || [...groupStartDates.values()][0] || null;
+        const downstreamStart = upstreamEnds.length ? nextWorkingDate(maxDateStr(upstreamEnds), rules) : fallbackStart;
+        runGroup(downstreamGroup, downstreamStart);
+
+        return scheduled;
     }
 
     async function saveTemplateDefaults({ silent = false } = {}) {
@@ -5369,7 +6335,9 @@ window.PPMSModuleRuntime = (() => {
         const existingCodes = new Set(state.stations.map(row => `${row.vehicle_type}||${row.station_code}`));
         const categorySequenceCounters = new Map();
         for (const row of processRows) {
-            if (!row.isNew) continue;
+            // Rows the user picked from the "existing station" dropdown already carry
+            // a real station_code — only truly custom (typed-name) rows need one minted.
+            if (!row.isNew || row.station_code) continue;
             const base = `${row.vehicle_type.toLowerCase()}_${row.category_code}_${slugifyStationName(row.station_name)}`;
             let stationCode = base;
             let suffix = 2;
@@ -5413,6 +6381,7 @@ window.PPMSModuleRuntime = (() => {
                     station_code: row.station_code,
                     station_name: row.station_name,
                     work_center: normalizeWorkCenter(row.work_center) || null,
+                    component_group: row.component_group || null,
                     station_sequence_in_category: row.station_sequence_in_category,
                     route_sequence: row.route_sequence,
                     is_active: true,
@@ -5584,6 +6553,7 @@ window.PPMSModuleRuntime = (() => {
         state.templateEditorVehicle = '';
         state.templateEditorBlocks = [];
         state.templateInsertIndex = null;
+        state.templateEditingBlockId = null;
         const defaultDate = document.getElementById('kd2TimelineStart')?.value || localDateStr(new Date());
         const defaultVehicle = getVehicleFilterValue() || state.timelinePlacementVehicle || 'K9';
         document.getElementById('kd2PlanCreateVehicle').value = defaultVehicle;
@@ -5915,15 +6885,37 @@ window.PPMSModuleRuntime = (() => {
         return laneRows.filter(row => routeSequenceValue(row) >= anchorRouteSequence);
     }
 
+    // Station-scoped counterpart to getPlanMoveRowsFromAnchor — "the lane"
+    // meaning what Process View actually shows as a row (this station,
+    // across every unit passing through it), not this one unit's own route.
+    // route_sequence doesn't distinguish rows here (every row at this
+    // station shares essentially the same one, by definition) so "forward"
+    // means chronologically — every other unit's block at this station
+    // scheduled on or after this one — the ones that would actually be
+    // affected by this block running late.
+    function getPlanMoveRowsFromAnchorByStation(anchorRow, rows = []) {
+        if (!anchorRow) return [];
+        const stationKey = row => `${row.vehicle_type || row.vehicle || ''}||${row.station_code || ''}`;
+        const anchorStationKey = stationKey(anchorRow);
+        const stationRows = rows.filter(row => stationKey(row) === anchorStationKey);
+        if (!stationRows.length) return [];
+        const anchor = stationRows.find(row => row.id === anchorRow.id);
+        if (!anchor) return [];
+        const anchorStart = anchor.planned_start_date || anchor.start_date || '';
+        return stationRows
+            .filter(row => (row.planned_start_date || row.start_date || '') >= anchorStart)
+            .sort((a, b) => String(a.planned_start_date || a.start_date || '').localeCompare(String(b.planned_start_date || b.start_date || '')));
+    }
+
     async function applyTargetedNoWorkReschedule(addedOffDatesSet, previousOffDatesSet) {
         if (!dbRef || !addedOffDatesSet.size) return 0;
         const sortedOff = [...addedOffDatesSet].sort();
         const firstOff = sortedOff[0];
         const lastOff = sortedOff[sortedOff.length - 1];
         const nextOffDatesSet = new Set([...previousOffDatesSet, ...addedOffDatesSet]);
-        const { data: planRows, error } = await dbRef
+        const { data: planRows, error } = await PlanVersions.scoped(dbRef
             .from('kd2_plan')
-            .select('id, battalion_id, vehicle_type, unit_serial, unit_label, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date, schedule_week')
+            .select('id, battalion_id, vehicle_type, unit_serial, unit_label, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date, schedule_week'), 'kd2')
             .lte('planned_start_date', lastOff)
             .gte('planned_end_date', firstOff);
         if (error) throw error;
@@ -5960,9 +6952,9 @@ window.PPMSModuleRuntime = (() => {
         const firstOff = sortedOff[0];
         const lastOff = sortedOff[sortedOff.length - 1];
         const previousOffDatesSet = new Set([...remainingOffDatesSet, ...removedOffDatesSet]);
-        const { data: planRows, error } = await dbRef
+        const { data: planRows, error } = await PlanVersions.scoped(dbRef
             .from('kd2_plan')
-            .select('id, battalion_id, vehicle_type, unit_serial, unit_label, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date, schedule_week')
+            .select('id, battalion_id, vehicle_type, unit_serial, unit_label, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date, schedule_week'), 'kd2')
             .lte('planned_start_date', lastOff)
             .gte('planned_end_date', firstOff);
         if (error) throw error;
@@ -5995,9 +6987,9 @@ window.PPMSModuleRuntime = (() => {
 
     async function recalculatePlanWindowsForNonWorkDayChange(previousOffDates, nextOffDates, auditLabel) {
         if (!dbRef) return 0;
-        const { data: planRows, error } = await dbRef
+        const { data: planRows, error } = await PlanVersions.scoped(dbRef
             .from('kd2_plan')
-            .select('id, battalion_id, vehicle_type, unit_serial, unit_label, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date, schedule_week')
+            .select('id, battalion_id, vehicle_type, unit_serial, unit_label, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date, schedule_week'), 'kd2')
             .order('battalion_id')
             .order('vehicle_type')
             .order('unit_serial')
@@ -6113,9 +7105,9 @@ window.PPMSModuleRuntime = (() => {
                 return;
             }
 
-            const { data: existingPlans, error: existingError } = await dbRef
+            const { data: existingPlans, error: existingError } = await PlanVersions.scoped(dbRef
                 .from('kd2_plan')
-                .select('id')
+                .select('id'), 'kd2')
                 .eq('battalion_id', battalion.id);
             if (existingError) throw existingError;
             if ((existingPlans || []).length && !window.confirm(`Replace existing KD2 plan rows for ${battalionCode}?`)) return;
@@ -6195,6 +7187,7 @@ window.PPMSModuleRuntime = (() => {
                                 planned_end_date: window.end,
                                 planning_source: 'generated',
                                 remark: null,
+                                plan_version_id: PlanVersions.getActiveId('kd2'),
                             });
                         }
                         if (groupRows.length !== group.items.length) {
@@ -6215,7 +7208,7 @@ window.PPMSModuleRuntime = (() => {
                 return;
             }
 
-            await dbRef.from('kd2_plan').delete().eq('battalion_id', battalion.id);
+            await PlanVersions.scoped(dbRef.from('kd2_plan').delete(), 'kd2').eq('battalion_id', battalion.id);
             for (const batch of chunk(planRows, 500)) {
                 const { error } = await dbRef.from('kd2_plan').insert(batch);
                 if (error) throw error;
@@ -6355,10 +7348,13 @@ window.PPMSModuleRuntime = (() => {
         const unitSelect = document.getElementById('kd2PlanCreateUnit');
         const unitSerial = parseInt(unitSelect.value, 10);
         const selectedUnitLabel = unitSelect.selectedOptions[0]?.dataset.unitLabel || '';
-        const startDate = document.getElementById('kd2PlanCreateStart').value;
+        const upstreamGroups = templateUpstreamGroups(vehicle);
+        const groupStartDates = getTemplateGroupStartDates(vehicle);
 
-        if (!battalionId || !vehicle || !unitSerial || !startDate) {
-            setPlanCreateError('Battalion, vehicle, unit, and planned start are required for a template.');
+        if (!battalionId || !vehicle || !unitSerial || groupStartDates.size < upstreamGroups.length) {
+            setPlanCreateError(upstreamGroups.length >= 2
+                ? `Battalion, vehicle, unit, and a planned start for each of ${upstreamGroups.join(' and ')} are required for a template.`
+                : 'Battalion, vehicle, unit, and planned start are required for a template.');
             return;
         }
 
@@ -6390,9 +7386,9 @@ window.PPMSModuleRuntime = (() => {
             }
 
             const stationCodes = [...new Set(processItems.map(item => item.route.station_code))];
-            const { data: duplicateRows, error: duplicateError } = await dbRef
+            const { data: duplicateRows, error: duplicateError } = await PlanVersions.scoped(dbRef
                 .from('kd2_plan')
-                .select('station_code')
+                .select('station_code'), 'kd2')
                 .eq('battalion_id', battalion.id)
                 .eq('vehicle_type', vehicle)
                 .eq('unit_serial', unitSerial)
@@ -6404,37 +7400,30 @@ window.PPMSModuleRuntime = (() => {
             }
 
             const rules = planningRulesFor(battalionId, vehicle);
-            let currentStart = localDateStr(normalizeWorkingDateForward(startDate, rules));
-            const planRows = [];
-            segments.forEach(group => {
-                if (group.kind === 'space') {
-                    if (group.applies_to_next_process) {
-                        currentStart = shiftWorkingDateForward(currentStart, group.gap_days || 0, rules);
-                    }
-                    return;
-                }
-                const groupRows = group.items.map(item => {
-                    const window = buildForwardWindow(currentStart, item.duration, rules);
-                    return {
-                        battalion_id: battalion.id,
-                        vehicle_type: vehicle,
-                        unit_serial: unitSerial,
-                        unit_label: selectedUnitLabel || null,
-                        category_code: item.route.category_code,
-                        station_code: item.route.station_code,
-                        category_sequence: item.category.category_sequence,
-                        station_sequence_in_category: item.station.station_sequence_in_category,
-                        route_sequence: item.route.route_sequence,
-                        schedule_week: weekLabel(window.start),
-                        planned_start_date: window.start,
-                        planned_end_date: window.end,
-                        planning_source: 'manual',
-                        remark: 'Template',
-                    };
-                });
-                planRows.push(...groupRows);
-                currentStart = nextWorkingDate(maxDateStr(groupRows.map(row => row.planned_end_date)), rules);
-            });
+            const scheduled = scheduleTemplateSegments(
+                segments,
+                vehicle,
+                groupStartDates,
+                rules,
+                (item, cursor) => buildForwardWindow(cursor, item.duration, rules)
+            );
+            const planRows = scheduled.map(({ item, window }) => ({
+                battalion_id: battalion.id,
+                vehicle_type: vehicle,
+                unit_serial: unitSerial,
+                unit_label: selectedUnitLabel || null,
+                category_code: item.route.category_code,
+                station_code: item.route.station_code,
+                category_sequence: item.category.category_sequence,
+                station_sequence_in_category: item.station.station_sequence_in_category,
+                route_sequence: item.route.route_sequence,
+                schedule_week: weekLabel(window.start),
+                planned_start_date: window.start,
+                planned_end_date: window.end,
+                planning_source: 'manual',
+                remark: 'Template',
+                plan_version_id: PlanVersions.getActiveId('kd2'),
+            }));
 
             const { data, error } = await dbRef
                 .from('kd2_plan')
@@ -6577,11 +7566,8 @@ window.PPMSModuleRuntime = (() => {
         if (wired) return;
         wired = true;
 
-        document.getElementById('moduleSelector')?.addEventListener('change', event => {
-            setActiveModule(event.target.value);
-            applyModuleShell();
-            window.location.reload();
-        });
+        // Module switching is wired via CustomSelect.mount() inside applyModuleShell()
+        // (moduleSelectorWrap is a custom dropdown, not a native <select>).
 
         document.getElementById('filterBattalionMenu')?.addEventListener('change', updateGenerationTarget);
         document.getElementById('btnKd2RefreshInputs')?.addEventListener('click', () => refreshWorkspace({ force: true }));
@@ -6589,6 +7575,7 @@ window.PPMSModuleRuntime = (() => {
         document.getElementById('btnKd2NewBattalion')?.addEventListener('click', () => openPlanningModal(null));
         document.getElementById('btnKd2GeneratePlan')?.addEventListener('click', generatePlan);
         document.getElementById('btnKd2ManageProcesses')?.addEventListener('click', () => openProcessModal(state.routeVehicle || 'K9'));
+        document.getElementById('btnManageKd2Processes')?.addEventListener('click', () => openProcessModal(state.routeVehicle || 'K9'));
         document.getElementById('btnKd2ManageLeadTimes')?.addEventListener('click', openLeadTimeModal);
         document.getElementById('btnKd2AddBlock')?.addEventListener('click', () => openPlanCreateModal());
         document.getElementById('btnKd2VisualAdd')?.addEventListener('click', event => {
@@ -6648,6 +7635,12 @@ window.PPMSModuleRuntime = (() => {
         document.getElementById('ganttVisualPlacementVehicle')?.addEventListener('change', event => {
             setTimelinePlacementVehicle(event.target.value);
         });
+        document.getElementById('kd2TimelinePlacementBattalion')?.addEventListener('change', event => {
+            setTimelinePlacementBattalionFilter(event.target.value);
+        });
+        document.getElementById('ganttVisualPlacementBattalion')?.addEventListener('change', event => {
+            setTimelinePlacementBattalionFilter(event.target.value);
+        });
         document.getElementById('kd2TimelinePlacementFilter')?.addEventListener('input', event => {
             setTimelinePlacementQuery(event.target.value);
         });
@@ -6694,9 +7687,6 @@ window.PPMSModuleRuntime = (() => {
         document.getElementById('kd2PlanCreateClose')?.addEventListener('click', closePlanCreateModal);
         document.getElementById('btnKd2PlanCreateCancel')?.addEventListener('click', closePlanCreateModal);
         document.getElementById('btnKd2PlanCreateSave')?.addEventListener('click', savePlanCreate);
-        document.getElementById('btnKd2ManageProcessesInline')?.addEventListener('click', () => {
-            openProcessModal(document.getElementById('kd2PlanCreateVehicle')?.value || state.routeVehicle || 'K9');
-        });
         document.getElementById('kd2PlanCreateOverlay')?.addEventListener('click', function (e) {
             if (e.target === this) closePlanCreateModal();
         });
@@ -6717,6 +7707,7 @@ window.PPMSModuleRuntime = (() => {
             state.templateInsertIndex = null;
             populatePlanCreateStations();
             populatePlanCreateUnits();
+            syncTemplateStartDateFields();
             if (currentPlanCreateMode() === 'template') renderTemplateEditor();
             else updatePlanCreateDurationFromStation(true);
         });
@@ -6729,6 +7720,10 @@ window.PPMSModuleRuntime = (() => {
         document.getElementById('kd2PlanCreateStart')?.addEventListener('change', () => {
             updatePlanCreateEndFromDuration();
             if (currentPlanCreateMode() === 'template' && state.templateEditorView === 'preview') renderTemplateEditor();
+        });
+        document.getElementById('kd2TemplateGroupDates')?.addEventListener('change', e => {
+            if (!e.target.closest('[data-kd2-template-group-date]')) return;
+            if (state.templateEditorView === 'preview') renderTemplateEditor();
         });
         document.getElementById('kd2PlanCreateDuration')?.addEventListener('input', updatePlanCreateEndFromDuration);
         document.getElementById('kd2PlanCreateModeToggle')?.addEventListener('click', e => {
@@ -6744,14 +7739,17 @@ window.PPMSModuleRuntime = (() => {
             }
         });
         document.getElementById('btnKd2TemplateAddBlock')?.addEventListener('click', () => {
+            const vehicle = selectedTemplateVehicle();
+            ensureTemplateEditorGroupFilter(vehicle);
+            const appendIndex = templateActiveGroupAppendIndex(vehicle, state.templateEditorGroupFilter);
             if (state.templateEditorView === 'preview') {
                 state.templateEditorView = 'visual';
-                state.templateInsertIndex = state.templateEditorBlocks.length;
+                state.templateInsertIndex = appendIndex;
                 renderTemplateEditor();
                 return;
             }
             if (state.templateEditorView === 'visual') {
-                toggleTemplateInsertChooser(state.templateEditorBlocks.length);
+                toggleTemplateInsertChooser(appendIndex);
                 return;
             }
             addTemplateDraftRow('process');
@@ -6759,18 +7757,34 @@ window.PPMSModuleRuntime = (() => {
         document.getElementById('kd2TemplateEditorViewToggle')?.addEventListener('click', e => {
             const btn = e.target.closest('.kd2-template-view-btn');
             if (!btn) return;
-            const nextView = btn.dataset.view === 'form'
-                ? 'form'
-                : btn.dataset.view === 'preview'
-                    ? 'preview'
-                    : 'visual';
+            const nextView = btn.dataset.view === 'preview' ? 'preview' : 'visual';
             if (state.templateEditorView !== 'preview') {
-                syncTemplateEditorStateFromDom({ normalizeForVisual: nextView !== 'form' });
+                syncTemplateEditorStateFromDom({ normalizeForVisual: true });
             }
             state.templateEditorView = nextView;
             renderTemplateEditor();
         });
+        document.getElementById('kd2TemplateGroupTabs')?.addEventListener('click', e => {
+            const groupTab = e.target.closest('[data-kd2-template-group-tab]');
+            if (!groupTab) return;
+            syncTemplateEditorStateFromDom({ normalizeForVisual: state.templateEditorView === 'visual' });
+            state.templateEditorGroupFilter = groupTab.dataset.kd2TemplateGroupTab || '';
+            state.templateInsertIndex = null;
+            renderTemplateEditor();
+        });
         document.getElementById('kd2TemplateEditor')?.addEventListener('click', e => {
+            const legendToggle = e.target.closest('[data-kd2-template-legend-toggle]');
+            if (legendToggle) {
+                state.templatePreviewLegendOpen = !state.templatePreviewLegendOpen;
+                renderTemplateEditor();
+                return;
+            }
+            const moveModeBtn = e.target.closest('[data-kd2-template-gantt-move-mode]');
+            if (moveModeBtn) {
+                state.templateGanttMoveMode = moveModeBtn.dataset.kd2TemplateGanttMoveMode === 'lane' ? 'lane' : 'from-block';
+                renderTemplateEditor();
+                return;
+            }
             const insertTrigger = e.target.closest('[data-kd2-template-insert-trigger]');
             if (insertTrigger) {
                 e.stopPropagation();
@@ -6794,6 +7808,17 @@ window.PPMSModuleRuntime = (() => {
                 );
                 return;
             }
+            const editBtn = e.target.closest('[data-kd2-template-edit-id]');
+            if (editBtn) {
+                // Capture whatever's currently in the DOM first so switching which
+                // card is "being edited" doesn't discard an in-progress duration
+                // edit on another card.
+                syncTemplateEditorStateFromDom({ normalizeForVisual: state.templateEditorView === 'visual' });
+                const blockId = editBtn.dataset.kd2TemplateEditId;
+                state.templateEditingBlockId = state.templateEditingBlockId === blockId ? null : blockId;
+                renderTemplateEditor();
+                return;
+            }
             const removeBtn = e.target.closest('[data-kd2-template-remove-id]');
             if (removeBtn) {
                 syncTemplateEditorStateFromDom({ normalizeForVisual: state.templateEditorView === 'visual' });
@@ -6803,6 +7828,7 @@ window.PPMSModuleRuntime = (() => {
                 state.templateEditorBlocks = state.templateEditorBlocks.filter(item => item.editor_id !== blockId);
                 state.templateEditorBlocks = normalizeTemplateEditorBlocks(state.templateEditorBlocks);
                 state.templateInsertIndex = null;
+                if (state.templateEditingBlockId === blockId) state.templateEditingBlockId = null;
                 renderTemplateEditor();
                 return;
             }
@@ -6824,6 +7850,14 @@ window.PPMSModuleRuntime = (() => {
                 return;
             }
             if (e.target.matches('[data-field="gapDays"]')) {
+                syncTemplateEditorStateFromDom({ normalizeForVisual: state.templateEditorView === 'visual' });
+                renderTemplateEditor();
+                return;
+            }
+            if (e.target.matches('[data-field="stationPick"], [data-field="categoryCode"], [data-field="componentGroup"]')) {
+                // Category/component changes re-scope which existing stations the pick
+                // dropdown offers; picking a station fills in its name/work center.
+                // Re-rendering keeps all three in sync with the fresh selection.
                 syncTemplateEditorStateFromDom({ normalizeForVisual: state.templateEditorView === 'visual' });
                 renderTemplateEditor();
             }
@@ -6868,6 +7902,39 @@ window.PPMSModuleRuntime = (() => {
         document.getElementById('kd2TemplateEditor')?.addEventListener('dragend', e => {
             e.target.closest('.kd2-template-card')?.classList.remove('kd2-template-card-dragging');
         });
+        // Gantt tab: pointer-drag a bar left/right to reschedule it, matching
+        // the live plan Gantt's Lane / From Block move modes. Restricted to the
+        // dragged block's own line by construction — see shiftTemplateBlockDate.
+        document.getElementById('kd2TemplateEditor')?.addEventListener('pointerdown', e => {
+            if (state.templateEditorView !== 'preview') return;
+            const bar = e.target.closest('[data-kd2-template-preview-bar]');
+            if (!bar) return;
+            const editorId = bar.dataset.editorId;
+            if (!editorId) return;
+            e.preventDefault();
+            bar.setPointerCapture(e.pointerId);
+            const startX = e.clientX;
+            const startLeft = parseFloat(bar.style.left) || 0;
+            bar.classList.add('kd2-template-preview-bar-dragging');
+            let deltaDays = 0;
+            const onMove = moveEvent => {
+                const deltaPx = moveEvent.clientX - startX;
+                deltaDays = Math.round(deltaPx / TEMPLATE_GANTT_DAY_W);
+                bar.style.left = `${startLeft + deltaDays * TEMPLATE_GANTT_DAY_W}px`;
+            };
+            const onUp = () => {
+                bar.releasePointerCapture(e.pointerId);
+                bar.removeEventListener('pointermove', onMove);
+                bar.removeEventListener('pointerup', onUp);
+                bar.classList.remove('kd2-template-preview-bar-dragging');
+                bar.style.left = `${startLeft}px`;
+                if (deltaDays) {
+                    shiftTemplateBlockDate(selectedTemplateVehicle(), editorId, state.templateGanttMoveMode, deltaDays);
+                }
+            };
+            bar.addEventListener('pointermove', onMove);
+            bar.addEventListener('pointerup', onUp);
+        });
         document.addEventListener('click', e => {
             if (state.templateInsertIndex === null) return;
             if (e.target.closest('#kd2TemplateEditorWrap')) return;
@@ -6882,6 +7949,14 @@ window.PPMSModuleRuntime = (() => {
         });
         document.getElementById('kd2ProcessClose')?.addEventListener('click', closeProcessModal);
         document.getElementById('btnKd2ProcessCancel')?.addEventListener('click', closeProcessModal);
+        document.getElementById('btnKd2AddCategory')?.addEventListener('click', () => {
+            const form = document.getElementById('kd2AddCategoryForm');
+            if (form && form.style.display === 'block') closeAddCategoryForm();
+            else openAddCategoryForm();
+        });
+        document.getElementById('btnKd2CancelCategory')?.addEventListener('click', closeAddCategoryForm);
+        document.getElementById('btnKd2SaveCategory')?.addEventListener('click', saveNewCategory);
+        document.getElementById('kd2NewCategoryName')?.addEventListener('keydown', e => { if (e.key === 'Enter') saveNewCategory(); });
         document.getElementById('btnKd2ProcessReset')?.addEventListener('click', () => {
             const vehicleFilter = document.getElementById('kd2ProcessVehicleFilter')?.value || '';
             const categoryFilter = document.getElementById('kd2ProcessCategoryFilter')?.value || '';
@@ -6892,6 +7967,15 @@ window.PPMSModuleRuntime = (() => {
         document.getElementById('kd2ProcessVehicleFilter')?.addEventListener('change', renderProcessTable);
         document.getElementById('kd2ProcessCategoryFilter')?.addEventListener('change', renderProcessTable);
         document.getElementById('kd2ProcessSearch')?.addEventListener('input', renderProcessTable);
+        document.getElementById('kd2ProcessViewToggle')?.addEventListener('click', e => {
+            const btn = e.target.closest('[data-process-view]');
+            if (!btn) return;
+            state.processView = btn.dataset.processView === 'flow' ? 'flow' : 'table';
+            document.querySelectorAll('#kd2ProcessViewToggle .kd2-template-view-btn').forEach(b => {
+                b.classList.toggle('active', b === btn);
+            });
+            renderProcessTable();
+        });
         document.getElementById('kd2ProcessBody')?.addEventListener('change', event => {
             // The new-row's own Vehicle select changes which category list applies — re-render.
             if (event.target.id === 'peNewVehicle' && _processNewRowDraft) {
@@ -6979,6 +8063,8 @@ window.PPMSModuleRuntime = (() => {
         isF100KD2,
         isF200Module,
         isPlacementActive: () => state.timelinePlacementActive,
+        isPlacementMenuOpen: () => state.timelinePlacementMenuOpen,
+        isTimelineProcessView: () => isTimelineProcessView(),
         setActiveModule,
         getCategory,
         applyModuleShell,
@@ -7012,7 +8098,36 @@ window.PPMSModuleRuntime = (() => {
                     });
                 return order;
             },
+            // Every active station name for a vehicle, straight from
+            // state.stations — deliberately NOT filtered by whether its
+            // category_code resolves against state.categories (unlike
+            // getStationCategoryMap below). A station whose category can't
+            // be resolved (bad/stale category_code, category renamed, etc.)
+            // still needs to exist as a row in the Gantt so its first block
+            // can be placed — losing the category label for it is a much
+            // smaller problem than the row not existing at all.
+            getActiveStationNames(vehicle) {
+                return [...new Set(buildStationRowKeyMap(vehicle).values())];
+            },
+            // Map<station_code, rowKey> — see buildStationRowKeyMap above.
+            // Exposed so app.js can resolve the same row identity for an
+            // actual plan row (which carries station_code, not
+            // component_group) that the seeding/sort functions below use,
+            // so a scheduled block always lands on the row its own empty
+            // placeholder was seeded under, never a duplicate.
+            getStationRowKeyMap(vehicle) {
+                return buildStationRowKeyMap(vehicle);
+            },
             // Returns Map<stationName, {category_code, category_name, category_sequence, component_group, work_centers_combined}>
+            // Deliberately keyed by plain station name, NOT the disambiguated
+            // row key buildStationRowKeyMap produces — VPX (Hull/Turret tabs,
+            // bottleneck chart) looks entries up here by a task's own
+            // process_station text, which is always the plain name, and
+            // changing that contract would silently break those lookups for
+            // any station sharing a name across lines. The Gantt's own
+            // row-based lookups account for the row-key/plain-name gap
+            // themselves (see the row render code) instead of requiring this
+            // map to serve both key shapes.
             // work_centers_combined aggregates all parallel stations sharing the same station_name (e.g. "W05, W06")
             getStationCategoryMap(vehicle) {
                 const catByCode = new Map(
@@ -7025,15 +8140,20 @@ window.PPMSModuleRuntime = (() => {
                 (state.stations || [])
                     .filter(s => !vehicle || s.vehicle_type === vehicle)
                     .forEach(s => {
+                        // Used to skip the station entirely when category_code
+                        // didn't resolve — silently missing category label is
+                        // fine, silently missing from every consumer of this
+                        // map (VPX Hull/Turret tabs, Gantt station labels) is
+                        // not. Fall back to the raw category_code as a label
+                        // instead of dropping the station.
                         const cat = catByCode.get(s.category_code);
-                        if (!cat) return;
                         const name = s.station_name || s.station_code;
                         if (!name) return;
                         if (!result.has(name)) {
                             result.set(name, {
-                                category_code:     cat.category_code,
-                                category_name:     cat.category_name,
-                                category_sequence: cat.category_sequence,
+                                category_code:     cat?.category_code ?? s.category_code ?? null,
+                                category_name:     cat?.category_name ?? s.category_code ?? null,
+                                category_sequence: cat?.category_sequence ?? 9999,
                                 component_group:   s.component_group || null,
                             });
                         }
@@ -7048,7 +8168,65 @@ window.PPMSModuleRuntime = (() => {
                 });
                 return result;
             },
+            // Returns Map<stationName, { line, sortKey }> for the Gantt's Process
+            // view — grouped by physical/logical line first (Hull, then Turret,
+            // then every other category by its category_sequence), route_sequence
+            // only breaks ties *within* a line. Sorting by route_sequence alone
+            // (like getStationRouteOrder) interleaves lines that happen to share a
+            // route_sequence — Hull and Turret run in parallel, so they usually
+            // do — which is exactly what always split the lines apart was for.
+            getStationLaneOrder(vehicle) {
+                const catByCode = new Map(
+                    (state.categories || [])
+                        .filter(c => !vehicle || c.vehicle_type === vehicle)
+                        .map(c => [c.category_code, c])
+                );
+                const stations = (state.stations || []).filter(s => !vehicle || s.vehicle_type === vehicle);
+                const rowKeyByCode = buildStationRowKeyMap(vehicle);
+
+                const stationLine = new Map();     // rowKey -> line label
+                const stationRouteSeq = new Map(); // rowKey -> route_sequence
+                const lineMinCatSeq = new Map();   // line label -> lowest category_sequence seen for it
+                stations.forEach(s => {
+                    // Same silent-drop trap as getStationCategoryMap had: a
+                    // station whose category_code doesn't resolve against
+                    // state.categories used to be skipped here entirely,
+                    // which doesn't remove it from the Gantt (the row-seeding
+                    // above is independent of this) but leaves it with no
+                    // sort key — the caller then falls back to sorting it
+                    // dead last, which looks identical to "missing" unless
+                    // you scroll all the way down. component_group (Hull/
+                    // Turret) doesn't depend on the category resolving, so
+                    // it's used directly; category name/sequence still fall
+                    // back gracefully when unresolved instead of dropping
+                    // the station from this map altogether.
+                    const cat = catByCode.get(s.category_code);
+                    const rowKey = rowKeyByCode.get(s.station_code) || s.station_name || s.station_code;
+                    if (!rowKey) return;
+                    const line = (s.component_group === 'Hull' || s.component_group === 'Turret')
+                        ? s.component_group
+                        : (cat?.category_name || s.category_code || 'Other');
+                    if (!stationLine.has(rowKey)) stationLine.set(rowKey, line);
+                    if (!stationRouteSeq.has(rowKey)) stationRouteSeq.set(rowKey, parseInt(s.route_sequence, 10) || 9999);
+                    const catSeq = cat?.category_sequence || 9999;
+                    if (!lineMinCatSeq.has(line) || catSeq < lineMinCatSeq.get(line)) lineMinCatSeq.set(line, catSeq);
+                });
+
+                const lineRank = new Map([['Hull', 0], ['Turret', 1]]);
+                [...lineMinCatSeq.keys()]
+                    .filter(line => line !== 'Hull' && line !== 'Turret')
+                    .sort((a, b) => lineMinCatSeq.get(a) - lineMinCatSeq.get(b))
+                    .forEach((line, i) => lineRank.set(line, 2 + i));
+
+                const order = new Map();
+                stationLine.forEach((line, rowKey) => {
+                    const rank = lineRank.get(line) ?? 99;
+                    order.set(rowKey, { line, sortKey: rank * 100000 + stationRouteSeq.get(rowKey) });
+                });
+                return order;
+            },
         comparePlanRowsByLaneOrder,
         getPlanMoveRowsFromAnchor,
+        getPlanMoveRowsFromAnchorByStation,
     };
 })();

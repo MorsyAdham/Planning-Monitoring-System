@@ -314,6 +314,74 @@ export function renderSharedDialogs() {
             </div>
         </div>
 
+        <!-- ═══════════════════════════════════════════ MANAGE PLAN VERSIONS MODAL -->
+        <div class="modal-overlay modal-overlay-wide" id="planVersionsOverlay" style="display:none;" role="dialog"
+            aria-modal="true" aria-labelledby="planVersionsTitle">
+            <div class="modal modal-wide">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="planVersionsTitle">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"
+                            style="width:18px;height:18px;vertical-align:-3px;margin-right:8px">
+                            <path d="M4 3h9l3 3v11H4z" />
+                            <path d="M13 3v3h3" />
+                            <path d="M7 10h6M7 13h6" />
+                        </svg>
+                        <span id="planVersionsTitleText">Manage Plan Versions</span>
+                    </h4>
+                    <button class="modal-close" id="planVersionsClose">&#x2715;</button>
+                </div>
+                <div class="modal-body" style="padding:0">
+                    <div class="um-toolbar pv-toolbar">
+                        <span class="um-count" id="pvCount">0 versions</span>
+                        <div class="pv-new-row">
+                            <input type="text" id="pvNewName" class="filter-control"
+                                placeholder="New revision name, e.g. Revision 2 – Sep 2026" style="width:240px" />
+                            <div class="pv-mode-toggle" role="radiogroup" aria-label="New revision content">
+                                <label class="pv-mode-option">
+                                    <input type="radio" name="pvMode" value="copy" checked />
+                                    Copy current plan
+                                </label>
+                                <label class="pv-mode-option">
+                                    <input type="radio" name="pvMode" value="empty" />
+                                    Start empty
+                                </label>
+                            </div>
+                            <button class="btn btn-primary btn-sm" id="btnPvCreate">
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
+                                    style="width:13px;height:13px">
+                                    <path d="M10 4v12M4 10h12" />
+                                </svg>
+                                New Revision
+                            </button>
+                        </div>
+                    </div>
+                    <div class="um-table-wrap">
+                        <table class="data-table um-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Status</th>
+                                    <th>Created</th>
+                                    <th>By</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pvTableBody">
+                                <tr>
+                                    <td colspan="5" class="table-empty">
+                                        <div class="empty-state"><span class="spinner"></span>
+                                            <p>Loading…</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="ab-error" id="pvError" style="display:none;margin:0 20px 16px"></div>
+                </div>
+            </div>
+        </div>
+
         <div class="modal-overlay modal-overlay-wide" id="userMgmtOverlay" style="display:none;" role="dialog"
             aria-modal="true" aria-labelledby="userMgmtTitle">
             <div class="modal modal-wide">
@@ -343,7 +411,9 @@ export function renderSharedDialogs() {
                         </button>
                     </div>
 
-                    <!-- User table -->
+                    <!-- User table — one table: role, module access, and export
+                         permission all live here as columns, not a separate
+                         section below. -->
                     <div class="um-table-wrap">
                         <table class="data-table um-table">
                             <thead>
@@ -351,6 +421,8 @@ export function renderSharedDialogs() {
                                     <th>Full Name</th>
                                     <th>Email</th>
                                     <th>Role</th>
+                                    <th>Modules</th>
+                                    <th>Export</th>
                                     <th>Status</th>
                                     <th>Created</th>
                                     <th>Actions</th>
@@ -358,7 +430,7 @@ export function renderSharedDialogs() {
                             </thead>
                             <tbody id="umTableBody">
                                 <tr>
-                                    <td colspan="6" class="table-empty">
+                                    <td colspan="8" class="table-empty">
                                         <div class="empty-state"><span class="spinner"></span>
                                             <p>Loading…</p>
                                         </div>
@@ -410,6 +482,21 @@ export function renderSharedDialogs() {
                                             <option value="false">Inactive</option>
                                         </select>
                                     </div>
+                                    <div class="form-group" id="umModulesGroup">
+                                        <label class="form-label">Module Access</label>
+                                        <div class="um-modules-check-row">
+                                            <label class="kd2-check"><input type="checkbox" class="um-module-check" value="kd1" checked /> F200 – KD1</label>
+                                            <label class="kd2-check"><input type="checkbox" class="um-module-check" value="kd2" checked /> F200 – KD2</label>
+                                            <label class="kd2-check"><input type="checkbox" class="um-module-check" value="f100kd2" checked /> F100 – KD2</label>
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">Reports</label>
+                                        <label class="form-check">
+                                            <input type="checkbox" id="umCanExport" />
+                                            <span>Can export Excel &amp; PDF reports</span>
+                                        </label>
+                                    </div>
                                 </div>
                             </div>
                             <div class="um-form-footer">
@@ -417,30 +504,6 @@ export function renderSharedDialogs() {
                                 <button class="btn btn-ghost" id="btnUmCancel">Cancel</button>
                                 <span class="um-form-error" id="umFormError"></span>
                             </div>
-                    </div>
-
-                    <!-- ── Export Permissions section ──────────────────── -->
-                    <div class="um-export-perm-section" id="umExportPermSection">
-                        <div class="um-export-perm-header">
-                            <div>
-                                <span class="um-export-perm-title">Export Permissions</span>
-                                <span class="um-export-perm-sub">Users allowed to export Excel &amp; PDF reports (master admin always can)</span>
-                            </div>
-                        </div>
-                        <div class="um-export-perm-body">
-                            <ul class="exp-perm-list" id="exportPermList">
-                                <li class="exp-perm-empty">Loading…</li>
-                            </ul>
-                            <div class="exp-perm-add-row">
-                                <select id="exportPermUserSelect" class="filter-control" style="flex:1">
-                                    <option value="">— Select a user —</option>
-                                </select>
-                                <input type="text" id="exportPermNote" class="filter-control"
-                                    placeholder="Note (optional)" style="width:130px" autocomplete="off" />
-                                <button class="btn btn-primary btn-sm" id="btnExportPermAdd">Grant</button>
-                            </div>
-                            <div class="ab-error" id="exportPermError" style="display:none;margin-top:8px"></div>
-                        </div>
                     </div>
 
                 </div>
@@ -1047,14 +1110,21 @@ export function renderSharedDialogs() {
                     <button class="modal-close" id="kd2PlanCreateClose">&#x2715;</button>
                 </div>
                 <div class="modal-body">
-                    <div class="kd2-modal-grid">
-                        <div class="form-group" style="grid-column:1/-1" id="kd2PlanCreateModeGroup" data-kd2-plan-create-form>
-                            <label class="form-label">Add Type</label>
-                            <div class="kd2-create-mode-toggle" id="kd2PlanCreateModeToggle">
-                                <button type="button" class="kd2-create-mode-btn active" data-mode="block">Block</button>
-                                <button type="button" class="kd2-create-mode-btn" data-mode="template">Template</button>
-                            </div>
+                    <div class="kd2-plan-create-modewrap" id="kd2PlanCreateModeGroup" data-kd2-plan-create-form>
+                        <div class="kd2-create-mode-toggle" id="kd2PlanCreateModeToggle">
+                            <button type="button" class="kd2-create-mode-btn active" data-mode="block">
+                                <span class="kd2-create-mode-btn-title">Block</span>
+                                <span class="kd2-create-mode-btn-desc">Add one station block to the live plan</span>
+                            </button>
+                            <button type="button" class="kd2-create-mode-btn" data-mode="template">
+                                <span class="kd2-create-mode-btn-title">Template</span>
+                                <span class="kd2-create-mode-btn-desc">Edit the reusable route template</span>
+                            </button>
                         </div>
+                    </div>
+
+                    <section class="kd2-modal-section">
+                        <h5 class="kd2-modal-section-title"><span class="kd2-modal-section-num">1</span>Context</h5>
                         <div class="kd2-plan-create-toolbar">
                             <div class="form-group" data-kd2-plan-create-form>
                                 <label class="form-label" for="kd2PlanCreateBattalion">Battalion</label>
@@ -1077,46 +1147,52 @@ export function renderSharedDialogs() {
                                 <input type="date" id="kd2PlanCreateStart" class="filter-control" />
                             </div>
                         </div>
-                        <div class="form-group" style="grid-column:1/-1" data-kd2-plan-create-form>
-                            <div class="kd2-form-label-row">
+                        <div class="kd2-template-group-dates" id="kd2TemplateGroupDates" style="display:none"></div>
+                    </section>
+
+                    <section class="kd2-modal-section" id="kd2PlanCreateBlockSection" data-kd2-plan-create-form>
+                        <h5 class="kd2-modal-section-title"><span class="kd2-modal-section-num">2</span>Block Details</h5>
+                        <div class="kd2-modal-grid">
+                            <div class="form-group" style="grid-column:1/-1" data-kd2-plan-create-form>
                                 <label class="form-label" for="kd2PlanCreateStation">Process / Station</label>
-                                <button class="btn btn-ghost btn-sm" type="button" id="btnKd2ManageProcessesInline">Manage Processes</button>
+                                <select id="kd2PlanCreateStation" class="filter-control"></select>
                             </div>
-                            <select id="kd2PlanCreateStation" class="filter-control"></select>
+                            <div class="form-group" style="grid-column:1/-1" data-kd2-plan-create-form>
+                                <label class="form-label">Category</label>
+                                <div class="modal-info" id="kd2PlanCreateCategory">Select a station to resolve the KD2 category.</div>
+                            </div>
+                            <div class="form-group" data-kd2-plan-create-form>
+                                <label class="form-label" for="kd2PlanCreateDuration">Duration (working days)</label>
+                                <input type="number" id="kd2PlanCreateDuration" class="filter-control" min="1" step="1" placeholder="Set default first" />
+                            </div>
+                            <div class="form-group" data-kd2-plan-create-form>
+                                <label class="form-label" for="kd2PlanCreateEnd">Planned End</label>
+                                <input type="date" id="kd2PlanCreateEnd" class="filter-control" />
+                            </div>
+                            <div class="form-group" style="grid-column:1/-1" data-kd2-plan-create-form>
+                                <label class="form-label" for="kd2PlanCreateRemark">Remark <span class="form-label-optional">(optional)</span></label>
+                                <input type="text" id="kd2PlanCreateRemark" class="filter-control" placeholder="Optional note" />
+                            </div>
                         </div>
-                        <div class="form-group" style="grid-column:1/-1" data-kd2-plan-create-form>
-                            <label class="form-label">Category</label>
-                            <div class="modal-info" id="kd2PlanCreateCategory">Select a station to resolve the KD2 category.</div>
-                        </div>
-                        <div class="form-group" data-kd2-plan-create-form>
-                            <label class="form-label" for="kd2PlanCreateDuration">Duration (working days)</label>
-                            <input type="number" id="kd2PlanCreateDuration" class="filter-control" min="1" step="1" placeholder="Set default first" />
-                        </div>
-                        <div class="form-group" data-kd2-plan-create-form>
-                            <label class="form-label" for="kd2PlanCreateEnd">Planned End</label>
-                            <input type="date" id="kd2PlanCreateEnd" class="filter-control" />
-                        </div>
-                        <div class="form-group" style="grid-column:1/-1" data-kd2-plan-create-form>
-                            <label class="form-label" for="kd2PlanCreateRemark">Remark <span class="form-label-optional">(optional)</span></label>
-                            <input type="text" id="kd2PlanCreateRemark" class="filter-control" placeholder="Optional note" />
-                        </div>
-                        <div class="form-group kd2-template-editor-wrap" id="kd2TemplateEditorWrap" style="grid-column:1/-1;display:none">
-                            <div class="kd2-template-editor-head">
-                                <label class="form-label">Template Layout</label>
-                                <div class="kd2-template-editor-actions">
-                                    <div class="kd2-template-editor-view" id="kd2TemplateEditorViewToggle" aria-label="Template editor view">
-                                        <button class="kd2-template-view-btn active" type="button" data-view="visual">Visual</button>
-                                        <button class="kd2-template-view-btn" type="button" data-view="form">Form</button>
-                                        <button class="kd2-template-view-btn" type="button" data-view="preview">Gantt</button>
-                                    </div>
-                                    <button class="btn btn-ghost btn-sm" type="button" id="btnKd2TemplateAddBlock">Add Item</button>
-                                    <button class="btn btn-ghost btn-sm" type="button" id="btnKd2TemplateSave">Save Template</button>
+                    </section>
+
+                    <section class="kd2-modal-section kd2-template-editor-wrap" id="kd2TemplateEditorWrap" style="display:none">
+                        <h5 class="kd2-modal-section-title"><span class="kd2-modal-section-num">2</span>Template Layout</h5>
+                        <div class="kd2-template-editor-head">
+                            <div class="kd2-template-editor-actions">
+                                <div class="kd2-template-group-tabs" id="kd2TemplateGroupTabs" role="tablist" aria-label="Template component"></div>
+                                <div class="kd2-template-editor-view" id="kd2TemplateEditorViewToggle" aria-label="Template editor view">
+                                    <button class="kd2-template-view-btn active" type="button" data-view="visual">Cards</button>
+                                    <button class="kd2-template-view-btn" type="button" data-view="preview">Gantt</button>
                                 </div>
+                                <button class="btn btn-ghost btn-sm" type="button" id="btnKd2TemplateAddBlock">Add Item</button>
+                                <button class="btn btn-ghost btn-sm" type="button" id="btnKd2TemplateSave">Save Template</button>
                             </div>
-                            <div class="modal-info" id="kd2TemplateEditorHint">Drag blocks and spaces to reorder the template. Hover between cards to insert a Process Block or Space.</div>
-                            <div class="kd2-template-editor" id="kd2TemplateEditor"></div>
                         </div>
-                    </div>
+                        <div class="modal-info" id="kd2TemplateEditorHint">Drag blocks and spaces to reorder the template. Hover between cards to insert a Process Block or Space.</div>
+                        <div class="kd2-template-editor" id="kd2TemplateEditor"></div>
+                    </section>
+
                     <div class="ab-error" id="kd2PlanCreateError" style="display:none"></div>
                 </div>
                 <div class="modal-footer">
@@ -1198,6 +1274,17 @@ export function renderSharedDialogs() {
                 </div>
                 <div class="modal-body">
                     <div class="modal-info" id="kd2ProcessSummary">Loading process stations…</div>
+
+                    <div class="kd2-process-view-row">
+                        <div class="kd2-template-editor-view" id="kd2ProcessViewToggle" aria-label="Process view">
+                            <button class="kd2-template-view-btn active" type="button" data-process-view="table">Table</button>
+                            <button class="kd2-template-view-btn" type="button" data-process-view="flow">Flow</button>
+                        </div>
+                        <div class="modal-info kd2-process-flow-hint" id="kd2ProcessFlowHint" style="display:none">
+                            One continuous route, not grouped by category — a station can go from Welding to Machining and back to Welding, so cards flow in actual route order with a color-coded category tag on each. Stations running in parallel stack together as one node. Drag a card between two others to reorder the route, or onto another card to make them run in parallel — the Gantt, VPX, and Plan Data all follow it automatically. Pick one Vehicle to reorder (each has its own route).
+                        </div>
+                    </div>
+
                     <div class="kd2-process-toolbar">
                         <div class="form-group">
                             <label class="form-label" for="kd2ProcessVehicleFilter">Vehicle</label>
@@ -1208,19 +1295,43 @@ export function renderSharedDialogs() {
                                 <option value="K11">K11</option>
                             </select>
                         </div>
-                        <div class="form-group">
+                        <div class="form-group" id="kd2ProcessCategoryFilterGroup">
                             <label class="form-label" for="kd2ProcessCategoryFilter">Category</label>
                             <select id="kd2ProcessCategoryFilter" class="filter-control">
                                 <option value="">All Categories</option>
                             </select>
                         </div>
-                        <div class="form-group">
+                        <div class="form-group" id="kd2ProcessSearchGroup">
                             <label class="form-label" for="kd2ProcessSearch">Search</label>
                             <input type="text" id="kd2ProcessSearch" class="filter-control" placeholder="Station name or code…" />
                         </div>
+                        <button class="btn btn-ghost btn-sm" type="button" id="btnKd2AddCategory">+ Add Category</button>
                         <button class="btn btn-primary btn-sm" type="button" id="btnKd2ProcessReset">+ New Process</button>
                     </div>
+                    <div class="kd2-add-category-form" id="kd2AddCategoryForm" style="display:none">
+                        <div class="kd2-add-category-grid">
+                            <div class="form-group">
+                                <label class="form-label" for="kd2NewCategoryName">New Category Name</label>
+                                <input type="text" id="kd2NewCategoryName" class="filter-control" placeholder="e.g. Quality Check" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Applies To</label>
+                                <div class="kd2-add-category-vehicles">
+                                    <label class="kd2-check"><input type="checkbox" class="kd2-new-category-vehicle" value="K9" checked /> K9</label>
+                                    <label class="kd2-check"><input type="checkbox" class="kd2-new-category-vehicle" value="K10" checked /> K10</label>
+                                    <label class="kd2-check"><input type="checkbox" class="kd2-new-category-vehicle" value="K11" checked /> K11</label>
+                                </div>
+                            </div>
+                            <div class="kd2-add-category-actions">
+                                <button class="btn btn-primary btn-sm" type="button" id="btnKd2SaveCategory">Add Category</button>
+                                <button class="btn btn-ghost btn-sm" type="button" id="btnKd2CancelCategory">Cancel</button>
+                            </div>
+                        </div>
+                        <div class="modal-info">Added at the end of each selected vehicle's route — reorder later by editing category_sequence directly if it needs to sit somewhere else.</div>
+                        <div class="ab-error" id="kd2AddCategoryError" style="display:none"></div>
+                    </div>
                     <div class="kd2-process-shell" id="kd2ProcessBody"></div>
+                    <div class="kd2-process-flow" id="kd2ProcessFlow" style="display:none"></div>
                     <div class="ab-error" id="kd2ProcessError" style="display:none"></div>
                 </div>
                 <div class="modal-footer">

@@ -125,12 +125,23 @@ async function initPage() {
 
         try {
             const hash = await sha256(password);
-            const { data: user, error } = await db
+            let { data: user, error } = await db
                 .from('planning_app_users')
-                .select('id, email, full_name, role, is_active')
+                .select('id, email, full_name, role, is_active, modules, can_export')
                 .eq('email', email)
                 .eq('password_hash', hash)
                 .maybeSingle();
+
+            // Migration 44 (modules / can_export) not applied yet — retry without
+            // those columns rather than blocking login entirely.
+            if (error?.code === '42703') {
+                ({ data: user, error } = await db
+                    .from('planning_app_users')
+                    .select('id, email, full_name, role, is_active')
+                    .eq('email', email)
+                    .eq('password_hash', hash)
+                    .maybeSingle());
+            }
 
             if (error) throw error;
             if (!user) {
@@ -148,6 +159,10 @@ async function initPage() {
                 email: user.email,
                 name: user.full_name,
                 role: user.role,
+                // master_admin ignores this list entirely (see isModuleAllowed()
+                // in kd2.js) — it can't be used to lock out the top admin.
+                modules: Array.isArray(user.modules) && user.modules.length ? user.modules : ['kd1', 'kd2', 'f100kd2'],
+                canExport: !!user.can_export,
                 ip,
                 loginAt: new Date().toISOString(),
             });

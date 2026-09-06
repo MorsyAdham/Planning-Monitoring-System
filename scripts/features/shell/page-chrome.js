@@ -10,13 +10,11 @@ export function renderPageChrome() {
     <!-- ═══════════════════════════════════════════════════ HEADER -->
     <header class="site-header">
         <div class="header-inner">
-            <!-- Brand -->
-            <div class="header-brand">
-                <div class="brand-badge" id="moduleBadge">KD1</div>
-                <div class="brand-text">
-                    <span class="brand-title" id="brandTitle">PPMS</span>
-                    <span class="brand-sub" id="brandSubtitle">Production Planning &amp; Monitoring</span>
-                </div>
+            <!-- Brand — a mark, not a masthead. Which module/plan is live now
+                 reads from the context switcher below, not from brand text. -->
+            <div class="header-brand" title="PPMS — Production Planning &amp; Monitoring System">
+                <img class="brand-mark" src="assets/favicon.png" alt="PPMS" />
+                <span class="brand-word">PPMS</span>
             </div>
 
             <!-- Centre nav -->
@@ -27,121 +25,158 @@ export function renderPageChrome() {
                 <a class="section-nav-link" href="#chartsSection"  data-target="chartsSection">Analytics</a>
                 <a class="section-nav-link" href="#tableSection"   data-target="tableSection">Plan Table</a>
                 <a class="section-nav-link" href="#issuesSection"  data-target="issuesSection">Issues</a>
+                <span class="section-nav-indicator" id="sectionNavIndicator" aria-hidden="true"></span>
             </nav>
 
-            <!-- Right-side controls (left→right = module, theme, notif, more, time, conn, user, logout) -->
+            <!-- Right-side controls, grouped into four legible clusters instead
+                 of one long row of individually-bordered pills:
+                 [plan context] [icon rail] [status] | [user] -->
             <div class="header-meta">
-                <!-- Module selector -->
-                <div class="module-switch">
-                    <select id="moduleSelector" class="filter-control module-switch-control" aria-label="Module" title="Module">
-                        <option value="kd1">F200 – KD1</option>
-                        <option value="kd2">F200 – KD2</option>
-                        <option value="f100kd2">F100 – KD2</option>
-                    </select>
-                </div>
 
-                <div class="header-meta-sep"></div>
-
-                <!-- Notification bell -->
-                <div class="f100-notif-wrap" id="f100NotifWrap" style="display:none">
-                    <button class="btn-nav-icon f100-notif-bell" id="f100NotifBell" title="Notifications">
-                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                            <path d="M10 2a6 6 0 00-6 6v3l-1.5 2.5h15L16 11V8a6 6 0 00-6-6z"/>
-                            <path d="M8.5 17a1.5 1.5 0 003 0"/>
-                        </svg>
-                        <span class="f100-notif-badge" id="f100NotifBadge" style="display:none">0</span>
-                    </button>
-                </div>
-
-                <!-- Active Users (master_admin only — inline next to bell) -->
-                <div class="active-users-wrap" id="activeUsersWrap" style="display:none">
-                    <button class="btn-nav-icon active-users-btn" id="activeUsersBtn" title="Active Users">
-                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                            <circle cx="7" cy="8" r="3"/>
-                            <path d="M1 18c0-3.3 2.7-6 6-6s6 2.7 6 6"/>
-                            <path d="M14 6a2.5 2.5 0 1 1 0 5"/>
-                            <path d="M20 18c0-2.8-2.2-5-5-5"/>
-                        </svg>
-                        <span class="active-users-badge" id="activeUsersCount">1</span>
-                    </button>
-                </div>
-
-                <!-- ── Theme picker (standalone, outside the More menu) ── -->
-                <div class="theme-picker-wrap" id="themePickerWrap">
-                    <button class="btn-nav-icon" id="btnThemePicker" title="Theme" aria-haspopup="true" aria-expanded="false">
-                        <span id="themePickerIcon"></span>
-                    </button>
-                    <div class="theme-picker-dropdown" id="themePickerDropdown" style="display:none" role="menu"></div>
-                </div>
-
-                <!-- ── More menu (collapsible) ── -->
-                <div class="nav-more-wrap" id="navMoreWrap">
-                    <button class="btn-nav-icon" id="btnNavMore" title="More options" aria-haspopup="true" aria-expanded="false">
-                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-                            <path d="M3 5h14M3 10h14M3 15h14"/>
-                        </svg>
-                    </button>
-                    <div class="nav-more-dropdown" id="navMoreDropdown" style="display:none" role="menu">
-                        <!-- Audit Log (master_admin only) -->
-                        <button class="nav-more-btn" id="btnAuditLog" role="menuitem" style="display:none">
-                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                                <path d="M4 4h12v2H4zM4 8h12v2H4zM4 12h8v2H4z" />
-                                <circle cx="15" cy="13" r="3.5" />
-                                <path d="M17 15l1.5 1.5" />
+                <!-- Plan context: module + version live in one segmented control.
+                     Custom dropdowns (see core/custom-select.js) — a native
+                     <select>'s option list can't be restyled to match the app. -->
+                <div class="context-switch" title="Module &amp; plan version">
+                    <div class="context-select" id="moduleSelectorWrap">
+                        <button type="button" class="context-select-trigger" data-cs-trigger aria-haspopup="listbox" aria-expanded="false" aria-label="Module">
+                            <span class="context-select-value" data-cs-value>—</span>
+                            <svg class="context-select-caret" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M1 1l4 4 4-4"/>
                             </svg>
-                            <span>Audit Log</span>
                         </button>
-                        <!-- Unit Codes (admin+) -->
-                        <button class="nav-more-btn" id="btnUnitCodes" role="menuitem" style="display:none">
-                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                                <rect x="2" y="4" width="16" height="12" rx="2" />
-                                <path d="M6 8h8M6 12h5" />
+                        <div class="context-select-menu" data-cs-menu role="listbox" style="display:none"></div>
+                    </div>
+                    <span class="context-switch-divider" aria-hidden="true"></span>
+                    <div class="context-select" id="planVersionSelectorWrap">
+                        <button type="button" class="context-select-trigger" data-cs-trigger aria-haspopup="listbox" aria-expanded="false" aria-label="Plan Version">
+                            <span class="context-select-value" data-cs-value>—</span>
+                            <svg class="context-select-caret" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M1 1l4 4 4-4"/>
                             </svg>
-                            <span>Unit Codes</span>
                         </button>
-                        <!-- User Management (master_admin only) -->
-                        <button class="nav-more-btn" id="btnUserMgmt" role="menuitem" style="display:none">
-                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                                <circle cx="8" cy="7" r="3" />
-                                <path d="M2 18c0-3.3 2.7-6 6-6s6 2.7 6 6" />
-                                <path d="M15 9l2 2 3-3" />
-                            </svg>
-                            <span>User Management</span>
-                        </button>
+                        <div class="context-select-menu context-select-menu--wide" data-cs-menu role="listbox" style="display:none"></div>
                     </div>
                 </div>
 
-                <div class="header-meta-sep"></div>
+                <!-- Icon rail: notifications, active users, theme, more — flush,
+                     no per-icon borders, so it reads as one strip -->
+                <div class="icon-rail">
+                    <div class="f100-notif-wrap" id="f100NotifWrap" style="display:none">
+                        <button class="btn-nav-icon f100-notif-bell" id="f100NotifBell" title="Notifications">
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                                <path d="M10 2a6 6 0 00-6 6v3l-1.5 2.5h15L16 11V8a6 6 0 00-6-6z"/>
+                                <path d="M8.5 17a1.5 1.5 0 003 0"/>
+                            </svg>
+                            <span class="f100-notif-badge" id="f100NotifBadge" style="display:none">0</span>
+                        </button>
+                    </div>
 
-                <!-- Clock + Date (compact) -->
-                <div class="header-clock-date">
-                    <div class="header-clock" id="headerClock">--:--:--</div>
-                    <div class="header-date" id="headerDate">--</div>
-                </div>
+                    <!-- Active Users (master_admin only) -->
+                    <div class="active-users-wrap" id="activeUsersWrap" style="display:none">
+                        <button class="btn-nav-icon active-users-btn" id="activeUsersBtn" title="Active Users">
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                                <circle cx="7" cy="8" r="3"/>
+                                <path d="M1 18c0-3.3 2.7-6 6-6s6 2.7 6 6"/>
+                                <path d="M14 6a2.5 2.5 0 1 1 0 5"/>
+                                <path d="M20 18c0-2.8-2.2-5-5-5"/>
+                            </svg>
+                            <span class="active-users-badge" id="activeUsersCount">1</span>
+                        </button>
+                    </div>
 
-                <!-- Connection indicator -->
-                <div class="conn-indicator" id="connIndicator">
-                    <span class="conn-dot"></span>
-                    <span class="conn-label">Connecting…</span>
-                </div>
+                    <!-- Theme picker -->
+                    <div class="theme-picker-wrap" id="themePickerWrap">
+                        <button class="btn-nav-icon" id="btnThemePicker" title="Theme" aria-haspopup="true" aria-expanded="false">
+                            <span id="themePickerIcon"></span>
+                        </button>
+                        <div class="theme-picker-dropdown" id="themePickerDropdown" style="display:none" role="menu"></div>
+                    </div>
 
-                <div class="header-meta-sep"></div>
-
-                <!-- User chip -->
-                <div class="nav-user-chip" id="navUserChip" style="display:none">
-                    <div class="nav-user-avatar" id="navUserAvatar">?</div>
-                    <div class="nav-user-info">
-                        <span class="nav-user-name" id="navUserName">—</span>
-                        <span class="nav-role-badge" id="navRoleBadge">—</span>
+                    <!-- More menu (collapsible) -->
+                    <div class="nav-more-wrap" id="navMoreWrap">
+                        <button class="btn-nav-icon" id="btnNavMore" title="More options" aria-haspopup="true" aria-expanded="false">
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                                <path d="M3 5h14M3 10h14M3 15h14"/>
+                            </svg>
+                        </button>
+                        <div class="nav-more-dropdown" id="navMoreDropdown" style="display:none" role="menu">
+                            <!-- Audit Log (master_admin only) -->
+                            <button class="nav-more-btn" id="btnAuditLog" role="menuitem" style="display:none">
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                                    <path d="M4 4h12v2H4zM4 8h12v2H4zM4 12h8v2H4z" />
+                                    <circle cx="15" cy="13" r="3.5" />
+                                    <path d="M17 15l1.5 1.5" />
+                                </svg>
+                                <span>Audit Log</span>
+                            </button>
+                            <!-- Unit Codes (admin+) -->
+                            <button class="nav-more-btn" id="btnUnitCodes" role="menuitem" style="display:none">
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                                    <rect x="2" y="4" width="16" height="12" rx="2" />
+                                    <path d="M6 8h8M6 12h5" />
+                                </svg>
+                                <span>Unit Codes</span>
+                            </button>
+                            <!-- User Management (master_admin only) -->
+                            <button class="nav-more-btn" id="btnUserMgmt" role="menuitem" style="display:none">
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                                    <circle cx="8" cy="7" r="3" />
+                                    <path d="M2 18c0-3.3 2.7-6 6-6s6 2.7 6 6" />
+                                    <path d="M15 9l2 2 3-3" />
+                                </svg>
+                                <span>User Management</span>
+                            </button>
+                            <!-- Manage Processes (KD2 only, planner+ — includes adding process categories) -->
+                            <button class="nav-more-btn" id="btnManageKd2Processes" role="menuitem" style="display:none">
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                                    <rect x="2" y="3" width="16" height="4" rx="1" />
+                                    <rect x="2" y="9" width="10" height="4" rx="1" />
+                                    <rect x="2" y="15" width="13" height="2.5" rx="1" />
+                                </svg>
+                                <span>Manage Processes</span>
+                            </button>
+                            <!-- Manage Plan Versions (admin+) -->
+                            <button class="nav-more-btn" id="btnManagePlanVersions" role="menuitem" style="display:none">
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                                    <path d="M4 3h9l3 3v11H4z" />
+                                    <path d="M13 3v3h3" />
+                                    <path d="M7 10h6M7 13h6" />
+                                </svg>
+                                <span>Manage Plan Versions</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Logout -->
-                <button class="btn-nav-icon btn-logout" id="btnLogout" title="Sign Out" style="display:none">
-                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                        <path d="M7 3H4a1 1 0 00-1 1v12a1 1 0 001 1h3M13 14l3-4-3-4M16 10H7" />
-                    </svg>
-                </button>
+                <!-- Status: clock + date + connection, one compact line -->
+                <div class="status-strip">
+                    <span class="status-clock">
+                        <span class="status-time" id="headerClock">--:--:--</span>
+                        <span class="status-date" id="headerDate">--</span>
+                    </span>
+                    <span class="conn-indicator" id="connIndicator">
+                        <span class="conn-dot"></span>
+                        <span class="conn-label">Connecting…</span>
+                    </span>
+                </div>
+
+                <div class="header-meta-sep"></div>
+
+                <!-- User zone: chip + sign out, grouped as one unit -->
+                <div class="user-zone">
+                    <div class="nav-user-chip" id="navUserChip" style="display:none">
+                        <div class="nav-user-avatar" id="navUserAvatar">?</div>
+                        <div class="nav-user-info">
+                            <span class="nav-user-name" id="navUserName">—</span>
+                            <span class="nav-role-badge" id="navRoleBadge">—</span>
+                        </div>
+                    </div>
+                    <button class="btn-nav-icon btn-logout" id="btnLogout" title="Sign Out" style="display:none">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M7 3H4a1 1 0 00-1 1v12a1 1 0 001 1h3M13 14l3-4-3-4M16 10H7" />
+                        </svg>
+                    </button>
+                </div>
             </div>
         </div>
 

@@ -123,6 +123,12 @@ export function initFeature() {
                                             <option value="K11">K11</option>
                                         </select>
                                     </div>
+                                    <div class="filter-item kd2-timeline-filter" id="kd2TimelinePlacementBattalionGroup">
+                                        <label class="filter-label" for="kd2TimelinePlacementBattalion">Battalion</label>
+                                        <select id="kd2TimelinePlacementBattalion" class="filter-control">
+                                            <option value="">All battalions</option>
+                                        </select>
+                                    </div>
                                     <div class="filter-item kd2-timeline-filter">
                                         <label class="filter-label" for="kd2TimelinePlacementFilter">Filter</label>
                                         <input id="kd2TimelinePlacementFilter" class="filter-control" type="text" placeholder="Hull, turret, assembly..." />

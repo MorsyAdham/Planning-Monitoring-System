@@ -154,13 +154,21 @@
                             </svg>
                             Lane
                         </button>
-                        <button class="gmt-btn" id="gmtFromBlock" data-mode="from-block" style="display:none">
+                        <button class="gmt-btn" id="gmtFromBlock" data-mode="from-block" style="display:none" title="Drag this block: also shifts this vehicle's remaining stations after it">
                             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" style="width:11px;height:11px">
                                 <rect x="1" y="2" width="6" height="4" rx="1" />
                                 <rect x="7" y="2" width="6" height="4" rx="1" opacity=".45" />
                                 <rect x="7" y="8" width="6" height="4" rx="1" />
                             </svg>
                             From Block
+                        </button>
+                        <button class="gmt-btn" id="gmtFromBlockLane" data-mode="from-block-lane" style="display:none" title="Drag this block: also shifts every other vehicle queued at this same station from this date on">
+                            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" style="width:11px;height:11px">
+                                <rect x="1" y="2" width="6" height="4" rx="1" />
+                                <rect x="1" y="8" width="6" height="4" rx="1" opacity=".45" />
+                                <rect x="7" y="8" width="6" height="4" rx="1" opacity=".45" />
+                            </svg>
+                            From Block · Lane
                         </button>
                         <button class="gmt-btn" id="gmtPlan" data-mode="plan">
                             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" style="width:11px;height:11px">
@@ -238,6 +246,12 @@
                                         <option value="K9">K9</option>
                                         <option value="K10">K10</option>
                                         <option value="K11">K11</option>
+                                    </select>
+                                </div>
+                                <div class="filter-item kd2-timeline-filter" id="ganttVisualPlacementBattalionGroup">
+                                    <label class="filter-label" for="ganttVisualPlacementBattalion">Battalion</label>
+                                    <select id="ganttVisualPlacementBattalion" class="filter-control">
+                                        <option value="">All battalions</option>
                                     </select>
                                 </div>
                                 <div class="filter-item kd2-timeline-filter">

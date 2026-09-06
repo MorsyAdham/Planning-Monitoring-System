@@ -63,6 +63,9 @@ function populateShellSessionState() {
     const unitCodes = byId('btnUnitCodes');
     if (unitCodes && isAdmin()) unitCodes.style.display = 'flex';
 
+    const managePlanVersions = byId('btnManagePlanVersions');
+    if (managePlanVersions && isAdmin()) managePlanVersions.style.display = 'flex';
+
     const auditLog = byId('btnAuditLog');
     const userMgmt = byId('btnUserMgmt');
     if (auditLog && isMasterAdmin()) auditLog.style.display = 'flex';
@@ -105,6 +108,8 @@ async function initPage() {
         CDN_SCRIPTS.jspdfAutoTable,
         CDN_SCRIPTS.xlsx,
         CDN_SCRIPTS.excelJs,
+        { src: 'scripts/core/custom-select.js' },
+        { src: 'scripts/core/plan-versions.js' },
         { src: 'scripts/gantt-module.js' },
         { src: 'scripts/kd2.js' },
         { src: 'scripts/app.js' },
