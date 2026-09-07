@@ -234,34 +234,42 @@ window.PPMSModuleRuntime = (() => {
         return true;
     }
 
-    // Process View groups rows by station name — fine until two genuinely
-    // different stations happen to share one (K9's Hull/Turret split makes
-    // this easy: a "Qualifying" check that exists on both lines is a
-    // legitimate real-world case, not bad data). Without this, they'd
-    // silently collapse into a single row whose identity (category, line,
-    // sort position) is decided by array order, not anything meaningful —
-    // which reads as "the other one is just missing".
-    // Returns Map<station_code, rowKey>: the plain station name normally
-    // (same as before — parallel same-line stations sharing a name, like
-    // multiple work centers running the identical process, still merge
-    // into one row, unchanged), disambiguated with "(Hull)"/"(Turret)"
-    // only when a name is shared *across* those two lines.
+    // Process View / Gantt / Plan Data group rows by station name — fine until
+    // two genuinely different stations share one (a "Qualifying" check that
+    // exists on both the Hull and Turret lines, or a "Steam Cleaning" that
+    // runs at two different points in the route). Without disambiguation they
+    // collapse into one row whose identity is decided by array order, which
+    // reads as "the other one is missing" and drops it to the end.
+    //
+    // Rule: same name + same route_sequence = parallel work centers for one
+    // process → merge (unchanged). Same name + different route_sequence =
+    // genuinely different steps → split, tagged by component line (Hull /
+    // Turret) when that differs, else by work center, else by route number.
+    // Returns Map<station_code, rowKey>.
     function buildStationRowKeyMap(vehicle) {
         const stations = (state.stations || []).filter(s => !vehicle || s.vehicle_type === vehicle);
-        const groupsByName = new Map(); // name -> Set of component_group values seen for it
+        const byName = new Map(); // name -> [stations]
         stations.forEach(s => {
             const name = s.station_name || s.station_code;
             if (!name) return;
-            if (!groupsByName.has(name)) groupsByName.set(name, new Set());
-            groupsByName.get(name).add(s.component_group || '');
+            if (!byName.has(name)) byName.set(name, []);
+            byName.get(name).push(s);
         });
         const map = new Map(); // station_code -> rowKey
-        stations.forEach(s => {
-            const name = s.station_name || s.station_code;
-            if (!name) return;
-            const grp = s.component_group || '';
-            const crossesLines = groupsByName.get(name).size > 1 && (grp === 'Hull' || grp === 'Turret');
-            map.set(s.station_code, crossesLines ? `${name} (${grp})` : name);
+        byName.forEach((list, name) => {
+            const routes = new Set(list.map(s => parseInt(s.route_sequence, 10) || 0));
+            if (list.length === 1 || routes.size === 1) {
+                list.forEach(s => map.set(s.station_code, name));
+                return;
+            }
+            const groups = new Set(list.map(s => s.component_group || ''));
+            list.forEach(s => {
+                const grp = s.component_group || '';
+                const tag = (groups.size > 1 && (grp === 'Hull' || grp === 'Turret')) ? grp
+                    : (s.work_center || '').split(/[,/]/)[0].trim()
+                    || `route ${parseInt(s.route_sequence, 10) || '?'}`;
+                map.set(s.station_code, `${name} (${tag})`);
+            });
         });
         return map;
     }
@@ -1353,24 +1361,8 @@ window.PPMSModuleRuntime = (() => {
                 </td>
                 <td>${escapeHtml(station.work_center || '—')}</td>
                 <td>${station.vehicle_type === 'K9' ? escapeHtml(station.component_group || '—') : '—'}</td>
-                <td>
-                    <div class="kd2-process-reorder">
-                        <span>${station.station_sequence_in_category}</span>
-                        <div class="kd2-process-reorder-arrows">
-                            <button type="button" class="kd2-reorder-btn" title="Move up in category" data-kd2-process-move="${escapeHtml(station.station_code)}" data-kd2-move-vehicle="${escapeHtml(station.vehicle_type)}" data-kd2-move-scope="category" data-kd2-move-dir="up">&#9650;</button>
-                            <button type="button" class="kd2-reorder-btn" title="Move down in category" data-kd2-process-move="${escapeHtml(station.station_code)}" data-kd2-move-vehicle="${escapeHtml(station.vehicle_type)}" data-kd2-move-scope="category" data-kd2-move-dir="down">&#9660;</button>
-                        </div>
-                    </div>
-                </td>
-                <td>
-                    <div class="kd2-process-reorder">
-                        <span>${station.route_sequence}</span>
-                        <div class="kd2-process-reorder-arrows">
-                            <button type="button" class="kd2-reorder-btn" title="Move up in route" data-kd2-process-move="${escapeHtml(station.station_code)}" data-kd2-move-vehicle="${escapeHtml(station.vehicle_type)}" data-kd2-move-scope="route" data-kd2-move-dir="up">&#9650;</button>
-                            <button type="button" class="kd2-reorder-btn" title="Move down in route" data-kd2-process-move="${escapeHtml(station.station_code)}" data-kd2-move-vehicle="${escapeHtml(station.vehicle_type)}" data-kd2-move-scope="route" data-kd2-move-dir="down">&#9660;</button>
-                        </div>
-                    </div>
-                </td>
+                <td class="kd2-process-num">${station.station_sequence_in_category}</td>
+                <td class="kd2-process-num">${station.route_sequence}</td>
                 <td>${escapeHtml(leadTimeText(station.vehicle_type, station.category_code, station.station_code))}</td>
                 <td>${escapeHtml(lead?.lead_time_source || '—')}</td>
                 <td>${escapeHtml(station.notes || '—')}</td>
@@ -1734,10 +1726,9 @@ window.PPMSModuleRuntime = (() => {
      *  and Turret each number their steps 1..N independently (that's the
      *  parallel portion of the route) and the downstream flow starts right
      *  after whichever lane has more steps. Writes both
-     *  kd2_process_stations and kd2_process_routes — the same two tables
-     *  moveProcessStationOrder()'s 'route' scope keeps in sync. No temp-
-     *  offset trick needed — route_sequence has no uniqueness constraint,
-     *  parallel stations sharing a value is intentional. */
+     *  kd2_process_stations and kd2_process_routes. No temp-offset trick
+     *  needed — route_sequence has no uniqueness constraint, parallel
+     *  stations sharing a value is intentional. */
     async function persistFlowOrder(vehicle) {
         if (!dbRef || !canManageKD2()) return;
         const flowContainer = document.getElementById('kd2ProcessFlow');
@@ -2141,54 +2132,6 @@ window.PPMSModuleRuntime = (() => {
             renderProcessTable();
         } catch (error) {
             setProcessError(error.message);
-        }
-    }
-
-    /** Swap a station's order with its neighbor — 'category' scope reorders within
-     *  station_sequence_in_category, 'route' scope reorders within route_sequence
-     *  for the whole vehicle. Uses a temporary sentinel value for the 3-step swap
-     *  so the (vehicle_type, category_code, station_sequence_in_category) unique
-     *  constraint is never violated mid-update. */
-    async function moveProcessStationOrder(vehicle, stationCode, direction, scope) {
-        if (!dbRef) return;
-        if (!canManageKD2()) {
-            toast('Only planners and operators can edit KD2 processes.', 'error');
-            return;
-        }
-        const field = scope === 'route' ? 'route_sequence' : 'station_sequence_in_category';
-        const station = state.stations.find(row => row.vehicle_type === vehicle && row.station_code === stationCode);
-        if (!station) return;
-
-        const siblings = state.stations
-            .filter(row => row.vehicle_type === vehicle && (scope === 'route' || row.category_code === station.category_code))
-            .sort((a, b) => (a[field] || 0) - (b[field] || 0));
-        const idx = siblings.findIndex(row => row.station_code === stationCode);
-        const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
-        if (idx < 0 || swapIdx < 0 || swapIdx >= siblings.length) return;
-        const other = siblings[swapIdx];
-        const stationVal = station[field];
-        const otherVal = other[field];
-        const TEMP_SEQUENCE = 999999;
-
-        try {
-            let { error } = await dbRef.from('kd2_process_stations').update({ [field]: TEMP_SEQUENCE }).eq('vehicle_type', vehicle).eq('station_code', station.station_code);
-            if (error) throw error;
-            ({ error } = await dbRef.from('kd2_process_stations').update({ [field]: stationVal }).eq('vehicle_type', vehicle).eq('station_code', other.station_code));
-            if (error) throw error;
-            ({ error } = await dbRef.from('kd2_process_stations').update({ [field]: otherVal }).eq('vehicle_type', vehicle).eq('station_code', station.station_code));
-            if (error) throw error;
-
-            if (scope === 'route') {
-                await dbRef.from('kd2_process_routes').update({ route_sequence: stationVal }).eq('vehicle_type', vehicle).eq('station_code', other.station_code);
-                await dbRef.from('kd2_process_routes').update({ route_sequence: otherVal }).eq('vehicle_type', vehicle).eq('station_code', station.station_code);
-            }
-
-            await writeAudit('UPDATE', 'kd2_process_stations', `${vehicle}:${stationCode}`, { [field]: stationVal }, { [field]: otherVal });
-            await refreshWorkspace({ force: true });
-            await helpers.reloadAll?.();
-            renderProcessTable();
-        } catch (error) {
-            setProcessError('Failed to reorder: ' + error.message);
         }
     }
 
@@ -7985,11 +7928,6 @@ window.PPMSModuleRuntime = (() => {
             }
         });
         document.getElementById('kd2ProcessBody')?.addEventListener('click', event => {
-            const moveBtn = event.target.closest('[data-kd2-process-move]');
-            if (moveBtn) {
-                moveProcessStationOrder(moveBtn.dataset.kd2MoveVehicle || '', moveBtn.dataset.kd2ProcessMove || '', moveBtn.dataset.kd2MoveDir, moveBtn.dataset.kd2MoveScope);
-                return;
-            }
             const editBtn = event.target.closest('[data-kd2-process-edit]');
             if (editBtn) {
                 _processNewRowDraft = null;
@@ -8168,62 +8106,57 @@ window.PPMSModuleRuntime = (() => {
                 });
                 return result;
             },
-            // Returns Map<stationName, { line, sortKey }> for the Gantt's Process
-            // view — grouped by physical/logical line first (Hull, then Turret,
-            // then every other category by its category_sequence), route_sequence
-            // only breaks ties *within* a line. Sorting by route_sequence alone
-            // (like getStationRouteOrder) interleaves lines that happen to share a
-            // route_sequence — Hull and Turret run in parallel, so they usually
-            // do — which is exactly what always split the lines apart was for.
+            // Returns Map<rowKey, { line, sortKey }> for the Gantt Process view,
+            // the Plan Data table and reports. Three blocks, in this order:
+            //   K9:      Hull → Turret → Assembly & Processing & Testing
+            //   K10/K11: Structure → Assembly & Processing & Testing
+            // Hull and Turret run in parallel (they share route_sequence values),
+            // so the block is the primary key; route_sequence only orders
+            // stations *within* a block — sorting by route_sequence alone
+            // interleaves the parallel lines.
             getStationLaneOrder(vehicle) {
-                const catByCode = new Map(
-                    (state.categories || [])
-                        .filter(c => !vehicle || c.vehicle_type === vehicle)
-                        .map(c => [c.category_code, c])
-                );
                 const stations = (state.stations || []).filter(s => !vehicle || s.vehicle_type === vehicle);
                 const rowKeyByCode = buildStationRowKeyMap(vehicle);
+                const DOWNSTREAM_CATS = new Set(['assembly', 'processing', 'final_test']);
 
-                const stationLine = new Map();     // rowKey -> line label
-                const stationRouteSeq = new Map(); // rowKey -> route_sequence
-                const lineMinCatSeq = new Map();   // line label -> lowest category_sequence seen for it
-                stations.forEach(s => {
-                    // Same silent-drop trap as getStationCategoryMap had: a
-                    // station whose category_code doesn't resolve against
-                    // state.categories used to be skipped here entirely,
-                    // which doesn't remove it from the Gantt (the row-seeding
-                    // above is independent of this) but leaves it with no
-                    // sort key — the caller then falls back to sorting it
-                    // dead last, which looks identical to "missing" unless
-                    // you scroll all the way down. component_group (Hull/
-                    // Turret) doesn't depend on the category resolving, so
-                    // it's used directly; category name/sequence still fall
-                    // back gracefully when unresolved instead of dropping
-                    // the station from this map altogether.
-                    const cat = catByCode.get(s.category_code);
-                    const rowKey = rowKeyByCode.get(s.station_code) || s.station_name || s.station_code;
-                    if (!rowKey) return;
-                    const line = (s.component_group === 'Hull' || s.component_group === 'Turret')
-                        ? s.component_group
-                        : (cat?.category_name || s.category_code || 'Other');
-                    if (!stationLine.has(rowKey)) stationLine.set(rowKey, line);
-                    if (!stationRouteSeq.has(rowKey)) stationRouteSeq.set(rowKey, parseInt(s.route_sequence, 10) || 9999);
-                    const catSeq = cat?.category_sequence || 9999;
-                    if (!lineMinCatSeq.has(line) || catSeq < lineMinCatSeq.get(line)) lineMinCatSeq.set(line, catSeq);
-                });
-
-                const lineRank = new Map([['Hull', 0], ['Turret', 1]]);
-                [...lineMinCatSeq.keys()]
-                    .filter(line => line !== 'Hull' && line !== 'Turret')
-                    .sort((a, b) => lineMinCatSeq.get(a) - lineMinCatSeq.get(b))
-                    .forEach((line, i) => lineRank.set(line, 2 + i));
+                const lineFor = (s) => {
+                    if (s.vehicle_type === 'K9') {
+                        if (s.component_group === 'Hull') return { line: 'Hull', rank: 0 };
+                        if (s.component_group === 'Turret') return { line: 'Turret', rank: 1 };
+                        return { line: 'Assembly & Processing & Testing', rank: 2 };
+                    }
+                    return DOWNSTREAM_CATS.has(s.category_code)
+                        ? { line: 'Assembly & Processing & Testing', rank: 1 }
+                        : { line: 'Structure', rank: 0 };
+                };
 
                 const order = new Map();
-                stationLine.forEach((line, rowKey) => {
-                    const rank = lineRank.get(line) ?? 99;
-                    order.set(rowKey, { line, sortKey: rank * 100000 + stationRouteSeq.get(rowKey) });
+                stations.forEach(s => {
+                    const rowKey = rowKeyByCode.get(s.station_code) || s.station_name || s.station_code;
+                    if (!rowKey || order.has(rowKey)) return;
+                    const { line, rank } = lineFor(s);
+                    const routeSeq = parseInt(s.route_sequence, 10) || 9999;
+                    order.set(rowKey, { line, sortKey: rank * 1000000 + routeSeq });
                 });
                 return order;
+            },
+            // Map<station_code, sortKey> from the *live* station config, on the
+            // same line-grouped basis as the Gantt. Plan rows carry a frozen
+            // route_sequence snapshot from when they were scheduled, which drifts
+            // from config as Manage Processes is edited — the Plan Data table and
+            // reports use this to sort by the current route instead.
+            getStationOrderByCode(vehicle) {
+                const lane = window.PPMSModuleRuntime.getStationLaneOrder(vehicle);
+                const rowKeyByCode = buildStationRowKeyMap(vehicle);
+                const m = new Map(); // station_code -> { sortKey, line }
+                (state.stations || [])
+                    .filter(s => !vehicle || s.vehicle_type === vehicle)
+                    .forEach(s => {
+                        const rk = rowKeyByCode.get(s.station_code) || s.station_name || s.station_code;
+                        const info = lane.get(rk);
+                        if (info) m.set(s.station_code, { sortKey: info.sortKey, line: info.line });
+                    });
+                return m;
             },
         comparePlanRowsByLaneOrder,
         getPlanMoveRowsFromAnchor,

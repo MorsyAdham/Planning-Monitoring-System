@@ -2842,45 +2842,10 @@ body {
     vertical-align: middle;
 }
 
-.kd2-process-reorder {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
+.kd2-process-num {
     font-variant-numeric: tabular-nums;
     font-weight: 600;
-}
-
-.kd2-process-reorder-arrows {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.kd2-reorder-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--clr-surface-2);
-    border: 1px solid var(--clr-border-soft);
-    border-radius: 4px;
     color: var(--clr-text-muted);
-    cursor: pointer;
-    font-size: .5rem;
-    line-height: 1;
-    width: 18px;
-    height: 14px;
-    transition: color .12s, border-color .12s, background .12s;
-}
-
-.kd2-reorder-btn:hover:not(:disabled) {
-    color: var(--clr-accent);
-    border-color: var(--clr-accent);
-    background: var(--clr-accent-dim);
-}
-
-.kd2-reorder-btn:disabled {
-    opacity: .3;
-    cursor: default;
 }
 
 .kd2-icon-action-btn {
@@ -5375,7 +5340,7 @@ body {
     border-bottom: 1px solid color-mix(in srgb, var(--clr-border) 50%, var(--clr-accent) 50%);
     position: sticky;
     top: 108px;
-    z-index: 66; /* matches gr-label — separator row label covers zones that scroll into label area */
+    z-index: 69; /* above gr-label (66) so unit-row labels tuck behind this on vertical scroll, below gr-group (70) */
 }
 
 .gr-process-cat-label {
@@ -5969,8 +5934,44 @@ body {
    ================================================================ */
 
 .report-modal {
-    max-width: 720px;
+    max-width: 780px;
     width: 100%;
+}
+
+/* ─── Report modal: stepped sections ───────────────────────────── */
+.report-section {
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius, 10px);
+    background: var(--clr-surface);
+    padding: 14px 16px 16px;
+}
+
+.report-section-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.report-section-head .form-label { margin: 0; }
+.report-section-head .btn-sm { margin-left: auto; }
+
+.report-section-step {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    border-radius: 999px;
+    background: var(--clr-accent);
+    color: #fff;
+    font-size: .72rem;
+    font-weight: 800;
+}
+
+.report-section-sub {
+    font-size: .72rem;
+    color: var(--clr-text-dim);
 }
 
 .issue-report-modal {
@@ -6062,9 +6063,8 @@ body {
 /* ─── Report type grid ──────────────────────────────────────────── */
 .report-type-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 10px;
-    margin-top: 6px;
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+    gap: 8px;
 }
 
 .report-type-card {
@@ -6080,36 +6080,39 @@ body {
 }
 
 .rtc-inner {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 12px 14px;
+    display: grid;
+    grid-template-columns: 18px 1fr;
+    column-gap: 8px;
+    row-gap: 2px;
+    align-items: center;
+    padding: 9px 11px;
     border: 1px solid var(--clr-border);
     border-radius: var(--radius);
     background: var(--clr-surface-2);
-    transition: border-color .18s, background .18s;
+    transition: border-color .15s, background .15s;
+    height: 100%;
 }
 
 .rtc-inner svg {
-    width: 22px;
-    height: 22px;
+    width: 16px;
+    height: 16px;
     color: var(--clr-text-dim);
-    margin-bottom: 4px;
-    transition: color .18s;
+    transition: color .15s;
+    align-self: center;
 }
 
 .rtc-label {
-    font-family: var(--ff-display);
-    font-size: .88rem;
+    font-size: .8rem;
     font-weight: 700;
-    letter-spacing: .04em;
+    letter-spacing: .01em;
     color: var(--clr-text);
 }
 
 .rtc-desc {
-    font-size: .72rem;
+    grid-column: 2;
+    font-size: .68rem;
     color: var(--clr-text-muted);
-    line-height: 1.4;
+    line-height: 1.35;
 }
 
 .report-type-card:hover .rtc-inner {
@@ -6133,6 +6136,34 @@ body {
     align-items: flex-start;
     gap: 16px;
     flex-wrap: wrap;
+}
+
+/* ─── Report modal filter grid (mirrors the main filter bar) ────── */
+.report-filter-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px 14px;
+}
+
+.report-filter-grid .filter-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.report-filter-grid .filter-label {
+    font-size: .72rem;
+    font-weight: 600;
+    color: var(--clr-text-muted);
+}
+
+/* The modal body scrolls, so keep the dropdowns compact and let them float
+   above sibling rows. */
+.report-filter-grid .ms-menu {
+    min-width: 100%;
+    max-height: 190px;
+    z-index: 1200;
 }
 
 .report-date-row {
@@ -6165,23 +6196,31 @@ body {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 14px;
-    border-radius: var(--radius-sm);
-    background: var(--clr-surface-2);
-    border: 1px solid var(--clr-border);
-    margin-top: 4px;
+    padding: 12px 16px;
+    border-radius: var(--radius, 10px);
+    background: var(--clr-accent-dim);
+    border: 1px solid color-mix(in srgb, var(--clr-accent) 45%, var(--clr-border));
+}
+
+.report-preview-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    color: var(--clr-accent);
 }
 
 .report-preview-count {
     font-family: var(--ff-display);
-    font-size: 1rem;
-    font-weight: 700;
+    font-size: 1.05rem;
+    font-weight: 800;
     color: var(--clr-accent);
 }
 
 .report-preview-hint {
     font-size: .78rem;
     color: var(--clr-text-muted);
+    margin-left: auto;
+    text-align: right;
 }
 
 /* ─── "View before exporting" toggle + preview modal ───────────────── */
@@ -9974,6 +10013,44 @@ th.vpx-grp-processing:first-of-type {
     color: var(--clr-text-muted);
     border-bottom: 1px solid var(--clr-border-soft);
 }
+
+/* ─── KD2 Plan Data table: Hull / Turret / downstream line separator ─ */
+.kd2-tbl-line-row td {
+    padding: 9px 16px;
+    border-top: 2px solid var(--clr-border);
+    border-bottom: 2px solid var(--clr-border);
+    background:
+        repeating-linear-gradient(-45deg,
+            var(--clr-surface-2) 0 10px,
+            color-mix(in srgb, var(--clr-surface-2) 70%, transparent) 10px 20px);
+}
+.kd2-tbl-line-row td > span {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 12px;
+    border-radius: 999px;
+    font-size: .74rem;
+    font-weight: 800;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: #fff;
+    background: var(--clr-text-muted);
+    vertical-align: middle;
+    margin-left: 6px;
+}
+.kd2-tbl-line-row svg { vertical-align: middle; opacity: .55; }
+.kd2-tbl-line-hull td {
+    background: color-mix(in srgb, var(--clr-planned, #3b82f6) 12%, var(--clr-surface));
+    border-color: color-mix(in srgb, var(--clr-planned, #3b82f6) 40%, var(--clr-border));
+}
+.kd2-tbl-line-hull td > span { background: var(--clr-planned, #3b82f6); }
+.kd2-tbl-line-hull svg { color: var(--clr-planned, #3b82f6); opacity: .8; }
+.kd2-tbl-line-turret td {
+    background: color-mix(in srgb, var(--clr-xray-active, #a855f7) 12%, var(--clr-surface));
+    border-color: color-mix(in srgb, var(--clr-xray-active, #a855f7) 40%, var(--clr-border));
+}
+.kd2-tbl-line-turret td > span { background: var(--clr-xray-active, #a855f7); }
+.kd2-tbl-line-turret svg { color: var(--clr-xray-active, #a855f7); opacity: .8; }
 /* group header background/color rules are in the "improved colors" block below */
 .f100-tbl-veh-badge {
     display: inline-flex;

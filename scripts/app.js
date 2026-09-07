@@ -355,36 +355,36 @@ function getModuleCategory(processStation, row = null) {
 }
 
 function syncReportCategoryOptions() {
-    const target = document.getElementById('reportCategory');
-    if (!target) return;
-    // F100 has no station categories — show a disabled placeholder
-    if (isF100KD2Module()) {
-        target.innerHTML = '<option value="">All (no categories)</option>';
-        target.disabled = true;
-        const wrap = target.closest('.form-group') || target.parentElement;
-        if (wrap) wrap.style.opacity = '0.4';
-    } else {
-        target.disabled = false;
-        const wrap = target.closest('.form-group') || target.parentElement;
-        if (wrap) wrap.style.opacity = '';
-        const currentVal = target.value;
-        target.innerHTML = '<option value="">All Categories</option>' +
-            filterOptions.category.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
-        if ([...target.options].some(opt => opt.value === currentVal)) target.value = currentVal;
-    }
-    // Show/hide KD2-only report type cards
     const kd2 = isKD2Module();
+
+    // Mirror the main filter bar's option lists into the report-scoped copies,
+    // then pre-fill the report selections from the bar's current state so the
+    // modal opens showing "what the table shows" — editable without touching it.
+    const mirror = [
+        ['reportVehicle', 'vehicle'],
+        ['reportK9Component', 'k9Component'],
+        ['reportBattalion', 'battalion'],
+        ['reportUnit', 'unit'],
+        ['reportCategory', 'category'],
+        ['reportWeek', 'week'],
+    ];
+    mirror.forEach(([rk, bk]) => {
+        filterOptions[rk] = (filterOptions[bk] || []).map(o => ({ ...o }));
+        filterState[rk] = new Set([...(filterState[bk] || new Set(['all']))]);
+        renderMultiSelectMenu(rk);
+    });
+
+    // Battalion + K9 Component are KD2-only; K9 Component only when K9 is in scope.
+    const k9InScope = filterState.reportVehicle.has('all') || filterState.reportVehicle.has('K9');
+    const showGroup = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+    showGroup('reportBattalionGroup', kd2);
+    showGroup('reportK9ComponentGroup', kd2 && k9InScope);
+
+    // Show/hide KD2-only report type cards
     ['kd2ReportCardBattalion', 'kd2ReportCardVtype', 'kd2ReportCardAnalytics', 'kd2ReportCardXray'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.hidden = !kd2;
     });
-    // Show/hide vehicle type filter
-    const vtypeGroup = document.getElementById('reportVtypeGroup');
-    if (vtypeGroup) vtypeGroup.style.display = kd2 ? '' : 'none';
-    if (!kd2) {
-        const vtypeSel = document.getElementById('reportVehicleType');
-        if (vtypeSel) vtypeSel.value = '';
-    }
     // If a KD2-only type was checked but we're now in a non-KD2 module, reset to full
     if (!kd2) {
         const checked = document.querySelector('input[name="reportType"]:checked');
@@ -782,11 +782,7 @@ function getRowCode(row) {
 // Order: battalion (top) is shown above vehicle_no in the cell via the td structure,
 // so here we return unit_code (bottom line).
 function getRowUnitMeta(row) {
-    if (isKD2Module()) {
-        const code = getUnitCode(row.vehicle, row.vehicle_no);
-        return code ? `<br><span class="unit-code-badge">${esc(code)}</span>` : '';
-    }
-    const code = getUnitCode(row.vehicle, row.vehicle_no);
+    const code = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
     return code ? `<br><span class="unit-code-badge">${esc(code)}</span>` : '';
 }
 
@@ -903,6 +899,14 @@ const filterState = {
     issueStatus: new Set(['all']),
     issuePriority: new Set(['all']),
     issueReporter: new Set(['all']),
+    // Export Report modal — independent copies of the main plan filters,
+    // pre-filled from the bar on open, editable without touching it.
+    reportVehicle: new Set(['all']),
+    reportK9Component: new Set(['all']),
+    reportBattalion: new Set(['all']),
+    reportUnit: new Set(['all']),
+    reportCategory: new Set(['all']),
+    reportWeek: new Set(['all']),
 };
 
 const filterOptions = {
@@ -944,6 +948,12 @@ const filterOptions = {
         { value: 'critical', label: 'Critical' },
     ],
     issueReporter: [],
+    reportVehicle: [],
+    reportK9Component: [{ value: 'Hull', label: 'Hull' }, { value: 'Turret', label: 'Turret' }],
+    reportBattalion: [],
+    reportUnit: [],
+    reportCategory: [],
+    reportWeek: [],
 };
 
 /** Default button text (instead of "All") for filters whose placeholder is the field name. */
@@ -970,10 +980,18 @@ const filterConfig = {
     issueStatus:       { btn: 'issueFilterStatusBtn',      menu: 'issueFilterStatusMenu' },
     issuePriority:     { btn: 'issueFilterPriorityBtn',    menu: 'issueFilterPriorityMenu' },
     issueReporter:     { btn: 'issueFilterReporterBtn',    menu: 'issueFilterReporterMenu' },
+    reportVehicle:     { btn: 'reportVehicleBtn',          menu: 'reportVehicleMenu' },
+    reportK9Component: { btn: 'reportK9ComponentBtn',      menu: 'reportK9ComponentMenu' },
+    reportBattalion:   { btn: 'reportBattalionBtn',        menu: 'reportBattalionMenu' },
+    reportUnit:        { btn: 'reportUnitBtn',             menu: 'reportUnitMenu' },
+    reportCategory:    { btn: 'reportCategoryBtn',         menu: 'reportCategoryMenu' },
+    reportWeek:        { btn: 'reportWeekBtn',             menu: 'reportWeekMenu' },
 };
 
 /** Set of filterConfig keys that belong to the Production Issues table (vs. the main plan filter bar). */
 const ISSUE_FILTER_KEYS = new Set(['issueCategory', 'issueStatus', 'issuePriority', 'issueReporter']);
+/** Set of filterConfig keys that belong to the Export Report modal. */
+const REPORT_FILTER_KEYS = new Set(['reportVehicle', 'reportK9Component', 'reportBattalion', 'reportUnit', 'reportCategory', 'reportWeek']);
 
 /** Generic Set-membership matcher: true if "All" selected or value is in the set. */
 function matchesMultiSet(selected, rawValue) {
@@ -1095,7 +1113,14 @@ function handleMultiSelectMenuChange(key, e, onApply) {
 
 function resetMultiSelectFilters() {
     Object.keys(filterConfig).forEach(key => {
-        if (ISSUE_FILTER_KEYS.has(key)) return;
+        if (ISSUE_FILTER_KEYS.has(key) || REPORT_FILTER_KEYS.has(key)) return;
+        filterState[key] = new Set(['all']);
+        renderMultiSelectMenu(key);
+    });
+}
+
+function resetReportMultiSelectFilters() {
+    REPORT_FILTER_KEYS.forEach(key => {
         filterState[key] = new Set(['all']);
         renderMultiSelectMenu(key);
     });
@@ -1683,11 +1708,18 @@ async function loadUnitCodes() {
                 const fallbackLabel = battalionCode
                     ? `${battalionCode} / ${r.vehicle_type}-${String(r.unit_serial).padStart(2, '0')}`
                     : `${r.vehicle_type}-${String(r.unit_serial).padStart(2, '0')}`;
+                // Battalion-qualified keys are authoritative: unit_label ("M1", "M2"…)
+                // repeats across battalions, so the bare vehicle||label keys collide
+                // and the last battalion loaded would win for every battalion.
                 const key1 = r.unit_label ? r.vehicle_type + '||' + r.unit_label : null;
                 const key2 = r.vehicle_type + '||' + fallbackLabel;
+                const qkey1 = (battalionCode && r.unit_label) ? battalionCode + '||' + r.vehicle_type + '||' + r.unit_label : null;
+                const qkey2 = battalionCode ? battalionCode + '||' + r.vehicle_type + '||' + fallbackLabel : null;
+                const drEntry = { id: r.id, reasons: (r.delay_reason && typeof r.delay_reason === 'object') ? r.delay_reason : {} };
+                if (qkey1) { unitCodeMap[qkey1] = code; vpxDelayReasonMap[qkey1] = drEntry; }
+                if (qkey2) { unitCodeMap[qkey2] = code; vpxDelayReasonMap[qkey2] = drEntry; }
                 if (key1) unitCodeMap[key1] = code;
                 unitCodeMap[key2] = code;
-                const drEntry = { id: r.id, reasons: (r.delay_reason && typeof r.delay_reason === 'object') ? r.delay_reason : {} };
                 if (key1) vpxDelayReasonMap[key1] = drEntry;
                 vpxDelayReasonMap[key2] = drEntry;
                 unitRegistryRows.push({
@@ -2091,9 +2123,11 @@ async function loadData() {
                 }
             }
 
+            resetKd2LaneOrderCache();
             currentData.sort((a, b) => {
                 const vCmp = vehicleSort(a.vehicle, b.vehicle); if (vCmp !== 0) return vCmp;
                 const uCmp = naturalSort(a.vehicle_no, b.vehicle_no); if (uCmp !== 0) return uCmp;
+                if (getModuleRuntime()?.getStationOrderByCode) return kd2StationCompare(a, b);
                 const kd2Compare = getModuleRuntime()?.comparePlanRowsByLaneOrder;
                 if (typeof kd2Compare === 'function') return kd2Compare(a, b);
                 const rA = parseInt(a.route_sequence, 10) || 9999;
@@ -3272,73 +3306,22 @@ function renderTable(data) {
     }
 
     // ── Sort data by active view ──────────────────────────────────
+    // Station order (all views) comes from kd2StationCompare — the live
+    // line-grouped route (Hull block → Turret block → downstream categories),
+    // same basis as the Gantt/VPX. The views differ only in primary grouping.
     let sorted = data;
     if (isKD2Module()) {
+        resetKd2LaneOrderCache();
+        const batCmp = (a, b) => String(a.battalion_code || '').localeCompare(String(b.battalion_code || ''), undefined, { numeric: true });
         if (_kd2TableView === 'station') {
-            const _rt = getModuleRuntime();
-            const _routeCache = {};
-            const _routeSeq = (vehicle, station) => {
-                if (!_routeCache[vehicle]) {
-                    _routeCache[vehicle] = _rt?.getStationRouteOrder ? _rt.getStationRouteOrder(vehicle) : new Map();
-                }
-                return _routeCache[vehicle].get(station) ?? 9999;
-            };
-            sorted = data.slice().sort((a, b) => {
-                const vc = vehicleSort(a.vehicle, b.vehicle);
-                if (vc !== 0) return vc;
-                const seqA = _routeSeq(a.vehicle, a.process_station);
-                const seqB = _routeSeq(b.vehicle, b.process_station);
-                if (seqA !== seqB) return seqA - seqB;
-                return naturalSort(a.vehicle_no, b.vehicle_no);
-            });
-        } else if (_kd2TableView === 'unit') {
-            const _rt2 = getModuleRuntime();
-            const _rc2 = {};
-            const _seq2 = (vehicle, station) => {
-                if (!_rc2[vehicle]) _rc2[vehicle] = _rt2?.getStationRouteOrder ? _rt2.getStationRouteOrder(vehicle) : new Map();
-                return _rc2[vehicle].get(station) ?? 9999;
-            };
-            sorted = data.slice().sort((a, b) => {
-                const bc = String(a.battalion_code || '').localeCompare(String(b.battalion_code || ''), undefined, { numeric: true });
-                if (bc !== 0) return bc;
-                const vc = vehicleSort(a.vehicle, b.vehicle);
-                if (vc !== 0) return vc;
-                const nc = naturalSort(a.vehicle_no, b.vehicle_no);
-                if (nc !== 0) return nc;
-                return _seq2(a.vehicle, a.process_station) - _seq2(b.vehicle, b.process_station);
-            });
-        } else if (_kd2TableView === 'battalion') {
-            const _rt3 = getModuleRuntime();
-            const _rc3 = {};
-            const _seq3 = (vehicle, station) => {
-                if (!_rc3[vehicle]) _rc3[vehicle] = _rt3?.getStationRouteOrder ? _rt3.getStationRouteOrder(vehicle) : new Map();
-                return _rc3[vehicle].get(station) ?? 9999;
-            };
-            sorted = data.slice().sort((a, b) => {
-                const bc = String(a.battalion_code || '').localeCompare(String(b.battalion_code || ''), undefined, { numeric: true });
-                if (bc !== 0) return bc;
-                const vc = vehicleSort(a.vehicle, b.vehicle);
-                if (vc !== 0) return vc;
-                const nc = naturalSort(a.vehicle_no, b.vehicle_no);
-                if (nc !== 0) return nc;
-                return _seq3(a.vehicle, a.process_station) - _seq3(b.vehicle, b.process_station);
-            });
+            sorted = data.slice().sort((a, b) =>
+                vehicleSort(a.vehicle, b.vehicle) || kd2StationCompare(a, b) || naturalSort(a.vehicle_no, b.vehicle_no));
+        } else if (_kd2TableView === 'battalion' || _kd2TableView === 'unit') {
+            sorted = data.slice().sort((a, b) =>
+                batCmp(a, b) || vehicleSort(a.vehicle, b.vehicle) || naturalSort(a.vehicle_no, b.vehicle_no) || kd2StationCompare(a, b));
         } else {
-            const _rt4 = getModuleRuntime();
-            const _rc4 = {};
-            const _seq4 = (vehicle, station) => {
-                if (!_rc4[vehicle]) _rc4[vehicle] = _rt4?.getStationRouteOrder ? _rt4.getStationRouteOrder(vehicle) : new Map();
-                return _rc4[vehicle].get(station) ?? 9999;
-            };
-            sorted = data.slice().sort((a, b) => {
-                const vc = vehicleSort(a.vehicle, b.vehicle);
-                if (vc !== 0) return vc;
-                const bc = String(a.battalion_code || '').localeCompare(String(b.battalion_code || ''), undefined, { numeric: true });
-                if (bc !== 0) return bc;
-                const nc = naturalSort(a.vehicle_no, b.vehicle_no);
-                if (nc !== 0) return nc;
-                return _seq4(a.vehicle, a.process_station) - _seq4(b.vehicle, b.process_station);
-            });
+            sorted = data.slice().sort((a, b) =>
+                vehicleSort(a.vehicle, b.vehicle) || batCmp(a, b) || naturalSort(a.vehicle_no, b.vehicle_no) || kd2StationCompare(a, b));
         }
     }
 
@@ -3351,6 +3334,12 @@ function renderTable(data) {
 
     let html = '';
     let prevGroupKey = null;
+    let prevLineLabel = null; // K9 Hull/Turret/… line separator within a group
+
+    // Show line-separator rows in every KD2 view except "station" (which is
+    // already grouped by station). K9 is the meaningful case — Hull then
+    // Turret then the shared downstream flow.
+    const _showLineSeps = isKD2Module() && _kd2TableView !== 'station';
 
     sorted.forEach(row => {
         let groupKey, groupHtml;
@@ -3394,7 +3383,23 @@ function renderTable(data) {
         if (groupKey !== prevGroupKey) {
             if (groupHtml) html += groupHtml;
             prevGroupKey = groupKey;
+            prevLineLabel = null; // reset line tracking at each new group
         }
+
+        // Line separator rows — K9: Hull → Turret → Assembly & Processing &
+        // Testing. K10/K11: Structure → Assembly & Processing & Testing.
+        if (_showLineSeps) {
+            const line = kd2LineLabel(row);
+            if (line && line !== prevLineLabel) {
+                prevLineLabel = line;
+                const cls = line === 'Hull' ? ' kd2-tbl-line-hull' : line === 'Turret' ? ' kd2-tbl-line-turret' : '';
+                html += `<tr class="kd2-tbl-line-row${cls}"><td colspan="12">
+                    <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" style="width:11px;height:11px;flex-shrink:0;opacity:.7"><path d="M3 4h8M3 7h8M3 10h6" stroke-dasharray="2 1.5"/></svg>
+                    <span>${esc(line)}</span>
+                </td></tr>`;
+            }
+        }
+
         const status = calculateStatus(row);
         const delay = delayDays(row);
         const badgeCls = `badge badge-${status.toLowerCase().replace(' ', '-').replace('late-completion', 'late')}`;
@@ -3434,11 +3439,14 @@ function renderTable(data) {
         html += `
       <tr data-plan-id="${row.id}">
         <td><strong>${esc(row.vehicle)}</strong></td>
-        <td class="unit-cell">${[
-            row.battalion_code ? `<span class="f100-tbl-bat-tag">${esc(row.battalion_code)}</span>` : '',
-            `<span class="unit-main-label">${esc(row.vehicle_no)}</span>`,
-            getUnitCode(row.vehicle, row.vehicle_no) ? `<span class="unit-code-badge">${esc(getUnitCode(row.vehicle, row.vehicle_no))}</span>` : '',
-        ].filter(Boolean).join('')}</td>
+        <td class="unit-cell">${(() => {
+            const uc = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
+            return [
+                row.battalion_code ? `<span class="f100-tbl-bat-tag">${esc(row.battalion_code)}</span>` : '',
+                `<span class="unit-main-label">${esc(row.vehicle_no)}</span>`,
+                uc ? `<span class="unit-code-badge">${esc(uc)}</span>` : '',
+            ].filter(Boolean).join('');
+        })()}</td>
         <td>${esc(row.process_station)}</td>
         <td class="mono station-code-cell">${esc(getRowCode(row))}</td>
         <td class="mono">${esc(row.week || '—')}</td>
@@ -4246,14 +4254,14 @@ function getVpxRowPrimaryLabel(row) {
 }
 
 function getVpxRowSecondaryLabel(row) {
-    const unitCode = getUnitCode(row.vehicle, row.vehicle_no);
+    const unitCode = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
     if (isKD2Module()) return unitCode || '';
     return unitCode;
 }
 
 function getVpxExportLabel(row) {
     if (!isKD2Module()) return row.vehicle + '\n' + unitLabel(row.vehicle, row.vehicle_no);
-    return [row.battalion_code || '—', `${row.vehicle} · ${unitLabel(row.vehicle, row.vehicle_no)}`].join('\n');
+    return [row.battalion_code || '—', `${row.vehicle} · ${unitLabel(row.vehicle, row.vehicle_no, row.battalion_code)}`].join('\n');
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -4615,12 +4623,12 @@ function renderVPX(data) {
         var rowPctHtml = row.total > 0
             ? '<div class="vpx-unit-pct-row"><div class="vpx-unit-pct-bar-wrap"><div class="vpx-unit-pct-bar-fill" style="width:' + rowPct + '%"></div></div><span class="vpx-unit-pct-text">' + row.done + '/' + row.total + ' (' + rowPct + '%)</span></div>'
             : '';
-        var drEntry = isKD2Module() ? getDelayReasonEntry(row.vehicle, row.vehicle_no) : null;
+        var drEntry = isKD2Module() ? getDelayReasonEntry(row.vehicle, row.vehicle_no, row.battalion_code) : null;
         var drCategory = _vpxCategoryFilter || 'general';
         var drReason = drEntry?.reasons?.[drCategory] || '';
         var drBtnHtml = drEntry
             ? '<button type="button" class="vpx-delay-reason-btn' + (drReason ? ' has-reason' : '') + '"'
-                + ' data-vpx-vehicle="' + esc(row.vehicle) + '" data-vpx-unit="' + esc(row.vehicle_no) + '" data-vpx-category="' + esc(drCategory) + '"'
+                + ' data-vpx-vehicle="' + esc(row.vehicle) + '" data-vpx-unit="' + esc(row.vehicle_no) + '" data-vpx-battalion="' + esc(row.battalion_code || '') + '" data-vpx-category="' + esc(drCategory) + '"'
                 + ' title="' + (drReason ? 'Delay reason (' + esc(drCategory) + '): ' + esc(drReason) : 'Add a delay reason (' + esc(drCategory) + ')') + '">'
                 + '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 2.5h7.5L13 5v8.5a1 1 0 01-1 1H3a1 1 0 01-1-1v-10a1 1 0 011-1z"/><path d="M9.5 2.5V5H13"/><path d="M4.5 8h5M4.5 10.5h3.5"/></svg>'
                 + '</button>'
@@ -6135,7 +6143,7 @@ function openCompleteModal(planId, idx) {
     } else {
         const actualStart = row.progress?.actual_start_date;
         document.getElementById('modalInfo').innerHTML = `
-        <strong>${esc(row.vehicle)} · ${esc(row.vehicle_no)}${getUnitCode(row.vehicle, row.vehicle_no) ? ' <span style="font-weight:400;opacity:.7;font-size:.85em">(' + esc(getUnitCode(row.vehicle, row.vehicle_no)) + ')</span>' : ''}</strong><br>
+        <strong>${esc(row.vehicle)} · ${esc(row.vehicle_no)}${(() => { const c = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code); return c ? ' <span style="font-weight:400;opacity:.7;font-size:.85em">(' + esc(c) + ')</span>' : ''; })()}</strong><br>
         ${esc(row.process_station)}<br>
         <small>Planned: ${formatDate(row.start_date)} → ${formatDate(row.end_date)}</small>
         ${actualStart ? `<br><small>Actual start: ${formatDate(actualStart)}</small>` : ''}`;
@@ -6311,8 +6319,11 @@ function wireEvents() {
     // Render each menu now so static-option filters (k9Component, f100Manufacturer,
     // f100VehicleType) aren't empty on first open; dynamic ones get re-rendered
     // again once their real option lists load.
-    Object.keys(filterConfig).forEach(key => renderMultiSelectMenu(key));
-    Object.keys(filterConfig).forEach(key => {
+    // Report-modal filters are wired separately in wireReportModal() — skip them
+    // here so their changes never trigger a main-table reload.
+    const barFilterKeys = Object.keys(filterConfig).filter(k => !REPORT_FILTER_KEYS.has(k));
+    barFilterKeys.forEach(key => renderMultiSelectMenu(key));
+    barFilterKeys.forEach(key => {
         const cfg = filterConfig[key];
         document.getElementById(cfg.btn)?.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -6752,14 +6763,20 @@ function formatDateShort(isoStr) {
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 }
 
-/** Return the unit code for a vehicle+unit combo, or '' */
-function getUnitCode(vehicle, vehicle_no) {
+/** Return the unit code for a vehicle+unit combo, or ''. Pass `battalion` whenever
+ *  it's known — unit labels (M1, M2…) repeat across battalions, so the bare
+ *  vehicle+label lookup is ambiguous and returns whichever battalion loaded last. */
+function getUnitCode(vehicle, vehicle_no, battalion) {
+    if (battalion) {
+        const qk = battalion + '||' + vehicle + '||' + vehicle_no;
+        if (Object.prototype.hasOwnProperty.call(unitCodeMap, qk)) return unitCodeMap[qk] || '';
+    }
     return unitCodeMap[vehicle + '||' + vehicle_no] || '';
 }
 
 /** Format unit label: "M1" or "M1 · EGY N25020" */
-function unitLabel(vehicle, vehicle_no) {
-    const code = getUnitCode(vehicle, vehicle_no);
+function unitLabel(vehicle, vehicle_no, battalion) {
+    const code = getUnitCode(vehicle, vehicle_no, battalion);
     return code ? vehicle_no + ' · ' + code : vehicle_no;
 }
 
@@ -6767,11 +6784,15 @@ function unitLabel(vehicle, vehicle_no) {
  *  vehicle isn't registered in Unit Codes (no row to attach a reason to).
  *  `reasons` is keyed by VPX category (Hull/Turret/Assembly/Structure) since
  *  each component tracks its delay separately. */
-function getDelayReasonEntry(vehicle, vehicle_no) {
+function getDelayReasonEntry(vehicle, vehicle_no, battalion) {
+    if (battalion) {
+        const qk = battalion + '||' + vehicle + '||' + vehicle_no;
+        if (Object.prototype.hasOwnProperty.call(vpxDelayReasonMap, qk)) return vpxDelayReasonMap[qk] || null;
+    }
     return vpxDelayReasonMap[vehicle + '||' + vehicle_no] || null;
 }
-function getDelayReason(vehicle, vehicle_no, category) {
-    return getDelayReasonEntry(vehicle, vehicle_no)?.reasons?.[category || 'general'] || '';
+function getDelayReason(vehicle, vehicle_no, category, battalion) {
+    return getDelayReasonEntry(vehicle, vehicle_no, battalion)?.reasons?.[category || 'general'] || '';
 }
 
 function daysBetween(from, to) {
@@ -7547,16 +7568,18 @@ function renderGantt(plans, startDate, endDate) {
     let bodyHtml = '';
 
     groupKeys.forEach(groupKey => {
+        // Line-grouped station order (Hull → Turret → downstream categories) for
+        // the KD2 process view — the single source of truth for both lane sort
+        // order and the block separators below. Sorting by route_sequence alone
+        // interleaves the parallel Hull and Turret lines.
+        const _laneOrder = isKd2ProcessView
+            ? (getModuleRuntime()?.getStationLaneOrder?.(groupKey) || new Map())
+            : null;
         const unitKeys = Object.keys(groups[groupKey]).sort((a, b) => {
             if (isF100ProcessView) return naturalSort(a, b);
             if (isKd2ProcessView) {
-                // Grouped by line (Hull, Turret, then every other category) first,
-                // route_sequence only orders stations *within* one line — sorting
-                // by route_sequence alone interleaves Hull and Turret whenever they
-                // share a number, which they usually do since they run in parallel.
-                const laneOrder = getModuleRuntime()?.getStationLaneOrder?.(groupKey) || new Map();
-                const seqA = laneOrder.get(a)?.sortKey ?? 9999999;
-                const seqB = laneOrder.get(b)?.sortKey ?? 9999999;
+                const seqA = _laneOrder.get(a)?.sortKey ?? 9999999;
+                const seqB = _laneOrder.get(b)?.sortKey ?? 9999999;
                 if (seqA !== seqB) return seqA - seqB;
                 return a.localeCompare(b, undefined, { numeric: true });
             }
@@ -7608,24 +7631,13 @@ function renderGantt(plans, startDate, endDate) {
 
             let _prevLineLabel = null;
             section.units.forEach(unit => {
-            // ── KD2 process view: always separate lines (Hull, Turret, then every
-            // other category) — a separator on every line change, not just the
-            // ones into Hull/Turret, so Assembly/Processing/Final Test get split
-            // apart from each other too, not left running together undivided. ──
-            if (isKd2ProcessView && _kd2CatMap) {
-                const catInfo = _kd2CatMap.get(unit) || _kd2CatMap.get(kd2StripRowKeySuffix(unit));
-                if (catInfo) {
-                    // unit itself carries "(Hull)"/"(Turret)" when it's a
-                    // disambiguated row (two stations sharing a name across
-                    // the split) — that's the row's own real line. Falling
-                    // through to catInfo.component_group here would use
-                    // whichever of the two same-named stations won the
-                    // plain-name lookup, which can be the *other* one.
-                    const rowKeySuffix = /\((Hull|Turret)\)$/.exec(unit)?.[1];
-                    const lineLabel = rowKeySuffix
-                        || ((catInfo.component_group === 'Hull' || catInfo.component_group === 'Turret')
-                            ? catInfo.component_group
-                            : catInfo.category_name);
+            // ── KD2 process view: block separator on every line change (Hull,
+            // Turret, then each downstream category), taken from the same
+            // lane-order map that sorts the rows so the two always agree. ──
+            if (isKd2ProcessView && _laneOrder) {
+                const lineLabel = _laneOrder.get(unit)?.line
+                    || _kd2CatMap?.get(kd2StripRowKeySuffix(unit))?.category_name;
+                if (lineLabel) {
                     if (lineLabel !== _prevLineLabel) {
                         _prevLineLabel = lineLabel;
                         bodyHtml += `
@@ -7788,7 +7800,7 @@ function renderGantt(plans, startDate, endDate) {
             <div class="gr-unit-info">
               ${isKD2Module() && !isKd2ProcessView && groupKey ? `<span class="gr-unit-ctx">${esc(laneVehicle)} · ${esc(groupKey)}</span>` : ''}
               ${isKd2ProcessView && _stationWC ? `<span class="gr-unit-ctx">${esc(_stationWC)}</span>` : ''}
-              <span class="gr-unit-name">${esc(isF100ProcessView ? laneUnit : isF100KD2Module() ? (() => { const t0 = tasks[0]; const uCode = t0?.unit_code || ''; const uName = t0?.unit_name || ''; return uCode && uName ? `${uCode} · ${uName}` : uCode || uName || `${laneVehicle} #${laneUnit}`; })() : isKd2ProcessView ? laneUnit : isKD2Module() ? unitLabel(laneVehicle, laneUnit) : unitLabel(laneVehicle, laneUnit))}</span>
+              <span class="gr-unit-name">${esc(isF100ProcessView ? laneUnit : isF100KD2Module() ? (() => { const t0 = tasks[0]; const uCode = t0?.unit_code || ''; const uName = t0?.unit_name || ''; return uCode && uName ? `${uCode} · ${uName}` : uCode || uName || `${laneVehicle} #${laneUnit}`; })() : isKd2ProcessView ? laneUnit : isKD2Module() ? unitLabel(laneVehicle, laneUnit, groupKey) : unitLabel(laneVehicle, laneUnit))}</span>
               ${(!isKd2ProcessView && _stationWC) ? `<span class="gr-unit-wc">${esc(_stationWC)}</span>` : ''}
               ${_f100PctHtml}
               ${_kd2PctHtml}
@@ -8264,9 +8276,15 @@ async function exportGanttSchedule(exportView = 'process') {
 
         // ── 7. Data rows ──────────────────────────────────────────
         groupKeys.forEach(groupKey => {
-            // Category map per vehicle for KD2 process view
+            // Category map + line order per vehicle for KD2 process view.
+            // _exportLaneOrder groups by physical/logical line (Hull, Turret,
+            // then downstream categories) — sorting by raw route_sequence alone
+            // interleaves the parallel Hull and Turret lines.
             const _exportCatMap = (isProcessView && isKD2Module())
                 ? (getModuleRuntime()?.getStationCategoryMap?.(groupKey) || new Map())
+                : null;
+            const _exportLaneOrder = (isProcessView && isKD2Module())
+                ? (getModuleRuntime()?.getStationLaneOrder?.(groupKey) || new Map())
                 : null;
             // Group header row
             ws.getRow(r).height = 18;
@@ -8279,7 +8297,14 @@ async function exportGanttSchedule(exportView = 'process') {
             r++;
 
             const unitKeys = Object.keys(groups[groupKey]).sort((a, b) => {
-                if (isProcessView) {
+                if (isProcessView && _exportLaneOrder) {
+                    // Line-grouped (Hull → Turret → downstream categories),
+                    // matching the on-screen Gantt — not raw route_sequence,
+                    // which zig-zags between the parallel Hull/Turret lines.
+                    const seqA = _exportLaneOrder.get(a)?.sortKey ?? 9999999;
+                    const seqB = _exportLaneOrder.get(b)?.sortKey ?? 9999999;
+                    if (seqA !== seqB) return seqA - seqB;
+                } else if (isProcessView) {
                     const routeOrder = getModuleRuntime()?.getStationRouteOrder?.(groupKey) || new Map();
                     const seqA = routeOrder.get(a) ?? 9999;
                     const seqB = routeOrder.get(b) ?? 9999;
@@ -8320,19 +8345,15 @@ async function exportGanttSchedule(exportView = 'process') {
                 // Process view (or non-KD2 unit view) — with component separators for KD2
                 let prevCompLabel = null;
                 unitKeys.forEach(unit => {
-                    if (_exportCatMap) {
-                        const catInfo = _exportCatMap.get(unit) || _exportCatMap.get(kd2StripRowKeySuffix(unit));
-                        if (catInfo) {
-                            // Same reasoning as the on-screen Gantt: unit's own
-                            // "(Hull)"/"(Turret)" suffix (when present) is this
-                            // row's real line — catInfo.component_group can
-                            // belong to whichever same-named station won the
-                            // plain-name lookup instead.
-                            const compLabel = /\((Hull|Turret)\)$/.exec(unit)?.[1] || catInfo.component_group;
-                            if (compLabel && compLabel !== prevCompLabel) {
-                                prevCompLabel = compLabel;
-                                writeCatSepRow(compLabel);
-                            }
+                    if (_exportLaneOrder) {
+                        // Block label straight from the lane-order map, so the
+                        // separator matches the sort exactly (one Hull header,
+                        // one Turret header, then one per downstream category).
+                        const compLabel = _exportLaneOrder.get(unit)?.line
+                            || _exportCatMap?.get(kd2StripRowKeySuffix(unit))?.category_name;
+                        if (compLabel && compLabel !== prevCompLabel) {
+                            prevCompLabel = compLabel;
+                            writeCatSepRow(compLabel);
                         }
                     }
                     const laneCount = writeLaneRows(unit, groups[groupKey][unit], r);
@@ -8497,16 +8518,12 @@ const REPORT_TYPES = {
     completed: { label: 'Completed Report', filter: r => ['Completed', 'Late Completion'].includes(calculateStatus(r)) },
     late: { label: 'Late Completions', filter: r => calculateStatus(r) === 'Late Completion' },
     planned: { label: 'Not Started Report', filter: r => calculateStatus(r) === 'Planned' },
-    vehicle: {
-        label: 'By Vehicle Report', filter: r => matchesMultiSet(filterState.vehicle, r.vehicle)
-    },
+    // Vehicle / Battalion / Vehicle-Type scoping now comes from the modal's own
+    // filters (applyReportModalFilters); these types only change the layout.
+    vehicle: { label: 'By Vehicle Report', filter: () => true },
     // KD2-only types
-    battalion: {
-        label: 'By Battalion', filter: r => matchesMultiSet(filterState.battalion, r.battalion_code)
-    },
-    vtype: {
-        label: 'By Vehicle Type', filter: r => matchesMultiSet(filterState.vehicle, r.vehicle)
-    },
+    battalion: { label: 'By Battalion', filter: () => true },
+    vtype: { label: 'By Vehicle Type', filter: () => true },
     analytics: { label: 'Station Analytics', filter: () => true },
     xray_status: {
         label: 'X-ray Status',
@@ -8529,6 +8546,41 @@ function buildXrayStatusRows() {
         );
 }
 
+/* ─── Live-config station order (per vehicle, by station_code) ─────────
+   Plan rows carry a route_sequence snapshot frozen at scheduling time,
+   which drifts from the current Manage Processes route as it's edited.
+   The Gantt/VPX already read the live config; this lets the Plan Data
+   table and reports do the same so all four views agree. Rebuilt each
+   loadData() via resetKd2LaneOrderCache(). */
+let _kd2LaneOrderCache = {};
+function resetKd2LaneOrderCache() { _kd2LaneOrderCache = {}; }
+function _kd2LaneInfo(row) {
+    const rt = getModuleRuntime();
+    if (!rt?.getStationOrderByCode) return null;
+    const v = row.vehicle_type || row.vehicle || '';
+    if (!(v in _kd2LaneOrderCache)) _kd2LaneOrderCache[v] = rt.getStationOrderByCode(v) || new Map();
+    return _kd2LaneOrderCache[v].get(row.station_code) || null;
+}
+function kd2LaneSortKey(row) {
+    const info = _kd2LaneInfo(row);
+    return info ? info.sortKey : null;
+}
+/** Physical/logical line for a plan row ("Hull" / "Turret" / category name), from
+ *  live config — used for the K9 Hull/Turret separator rows in the Plan Data table. */
+function kd2LineLabel(row) {
+    return _kd2LaneInfo(row)?.line || null;
+}
+/** Station comparator for the Plan Data table + reports — live config order
+ *  first, the row's frozen route_sequence / station order as fallback. */
+function kd2StationCompare(a, b) {
+    const ka = kd2LaneSortKey(a), kb = kd2LaneSortKey(b);
+    if (ka != null && kb != null && ka !== kb) return ka - kb;
+    if ((ka == null) !== (kb == null)) return ka == null ? 1 : -1;
+    return (parseInt(a.route_sequence, 10) || 9999) - (parseInt(b.route_sequence, 10) || 9999)
+        || (parseInt(a.station_sequence_in_category, 10) || 9999) - (parseInt(b.station_sequence_in_category, 10) || 9999)
+        || String(a.process_station || '').localeCompare(String(b.process_station || ''), undefined, { numeric: true });
+}
+
 /* ─── Merged route-order map for reports (min seq across all vehicles) ─ */
 function getReportRouteOrder() {
     const rt = getModuleRuntime();
@@ -8542,6 +8594,31 @@ function getReportRouteOrder() {
     return merged;
 }
 
+/** Narrow report rows by the Export Report modal's own filter selections
+ *  (mirrors the main bar's Vehicle / Battalion / Unit / K9 Component /
+ *  Category / Week — same matchesMultiSet semantics). */
+function applyReportModalFilters(rows) {
+    const rv = filterState.reportVehicle, rb = filterState.reportBattalion, ru = filterState.reportUnit;
+    const rc = filterState.reportCategory, rw = filterState.reportWeek, rk9 = filterState.reportK9Component;
+    const needK9 = isKD2Module() && rk9 && !rk9.has('all');
+    let compMap = null;
+    if (needK9) {
+        compMap = getModuleRuntime()?.getStationCategoryMap?.('K9') || new Map();
+    }
+    return (rows || []).filter(r => {
+        if (!matchesMultiSet(rv, r.vehicle)) return false;
+        if (isKD2Module() && !matchesMultiSet(rb, r.battalion_code)) return false;
+        if (!matchesMultiSet(ru, r.vehicle_no)) return false;
+        if (!matchesMultiSet(rc, getModuleCategory(r.process_station, r))) return false;
+        if (!matchesMultiSet(rw, r.week)) return false;
+        if (needK9 && r.vehicle === 'K9') {
+            const grp = compMap.get(r.process_station)?.component_group || '';
+            if (![...rk9].some(w => grp === w || grp.startsWith(w + ' '))) return false;
+        }
+        return true;
+    });
+}
+
 /* ─── Build the row array for a report ─────────────────────────── */
 function buildReportRows(typeKey, fromDate, toDate, category) {
     const def = REPORT_TYPES[typeKey];
@@ -8552,19 +8629,28 @@ function buildReportRows(typeKey, fromDate, toDate, category) {
     const startField = isF100KD2Module() ? 'planned_start_date' : 'start_date';
     if (fromDate) rows = rows.filter(r => (r[startField] || r.start_date) >= fromDate);
     if (toDate)   rows = rows.filter(r => (r[startField] || r.start_date) <= toDate);
-    // Category filter only applies to F200 modules (F100 has no station categories)
-    if (category && !isF100KD2Module()) rows = rows.filter(r => getModuleCategory(r.process_station, r) === category);
-    // Vehicle type filter — KD2 only
-    if (isKD2Module()) {
-        const vtype = getVal('reportVehicleType');
-        if (vtype) rows = rows.filter(r => r.vehicle === vtype);
+
+    // Report-modal filters — independent copies of the main filter bar, applied
+    // client-side on top of whatever the bar already loaded into currentData.
+    rows = applyReportModalFilters(rows);
+
+    // Legacy `category` param still honoured when the modal's Category multi-
+    // select is left on "All" (used by internal buildReportRows('full', …) calls).
+    if (category && !isF100KD2Module() && filterState.reportCategory.has('all')) {
+        rows = rows.filter(r => getModuleCategory(r.process_station, r) === category);
     }
 
     // Sort: Battalion → Vehicle → Unit → Station (starting from the report's primary grouping field)
     const cmp = (a, b) => String(a || '').localeCompare(String(b || ''), undefined, { numeric: true, sensitivity: 'base' });
     if (isKD2Module()) {
-        const routeOrder = getReportRouteOrder();
-        const stationCmp = (a, b) => (routeOrder.get(a.process_station) ?? 9999) - (routeOrder.get(b.process_station) ?? 9999) || cmp(a.process_station, b.process_station);
+        // Order stations by the plan row's OWN route_sequence / station order —
+        // same as the Plan Data table (comparePlanRowsByLaneOrder). The old
+        // name-keyed getReportRouteOrder() merged all three vehicles' routes
+        // into one map (min sequence wins), so any station name that sits at a
+        // different route position across K9/K10/K11 — RT/X-ray, Qualifying,
+        // Deburring, Painting … — was mis-placed in the report.
+        resetKd2LaneOrderCache();
+        const stationCmp = kd2StationCompare;
         const startFromBattalion = ['full', 'battalion'].includes(typeKey);
         rows = [...rows].sort((a, b) => {
             if (startFromBattalion) {
@@ -9151,7 +9237,7 @@ async function exportExcel(typeKey, fromDate, toDate, category, preview) {
         { header: '#', width: 5, key: (r, i) => i + 1 },
         { header: 'Vehicle', width: 10, key: r => r.vehicle },
         { header: 'Unit', width: 10, key: r => r.vehicle_no },
-        { header: 'Unit Code', width: 16, key: r => getUnitCode(r.vehicle, r.vehicle_no) || '—' },
+        { header: 'Unit Code', width: 16, key: r => getUnitCode(r.vehicle, r.vehicle_no, r.battalion_code) || '—' },
         { header: 'Station', width: 26, key: r => r.process_station },
         { header: 'Code / Work Center', width: 18, key: r => getRowCode(r) },
         { header: 'Category', width: 16, key: r => getModuleCategory(r.process_station, r) },
@@ -11206,7 +11292,7 @@ function _addVpxStationReportSheet(wb, built, sheetName, categoryForReason = _vp
     let excelRowIdx = 6;
     rows.forEach(row => {
         const { cells, finalDelay } = _vpxProjectRow(row, allCols, activeCols);
-        const code = getUnitCode(row.vehicle, row.vehicle_no);
+        const code = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
         const label = `${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
         const planRowN = excelRowIdx;
         const actualRowN = excelRowIdx + 1;
@@ -11272,7 +11358,7 @@ function _addVpxStationReportSheet(wb, built, sheetName, categoryForReason = _vp
 
         // Delay Reason — editable per-vehicle, per-category note (VPX matrix
         // "note" icon), scoped to the tab this report was generated from.
-        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, categoryForReason);
+        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, categoryForReason, row.battalion_code);
         ws.mergeCells(planRowN, reasonCol, actualRowN, reasonCol);
         const reasonCell = ws.getCell(planRowN, reasonCol);
         reasonCell.value = delayReason || '—';
@@ -11421,9 +11507,9 @@ function _drawVpxStationReportTable(doc, built, title, categoryForReason = _vpxC
 
     rows.forEach(row => {
         const { cells, finalDelay } = _vpxProjectRow(row, allCols, activeCols);
-        const code = getUnitCode(row.vehicle, row.vehicle_no);
+        const code = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
         const label = `${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
-        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, categoryForReason);
+        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, categoryForReason, row.battalion_code);
 
         vehicleBlockStartRows.push(body.length);
 
@@ -11615,9 +11701,9 @@ function _vpxStationReportSegmentHtml(built, categoryForReason) {
 
     rows.forEach(row => {
         const { cells, finalDelay } = _vpxProjectRow(row, allCols, activeCols);
-        const code = getUnitCode(row.vehicle, row.vehicle_no);
+        const code = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
         const label = `${esc(row.vehicle)} #${esc(row.vehicle_no || '')}${code ? '<br>' + esc(code) : ''}`;
-        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, categoryForReason);
+        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, categoryForReason, row.battalion_code);
 
         html += `<tr>`;
         html += `<td rowspan="2" style="background:#334155;color:#fff;font-weight:bold;text-align:center;vertical-align:middle">${label}</td>`;
@@ -11920,10 +12006,10 @@ function wireExecReportModal() {
 /* ─── VPX delay-reason editing — click the note icon on a vehicle's row
    header to view/edit why it's delayed; flows into the Station Report as
    the "Delay Reason" column. Gated by the same permission as plan edits. ── */
-function openVpxDelayReasonModal(vehicle, vehicleNo, category) {
+function openVpxDelayReasonModal(vehicle, vehicleNo, category, battalion) {
     const overlay = document.getElementById('vpxDelayReasonModalOverlay');
     if (!overlay) return;
-    const entry = getDelayReasonEntry(vehicle, vehicleNo);
+    const entry = getDelayReasonEntry(vehicle, vehicleNo, battalion);
     if (!entry) {
         showToast('Add this vehicle in Unit Codes first to attach a delay reason.', 'error');
         return;
@@ -11944,6 +12030,7 @@ function openVpxDelayReasonModal(vehicle, vehicleNo, category) {
     overlay.dataset.rowId = entry.id;
     overlay.dataset.vehicle = vehicle;
     overlay.dataset.vehicleNo = vehicleNo;
+    overlay.dataset.battalion = battalion || '';
     overlay.dataset.category = category;
     overlay.style.display = 'flex';
 }
@@ -11960,7 +12047,7 @@ async function saveVpxDelayReason() {
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
 
     const vehicle = overlay.dataset.vehicle, vehicleNo = overlay.dataset.vehicleNo;
-    const entry = getDelayReasonEntry(vehicle, vehicleNo);
+    const entry = getDelayReasonEntry(vehicle, vehicleNo, overlay.dataset.battalion || undefined);
     const nextReasons = { ...(entry?.reasons || {}) };
     if (text) nextReasons[category] = text; else delete nextReasons[category];
 
@@ -11987,7 +12074,7 @@ function wireVpxDelayReasonModal() {
     document.getElementById('vpxMatrix')?.addEventListener('click', e => {
         const btn = e.target.closest('.vpx-delay-reason-btn');
         if (!btn) return;
-        openVpxDelayReasonModal(btn.dataset.vpxVehicle, btn.dataset.vpxUnit, btn.dataset.vpxCategory);
+        openVpxDelayReasonModal(btn.dataset.vpxVehicle, btn.dataset.vpxUnit, btn.dataset.vpxCategory, btn.dataset.vpxBattalion || undefined);
     });
 }
 
@@ -12268,25 +12355,49 @@ function wireReportModal() {
     document.getElementById('reportModalCancel').addEventListener('click', close);
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
-    // Live preview count when type, dates, or category change
+    // Live preview count when type, dates, or filters change
     overlay.querySelectorAll('input[name="reportType"]').forEach(radio => {
         radio.addEventListener('change', updateReportPreview);
     });
     document.getElementById('reportDateFrom').addEventListener('change', updateReportPreview);
     document.getElementById('reportDateTo').addEventListener('change', updateReportPreview);
-    document.getElementById('reportCategory').addEventListener('change', updateReportPreview);
-    document.getElementById('reportVehicleType')?.addEventListener('change', updateReportPreview);
+
+    // Report-scoped multi-select filters — same machinery as the main bar.
+    REPORT_FILTER_KEYS.forEach(key => {
+        const cfg = filterConfig[key];
+        document.getElementById(cfg.btn)?.addEventListener('click', e => {
+            e.stopPropagation();
+            toggleMultiSelectMenu(key);
+        });
+        document.getElementById(cfg.menu)?.addEventListener('change', e => {
+            handleMultiSelectMenuChange(key, e, () => {
+                // Toggling Vehicle can bring K9 in/out of scope.
+                if (key === 'reportVehicle') {
+                    const k9 = filterState.reportVehicle.has('all') || filterState.reportVehicle.has('K9');
+                    const el = document.getElementById('reportK9ComponentGroup');
+                    if (el) el.style.display = (isKD2Module() && k9) ? '' : 'none';
+                }
+                updateReportPreview();
+            });
+        });
+    });
+    document.getElementById('btnReportFilterReset')?.addEventListener('click', () => {
+        resetReportMultiSelectFilters();
+        document.getElementById('reportDateFrom').value = '';
+        document.getElementById('reportDateTo').value = '';
+        updateReportPreview();
+    });
 
     document.getElementById('btnExportPDF').addEventListener('click', () => {
         const type = document.querySelector('input[name="reportType"]:checked')?.value || 'full';
         const preview = !!document.getElementById('reportPreviewToggle')?.checked;
-        exportPDF(type, getVal('reportDateFrom'), getVal('reportDateTo'), getVal('reportCategory'), preview);
+        exportPDF(type, getVal('reportDateFrom'), getVal('reportDateTo'), '', preview);
     });
 
     document.getElementById('btnExportExcel').addEventListener('click', async () => {
         const type = document.querySelector('input[name="reportType"]:checked')?.value || 'full';
         const preview = !!document.getElementById('reportPreviewToggle')?.checked;
-        await exportExcel(type, getVal('reportDateFrom'), getVal('reportDateTo'), getVal('reportCategory'), preview);
+        await exportExcel(type, getVal('reportDateFrom'), getVal('reportDateTo'), '', preview);
     });
 }
 
@@ -12294,7 +12405,7 @@ function updateReportPreview() {
     const type = document.querySelector('input[name="reportType"]:checked')?.value || 'full';
     const from = getVal('reportDateFrom');
     const to = getVal('reportDateTo');
-    const category = getVal('reportCategory');
+    const category = '';
     const bar = document.getElementById('reportPreviewBar');
     const cnt = document.getElementById('reportPreviewCount');
     const hint = bar?.querySelector('.report-preview-hint');

@@ -11,8 +11,8 @@ export function renderSharedDialogs() {
                 <div class="modal-body">
 
                     <!-- Report type selector -->
-                    <div class="form-group">
-                        <label class="form-label">Report Type</label>
+                    <div class="report-section">
+                        <div class="report-section-head"><span class="report-section-step">1</span><label class="form-label">Report Type</label></div>
                         <div class="report-type-grid">
                             <label class="report-type-card">
                                 <input type="radio" name="reportType" value="full" checked />
@@ -155,40 +155,54 @@ export function renderSharedDialogs() {
                         </div>
                     </div>
 
-                    <!-- Date range + Category filter row -->
-                    <div class="report-filter-row">
-                        <div class="form-group" style="flex:1">
-                            <label class="form-label">Date Range <span class="form-label-optional">(optional — filters
-                                    by planned start)</span></label>
-                            <div class="report-date-row">
-                                <input type="date" id="reportDateFrom" class="filter-control" placeholder="From" />
-                                <span class="report-date-sep">→</span>
-                                <input type="date" id="reportDateTo" class="filter-control" placeholder="To" />
+                    <!-- Filters — same set + behaviour as the main filter bar,
+                         pre-filled from it on open, independent thereafter. -->
+                    <div class="report-section">
+                        <div class="report-section-head">
+                            <span class="report-section-step">2</span>
+                            <label class="form-label">Filters</label>
+                            <span class="report-section-sub">pre-filled from the current view</span>
+                            <button type="button" class="btn btn-ghost btn-sm" id="btnReportFilterReset">Reset</button>
+                        </div>
+                        <div class="report-filter-grid">
+                            <div class="filter-item" style="grid-column:1 / -1">
+                                <label class="filter-label">Date Range <span class="form-label-optional">(by planned start)</span></label>
+                                <div class="report-date-row">
+                                    <input type="date" id="reportDateFrom" class="filter-control" placeholder="From" />
+                                    <span class="report-date-sep">→</span>
+                                    <input type="date" id="reportDateTo" class="filter-control" placeholder="To" />
+                                </div>
                             </div>
-                        </div>
-                        <div class="form-group" style="min-width:180px">
-                            <label class="form-label">Category <span
-                                    class="form-label-optional">(optional)</span></label>
-                            <select id="reportCategory" class="filter-control">
-                                <option value="">All Categories</option>
-                                <option value="Assembly">Assembly</option>
-                                <option value="Final Test">Final Test</option>
-                                <option value="Processing">Processing</option>
-                            </select>
-                        </div>
-                        <div class="form-group" id="reportVtypeGroup" style="min-width:140px; display:none">
-                            <label class="form-label">Vehicle Type</label>
-                            <select id="reportVehicleType" class="filter-control">
-                                <option value="">All Types</option>
-                                <option value="K9">K9</option>
-                                <option value="K10">K10</option>
-                                <option value="K11">K11</option>
-                            </select>
+                            <div class="filter-item" id="reportVehicleGroup">
+                                <label class="filter-label">Vehicle</label>
+                                <div class="ms-filter"><button type="button" class="ms-trigger filter-control" id="reportVehicleBtn">All</button><div class="ms-menu" id="reportVehicleMenu" hidden></div></div>
+                            </div>
+                            <div class="filter-item" id="reportK9ComponentGroup" style="display:none">
+                                <label class="filter-label">K9 Component</label>
+                                <div class="ms-filter"><button type="button" class="ms-trigger filter-control" id="reportK9ComponentBtn">All</button><div class="ms-menu" id="reportK9ComponentMenu" hidden></div></div>
+                            </div>
+                            <div class="filter-item" id="reportBattalionGroup" style="display:none">
+                                <label class="filter-label">Battalion</label>
+                                <div class="ms-filter"><button type="button" class="ms-trigger filter-control" id="reportBattalionBtn">All</button><div class="ms-menu" id="reportBattalionMenu" hidden></div></div>
+                            </div>
+                            <div class="filter-item" id="reportUnitGroup">
+                                <label class="filter-label">Unit</label>
+                                <div class="ms-filter"><button type="button" class="ms-trigger filter-control" id="reportUnitBtn">All</button><div class="ms-menu" id="reportUnitMenu" hidden></div></div>
+                            </div>
+                            <div class="filter-item" id="reportCategoryGroup">
+                                <label class="filter-label">Category</label>
+                                <div class="ms-filter"><button type="button" class="ms-trigger filter-control" id="reportCategoryBtn">All</button><div class="ms-menu" id="reportCategoryMenu" hidden></div></div>
+                            </div>
+                            <div class="filter-item" id="reportWeekGroup">
+                                <label class="filter-label">Week</label>
+                                <div class="ms-filter"><button type="button" class="ms-trigger filter-control" id="reportWeekBtn">All</button><div class="ms-menu" id="reportWeekMenu" hidden></div></div>
+                            </div>
                         </div>
                     </div>
 
                     <!-- Preview badge -->
                     <div class="report-preview-bar" id="reportPreviewBar">
+                        <svg class="report-preview-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 10s3-6 8-6 8 6 8 6-3 6-8 6-8-6-8-6z"/><circle cx="10" cy="10" r="2.5"/></svg>
                         <span class="report-preview-count" id="reportPreviewCount">— tasks match</span>
                         <span class="report-preview-hint">Select a type to preview count</span>
                     </div>
