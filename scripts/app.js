@@ -357,9 +357,9 @@ function getModuleCategory(processStation, row = null) {
 function syncReportCategoryOptions() {
     const kd2 = isKD2Module();
 
-    // Mirror the main filter bar's option lists into the report-scoped copies,
-    // then pre-fill the report selections from the bar's current state so the
-    // modal opens showing "what the table shows" — editable without touching it.
+    // Mirror the main filter bar's option lists into the report-scoped copies.
+    // Selections are independent and default to "All" — the report exports
+    // everything currently loaded unless the user narrows it here.
     const mirror = [
         ['reportVehicle', 'vehicle'],
         ['reportK9Component', 'k9Component'],
@@ -370,8 +370,9 @@ function syncReportCategoryOptions() {
     ];
     mirror.forEach(([rk, bk]) => {
         filterOptions[rk] = (filterOptions[bk] || []).map(o => ({ ...o }));
-        filterState[rk] = new Set([...(filterState[bk] || new Set(['all']))]);
-        renderMultiSelectMenu(rk);
+        // Keep the user's current report selections if still valid; otherwise All.
+        if (!filterState[rk] || !filterState[rk].size) filterState[rk] = new Set(['all']);
+        renderMultiSelectMenu(rk); // also prunes selections no longer in the option list
     });
 
     // Battalion + K9 Component are KD2-only; K9 Component only when K9 is in scope.
@@ -8598,25 +8599,50 @@ function getReportRouteOrder() {
  *  (mirrors the main bar's Vehicle / Battalion / Unit / K9 Component /
  *  Category / Week — same matchesMultiSet semantics). */
 function applyReportModalFilters(rows) {
+    const list = rows || [];
+    const active = k => { const s = filterState[k]; return s && s.size && !s.has('all'); };
+    const anyActive = ['reportVehicle', 'reportBattalion', 'reportUnit', 'reportCategory', 'reportWeek', 'reportK9Component'].some(active);
+    if (!anyActive) return list; // fast path — no report filter narrows anything
+
     const rv = filterState.reportVehicle, rb = filterState.reportBattalion, ru = filterState.reportUnit;
     const rc = filterState.reportCategory, rw = filterState.reportWeek, rk9 = filterState.reportK9Component;
-    const needK9 = isKD2Module() && rk9 && !rk9.has('all');
-    let compMap = null;
-    if (needK9) {
-        compMap = getModuleRuntime()?.getStationCategoryMap?.('K9') || new Map();
+    const needK9 = isKD2Module() && active('reportK9Component');
+    const compMap = needK9 ? (getModuleRuntime()?.getStationCategoryMap?.('K9') || new Map()) : null;
+    try {
+        return list.filter(r => {
+            if (!matchesMultiSet(rv, r.vehicle)) return false;
+            if (isKD2Module() && !matchesMultiSet(rb, r.battalion_code)) return false;
+            if (!matchesMultiSet(ru, r.vehicle_no)) return false;
+            if (!matchesMultiSet(rc, getModuleCategory(r.process_station, r))) return false;
+            if (!matchesMultiSet(rw, r.week)) return false;
+            if (needK9 && r.vehicle === 'K9') {
+                const grp = compMap.get(r.process_station)?.component_group || '';
+                if (![...rk9].some(w => grp === w || grp.startsWith(w + ' '))) return false;
+            }
+            return true;
+        });
+    } catch (e) {
+        console.warn('[applyReportModalFilters] filter error — exporting unfiltered:', e);
+        return list;
     }
-    return (rows || []).filter(r => {
-        if (!matchesMultiSet(rv, r.vehicle)) return false;
-        if (isKD2Module() && !matchesMultiSet(rb, r.battalion_code)) return false;
-        if (!matchesMultiSet(ru, r.vehicle_no)) return false;
-        if (!matchesMultiSet(rc, getModuleCategory(r.process_station, r))) return false;
-        if (!matchesMultiSet(rw, r.week)) return false;
-        if (needK9 && r.vehicle === 'K9') {
-            const grp = compMap.get(r.process_station)?.component_group || '';
-            if (![...rk9].some(w => grp === w || grp.startsWith(w + ' '))) return false;
-        }
-        return true;
+}
+
+/** For a sorted report row list, map<rowIndex, label> for each row that
+ *  starts a new vehicle group (KD2: battalion · vehicle). Empty when there's
+ *  only one group. Both exporters insert a separator row before those indices. */
+function reportGroupSeparators(rows) {
+    const list = rows || [];
+    const multiBat = isKD2Module()
+        && new Set(list.map(r => r.battalion_code || '')).size > 1;
+    const sep = new Map();
+    let prev = null;
+    list.forEach((r, i) => {
+        const label = (isKD2Module() && multiBat)
+            ? [r.battalion_code, r.vehicle].filter(Boolean).join('  ·  ')
+            : (r.vehicle || '');
+        if (label && label !== prev) { sep.set(i, label); prev = label; }
     });
+    return sep.size > 1 ? sep : new Map();
 }
 
 /* ─── Build the row array for a report ─────────────────────────── */
@@ -8650,7 +8676,7 @@ function buildReportRows(typeKey, fromDate, toDate, category) {
         // different route position across K9/K10/K11 — RT/X-ray, Qualifying,
         // Deburring, Painting … — was mis-placed in the report.
         resetKd2LaneOrderCache();
-        const stationCmp = kd2StationCompare;
+        const stationCmp = (a, b) => { try { return kd2StationCompare(a, b); } catch { return 0; } };
         const startFromBattalion = ['full', 'battalion'].includes(typeKey);
         rows = [...rows].sort((a, b) => {
             if (startFromBattalion) {
@@ -8939,7 +8965,18 @@ async function exportPDF(typeKey, fromDate, toDate, category, preview) {
     const statusColIdx = isF100KD2Module() ? 13 : isKD2Module() ? 12 : 11;
     const delayColIdx  = isF100KD2Module() ? 14 : isKD2Module() ? 13 : 12;
     const headers = activeCols.map(c => c.header);
-    const body = rows.map((r, i) => activeCols.map(c => String(c.key(r, i) ?? '')));
+    const _seps = reportGroupSeparators(rows);
+    const body = [];
+    rows.forEach((r, i) => {
+        if (_seps.has(i)) {
+            body.push([{
+                content: _seps.get(i),
+                colSpan: activeCols.length,
+                styles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'left', fontSize: 8, cellPadding: 2 },
+            }]);
+        }
+        body.push(activeCols.map(c => String(c.key(r, i) ?? '')));
+    });
 
     // Status badge colours for white background (darker shades)
     const STATUS_COLORS_LIGHT = {
@@ -9289,8 +9326,22 @@ async function exportExcel(typeKey, fromDate, toDate, category, preview) {
         cell.border = hdrBorder();
     });
 
-    // ── Data rows ──────────────────────────────────────────────────
+    // ── Data rows (with vehicle-group separator rows) ──────────────
+    const _xlSeps = reportGroupSeparators(rows);
+    let _xlRow = 5; // running worksheet row index
     rows.forEach((r, ri) => {
+        if (_xlSeps.has(ri)) {
+            ws.addRow([_xlSeps.get(ri)]);
+            ws.mergeCells(_xlRow, 1, _xlRow, COLS.length);
+            const gc = ws.getCell(_xlRow, 1);
+            gc.value = _xlSeps.get(ri);
+            gc.font = { name: 'Calibri', size: 10, bold: true, color: { argb: WHITE } };
+            gc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAV } };
+            gc.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+            ws.getRow(_xlRow).height = 18;
+            _xlRow++;
+        }
+
         const status = calculateStatus(r);
         const st = ST[status] || ST['Planned'];
         const isAlt = ri % 2 === 1;
@@ -9298,11 +9349,11 @@ async function exportExcel(typeKey, fromDate, toDate, category, preview) {
 
         const values = COLS.map((c, ci) => c.key(r, ri));
         ws.addRow(values);
-        const dataRow = ws.getRow(ri + 5);
+        const dataRow = ws.getRow(_xlRow);
         dataRow.height = 16;
 
         COLS.forEach((col, ci) => {
-            const cell = ws.getCell(ri + 5, ci + 1);
+            const cell = ws.getCell(_xlRow, ci + 1);
             const colHdr = col.header;
 
             // Status cell — coloured badge
@@ -9346,6 +9397,7 @@ async function exportExcel(typeKey, fromDate, toDate, category, preview) {
             }
             cell.border = border();
         });
+        _xlRow++;
     });
 
     // ════════════════════════════════════════════════════════════════
