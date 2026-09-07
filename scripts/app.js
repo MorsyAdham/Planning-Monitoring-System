@@ -8628,21 +8628,30 @@ function applyReportModalFilters(rows) {
 }
 
 /** For a sorted report row list, map<rowIndex, label> for each row that
- *  starts a new vehicle group (KD2: battalion · vehicle). Empty when there's
- *  only one group. Both exporters insert a separator row before those indices. */
+ *  starts a new unit group — e.g. "K9 M1", or "1st Battalion · K9 M1" when the
+ *  report spans multiple battalions. Empty when there's only one group. Both
+ *  exporters insert a separator row before those indices. */
 function reportGroupSeparators(rows) {
     const list = rows || [];
     const multiBat = isKD2Module()
         && new Set(list.map(r => r.battalion_code || '')).size > 1;
+    const unitOf = r => isF100KD2Module()
+        ? `${r.vehicle_type || ''} #${r.serial_number ?? r.vehicle_no ?? ''}`.trim()
+        : `${r.vehicle || ''} ${r.vehicle_no || ''}`.trim();
     const sep = new Map();
-    let prev = null;
+    let prevKey = null;
     list.forEach((r, i) => {
-        const label = (isKD2Module() && multiBat)
-            ? [r.battalion_code, r.vehicle].filter(Boolean).join('  ·  ')
-            : (r.vehicle || '');
-        if (label && label !== prev) { sep.set(i, label); prev = label; }
+        const unit = unitOf(r);
+        const key = `${r.battalion_code || ''}||${unit}`;
+        if (unit && key !== prevKey) {
+            const label = (isKD2Module() && multiBat && r.battalion_code)
+                ? `${r.battalion_code}  ·  ${unit}`
+                : unit;
+            sep.set(i, label);
+            prevKey = key;
+        }
     });
-    return sep.size > 1 ? sep : new Map();
+    return sep;
 }
 
 /* ─── Build the row array for a report ─────────────────────────── */
