@@ -1104,6 +1104,7 @@ window.PPMSModuleRuntime = (() => {
         // without a code change.
         state.categories = categories;
         state.stations = stations.filter(row => stationAllowedForVehicle(row));
+        _liveStationSeqCache = null; // station config changed — drop the live-order cache
         const validStationKeys = new Set(state.stations.map(row => `${row.vehicle_type}||${row.station_code}`));
         state.routes = routes.filter(row => validStationKeys.has(`${row.vehicle_type}||${row.station_code}`));
         state.leadTimes = leadTimes;
@@ -6765,12 +6766,36 @@ window.PPMSModuleRuntime = (() => {
         return [row?.battalion_id ?? '', row?.vehicle_type ?? '', row?.unit_serial ?? ''].join('||');
     }
 
+    // ── Live process order for plan rows ─────────────────────────────
+    // Plan rows carry a route_sequence / station_sequence_in_category snapshot
+    // frozen at generation. These helpers read the CURRENT value from station
+    // config by (vehicle_type, station_code), falling back to the frozen value
+    // for retired stations. Result: reordering the route in the UI reflects in
+    // the timeline sort and the non-work-day recalc immediately, and when
+    // config == frozen the output is unchanged. Cache is dropped whenever
+    // state.stations reloads (loadWorkspaceData).
+    let _liveStationSeqCache = null;
+    function _liveStationSeq(vehicleType, stationCode) {
+        if (!_liveStationSeqCache) {
+            _liveStationSeqCache = new Map();
+            (state.stations || []).forEach(s => {
+                _liveStationSeqCache.set(`${s.vehicle_type}||${s.station_code}`, {
+                    route: parseInt(s.route_sequence, 10) || 9999,
+                    cat: parseInt(s.station_sequence_in_category, 10) || 9999,
+                });
+            });
+        }
+        return _liveStationSeqCache.get(`${vehicleType || ''}||${stationCode || ''}`) || null;
+    }
+
     function routeSequenceValue(row) {
-        return parseInt(row?.route_sequence, 10) || 9999;
+        const live = _liveStationSeq(row?.vehicle_type || row?.vehicle, row?.station_code);
+        return live ? live.route : (parseInt(row?.route_sequence, 10) || 9999);
     }
 
     function stationSequenceValue(row) {
-        return parseInt(row?.station_sequence_in_category, 10) || 9999;
+        const live = _liveStationSeq(row?.vehicle_type || row?.vehicle, row?.station_code);
+        return live ? live.cat : (parseInt(row?.station_sequence_in_category, 10) || 9999);
     }
 
     function comparePlanRowsByLaneOrder(a, b) {
@@ -6788,7 +6813,7 @@ window.PPMSModuleRuntime = (() => {
     function buildPlanGroupsForRecalc(rows = [], rulesOffDates) {
         const groups = [];
         sortPlanRowsForRecalc(rows).forEach(row => {
-            const routeSequence = parseInt(row.route_sequence, 10) || 9999;
+            const routeSequence = routeSequenceValue(row);
             let group = groups.find(item => item.routeSequence === routeSequence);
             if (!group) {
                 group = {
@@ -8155,6 +8180,37 @@ window.PPMSModuleRuntime = (() => {
                         const rk = rowKeyByCode.get(s.station_code) || s.station_name || s.station_code;
                         const info = lane.get(rk);
                         if (info) m.set(s.station_code, { sortKey: info.sortKey, line: info.line });
+                    });
+                return m;
+            },
+            // Map<station_name, sortKey> from the *live* station config — the
+            // lane-grouped order keyed by plain station name (min across
+            // same-named stations). For VPX / reports / analytics that only
+            // carry a station name, not a code.
+            getStationOrderByName(vehicle) {
+                const byCode = window.PPMSModuleRuntime.getStationOrderByCode(vehicle);
+                const m = new Map();
+                (state.stations || [])
+                    .filter(s => !vehicle || s.vehicle_type === vehicle)
+                    .forEach(s => {
+                        const info = byCode.get(s.station_code);
+                        if (!info) return;
+                        const name = s.station_name || s.station_code;
+                        if (!m.has(name) || info.sortKey < m.get(name)) m.set(name, info.sortKey);
+                    });
+                return m;
+            },
+            // Map<category_code, category_sequence> from the *live* category
+            // config for one vehicle — so consumers can order/group by the
+            // current category order without re-reading state.categories.
+            getCategoryOrderByCode(vehicle) {
+                const m = new Map();
+                (state.categories || [])
+                    .filter(c => !vehicle || c.vehicle_type === vehicle)
+                    .forEach(c => {
+                        if (!m.has(c.category_code)) {
+                            m.set(c.category_code, parseInt(c.category_sequence, 10) || 9999);
+                        }
                     });
                 return m;
             },

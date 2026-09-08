@@ -4130,16 +4130,28 @@ function getVpxDisplayMeta() {
 }
 
 function getKd2VpxColumnMeta(task) {
-    const routeSequence = parseInt(task.route_sequence, 10) || parseInt(task.step_sequence, 10) || 9999;
+    // Order from the LIVE station config (lane-grouped sortKey by station_code),
+    // falling back to the plan row's frozen route_sequence only when the station
+    // is no longer in config (retired). Using the live key also keeps every
+    // task for one station in the same column even if their frozen snapshots
+    // differ.
+    const rt = getModuleRuntime?.();
+    const v = task.vehicle_type || task.vehicle || '';
+    const liveInfo = (rt?.getStationOrderByCode && v && task.station_code)
+        ? rt.getStationOrderByCode(v).get(task.station_code)
+        : null;
+    const order = liveInfo
+        ? liveInfo.sortKey
+        : (parseInt(task.route_sequence, 10) || parseInt(task.step_sequence, 10) || 9999);
     const group = task.category || getModuleCategory(task.process_station, task) || 'Other';
     const name = task.process_station || task.station_name || task.station_code || 'Station';
     const workCenter = String(task.work_center || '').trim();
     return {
-        key: `${String(routeSequence).padStart(4, '0')}||${group}||${name}`,
+        key: `${String(order).padStart(9, '0')}||${group}||${name}`,
         code: workCenter || name,
         name,
         group,
-        order: routeSequence,
+        order,
     };
 }
 
@@ -4163,26 +4175,7 @@ function buildVpxColumns(data) {
         cols.get(meta.key).vehicles.add(task.vehicle || '');
     });
 
-    // Override order from station definitions — use the active vehicle type when known
-    // (mirrors how the Gantt process view sorts via getStationRouteOrder per vehicle)
-    const rt = getModuleRuntime?.();
-    if (rt?.getStationRouteOrder) {
-        const routeOrder = _vpxVehicleTypeFilter
-            ? rt.getStationRouteOrder(_vpxVehicleTypeFilter)
-            : (() => {
-                const merged = new Map();
-                ['K9', 'K10', 'K11'].forEach(v => {
-                    rt.getStationRouteOrder(v).forEach((seq, name) => {
-                        if (!merged.has(name) || seq < merged.get(name)) merged.set(name, seq);
-                    });
-                });
-                return merged;
-            })();
-        cols.forEach(col => {
-            if (routeOrder.has(col.name)) col.order = routeOrder.get(col.name);
-        });
-    }
-
+    // meta.order already comes from live config via getKd2VpxColumnMeta.
     return [...cols.values()]
         .sort((a, b) => {
             if (a.order !== b.order) return a.order - b.order;
@@ -4793,9 +4786,10 @@ function renderKD2BottleneckChart(data) {
 
     const rt = getModuleRuntime();
     const k9CatMap = rt?.getStationCategoryMap ? rt.getStationCategoryMap('K9') : new Map();
+    const _byName = rt?.getStationOrderByName || rt?.getStationRouteOrder;
     const vtypeRouteOrders = {};
     ['K9', 'K10', 'K11'].forEach(v => {
-        vtypeRouteOrders[v] = rt?.getStationRouteOrder ? rt.getStationRouteOrder(v) : new Map();
+        vtypeRouteOrders[v] = _byName ? _byName.call(rt, v) : new Map();
     });
 
     const stations = [...stationMap.values()]
@@ -8306,7 +8300,8 @@ async function exportGanttSchedule(exportView = 'process') {
                     const seqB = _exportLaneOrder.get(b)?.sortKey ?? 9999999;
                     if (seqA !== seqB) return seqA - seqB;
                 } else if (isProcessView) {
-                    const routeOrder = getModuleRuntime()?.getStationRouteOrder?.(groupKey) || new Map();
+                    const _rt = getModuleRuntime();
+                    const routeOrder = (_rt?.getStationOrderByName || _rt?.getStationRouteOrder)?.call(_rt, groupKey) || new Map();
                     const seqA = routeOrder.get(a) ?? 9999;
                     const seqB = routeOrder.get(b) ?? 9999;
                     if (seqA !== seqB) return seqA - seqB;
@@ -8582,13 +8577,17 @@ function kd2StationCompare(a, b) {
         || String(a.process_station || '').localeCompare(String(b.process_station || ''), undefined, { numeric: true });
 }
 
-/* ─── Merged route-order map for reports (min seq across all vehicles) ─ */
+/* ─── Merged route-order map (min lane sortKey per station name, across all
+   vehicles) — for the analytics rollup, which aggregates by station name. ─ */
 function getReportRouteOrder() {
     const rt = getModuleRuntime();
-    if (!rt?.getStationRouteOrder) return new Map();
+    const byName = rt?.getStationOrderByName ? v => rt.getStationOrderByName(v)
+        : rt?.getStationRouteOrder ? v => rt.getStationRouteOrder(v)
+        : null;
+    if (!byName) return new Map();
     const merged = new Map();
     ['K9', 'K10', 'K11'].forEach(v => {
-        rt.getStationRouteOrder(v).forEach((seq, name) => {
+        byName(v).forEach((seq, name) => {
             if (!merged.has(name) || seq < merged.get(name)) merged.set(name, seq);
         });
     });
