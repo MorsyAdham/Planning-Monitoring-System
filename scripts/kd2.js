@@ -6389,6 +6389,64 @@ window.PPMSModuleRuntime = (() => {
         renderTemplateEditor();
     }
 
+    // Phase 4: build the scheduler's segment list straight from live route
+    // config (kd2_process_stations / kd2_process_routes) instead of the frozen
+    // kd2_template_layout_items ordering. One process_group per distinct
+    // (structural group, route_sequence) slot — stations that share a
+    // route_sequence within the same group run in parallel (one shared
+    // planning window). A `space` segment is synthesised before any slot whose
+    // first station carries gap_days_before > 0. `generatePlan` consumes
+    // { segments, processItems } exactly as before.
+    function buildRouteSegmentsFromLiveConfig(vehicle) {
+        const stationByCode = new Map(
+            (state.stations || [])
+                .filter(s => s.vehicle_type === vehicle)
+                .map(s => [s.station_code, s])
+        );
+        const routeItems = templateRowsForVehicle(vehicle); // sorted by route_sequence, then station_code
+        const segments = [];
+        let currentGroup = null;
+
+        routeItems.forEach(item => {
+            const code = item.route.station_code;
+            const s = stationByCode.get(code) || {};
+            const group = templateGroupOf(
+                vehicle,
+                item.route.category_code,
+                s.component_group || item.station?.component_group || null
+            );
+            const routeSeq = parseInt(item.route.route_sequence, 10) || 9999;
+            const gapBefore = parseInt(s.gap_days_before, 10) || 0;
+            const sameSlot = currentGroup && currentGroup.group === group && currentGroup.sequence === routeSeq;
+
+            if (gapBefore > 0 && !sameSlot) {
+                segments.push({ kind: 'space', group, gap_days: gapBefore, applies_to_next_process: true });
+                currentGroup = null;
+            }
+
+            const processItem = {
+                layout: null,
+                route: item.route,
+                station: item.station,
+                category: item.category,
+                duration: item.duration ?? defaultDurationForStation(vehicle, item.route.category_code, code),
+            };
+
+            if (!sameSlot || !currentGroup) {
+                currentGroup = { kind: 'process_group', group, sequence: routeSeq, items: [] };
+                segments.push(currentGroup);
+            }
+            currentGroup.items.push(processItem);
+        });
+
+        return {
+            segments,
+            processItems: segments.flatMap(seg => (seg.kind === 'process_group' ? seg.items : [])),
+        };
+    }
+
+    // DEPRECATED (Phase 4): generation now uses buildRouteSegmentsFromLiveConfig.
+    // Kept only until the Template editor is retired in Phase 5 — no live callers.
     function buildTemplateLayoutSegments(vehicle) {
         const layoutBlocks = templateEditorBlocksForVehicle(vehicle);
         const routeItemMap = new Map(templateRowsForVehicle(vehicle).map(item => [item.route.station_code, item]));
@@ -7351,7 +7409,7 @@ window.PPMSModuleRuntime = (() => {
                 }
 
                 const rules = planningRulesFor(battalion.id, vehicle);
-                const { segments, processItems } = buildTemplateLayoutSegments(vehicle);
+                const { segments, processItems } = buildRouteSegmentsFromLiveConfig(vehicle);
 
                 if (!processItems.length) {
                     issues.push(`${vehicle}: route definition missing`);
@@ -7592,7 +7650,7 @@ window.PPMSModuleRuntime = (() => {
             const saved = await saveTemplateDefaults({ silent: true });
             if (!saved) return;
 
-            const { segments, processItems } = buildTemplateLayoutSegments(vehicle);
+            const { segments, processItems } = buildRouteSegmentsFromLiveConfig(vehicle);
             if (!processItems.length) {
                 setPlanCreateError('The selected vehicle has no route template.');
                 return;
