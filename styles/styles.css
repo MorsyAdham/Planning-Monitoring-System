@@ -7652,6 +7652,44 @@ body {
 .gantt-sel-count b { color: var(--clr-accent); }
 .gantt-sel-del { color: #ef4444; }
 
+/* ── Live co-editor presence ─────────────────────────────────── */
+.gantt-coeditors,
+.gantt-coedit-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: .78rem;
+    color: var(--clr-text-muted);
+    white-space: nowrap;
+}
+.gantt-coeditors[hidden],
+.gantt-coedit-badge[hidden] { display: none; }
+.gantt-coedit-badge {
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(245, 158, 11, .12);
+    border: 1px solid rgba(245, 158, 11, .3);
+    color: #b45309;
+}
+[data-theme="dark"] .gantt-coedit-badge,
+:root:not([data-theme="light"]) .gantt-coedit-badge { color: #e6a94b; }
+.gce-stack { display: inline-flex; }
+.gce-avatar {
+    width: 20px;
+    height: 20px;
+    display: inline-grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--clr-accent);
+    color: #fff;
+    font-size: .68rem;
+    font-weight: 700;
+    border: 1.5px solid var(--clr-surface);
+    margin-left: -6px;
+}
+.gce-avatar:first-child { margin-left: 0; }
+.gce-text { font-weight: 500; }
+
 .gantt-visual-placement-bar {
     width: 100%;
 }

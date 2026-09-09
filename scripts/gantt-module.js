@@ -133,6 +133,7 @@
                         <span id="btnGanttEditLabel">Edit Plan</span>
                     </button>
                 </div>
+                <div class="filter-item gantt-coedit-badge" id="ganttCoEditBadge" style="padding-top:18px" hidden></div>
                 <div class="gantt-edit-bar" id="ganttEditBar" style="display:none">
                     <span class="gantt-edit-badge">
                         <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" style="width:12px;height:12px">
@@ -190,6 +191,8 @@
                         <span class="gantt-ctx-label" id="ganttReorderScope">Route order</span>
                         <span class="gantt-ctx-hint">Use the arrows on each row &middot; &#8741; joins with the row above &middot; changes apply to this plan version</span>
                     </div>
+
+                    <div class="gantt-coeditors" id="ganttCoEditors" hidden></div>
 
                     <div class="gantt-edit-spacer"></div>
 

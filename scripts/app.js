@@ -1484,8 +1484,68 @@ function startCommentNotifSync() {
 // Instead each user broadcasts a heartbeat every 30 s on a broadcast channel.
 // Master admin keeps a local map of who sent a heartbeat in the last 90 s.
 let _presenceChannel = null;
-let _presenceOnlineMap = {};   // { userId: { name, email, role, ts } }
+let _presenceOnlineMap = {};   // { userId: { name, email, role, ts, editing } }
 let _heartbeatTimer   = null;
+let _sendPresenceHeartbeat = () => {};  // set by startPresenceTracking
+let _ganttEditSince = 0;
+
+/** What we broadcast about our own Gantt edit session, or null when not editing. */
+function _myGanttEditingState() {
+    if (!_ganttEditMode) return null;
+    return {
+        moduleId: getActiveModuleId(),
+        versionId: window.PlanVersions?.getActiveId?.(getActiveModuleId()) ?? null,
+        task: _ganttEditTask,
+        since: _ganttEditSince || Date.now(),
+    };
+}
+
+/** Peers (not me) editing the same module + plan version I'm looking at. */
+function _ganttCoEditors() {
+    const me = getCurrentUser();
+    const myId = String(me?.id || me?.email || '');
+    const myModule = getActiveModuleId();
+    const myVersion = window.PlanVersions?.getActiveId?.(getActiveModuleId()) ?? null;
+    const cutoff = Date.now() - 60_000;
+    return Object.values(_presenceOnlineMap).filter(u =>
+        u && u.id && String(u.id) !== myId
+        && (u.ts || 0) >= cutoff
+        && u.editing
+        && u.editing.moduleId === myModule
+        && String(u.editing.versionId ?? '') === String(myVersion ?? '')
+    );
+}
+
+function _renderGanttCoEditors() {
+    const peers = _ganttCoEditors();
+    const inline = document.getElementById('ganttCoEditors');   // in the edit bar
+    const badge  = document.getElementById('ganttCoEditBadge'); // next to Edit Plan
+
+    const names = peers.map(p => p.name || p.email || 'Someone');
+    const avatars = peers.slice(0, 4).map(p => {
+        const initial = (p.name || p.email || '?').charAt(0).toUpperCase();
+        return `<span class="gce-avatar" title="${esc((p.name || p.email || '') + (p.editing?.task ? ' — ' + p.editing.task : ''))}">${esc(initial)}</span>`;
+    }).join('');
+
+    if (inline) {
+        if (peers.length) {
+            inline.hidden = false;
+            inline.innerHTML = `<span class="gce-stack">${avatars}</span><span class="gce-text">${esc(names.join(', '))} ${peers.length === 1 ? 'is' : 'are'} also editing</span>`;
+        } else {
+            inline.hidden = true;
+            inline.innerHTML = '';
+        }
+    }
+    if (badge) {
+        if (peers.length && !_ganttEditMode) {
+            badge.hidden = false;
+            badge.innerHTML = `<span class="gce-stack">${avatars}</span><span class="gce-text">${esc(names.join(', '))} editing this plan</span>`;
+        } else {
+            badge.hidden = true;
+            badge.innerHTML = '';
+        }
+    }
+}
 
 function startPresenceTracking() {
     const user = getCurrentUser();
@@ -1514,15 +1574,17 @@ function startPresenceTracking() {
             if ((_presenceOnlineMap[k].ts || 0) < cutoff) delete _presenceOnlineMap[k];
         });
         _renderActiveUsers(Object.values(_presenceOnlineMap));
+        _renderGanttCoEditors();
     }
 
     function sendHeartbeat() {
         _presenceChannel?.send({
             type: 'broadcast',
             event: 'hb',
-            payload: { ...myInfo, ts: Date.now(), moduleId: getActiveModuleId() },
+            payload: { ...myInfo, ts: Date.now(), moduleId: getActiveModuleId(), editing: _myGanttEditingState() },
         }).catch(() => {});
     }
+    _sendPresenceHeartbeat = sendHeartbeat;
 
     _presenceChannel = db.channel('ppms-hb', {
         config: { broadcast: { self: true, ack: false } },
@@ -16047,6 +16109,7 @@ function setGanttEditMode(on) {
     _ganttEditMode = on;
     if (on) {
         _ganttEditTask = 'reschedule';
+        _ganttEditSince = Date.now();
     } else {
         _openGanttBlockMenuPlanId = null;
         _selectedGanttPlanIds.clear();
@@ -16077,6 +16140,10 @@ function setGanttEditMode(on) {
     if (body) body.classList.toggle('gantt-edit-active', on);
     document.body.classList.toggle('gantt-reorder-active', on && _ganttReorderMode);
     _syncSelectedBlockUi();
+
+    // Tell everyone else immediately (don't wait for the 30s heartbeat)
+    _sendPresenceHeartbeat();
+    _renderGanttCoEditors();
 }
 
 /* ── Saturday modal (promise-based) ─────────────────────────────── */
@@ -16650,6 +16717,7 @@ wireGanttControls = function () {
         if (task === 'reorder') _ganttMoveMode = 'single';
         if (task !== 'add') getModuleRuntime()?.toggleTimelineVisualMenu?.(false);
         syncGanttModuleEditControls();
+        _sendPresenceHeartbeat();
         const gsEl = document.getElementById('ganttStart');
         const geEl = document.getElementById('ganttEnd');
         renderGantt(currentData, gsEl?.value, geEl?.value);
