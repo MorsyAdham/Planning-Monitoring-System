@@ -9003,15 +9003,20 @@ function reportGroupSeparators(rows) {
     const unitOf = r => isF100KD2Module()
         ? `${r.vehicle_type || ''} #${r.serial_number ?? r.vehicle_no ?? ''}`.trim()
         : `${r.vehicle || ''} ${r.vehicle_no || ''}`.trim();
+    const serialOf = r => isF100KD2Module()
+        ? (r.unit_code || r.unit_name || '')
+        : getUnitCode(r.vehicle, r.vehicle_no, r.battalion_code);
     const sep = new Map();
     let prevKey = null;
     list.forEach((r, i) => {
         const unit = unitOf(r);
         const key = `${r.battalion_code || ''}||${unit}`;
         if (unit && key !== prevKey) {
+            const serial = (serialOf(r) || '').trim();
+            const unitWithSerial = serial ? `${unit} - ${serial}` : unit;
             const label = (isKD2Module() && multiBat && r.battalion_code)
-                ? `${r.battalion_code}  ·  ${unit}`
-                : unit;
+                ? `${r.battalion_code}  ·  ${unitWithSerial}`
+                : unitWithSerial;
             sep.set(i, label);
             prevKey = key;
         }
