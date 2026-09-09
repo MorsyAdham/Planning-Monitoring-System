@@ -6419,8 +6419,49 @@ body {
     background: var(--clr-surface-2);
     border: 1px solid var(--clr-border);
     border-radius: 20px;
-    padding: 4px 12px 4px 4px;
+    padding: 4px 10px 4px 4px;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
 }
+.nav-user-chip:hover { border-color: var(--clr-accent); }
+.nav-user-caret { width: 11px; height: 11px; opacity: .6; flex-shrink: 0; }
+.nav-user-chip[aria-expanded="true"] .nav-user-caret { transform: rotate(180deg); }
+
+.user-zone { position: relative; }
+.nav-user-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 34px;
+    z-index: 1200;
+    min-width: 180px;
+    background: var(--clr-surface);
+    border: 1px solid var(--clr-border);
+    border-radius: 10px;
+    box-shadow: 0 12px 34px -14px rgba(0, 0, 0, .5);
+    padding: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.nav-user-menu[hidden] { display: none; }
+.nav-user-menu button {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--clr-text);
+    font: inherit;
+    font-size: .82rem;
+    text-align: left;
+    cursor: pointer;
+}
+.nav-user-menu button:hover { background: var(--clr-surface-2); }
+.nav-user-menu button svg { width: 15px; height: 15px; color: var(--clr-text-muted); flex-shrink: 0; }
 
 .nav-user-avatar {
     width: 26px;

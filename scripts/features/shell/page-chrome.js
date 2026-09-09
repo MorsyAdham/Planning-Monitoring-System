@@ -164,18 +164,57 @@ export function renderPageChrome() {
 
                 <!-- User zone: chip + sign out, grouped as one unit -->
                 <div class="user-zone">
-                    <div class="nav-user-chip" id="navUserChip" style="display:none">
+                    <button class="nav-user-chip" id="navUserChip" style="display:none" aria-haspopup="true" aria-expanded="false">
                         <div class="nav-user-avatar" id="navUserAvatar">?</div>
                         <div class="nav-user-info">
                             <span class="nav-user-name" id="navUserName">—</span>
                             <span class="nav-role-badge" id="navRoleBadge">—</span>
                         </div>
+                        <svg class="nav-user-caret" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 4.5 6 8l3-3.5"/></svg>
+                    </button>
+                    <div class="nav-user-menu" id="navUserMenu" hidden>
+                        <button type="button" id="btnChangePassword">
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>
+                            Change password
+                        </button>
+                        <button type="button" id="btnUserMenuLogout">
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 2.5H3.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1H6M11 11l3-3-3-3M14 8H6"/></svg>
+                            Sign out
+                        </button>
                     </div>
                     <button class="btn-nav-icon btn-logout" id="btnLogout" title="Sign Out" style="display:none">
                         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                             <path d="M7 3H4a1 1 0 00-1 1v12a1 1 0 001 1h3M13 14l3-4-3-4M16 10H7" />
                         </svg>
                     </button>
+                </div>
+
+                <div class="modal-overlay" id="changePwOverlay" style="display:none" role="dialog" aria-modal="true">
+                    <div class="modal" style="max-width:400px">
+                        <div class="modal-header">
+                            <h4 class="modal-title">Change password</h4>
+                            <button class="modal-close" id="changePwClose">&times;</button>
+                        </div>
+                        <div class="modal-body" style="padding:18px 22px">
+                            <div class="form-group">
+                                <label class="form-label" for="cpCurrent">Current password</label>
+                                <input type="password" id="cpCurrent" class="filter-control" autocomplete="current-password" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="cpNew">New password</label>
+                                <input type="password" id="cpNew" class="filter-control" autocomplete="new-password" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="cpConfirm">Confirm new password</label>
+                                <input type="password" id="cpConfirm" class="filter-control" autocomplete="new-password" />
+                            </div>
+                            <div class="ab-error" id="changePwError" style="display:none"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-ghost" id="changePwCancel">Cancel</button>
+                            <button class="btn btn-primary" id="changePwSave">Update password</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

@@ -114,6 +114,34 @@ function _applyLivePermissions() {
     if (currentData?.length) refreshAllViews();
 }
 
+let _planVersionChannel = null;
+/** Plan-version changes (create / rename / archive / restore / delete) land
+ *  live for every user: the selector and the versions dialog refresh, and if
+ *  someone archives or deletes the version YOU'RE on, the page reloads onto
+ *  the fallback. */
+function startPlanVersionSync() {
+    if (!db) return;
+    if (_planVersionChannel) { try { db.removeChannel(_planVersionChannel); } catch {} }
+    _planVersionChannel = db
+        .channel('ppms-plan-versions')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'plan_versions' }, async (payload) => {
+            const moduleId = planVersionsModuleId();
+            const activeId = window.PlanVersions?.getActiveId?.(moduleId);
+            const row = payload.new || payload.old || {};
+            const hitMine = activeId && String(row.id) === String(activeId)
+                && (payload.eventType === 'DELETE' || row.status === 'archived');
+            await refreshPlanVersions();
+            if (document.getElementById('planVersionsOverlay')?.style.display === 'flex') {
+                renderPlanVersionsTable();
+            }
+            if (hitMine) {
+                showToast('The plan version you were viewing was archived by another user — reloading.', 'info');
+                setTimeout(() => window.location.reload(), 1200);
+            }
+        })
+        .subscribe();
+}
+
 let _selfPermChannel = null;
 /** Watches this user's own planning_app_users row so an admin's change to
  *  their role / module access / can_export / is_active lands live. */
@@ -439,6 +467,71 @@ function populateNavbar() {
     // Hide Edit Plan button unless user can edit the schedule
     const btnEdit = document.getElementById('btnGanttEdit');
     if (btnEdit) btnEdit.style.display = canEditPlan() ? '' : 'none';
+}
+
+function wireUserMenu() {
+    const chip = document.getElementById('navUserChip');
+    const menu = document.getElementById('navUserMenu');
+    if (!chip || !menu) return;
+    const closeMenu = () => { menu.hidden = true; chip.setAttribute('aria-expanded', 'false'); };
+    chip.addEventListener('click', (e) => {
+        e.stopPropagation();
+        menu.hidden = !menu.hidden;
+        chip.setAttribute('aria-expanded', menu.hidden ? 'false' : 'true');
+    });
+    document.addEventListener('click', (e) => {
+        if (menu.hidden) return;
+        if (e.target.closest('#navUserMenu') || e.target.closest('#navUserChip')) return;
+        closeMenu();
+    });
+
+    const overlay = document.getElementById('changePwOverlay');
+    const err = document.getElementById('changePwError');
+    const setErr = (m) => { if (err) { err.textContent = m || ''; err.style.display = m ? 'flex' : 'none'; } };
+    const closePw = () => { if (overlay) overlay.style.display = 'none'; };
+    const openPw = () => {
+        closeMenu();
+        ['cpCurrent', 'cpNew', 'cpConfirm'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+        setErr('');
+        if (overlay) overlay.style.display = 'flex';
+        document.getElementById('cpCurrent')?.focus();
+    };
+    document.getElementById('btnChangePassword')?.addEventListener('click', openPw);
+    document.getElementById('changePwClose')?.addEventListener('click', closePw);
+    document.getElementById('changePwCancel')?.addEventListener('click', closePw);
+    overlay?.addEventListener('click', (e) => { if (e.target === overlay) closePw(); });
+
+    document.getElementById('changePwSave')?.addEventListener('click', async () => {
+        const cur = document.getElementById('cpCurrent')?.value || '';
+        const nw = document.getElementById('cpNew')?.value || '';
+        const cf = document.getElementById('cpConfirm')?.value || '';
+        const user = getCurrentUser();
+        if (!user?.id) { setErr('Session expired — sign in again.'); return; }
+        if (!cur || !nw) { setErr('Fill in all fields.'); return; }
+        if (nw.length < 6) { setErr('New password must be at least 6 characters.'); return; }
+        if (nw !== cf) { setErr('The new passwords do not match.'); return; }
+        if (nw === cur) { setErr('The new password must be different.'); return; }
+        setErr('');
+        const saveBtn = document.getElementById('changePwSave');
+        if (saveBtn) saveBtn.disabled = true;
+        try {
+            const curHash = await sha256(cur);
+            const { data: match, error: chkErr } = await db.from('planning_app_users')
+                .select('id').eq('id', user.id).eq('password_hash', curHash).maybeSingle();
+            if (chkErr) throw chkErr;
+            if (!match) { setErr('Current password is incorrect.'); return; }
+            const { error: updErr } = await db.from('planning_app_users')
+                .update({ password_hash: await sha256(nw) }).eq('id', user.id);
+            if (updErr) throw updErr;
+            await auditLog('UPDATE', 'planning_app_users', user.id, null, { password_changed: true });
+            closePw();
+            showToast('Password updated.', 'success');
+        } catch (e) {
+            setErr('Could not update the password: ' + (e.message || e));
+        } finally {
+            if (saveBtn) saveBtn.disabled = false;
+        }
+    });
 }
 
 async function doLogout() {
@@ -1542,6 +1635,7 @@ async function initializeApp() {
     startAuditNotifSync();
     startAuditNotifPoll();
     startSelfPermissionSync();
+    startPlanVersionSync();
     startEditActivitySync();
     wireEvents();
     _applyExportVisibility(); // reads getCurrentUser().canExport, already fresh from refreshSessionFromServer() above
@@ -6768,6 +6862,8 @@ function wireEvents() {
 
     // ── Auth controls ────────────────────────────────────────────────
     document.getElementById('btnLogout')?.addEventListener('click', doLogout);
+    document.getElementById('btnUserMenuLogout')?.addEventListener('click', doLogout);
+    wireUserMenu();
 
     // Unit Codes (admin+ — button hidden for viewers/planners)
     document.getElementById('btnUnitCodes')?.addEventListener('click', openUnitCodes);
@@ -13323,8 +13419,35 @@ async function loadUserList() {
         return;
     }
 
+    _umUsers = users || [];
+    const searchEl = document.getElementById('umSearch');
+    if (searchEl && !searchEl.dataset.wired) {
+        searchEl.dataset.wired = '1';
+        searchEl.addEventListener('input', _renderUserList);
+    }
+    _renderUserList();
+}
+
+let _umUsers = [];
+function _renderUserList() {
+    const tbody = document.getElementById('umTableBody');
+    if (!tbody) return;
+    const q = (document.getElementById('umSearch')?.value || '').trim().toLowerCase();
+    const users = q
+        ? _umUsers.filter(u =>
+            (u.full_name || '').toLowerCase().includes(q)
+            || (u.email || '').toLowerCase().includes(q)
+            || roleLabel(u.role).toLowerCase().includes(q)
+            || (u.role || '').toLowerCase().includes(q))
+        : _umUsers;
+
     document.getElementById('umUserCount').textContent =
-        `${users.length} user${users.length !== 1 ? 's' : ''}`;
+        q ? `${users.length} of ${_umUsers.length} users` : `${_umUsers.length} user${_umUsers.length !== 1 ? 's' : ''}`;
+
+    if (!users.length) {
+        tbody.innerHTML = `<tr><td colspan="8" class="table-empty"><div class="empty-state"><p>No users match "${esc(q)}".</p></div></td></tr>`;
+        return;
+    }
 
     const currentUserId = getCurrentUser()?.id;
 
@@ -13558,7 +13681,7 @@ async function renderPlanVersionsTable() {
         <td>
           ${v.id === activeId ? '' : `<button class="btn btn-xs btn-ghost" onclick="setActivePlanVersionFromDialog(${v.id})">Set Active</button>`}
           <button class="btn btn-xs btn-ghost" onclick="renamePlanVersionFromDialog(${v.id})">Rename</button>
-          ${v.is_baseline ? '' : `<button class="btn btn-xs ${v.status === 'archived' ? 'btn-ghost' : 'btn-danger'}" onclick="togglePlanVersionArchive(${v.id}, '${v.status}')">${v.status === 'archived' ? 'Restore' : 'Archive'}</button>`}
+          <button class="btn btn-xs ${v.status === 'archived' ? 'btn-ghost' : 'btn-danger'}" onclick="togglePlanVersionArchive(${v.id}, '${v.status}')">${v.status === 'archived' ? 'Restore' : 'Archive'}</button>
           ${!v.is_baseline && isMasterAdmin() ? `<button class="btn btn-xs btn-danger" onclick="deletePlanVersionFromDialog(${v.id}, '${esc(v.name).replace(/'/g, "\\'")}')">Delete</button>` : ''}
         </td>
       </tr>`).join('');
@@ -13618,10 +13741,21 @@ async function renamePlanVersionFromDialog(versionId) {
 
 async function togglePlanVersionArchive(versionId, currentStatus) {
     const nextStatus = currentStatus === 'archived' ? 'active' : 'archived';
-    if (nextStatus === 'archived' && !confirm('Archive this plan version? It stays intact and can be restored later, but will be hidden from the version selector.')) return;
+    const moduleId = planVersionsModuleId();
+    const wasActive = window.PlanVersions.getActiveId(moduleId) === versionId;
+    if (nextStatus === 'archived' && !confirm(
+        (wasActive ? 'This is the active version. ' : '') +
+        'Archive this plan version? It stays intact and can be restored later, but is hidden from the version selector.')) return;
     try {
         await window.PlanVersions.setStatus(db, versionId, nextStatus, auditLog);
         showToast(nextStatus === 'archived' ? 'Plan version archived.' : 'Plan version restored.', 'success');
+        if (nextStatus === 'archived' && wasActive) {
+            // Fall back to whichever active version is left (or the baseline).
+            const left = window.PlanVersions.getVersions(moduleId).find(v => v.status === 'active' && v.id !== versionId);
+            window.PlanVersions.setActiveId(moduleId, left ? left.id : null);
+            window.location.reload();
+            return;
+        }
         await renderPlanVersionsTable();
         populatePlanVersionSelector();
     } catch (e) {

@@ -416,6 +416,7 @@ export function renderSharedDialogs() {
                     <!-- Toolbar -->
                     <div class="um-toolbar">
                         <span class="um-count" id="umUserCount">0 users</span>
+                        <input type="search" id="umSearch" class="filter-control" placeholder="Search name, email or role…" style="flex:1;min-width:160px;max-width:340px" />
                         <button class="btn btn-primary btn-sm" id="btnAddUser">
                             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
                                 style="width:13px;height:13px">
