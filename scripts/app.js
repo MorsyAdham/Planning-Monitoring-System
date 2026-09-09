@@ -1520,26 +1520,35 @@ function _renderGanttCoEditors() {
     const peers = _ganttCoEditors();
     const inline = document.getElementById('ganttCoEditors');   // in the edit bar
     const badge  = document.getElementById('ganttCoEditBadge'); // next to Edit Plan
-
-    const names = peers.map(p => p.name || p.email || 'Someone');
-    const avatars = peers.slice(0, 4).map(p => {
-        const initial = (p.name || p.email || '?').charAt(0).toUpperCase();
-        return `<span class="gce-avatar" title="${esc((p.name || p.email || '') + (p.editing?.task ? ' — ' + p.editing.task : ''))}">${esc(initial)}</span>`;
-    }).join('');
-
-    // The badge (always visible near the Gantt) covers this; the in-bar copy
-    // was redundant while co-editing.
     if (inline) { inline.hidden = true; inline.innerHTML = ''; }
-    if (badge) {
-        if (peers.length) {
-            badge.hidden = false;
-            const verb = peers.length === 1 ? 'is editing' : 'are editing';
-            badge.innerHTML = `<span class="gce-stack">${avatars}</span><span class="gce-text">${esc(names.join(', '))} ${verb} this plan</span>`;
-        } else {
-            badge.hidden = true;
-            badge.innerHTML = '';
-        }
+    if (!badge) return;
+
+    const iAmEditing = _ganttEditMode;
+    if (!peers.length && !iAmEditing) {
+        badge.hidden = true;
+        badge.innerHTML = '';
+        return;
     }
+
+    const me = getCurrentUser();
+    const av = (label, cls) => {
+        const initial = (label || '?').trim().charAt(0).toUpperCase() || '?';
+        return `<span class="gce-av ${cls}" title="${esc(label)}">${esc(initial)}</span>`;
+    };
+    const parts = [];
+    if (iAmEditing) parts.push(av(me?.name || me?.email || 'You', 'gce-av-me'));
+    peers.slice(0, 4).forEach(p => parts.push(av((p.name || p.email || 'Someone') + (p.editing?.task ? ' · ' + p.editing.task : ''), '')));
+
+    let text;
+    const names = peers.map(p => (p.name || p.email || 'Someone').split(' ')[0]);
+    if (iAmEditing && !peers.length) text = "You're editing this plan";
+    else if (iAmEditing) text = `You &amp; ${esc(names.join(', '))} editing together`;
+    else if (peers.length === 1) text = `${esc(names[0])} is editing this plan`;
+    else text = `${esc(names.join(', '))} are editing this plan`;
+
+    badge.hidden = false;
+    badge.className = 'gce-badge' + (iAmEditing ? ' gce-badge-me' : '');
+    badge.innerHTML = `<span class="gce-live" aria-hidden="true"></span><span class="gce-avs">${parts.join('')}</span><span class="gce-label">${text}</span>`;
 }
 
 function startPresenceTracking() {

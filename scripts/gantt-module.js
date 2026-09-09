@@ -133,7 +133,7 @@
                         <span id="btnGanttEditLabel">Edit Plan</span>
                     </button>
                 </div>
-                <div class="filter-item gantt-coedit-badge" id="ganttCoEditBadge" style="padding-top:18px" hidden></div>
+                <div class="gce-badge" id="ganttCoEditBadge" hidden></div>
                 <div class="gantt-edit-bar" id="ganttEditBar" style="display:none">
                     <span class="gantt-edit-badge">
                         <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" style="width:12px;height:12px">
