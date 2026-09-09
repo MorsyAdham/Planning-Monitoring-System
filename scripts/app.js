@@ -213,7 +213,7 @@ function _renderEditActivityPanel() {
                 <button class="eap-close" id="eapClose" title="Hide" aria-label="Hide">&times;</button>
             </div>
             <div class="eap-body" id="eapBody"></div>`;
-        document.body.appendChild(panel);
+        _fullscreenOverlayHost().appendChild(panel);
         try {
             const pos = JSON.parse(localStorage.getItem('ppms_eap_pos') || 'null');
             if (pos) { panel.style.left = pos.left + 'px'; panel.style.top = pos.top + 'px'; panel.style.right = 'auto'; }
@@ -225,6 +225,8 @@ function _renderEditActivityPanel() {
         _wireEditActivityDrag(panel, panel.querySelector('#eapHead'));
     }
     panel.hidden = false;
+    const host = _fullscreenOverlayHost();
+    if (panel.parentElement !== host) host.appendChild(panel);
 
     const body = panel.querySelector('#eapBody');
     body.innerHTML = _editActivityLog.slice(0, 30).map(e => `
@@ -1894,7 +1896,7 @@ function openActiveUsersDropdown() {
     if (!btn) return;
     const rect = btn.getBoundingClientRect();
     dropdown.style.cssText = `position:fixed;top:${rect.bottom + 6}px;right:${window.innerWidth - rect.right}px;z-index:10000;min-width:240px`;
-    document.body.appendChild(dropdown);
+    _fullscreenOverlayHost().appendChild(dropdown);
 
     setTimeout(() => document.addEventListener('click', function handler(ev) {
         if (!dropdown.contains(ev.target) && ev.target !== btn) {
@@ -6252,7 +6254,7 @@ function openNotifDropdown() {
             <div class="f100-notif-list">${items}</div>`;
     }
 
-    document.body.appendChild(dropdown);
+    _fullscreenOverlayHost().appendChild(dropdown);
     const rect = bell.getBoundingClientRect();
     const dw = 340;
     let left = rect.right + window.scrollX - dw;
@@ -6964,6 +6966,10 @@ function setTableLoading(loading) {
 
 function showToast(msg, type = 'info') {
     const container = document.getElementById('toastContainer');
+    if (container && typeof _fullscreenOverlayHost === 'function') {
+        const host = _fullscreenOverlayHost();
+        if (container.parentElement !== host) host.appendChild(container);
+    }
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
     toast.textContent = msg;
@@ -15871,6 +15877,27 @@ const _UNDO_LIMIT = 50;
 function getGanttCardHost() {
     return document.getElementById('ganttCard');
 }
+
+/** Where floating overlays (toasts, notif dropdowns, the live-edit panel)
+ *  must live so they stay visible: inside the fullscreen element when one is
+ *  active, otherwise document.body. */
+function _fullscreenOverlayHost() {
+    return document.fullscreenElement || document.body;
+}
+
+/** Move the persistent overlays into / out of the fullscreen element as it
+ *  toggles, so an already-visible toast or the edit panel doesn't vanish. */
+function _relocateOverlaysForFullscreen() {
+    const host = _fullscreenOverlayHost();
+    ['toastContainer', 'editActivityPanel'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.parentElement !== host) host.appendChild(el);
+    });
+    document.querySelectorAll('.f100-notif-dropdown, .active-users-dropdown').forEach(el => {
+        if (el.parentElement !== host) host.appendChild(el);
+    });
+}
+document.addEventListener('fullscreenchange', _relocateOverlaysForFullscreen);
 
 function isGanttFullscreen() {
     const host = getGanttCardHost();
