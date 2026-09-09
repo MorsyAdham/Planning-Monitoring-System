@@ -84,6 +84,60 @@ async function refreshSessionFromServer() {
     }
 }
 
+/** Re-applies every role/permission-dependent piece of UI from the current
+ *  (already-refreshed) session — so a live role change takes effect without
+ *  a page reload. */
+function _applyLivePermissions() {
+    const u = getCurrentUser();
+    if (!u) return;
+    document.body.classList.toggle('viewer-mode', !canWrite());
+
+    const setDisp = (id, show) => { const el = document.getElementById(id); if (el) el.style.display = show ? 'flex' : 'none'; };
+    setDisp('btnUnitCodes', isPlanner());
+    setDisp('btnAuditLog', isMasterAdmin());
+    setDisp('btnUserMgmt', isMasterAdmin());
+    setDisp('activeUsersWrap', isMasterAdmin());
+
+    const roleBadge = document.getElementById('navRoleBadge');
+    if (roleBadge) {
+        roleBadge.textContent = roleLabel(u.role);
+        roleBadge.className = `nav-role-badge role-${roleClass(u.role).replace('_', '-')}`;
+    }
+
+    _applyExportVisibility();
+    getModuleRuntime()?.applyModuleShell?.();
+
+    if (_ganttEditMode && !canEditPlan()) setGanttEditMode(false);
+    syncGanttModuleEditControls();
+
+    // Inline edit inputs in the table etc. are gated per-render.
+    if (currentData?.length) refreshAllViews();
+}
+
+let _selfPermChannel = null;
+/** Watches this user's own planning_app_users row so an admin's change to
+ *  their role / module access / can_export / is_active lands live. */
+function startSelfPermissionSync() {
+    const user = getCurrentUser();
+    if (!user?.id || !db) return;
+    if (_selfPermChannel) { try { db.removeChannel(_selfPermChannel); } catch {} }
+    _selfPermChannel = db
+        .channel('ppms-self-perms')
+        .on('postgres_changes',
+            { event: '*', schema: 'public', table: 'planning_app_users', filter: `id=eq.${user.id}` },
+            async () => {
+                const beforeRole = getCurrentUser()?.role;
+                await refreshSessionFromServer();   // patches sessionStorage; logs out if deactivated
+                const now = getCurrentUser();
+                if (!now) return;                   // deactivated → already logging out
+                _applyLivePermissions();
+                if (now.role !== beforeRole) {
+                    showToast(`Your access level is now "${roleLabel(now.role)}".`, 'info');
+                }
+            })
+        .subscribe();
+}
+
 async function sha256(str) {
     const buf = new TextEncoder().encode(str);
     const hash = await crypto.subtle.digest('SHA-256', buf);
@@ -1272,6 +1326,7 @@ async function initializeApp() {
     // channel existed and silently miss the broadcast.
     startAuditNotifSync();
     startAuditNotifPoll();
+    startSelfPermissionSync();
     wireEvents();
     _applyExportVisibility(); // reads getCurrentUser().canExport, already fresh from refreshSessionFromServer() above
     getModuleRuntime()?.initialize?.(db, {
