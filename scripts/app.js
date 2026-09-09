@@ -7649,6 +7649,8 @@ function renderGantt(plans, startDate, endDate) {
                 }
             }
             const tasks = groups[groupKey][unit] || [];
+            const _kd2ReorderRow = isKd2ProcessView && _ganttEditMode && _ganttReorderMode;
+            const _rowLine = (isKd2ProcessView && _laneOrder) ? (_laneOrder.get(unit)?.line || '') : '';
             const laneVehicle = isF100ProcessView ? groupKey : isKd2ProcessView ? groupKey : ((isKD2Module() || isF100KD2Module()) ? unit.split('||')[0] : groupKey);
             const laneUnit    = isF100ProcessView ? unit    : isKd2ProcessView ? unit    : ((isKD2Module() || isF100KD2Module()) ? unit.split('||').slice(1).join('||') : unit);
             // Work centers for this station (process view only — shown in label).
@@ -7801,6 +7803,11 @@ function renderGantt(plans, startDate, endDate) {
               ${_kd2PctHtml}
             </div>
             ${(isKD2Module() || isF100KD2Module()) && _ganttEditMode && _ganttSelectLaneMode && anchorTask ? `<button type="button" class="gantt-lane-select-btn" data-gantt-lane-select="${anchorTask.id}" aria-pressed="${laneSelected ? 'true' : 'false'}">${laneSelected ? 'Clear lane' : 'Select lane'}</button>` : ''}
+            ${_kd2ReorderRow ? `<div class="gr-reorder-ctrls" data-vehicle="${esc(groupKey)}" data-row-key="${esc(unit)}" data-line="${esc(_rowLine)}">
+              <button type="button" class="gr-reorder-btn" data-kd2-reorder="up" title="Move earlier"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11V3"/><path d="M3.5 6.5 7 3l3.5 3.5"/></svg></button>
+              <button type="button" class="gr-reorder-btn" data-kd2-reorder="down" title="Move later"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v8"/><path d="m3.5 7.5 3.5 3.5 3.5-3.5"/></svg></button>
+              <button type="button" class="gr-reorder-btn gr-reorder-par" data-kd2-reorder="parallel" title="Toggle parallel with the row above">&#8741;</button>
+            </div>` : ''}
           </div>
           <div class="gr-track" style="width:${totalW}px;height:${rowH}px"
             data-kd2-track="${(isKD2Module() || isF100KD2Module()) ? 'true' : ''}"
@@ -15531,6 +15538,7 @@ let _ganttSatAllowed = false;
 let _ganttSatAsked = false;
 let _ganttMoveMode = 'single';
 let _ganttSelectLaneMode = false;
+let _ganttReorderMode = false;
 let _openGanttBlockMenuPlanId = null;
 const _selectedGanttPlanIds = new Set();
 const _laneOrder = {};
@@ -15974,6 +15982,16 @@ function syncGanttModuleEditControls() {
         btn.classList.toggle('gmt-active', _ganttSelectLaneMode);
         btn.setAttribute('aria-pressed', _ganttSelectLaneMode ? 'true' : 'false');
     }
+    // Reorder-Processes toggle — KD2 process view only.
+    const reBtn = document.getElementById('gmtReorderProcesses');
+    if (reBtn) {
+        const canReorder = _ganttEditMode && isKd2ProcessView;
+        reBtn.style.display = canReorder ? '' : 'none';
+        if (!canReorder && _ganttReorderMode) _ganttReorderMode = false;
+        reBtn.classList.toggle('gmt-active', _ganttReorderMode);
+        reBtn.setAttribute('aria-pressed', _ganttReorderMode ? 'true' : 'false');
+    }
+    document.body.classList.toggle('gantt-reorder-active', _ganttEditMode && _ganttReorderMode);
 }
 
 /* ── Toggle edit mode ────────────────────────────────────────────── */
@@ -15983,6 +16001,7 @@ function setGanttEditMode(on) {
         _openGanttBlockMenuPlanId = null;
         _selectedGanttPlanIds.clear();
         _ganttSelectLaneMode = false;
+        _ganttReorderMode = false;
         if (isF100KD2Module()) cancelF100Placement();
     }
     document.getElementById('ganttEditBar').style.display = on ? 'flex' : 'none';
@@ -16003,6 +16022,7 @@ function setGanttEditMode(on) {
     // Toggle CSS edit-mode class on the gantt body
     const body = document.querySelector('.gantt-body');
     if (body) body.classList.toggle('gantt-edit-active', on);
+    document.body.classList.toggle('gantt-reorder-active', on && _ganttReorderMode);
     _syncSelectedBlockUi();
 }
 
@@ -16341,7 +16361,7 @@ async function redoGantt() {
  * Finds all .gc-bar[data-plan-id] elements and attaches pointer-drag handlers.
  */
 function wireGanttDragEdit(dayIndex, days) {
-    if (!_ganttEditMode) return;
+    if (!_ganttEditMode || _ganttReorderMode) return;
 
     const bars = document.querySelectorAll('.gc-bar[data-plan-id]');
     bars.forEach(bar => {
@@ -16350,7 +16370,7 @@ function wireGanttDragEdit(dayIndex, days) {
     });
 
     function onBarPointerDown(e) {
-        if (!_ganttEditMode) return;
+        if (!_ganttEditMode || _ganttReorderMode) return;
         if (!canEditPlan()) { showToast('Only planners and master admins can edit the plan.', 'error'); return; }
         // Let block menu controls handle their own clicks instead of starting a drag.
         if (e.target.closest('.gc-bar-menu') || e.target.closest('.gc-bar-menu-trigger') || e.target.closest('.gc-bar-select') || e.target.closest('.gc-bar-delete') || e.target.closest('.gc-bar-edit') || e.target.closest('.gc-bar-lane') || e.target.closest('.gc-bar-resize')) return;
@@ -16568,6 +16588,19 @@ wireGanttControls = function () {
     });
     document.getElementById('gmtSelectLane')?.addEventListener('click', () => {
         setGanttLaneSelectMode(!_ganttSelectLaneMode);
+    });
+    document.getElementById('gmtReorderProcesses')?.addEventListener('click', () => {
+        _ganttReorderMode = !_ganttReorderMode;
+        if (_ganttReorderMode) {
+            _ganttSelectLaneMode = false;
+            _ganttMoveMode = 'single';
+            getModuleRuntime()?.toggleTimelineVisualMenu?.(false);
+        }
+        document.body.classList.toggle('gantt-reorder-active', _ganttEditMode && _ganttReorderMode);
+        syncGanttModuleEditControls();
+        const gsEl = document.getElementById('ganttStart');
+        const geEl = document.getElementById('ganttEnd');
+        renderGantt(currentData, gsEl?.value, geEl?.value);
     });
     document.getElementById('btnGanttNoWorkDays')?.addEventListener('click', () => {
         if (!isKD2Module() && !isF100KD2Module()) return;
@@ -16903,14 +16936,84 @@ function _ganttClickOutsideHandler(e) {
     _closeAllBarMenus();
 }
 
+/* ── KD2 process-view reorder (arrow buttons + parallel toggle) ──
+   Operates strictly within one component track (data-line). Builds an
+   `order` override for the affected rows and hands it to the runtime's
+   persistRouteOrder, which re-normalises route_sequence for the whole
+   vehicle and dual-writes config + routes. */
+async function handleKd2ReorderClick(btn) {
+    const box = btn.closest('.gr-reorder-ctrls');
+    if (!box) return;
+    const vehicle = box.dataset.vehicle;
+    const rowKey = box.dataset.rowKey;
+    const line = box.dataset.line || '';
+    const action = btn.dataset.kd2Reorder;
+    const rt = getModuleRuntime();
+    if (!vehicle || !rowKey || !rt?.persistRouteOrder) return;
+    if (!line) { showToast('This row is not bound to a component track.', 'error'); return; }
+
+    const lane = rt.getStationLaneOrder(vehicle) || new Map();
+    const codesByKey = rt.getStationRowKeyToCodes?.(vehicle) || new Map();
+
+    // ordered slots within this track: [{ routeSeq, rowKeys:[] }]
+    const rowsInTrack = [...lane.entries()]
+        .filter(([, info]) => info && info.line === line)
+        .sort((a, b) => a[1].sortKey - b[1].sortKey);
+    if (!rowsInTrack.length) return;
+    const slots = [];
+    rowsInTrack.forEach(([rk, info]) => {
+        const routeSeq = info.sortKey % 1000000;
+        const last = slots[slots.length - 1];
+        if (last && last.routeSeq === routeSeq) last.rowKeys.push(rk);
+        else slots.push({ routeSeq, rowKeys: [rk] });
+    });
+    const idx = slots.findIndex(s => s.rowKeys.includes(rowKey));
+    if (idx < 0) return;
+
+    const codesOf = keys => keys.flatMap(k => codesByKey.get(k) || []);
+    let moves = [];
+
+    if (action === 'up' || action === 'down') {
+        const j = action === 'up' ? idx - 1 : idx + 1;
+        if (j < 0 || j >= slots.length) return;
+        moves = [
+            ...codesOf(slots[idx].rowKeys).map(c => ({ station_code: c, order: slots[j].routeSeq })),
+            ...codesOf(slots[j].rowKeys).map(c => ({ station_code: c, order: slots[idx].routeSeq })),
+        ];
+    } else if (action === 'parallel') {
+        const rowCodes = codesByKey.get(rowKey) || [];
+        if (slots[idx].rowKeys.length > 1) {
+            // currently parallel — split this row off just after the shared slot
+            moves = rowCodes.map(c => ({ station_code: c, order: slots[idx].routeSeq + 0.5 }));
+        } else {
+            if (idx === 0) { showToast('No row above to run this in parallel with.', 'info'); return; }
+            moves = rowCodes.map(c => ({ station_code: c, order: slots[idx - 1].routeSeq }));
+        }
+    }
+    if (!moves.length) return;
+    try {
+        await rt.persistRouteOrder(vehicle, moves);
+        syncDataViewsAfterGanttEdit?.();
+    } catch (err) {
+        showToast('Reorder failed: ' + (err.message || err), 'error');
+    }
+}
+
 function _ganttBarClickHandler(e) {
     if (e.target.closest('#ganttEmptyAddBlock')) {
         openAddBlockModal();
         return;
     }
+    const reorderBtn = e.target.closest('[data-kd2-reorder]');
+    if (reorderBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleKd2ReorderClick(reorderBtn);
+        return;
+    }
     const placementTrack = e.target.closest('.gr-track[data-kd2-track="true"]');
     const clickedBar = e.target.closest('.gc-bar');
-    if (placementTrack && !clickedBar) {
+    if (placementTrack && !clickedBar && !_ganttReorderMode) {
         const days = String(placementTrack.dataset.ganttDays || '').split(',').filter(Boolean);
         if (days.length) {
             const rect = placementTrack.getBoundingClientRect();

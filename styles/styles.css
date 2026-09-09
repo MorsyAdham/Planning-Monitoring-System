@@ -7856,6 +7856,52 @@ body {
     border-color: rgba(37, 99, 235, .18);
 }
 
+/* ── KD2 process-view reorder controls (Gantt edit → Reorder Processes) ── */
+.gr-reorder-ctrls {
+    flex-shrink: 0;
+    align-self: center;
+    display: flex;
+    gap: 3px;
+    margin-left: auto;
+}
+
+.gr-reorder-btn {
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid rgba(79, 142, 247, .3);
+    background: rgba(79, 142, 247, .1);
+    color: var(--clr-accent);
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: .8rem;
+    line-height: 1;
+}
+
+.gr-reorder-btn svg {
+    width: 11px;
+    height: 11px;
+}
+
+.gr-reorder-btn:hover {
+    background: rgba(79, 142, 247, .2);
+}
+
+.gr-reorder-par {
+    font-weight: 700;
+}
+
+body.gantt-reorder-active .gc-bar {
+    cursor: default !important;
+}
+
+body.gantt-reorder-active .gr-process-cat-sep .gr-label {
+    opacity: .75;
+}
+
 [data-theme="light"] .gantt-edit-badge {
     background: #d97706;
     color: #fff;

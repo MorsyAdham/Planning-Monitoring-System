@@ -274,6 +274,100 @@ window.PPMSModuleRuntime = (() => {
         return map;
     }
 
+    // The component "track" a process belongs to — the permanent grouping the
+    // Gantt process view bands by and the drag surface never lets a process
+    // leave. K9: Hull / Turret / downstream. K10-11: Structure / downstream.
+    // Hull & Turret run in parallel, so both rank 0 within their parallel
+    // portion; downstream is always after.
+    const DOWNSTREAM_CATS = new Set(['assembly', 'processing', 'final_test']);
+    function stationTrack(s) {
+        if (s.vehicle_type === 'K9') {
+            if (s.component_group === 'Hull') return { line: 'Hull', rank: 0 };
+            if (s.component_group === 'Turret') return { line: 'Turret', rank: 1 };
+            return { line: 'Assembly & Processing & Testing', rank: 2 };
+        }
+        return DOWNSTREAM_CATS.has(s.category_code)
+            ? { line: 'Assembly & Processing & Testing', rank: 1 }
+            : { line: 'Structure', rank: 0 };
+    }
+
+    /** Canonical dense route_sequence for one vehicle, computed purely from
+     *  state.stations (no DOM). Returns [{ station_code, route_sequence,
+     *  parallel_with_previous }] for every station whose value would change —
+     *  a no-op on already-consistent data.
+     *  Rules:
+     *   - partition by track (stationTrack) — a process never crosses tracks
+     *   - within a track keep the current order (route_sequence, then
+     *     station_sequence_in_category, then station_code)
+     *   - stations sharing a route_sequence within a track stay in one slot
+     *     (parallel); slots renumber densely 1..N
+     *   - Hull and Turret number slots independently; the downstream track
+     *     starts after the longer parallel track. K10/K11 downstream simply
+     *     continues after Structure.
+     *  station_sequence_in_category is NOT touched here — persistRouteOrder
+     *  re-densifies it only for categories a move actually affected.
+     *
+     *  `orderOverride` (optional) — Map<station_code, number>: the drag surface's
+     *  new within-track position for the stations it moved (equal numbers = a
+     *  parallel slot). Stations not in the map keep their current route_sequence
+     *  as the ordering hint.
+     */
+    function normalizeRoute(vehicle, orderOverride) {
+        const stations = (state.stations || []).filter(s => s.vehicle_type === vehicle);
+        if (!stations.length) return [];
+
+        const cur = s => (orderOverride && orderOverride.has(s.station_code))
+            ? orderOverride.get(s.station_code)
+            : (parseInt(s.route_sequence, 10) || 9999);
+        const curCat = s => parseInt(s.station_sequence_in_category, 10) || 9999;
+        const withinCmp = (a, b) => cur(a) - cur(b) || curCat(a) - curCat(b)
+            || String(a.station_code).localeCompare(String(b.station_code));
+
+        const DOWN = 'Assembly & Processing & Testing';
+        const tracks = new Map();
+        stations.forEach(s => {
+            const line = stationTrack(s).line;
+            if (!tracks.has(line)) tracks.set(line, []);
+            tracks.get(line).push(s);
+        });
+        const parallelTracks = [...tracks.entries()].filter(([line]) => line !== DOWN).map(([, l]) => l);
+        const downstream = tracks.get(DOWN) || [];
+
+        const bySlot = new Map();
+        const numberTrack = (list, slotOffset) => {
+            list.sort(withinCmp);
+            let slot = slotOffset;
+            let prev = null;
+            list.forEach(s => {
+                const c = cur(s);
+                const newSlot = (prev === null || c !== prev);
+                if (newSlot) slot += 1;
+                prev = c;
+                bySlot.set(s.station_code, { route_sequence: slot, parallel_with_previous: !newSlot });
+            });
+            return slot - slotOffset;
+        };
+
+        let span = 0;
+        parallelTracks.forEach(list => { span = Math.max(span, numberTrack(list, 0)); });
+        numberTrack(downstream, span);
+
+        const changes = [];
+        stations.forEach(s => {
+            const slot = bySlot.get(s.station_code);
+            if (!slot) return;
+            if (cur(s) !== slot.route_sequence
+                || (!!s.parallel_with_previous) !== (!!slot.parallel_with_previous)) {
+                changes.push({
+                    station_code: s.station_code,
+                    route_sequence: slot.route_sequence,
+                    parallel_with_previous: slot.parallel_with_previous,
+                });
+            }
+        });
+        return changes;
+    }
+
     // Template grouping: matches the actual production plan's Gantt split — K9
     // separates Hull and Turret (tagged per-station via component_group, same
     // field VPX uses for its Hull/Turret tabs) with everything downstream of
@@ -1770,6 +1864,162 @@ window.PPMSModuleRuntime = (() => {
         } catch (error) {
             setProcessError('Failed to reorder: ' + error.message);
             renderProcessTable(); // snap back to the last saved order
+        }
+    }
+
+    /** Persist a drag-reorder of one vehicle's route from the Gantt process
+     *  view. `moves` = [{ station_code, order, category_code? }] where `order`
+     *  is the new within-track slot index (equal values = one parallel slot)
+     *  and `category_code` is present only when the drag also moved the
+     *  process to a different category band (still within its track). Applies
+     *  the moves, canonicalises via normalizeRoute (parallel-track offset,
+     *  dense numbering, parallel_with_previous), re-densifies
+     *  station_sequence_in_category for touched categories, mirrors
+     *  kd2_process_routes, audits and reloads. */
+    async function persistRouteOrder(vehicle, moves) {
+        if (!dbRef || !canManageKD2()) {
+            toast('Only planners and operators can edit KD2 processes.', 'error');
+            return;
+        }
+        moves = (moves || []).filter(m => m && m.station_code);
+        if (!moves.length) return;
+
+        const vStations = () => state.stations.filter(s => s.vehicle_type === vehicle);
+        const before = vStations().map(s => ({
+            station_code: s.station_code, route_sequence: s.route_sequence,
+            category_code: s.category_code, station_sequence_in_category: s.station_sequence_in_category,
+            parallel_with_previous: s.parallel_with_previous,
+        }));
+
+        // Apply category moves in-memory so normalizeRoute + the seq-in-cat
+        // pass see the new categories.
+        const catMoves = new Map(moves.filter(m => m.category_code).map(m => [m.station_code, m.category_code]));
+        const catRevert = [];
+        vStations().forEach(s => {
+            if (catMoves.has(s.station_code) && s.category_code !== catMoves.get(s.station_code)) {
+                catRevert.push([s, s.category_code]);
+                s.category_code = catMoves.get(s.station_code);
+            }
+        });
+
+        const orderOverride = new Map(moves.map(m => [m.station_code, m.order]));
+        const routeChanges = normalizeRoute(vehicle, orderOverride);
+        const routeByCode = new Map(routeChanges.map(c => [c.station_code, c]));
+
+        // new route_sequence per station (in-memory), for the seq-in-cat pass
+        const memRoute = new Map();
+        vStations().forEach(s => {
+            const c = routeByCode.get(s.station_code);
+            memRoute.set(s.station_code, c ? c.route_sequence
+                : orderOverride.has(s.station_code) ? orderOverride.get(s.station_code)
+                : (parseInt(s.route_sequence, 10) || 9999));
+        });
+
+        // re-densify station_sequence_in_category per category, in new route order
+        const seqCount = new Map();
+        const seqInCat = new Map();
+        vStations().slice()
+            .sort((a, b) => memRoute.get(a.station_code) - memRoute.get(b.station_code)
+                || String(a.station_code).localeCompare(String(b.station_code)))
+            .forEach(s => {
+                const k = s.category_code || '';
+                const n = (seqCount.get(k) || 0) + 1;
+                seqCount.set(k, n);
+                seqInCat.set(s.station_code, n);
+            });
+
+        // build the write set — any station whose stored values would change
+        const writes = [];
+        vStations().forEach(s => {
+            const b = before.find(x => x.station_code === s.station_code);
+            if (!b) return;
+            const c = routeByCode.get(s.station_code);
+            const newRoute = c ? c.route_sequence : (parseInt(s.route_sequence, 10) || 9999);
+            const newPar = c ? !!c.parallel_with_previous : !!s.parallel_with_previous;
+            const newCat = s.category_code; // already applied
+            const newSeq = seqInCat.get(s.station_code);
+            if (b.route_sequence !== newRoute || b.category_code !== newCat
+                || b.station_sequence_in_category !== newSeq || (!!b.parallel_with_previous) !== newPar) {
+                writes.push({
+                    station_code: s.station_code, route_sequence: newRoute, category_code: newCat,
+                    station_sequence_in_category: newSeq, parallel_with_previous: newPar,
+                });
+            }
+        });
+
+        if (!writes.length) { catRevert.forEach(([s, c]) => { s.category_code = c; }); return; }
+
+        try {
+            await Promise.all(writes.map(w => Promise.all([
+                dbRef.from('kd2_process_stations').update({
+                    route_sequence: w.route_sequence,
+                    category_code: w.category_code,
+                    station_sequence_in_category: w.station_sequence_in_category,
+                    parallel_with_previous: w.parallel_with_previous,
+                }).eq('vehicle_type', vehicle).eq('station_code', w.station_code),
+                dbRef.from('kd2_process_routes').update({
+                    route_sequence: w.route_sequence,
+                    category_code: w.category_code,
+                }).eq('vehicle_type', vehicle).eq('station_code', w.station_code),
+            ])));
+            await writeAudit('UPDATE', 'kd2_process_stations', `${vehicle}:route-drag`, before, writes);
+            await refreshWorkspace({ force: true });
+            await helpers.reloadAll?.();
+        } catch (error) {
+            catRevert.forEach(([s, c]) => { s.category_code = c; });
+            toast('Failed to save the new order: ' + (error.message || error), 'error');
+            await refreshWorkspace({ force: true });
+        }
+    }
+
+    /** Persist a drag-reorder of one vehicle's category bands. `orderedCodes`
+     *  is the full new order of that vehicle's category_codes. Renumbers
+     *  category_sequence densely, then normalizeRoute so route_sequence agrees
+     *  with the new band order. */
+    async function persistCategoryOrder(vehicle, orderedCodes) {
+        if (!dbRef || !canManageKD2()) {
+            toast('Only planners and operators can edit KD2 processes.', 'error');
+            return;
+        }
+        const codes = (orderedCodes || []).filter(Boolean);
+        if (!codes.length) return;
+
+        const before = state.categories
+            .filter(c => c.vehicle_type === vehicle)
+            .map(c => ({ category_code: c.category_code, category_sequence: c.category_sequence }));
+        const writes = [];
+        codes.forEach((code, i) => {
+            const b = before.find(x => x.category_code === code);
+            if (b && b.category_sequence !== i + 1) writes.push({ category_code: code, category_sequence: i + 1 });
+        });
+        if (!writes.length) return;
+
+        try {
+            await Promise.all(writes.map(w =>
+                dbRef.from('kd2_process_categories')
+                    .update({ category_sequence: w.category_sequence })
+                    .eq('vehicle_type', vehicle).eq('category_code', w.category_code)));
+            // reflect new order in memory so normalizeRoute reads it
+            writes.forEach(w => {
+                const c = state.categories.find(x => x.vehicle_type === vehicle && x.category_code === w.category_code);
+                if (c) c.category_sequence = w.category_sequence;
+            });
+            const routeChanges = normalizeRoute(vehicle);
+            if (routeChanges.length) {
+                await Promise.all(routeChanges.map(rc => Promise.all([
+                    dbRef.from('kd2_process_stations').update({
+                        route_sequence: rc.route_sequence, parallel_with_previous: rc.parallel_with_previous,
+                    }).eq('vehicle_type', vehicle).eq('station_code', rc.station_code),
+                    dbRef.from('kd2_process_routes').update({ route_sequence: rc.route_sequence })
+                        .eq('vehicle_type', vehicle).eq('station_code', rc.station_code),
+                ])));
+            }
+            await writeAudit('UPDATE', 'kd2_process_categories', `${vehicle}:category-reorder`, before, writes);
+            await refreshWorkspace({ force: true });
+            await helpers.reloadAll?.();
+        } catch (error) {
+            toast('Failed to reorder categories: ' + (error.message || error), 'error');
+            await refreshWorkspace({ force: true });
         }
     }
 
@@ -8142,24 +8392,12 @@ window.PPMSModuleRuntime = (() => {
             getStationLaneOrder(vehicle) {
                 const stations = (state.stations || []).filter(s => !vehicle || s.vehicle_type === vehicle);
                 const rowKeyByCode = buildStationRowKeyMap(vehicle);
-                const DOWNSTREAM_CATS = new Set(['assembly', 'processing', 'final_test']);
-
-                const lineFor = (s) => {
-                    if (s.vehicle_type === 'K9') {
-                        if (s.component_group === 'Hull') return { line: 'Hull', rank: 0 };
-                        if (s.component_group === 'Turret') return { line: 'Turret', rank: 1 };
-                        return { line: 'Assembly & Processing & Testing', rank: 2 };
-                    }
-                    return DOWNSTREAM_CATS.has(s.category_code)
-                        ? { line: 'Assembly & Processing & Testing', rank: 1 }
-                        : { line: 'Structure', rank: 0 };
-                };
 
                 const order = new Map();
                 stations.forEach(s => {
                     const rowKey = rowKeyByCode.get(s.station_code) || s.station_name || s.station_code;
                     if (!rowKey || order.has(rowKey)) return;
-                    const { line, rank } = lineFor(s);
+                    const { line, rank } = stationTrack(s);
                     const routeSeq = parseInt(s.route_sequence, 10) || 9999;
                     order.set(rowKey, { line, sortKey: rank * 1000000 + routeSeq });
                 });
@@ -8200,6 +8438,21 @@ window.PPMSModuleRuntime = (() => {
                     });
                 return m;
             },
+            // Map<rowKey, string[]> — the station_code(s) behind each Gantt
+            // process-view row (parallel work centers sharing a row collapse
+            // to one rowKey with several codes). For the drag/reorder surface.
+            getStationRowKeyToCodes(vehicle) {
+                const codeToKey = buildStationRowKeyMap(vehicle);
+                const m = new Map();
+                (state.stations || [])
+                    .filter(s => !vehicle || s.vehicle_type === vehicle)
+                    .forEach(s => {
+                        const rk = codeToKey.get(s.station_code) || s.station_name || s.station_code;
+                        if (!m.has(rk)) m.set(rk, []);
+                        m.get(rk).push(s.station_code);
+                    });
+                return m;
+            },
             // Map<category_code, category_sequence> from the *live* category
             // config for one vehicle — so consumers can order/group by the
             // current category order without re-reading state.categories.
@@ -8217,5 +8470,10 @@ window.PPMSModuleRuntime = (() => {
         comparePlanRowsByLaneOrder,
         getPlanMoveRowsFromAnchor,
         getPlanMoveRowsFromAnchorByStation,
+        stationTrack,
+        normalizeRoute,
+        persistRouteOrder,
+        persistCategoryOrder,
+        canManageKD2,
     };
 })();

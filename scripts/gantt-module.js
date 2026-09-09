@@ -181,6 +181,12 @@
                     </div>
                     <div class="gantt-kd2-edit-tools" id="ganttKd2EditTools" style="display:none">
                         <button class="gmt-btn" id="gmtSelectLane" aria-pressed="false">Select Lane</button>
+                        <button class="gmt-btn" id="gmtReorderProcesses" aria-pressed="false" style="display:none" title="Move processes up/down, mark them parallel, add or remove a process">
+                            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" style="width:11px;height:11px">
+                                <path d="M4 2v10M4 2L2 4.5M4 2l2 2.5M10 12V2M10 12l-2-2.5M10 12l2-2.5" />
+                            </svg>
+                            Reorder Processes
+                        </button>
                         <button class="btn btn-ghost btn-sm" id="btnGanttNoWorkDays">No-work Days</button>
                     </div>
                     <button class="btn btn-primary btn-sm" id="btnAddBlock" style="gap:5px">
