@@ -7544,6 +7544,8 @@ body {
     align-items: center;
     gap: 12px;
     flex-wrap: wrap;
+    width: 100%;
+    flex-basis: 100%;
     padding: 8px 12px;
     background: rgba(245, 158, 11, .08);
     border: 1px solid rgba(245, 158, 11, .25);

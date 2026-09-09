@@ -16601,24 +16601,20 @@ const _origWireGantt = wireGanttControls;
 wireGanttControls = function () {
     _origWireGantt();
 
-    document.getElementById('btnGanttViewUnit')?.addEventListener('click', () => {
-        getModuleRuntime()?.setTimelineViewMode?.('unit', { skipRender: true });
+    const applyGanttViewMode = (mode) => {
+        getModuleRuntime()?.setTimelineViewMode?.(mode, { skipRender: true });
+        // Reorder-route is process-view only; keep the edit bar in step with
+        // the view without needing to close and reopen edit mode.
+        if (_ganttEditMode) syncGanttModuleEditControls();
         const gsEl = document.getElementById('ganttStart');
         const geEl = document.getElementById('ganttEnd');
         if (gsEl?.value && geEl?.value) {
             const data = applyActiveFilters(currentData);
             renderGantt(data, gsEl.value, geEl.value);
         }
-    });
-    document.getElementById('btnGanttViewProcess')?.addEventListener('click', () => {
-        getModuleRuntime()?.setTimelineViewMode?.('process', { skipRender: true });
-        const gsEl = document.getElementById('ganttStart');
-        const geEl = document.getElementById('ganttEnd');
-        if (gsEl?.value && geEl?.value) {
-            const data = applyActiveFilters(currentData);
-            renderGantt(data, gsEl.value, geEl.value);
-        }
-    });
+    };
+    document.getElementById('btnGanttViewUnit')?.addEventListener('click', () => applyGanttViewMode('unit'));
+    document.getElementById('btnGanttViewProcess')?.addEventListener('click', () => applyGanttViewMode('process'));
 
     document.getElementById('btnGanttEdit')?.addEventListener('click', () => setGanttEditMode(true));
     document.getElementById('btnGanttEditDone')?.addEventListener('click', () => {
