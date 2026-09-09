@@ -7715,8 +7715,8 @@ body {
     right: 20px;
     bottom: 20px;
     z-index: 9500;
-    width: 288px;
-    max-height: 340px;
+    width: 328px;
+    max-height: 360px;
     display: flex;
     flex-direction: column;
     background: var(--clr-surface);
@@ -7755,17 +7755,19 @@ body {
     padding: 4px 0;
 }
 .eap-row {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    padding: 5px 12px;
+    display: grid;
+    grid-template-columns: 9px auto 1fr;
+    grid-template-areas: "dot who when" "dot what what";
+    column-gap: 6px;
+    row-gap: 1px;
+    padding: 6px 12px;
     line-height: 1.35;
 }
 .eap-row + .eap-row { border-top: 1px solid color-mix(in srgb, var(--clr-border) 55%, transparent); }
-.eap-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; align-self: center; }
-.eap-who { font-weight: 700; flex-shrink: 0; }
-.eap-what { flex: 1; color: var(--clr-text); word-break: break-word; }
-.eap-when { font-size: .68rem; color: var(--clr-text-muted); flex-shrink: 0; }
+.eap-dot { grid-area: dot; width: 7px; height: 7px; border-radius: 50%; margin-top: 5px; }
+.eap-who { grid-area: who; font-weight: 700; }
+.eap-what { grid-area: what; color: var(--clr-text); word-break: break-word; }
+.eap-when { grid-area: when; font-size: .66rem; color: var(--clr-text-muted); text-align: right; }
 .eap-empty { padding: 14px 12px; color: var(--clr-text-muted); }
 
 .gantt-visual-placement-bar {

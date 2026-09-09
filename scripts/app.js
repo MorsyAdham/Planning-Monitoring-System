@@ -164,7 +164,7 @@ function startEditActivitySync() {
 }
 
 function _broadcastEditActivity(text, createdAt) {
-    if (!_editActivityChannel || !text) return;
+    if (!_editActivityChannel || !text || !_ganttEditMode) return;
     const u = getCurrentUser();
     _editActivityChannel.send({
         type: 'broadcast', event: 'edit',
@@ -312,32 +312,75 @@ async function auditLog(action, table, recId, before, after) {
     if (typeof _broadcastAuditEvent === 'function' && !AUDIT_NOTIF_EXCLUDED_ACTIONS.has(action)) {
         _broadcastAuditEvent(action, table, recId, user, createdAt);
     }
-    // Feed the shared "edit activity" panel while co-editing the plan.
+    // Feed the shared "edit activity" panel while co-editing the plan. Most
+    // edits broadcast a rich line from their own handler; this is the
+    // fallback for anything not covered (process-config edits, visual block
+    // placement, stray writes).
     if (_ganttEditMode && typeof _broadcastEditActivity === 'function' && _EDIT_ACTIVITY_TABLES.has(table)) {
-        _broadcastEditActivity(_editActivityText(action, table, recId, before, after), createdAt);
+        const rid = String(recId || '');
+        const covered = _EDIT_ACTIVITY_SKIP_RECIDS.has(rid) || rid.includes('route-drag')
+            || rid.includes('template') || rid.includes('undo') || rid.includes('redo');
+        if (!covered) _broadcastEditActivity(_editActivityText(action, table, recId, before, after), createdAt);
     }
 }
 
 const _EDIT_ACTIVITY_TABLES = new Set([
-    'kd2_plan', 'f100_plans', 'kd2_progress',
-    'kd2_process_stations', 'kd2_process_routes', 'kd2_process_categories',
+    'kd2_plan', 'f100_plans', 'assembly_plan', 'kd2_progress',
+    'kd2_process_stations', 'kd2_process_routes', 'kd2_process_categories', 'kd2_process_lead_times',
 ]);
+// Handlers that broadcast their own detailed line — don't double-report from auditLog.
+const _EDIT_ACTIVITY_SKIP_RECIDS = new Set(['batch-move', 'undo', 'redo', 'batch-delete']);
+
+function _fmtActivityDate(d) {
+    if (!d) return '';
+    try {
+        return new Date(d + (String(d).length === 10 ? 'T00:00:00' : '')).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    } catch { return String(d); }
+}
+
+/** "K9 M2 · RT (Hull)" from a currentData plan row, or a plain-id lookup. */
+function _planRowLabel(rowOrId) {
+    const row = (rowOrId && typeof rowOrId === 'object')
+        ? rowOrId
+        : currentData.find(r => String(r.id) === String(rowOrId));
+    if (!row) return 'a block';
+    if (isF100KD2Module()) {
+        const unit = `${row.vehicle_type || ''} #${row.serial_number ?? row.vehicle_no ?? '?'}`.trim();
+        const proc = row.process_name || row.part_name || row.process_station || '';
+        return proc ? `${unit} · ${proc}` : unit;
+    }
+    const unit = `${row.vehicle || row.vehicle_type || ''} ${row.vehicle_no ?? row.unit_label ?? ''}`.trim();
+    const batt = row.battalion_code ? `${row.battalion_code} ` : '';
+    const proc = row.process_station || row.station_name || row.station_code || '';
+    return `${batt}${unit}${proc ? ' · ' + proc : ''}`.trim();
+}
 
 function _editActivityText(action, table, recId, before, after) {
-    const rid = String(recId || '');
-    const st = after?.station_code || before?.station_code || after?.process_station || before?.process_station || '';
-    const stn = st ? ` ${st}` : '';
-    if (rid.includes('route-drag')) return 'reordered the route';
-    if (table === 'kd2_plan' || table === 'f100_plans') {
-        if (action === 'INSERT') return `added a block${stn}`;
-        if (action === 'DELETE') return `removed a block${stn}`;
-        const ns = after?.planned_start_date || after?.start_date;
+    if (table === 'kd2_plan' || table === 'f100_plans' || table === 'assembly_plan' || table === 'kd2_progress') {
+        const src = after || before || {};
+        const known = currentData.find(r => String(r.id) === String(recId));
+        const label = _planRowLabel(known || {
+            vehicle: src.vehicle_type || src.vehicle,
+            vehicle_no: src.unit_label ?? src.unit_serial ?? src.vehicle_no,
+            battalion_code: src.battalion_code || '',
+            process_station: src.station_code || src.process_station || src.station_name,
+        });
+        if (table === 'kd2_progress') return `updated actuals for ${label}`;
+        if (action === 'INSERT') {
+            const d = src.planned_start_date || src.start_date;
+            return `added ${label}${d ? ` (${_fmtActivityDate(d)})` : ''}`;
+        }
+        if (action === 'DELETE') return `removed ${label}`;
+        const ns = src.planned_start_date || src.start_date;
         const os = before?.planned_start_date || before?.start_date;
-        if (ns && os !== ns) return `moved${stn} → ${ns}`;
-        return `updated a block${stn}`;
+        if (ns && os && os !== ns) return `moved ${label} from ${_fmtActivityDate(os)} → ${_fmtActivityDate(ns)}`;
+        return `updated ${label}`;
     }
-    if (table === 'kd2_progress') return `logged actuals${stn}`;
-    if (table.startsWith('kd2_process')) return 'changed process config';
+    const st = after?.station_name || before?.station_name || after?.station_code || before?.station_code
+        || after?.category_name || after?.category_code || '';
+    if (table === 'kd2_process_lead_times') return `changed the lead time for ${st || 'a process'}`;
+    if (table === 'kd2_process_categories') return `edited category ${st || ''}`.trim();
+    if (table.startsWith('kd2_process')) return `edited process ${st || 'config'}`.trim();
     return `${String(action).toLowerCase()} ${table}`;
 }
 
@@ -5860,6 +5903,9 @@ async function saveActualStart(planId, dateValue) {
             row.progress.actual_start_date = valueToSave;
             if (!updateTableRowInPlace(planId)) refreshAllViews();
             else syncSiblingViews();
+            _broadcastEditActivity(valueToSave
+                ? `logged actual start for ${_planRowLabel(row)} (${_fmtActivityDate(valueToSave)})`
+                : `cleared the actual start for ${_planRowLabel(row)}`);
         } else {
             const pos = saveScrollPos();
             await loadData();
@@ -5952,6 +5998,9 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
             row2.progress.completion_date = valueToSave;
             if (!updateTableRowInPlace(planId)) refreshAllViews();
             else syncSiblingViews();
+            _broadcastEditActivity(valueToSave
+                ? `marked ${_planRowLabel(row2)} complete (${_fmtActivityDate(valueToSave)})`
+                : `reopened ${_planRowLabel(row2)}`);
         } else {
             const pos = saveScrollPos();
             await loadData();
@@ -16635,6 +16684,15 @@ async function savePlanChanges(changes) {
         );
 
         showToast(`${changes.length} block${changes.length > 1 ? 's' : ''} rescheduled ✓`, 'success');
+        if (_ganttEditMode) {
+            if (changes.length === 1) {
+                const c = changes[0];
+                _broadcastEditActivity(`moved ${_planRowLabel(c.id)} from ${_fmtActivityDate(c.oldStart)} → ${_fmtActivityDate(c.newStart)}`);
+            } else {
+                const first = _planRowLabel(changes[0].id);
+                _broadcastEditActivity(`rescheduled ${changes.length} blocks (${first}${changes.length > 1 ? ', …' : ''})`);
+            }
+        }
         _pushUndo(changes);
         refreshAllViews();
     } catch (err) {
@@ -17296,6 +17354,11 @@ async function deleteSelectedGanttBlocks() {
         });
         _syncSelectedBlockUi();
         showToast(`${selectedTasks.length} selected block${selectedTasks.length > 1 ? 's' : ''} deleted.`, 'success');
+        if (_ganttEditMode) {
+            _broadcastEditActivity(selectedTasks.length === 1
+                ? `deleted ${_planRowLabel(selectedTasks[0])}`
+                : `deleted ${selectedTasks.length} blocks (${_planRowLabel(selectedTasks[0])}, …)`);
+        }
 
         const gsEl = document.getElementById('ganttStart');
         const geEl = document.getElementById('ganttEnd');
@@ -17369,6 +17432,7 @@ async function handleKd2ReorderClick(btn) {
             }
             resetKd2LaneOrderCache();
             refreshAllViews();
+            _broadcastEditActivity(`removed ${rowKey} from the ${vehicle} route`);
         } catch (err) {
             showToast('Remove failed: ' + (err.message || err), 'error');
         }
@@ -17424,6 +17488,9 @@ async function handleKd2ReorderClick(btn) {
         showToast('Could not resolve this row for reordering.', 'error');
         return;
     }
+    const nextTo = action === 'up' ? slots[idx - 1]?.rowKeys[0]
+        : action === 'down' ? slots[idx + 1]?.rowKeys[0]
+        : slots[idx - 1]?.rowKeys[0];
     try {
         const changed = await rt.persistRouteOrder(vehicle, moves);
         if (changed === false) {
@@ -17431,6 +17498,12 @@ async function handleKd2ReorderClick(btn) {
         } else {
             resetKd2LaneOrderCache();
             refreshAllViews();
+            const verb = action === 'up' ? `moved ${rowKey} before ${nextTo || 'the previous step'}`
+                : action === 'down' ? `moved ${rowKey} after ${nextTo || 'the next step'}`
+                : (slots[idx].rowKeys.length > 1
+                    ? `split ${rowKey} out of its parallel group`
+                    : `set ${rowKey} to run parallel with ${nextTo || 'the row above'}`);
+            _broadcastEditActivity(`${verb} in the ${vehicle} route`);
         }
     } catch (err) {
         showToast('Reorder failed: ' + (err.message || err), 'error');
@@ -17760,6 +17833,7 @@ async function saveAddBlock() {
         });
 
         showToast(`"${station}" added to ${vehicle} ${unit}`, 'success');
+        _broadcastEditActivity(`added ${vehicle} ${unit} · ${station} (${_fmtActivityDate(adjStart)})`);
         closeAddBlockModal();
 
         const gsEl = document.getElementById('ganttStart');
