@@ -17102,10 +17102,14 @@ async function handleKd2ReorderClick(btn) {
         const codes = (box.dataset.stationCodes || '').split(',').filter(Boolean);
         if (!codes.length) { showToast('No station is bound to this row.', 'error'); return; }
         try {
-            for (const code of codes) await rt.deleteProcessStation?.(vehicle, code);
-            const gs = document.getElementById('ganttStart');
-            const ge = document.getElementById('ganttEnd');
-            renderGantt(currentData, gs?.value, ge?.value);
+            for (const code of codes) {
+                // In a plan version, remove only from this version; otherwise
+                // retire the catalog station.
+                const handled = await rt.removeStationFromVersion?.(vehicle, code);
+                if (!handled) await rt.deleteProcessStation?.(vehicle, code);
+            }
+            resetKd2LaneOrderCache();
+            refreshAllViews();
         } catch (err) {
             showToast('Remove failed: ' + (err.message || err), 'error');
         }

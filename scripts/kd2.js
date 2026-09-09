@@ -72,6 +72,13 @@ window.PPMSModuleRuntime = (() => {
         routes: [],
         leadTimes: [],
         vehicleUnits: [],
+        // Per plan-version route order: Map<vehicle, Map<station_code,
+        // {route_sequence, parallel_with_previous, category_code}>>. Frozen on
+        // kd2_plan at generation, edited per-version by the Gantt reorder
+        // surface. When a station isn't here (new version pre-generation, or a
+        // station added to the catalog but not this version) the global
+        // kd2_process_stations order is the fallback.
+        versionRoute: new Map(),
         nonWorkDays: [],
         nonWorkDaySet: new Set(),
         routeVehicle: 'K9',
@@ -312,12 +319,23 @@ window.PPMSModuleRuntime = (() => {
      *  as the ordering hint.
      */
     function normalizeRoute(vehicle, orderOverride) {
-        const stations = (state.stations || []).filter(s => s.vehicle_type === vehicle);
+        const vRoute = state.versionRoute?.get(vehicle);
+        const versionMode = !!(vRoute && vRoute.size);
+        // In version mode only the stations that belong to the active version
+        // are ordered — the global catalog may hold more.
+        let stations = (state.stations || []).filter(s => s.vehicle_type === vehicle);
+        if (versionMode) stations = stations.filter(s => vRoute.has(s.station_code));
         if (!stations.length) return [];
 
+        const baseRoute = s => versionMode
+            ? (vRoute.get(s.station_code)?.route_sequence ?? 9999)
+            : (parseInt(s.route_sequence, 10) || 9999);
+        const basePar = s => versionMode
+            ? !!vRoute.get(s.station_code)?.parallel_with_previous
+            : !!s.parallel_with_previous;
         const cur = s => (orderOverride && orderOverride.has(s.station_code))
             ? orderOverride.get(s.station_code)
-            : (parseInt(s.route_sequence, 10) || 9999);
+            : baseRoute(s);
         const curCat = s => parseInt(s.station_sequence_in_category, 10) || 9999;
         const withinCmp = (a, b) => cur(a) - cur(b) || curCat(a) - curCat(b)
             || String(a.station_code).localeCompare(String(b.station_code));
@@ -355,8 +373,8 @@ window.PPMSModuleRuntime = (() => {
         stations.forEach(s => {
             const slot = bySlot.get(s.station_code);
             if (!slot) return;
-            if (cur(s) !== slot.route_sequence
-                || (!!s.parallel_with_previous) !== (!!slot.parallel_with_previous)) {
+            if (baseRoute(s) !== slot.route_sequence
+                || basePar(s) !== (!!slot.parallel_with_previous)) {
                 changes.push({
                     station_code: s.station_code,
                     route_sequence: slot.route_sequence,
@@ -1034,6 +1052,9 @@ window.PPMSModuleRuntime = (() => {
 
     async function loadData(db, filters) {
         if (!state.stations.length) await loadWorkspaceData();
+        // Route order is per plan version and can change from another user's
+        // reorder without touching the config tables — refresh it every load.
+        await loadVersionRoute();
         let query = PlanVersions.scoped(db.from('kd2_plan_live').select('*'), 'kd2');
         // battalion/vehicle/unit/k9Component/weekRanges are arrays (possibly empty,
         // meaning "all") — the filter bar supports multi-select on these fields.
@@ -1204,6 +1225,53 @@ window.PPMSModuleRuntime = (() => {
         state.vehicleUnits = vehicleUnits;
         state.templateLayouts = templateLayouts;
         syncNonWorkDays(nonWorkDays);
+        await loadVersionRoute({ force: true });
+    }
+
+    /** Per-version route order — one dedup'd row per (vehicle, station) from the
+     *  active plan version's kd2_plan rows. All of a version's units share the
+     *  same route_sequence per station (frozen at generation, and the reorder
+     *  surface writes every unit's row together), so first-wins dedup is safe. */
+    let _versionRouteLoadedAt = 0;
+    async function loadVersionRoute({ force = false } = {}) {
+        if (!force && Date.now() - _versionRouteLoadedAt < 2000) return;
+        _versionRouteLoadedAt = Date.now();
+        state.versionRoute = new Map();
+        if (!dbRef || !PlanVersions?.getActiveId) return;
+        // Only meaningful once a specific version is active — otherwise the
+        // query has no version filter and would blend every version's rows.
+        if (!PlanVersions.getActiveId('kd2')) return;
+        try {
+            const rows = await queryAll(
+                PlanVersions.scoped(
+                    dbRef.from('kd2_plan').select('station_code, vehicle_type, route_sequence, parallel_with_previous, category_code'),
+                    'kd2'
+                )
+            );
+            rows.forEach(r => {
+                if (!r.vehicle_type || !r.station_code) return;
+                if (!state.versionRoute.has(r.vehicle_type)) state.versionRoute.set(r.vehicle_type, new Map());
+                const m = state.versionRoute.get(r.vehicle_type);
+                if (!m.has(r.station_code)) {
+                    m.set(r.station_code, {
+                        route_sequence: parseInt(r.route_sequence, 10) || 9999,
+                        parallel_with_previous: !!r.parallel_with_previous,
+                        category_code: r.category_code || null,
+                    });
+                }
+            });
+        } catch (error) {
+            // parallel_with_previous column missing until migration 51 runs — keep
+            // the global-config path working in the meantime.
+            console.warn('KD2 per-version route load skipped:', error.message);
+            state.versionRoute = new Map();
+        }
+    }
+
+    /** {route_sequence, parallel_with_previous} for a station in the active
+     *  version, or null to fall back to the global catalog. */
+    function versionRouteFor(vehicle, stationCode) {
+        return state.versionRoute?.get(vehicle)?.get(stationCode) || null;
     }
 
     function inputFor(battalionId, vehicleType) {
@@ -1608,6 +1676,9 @@ window.PPMSModuleRuntime = (() => {
         moves = (moves || []).filter(m => m && m.station_code);
         if (!moves.length) return;
 
+        const vRoute = state.versionRoute?.get(vehicle);
+        if (vRoute && vRoute.size) return persistVersionRouteOrder(vehicle, moves, vRoute);
+
         const vStations = () => state.stations.filter(s => s.vehicle_type === vehicle);
         const before = vStations().map(s => ({
             station_code: s.station_code, route_sequence: s.route_sequence,
@@ -1685,6 +1756,53 @@ window.PPMSModuleRuntime = (() => {
             return true;
         } catch (error) {
             catRevert.forEach(([s, c]) => { s.category_code = c; });
+            toast('Failed to save the new order: ' + (error.message || error), 'error');
+            await refreshWorkspace({ force: true });
+            throw error;
+        }
+    }
+
+    /** Version-scoped reorder: writes route_sequence / parallel_with_previous
+     *  (and category_code when a band move is included) onto every kd2_plan row
+     *  of the active plan version for the moved stations. Other versions and
+     *  the global catalog are untouched. */
+    async function persistVersionRouteOrder(vehicle, moves, vRoute) {
+        const before = [...vRoute.entries()].map(([code, v]) => ({
+            station_code: code, route_sequence: v.route_sequence,
+            parallel_with_previous: v.parallel_with_previous, category_code: v.category_code,
+        }));
+        const catMoves = new Map(moves.filter(m => m.category_code).map(m => [m.station_code, m.category_code]));
+        const orderOverride = new Map(moves.map(m => [m.station_code, m.order]));
+        const routeChanges = normalizeRoute(vehicle, orderOverride);
+        const routeByCode = new Map(routeChanges.map(c => [c.station_code, c]));
+
+        const writes = [];
+        vRoute.forEach((v, code) => {
+            const c = routeByCode.get(code);
+            const newRoute = c ? c.route_sequence : v.route_sequence;
+            const newPar = c ? !!c.parallel_with_previous : !!v.parallel_with_previous;
+            const newCat = catMoves.get(code) ?? v.category_code;
+            if (v.route_sequence !== newRoute || (!!v.parallel_with_previous) !== newPar || (v.category_code ?? null) !== (newCat ?? null)) {
+                writes.push({ station_code: code, route_sequence: newRoute, parallel_with_previous: newPar, category_code: newCat });
+            }
+        });
+        if (!writes.length) return false;
+
+        try {
+            await Promise.all(writes.map(w => {
+                const patch = { route_sequence: w.route_sequence, parallel_with_previous: w.parallel_with_previous };
+                if (w.category_code != null) patch.category_code = w.category_code;
+                return PlanVersions.scoped(dbRef.from('kd2_plan').update(patch), 'kd2')
+                    .eq('vehicle_type', vehicle).eq('station_code', w.station_code);
+            }));
+            await writeAudit('UPDATE', 'kd2_plan', `${vehicle}:version-route-drag`, before, writes);
+            // Patch the in-memory version map — the caller re-renders from it.
+            writes.forEach(w => {
+                const v = vRoute.get(w.station_code);
+                if (v) { v.route_sequence = w.route_sequence; v.parallel_with_previous = w.parallel_with_previous; if (w.category_code != null) v.category_code = w.category_code; }
+            });
+            return true;
+        } catch (error) {
             toast('Failed to save the new order: ' + (error.message || error), 'error');
             await refreshWorkspace({ force: true });
             throw error;
@@ -2059,6 +2177,28 @@ window.PPMSModuleRuntime = (() => {
         } catch (error) {
             setProcessError(error.message);
         }
+    }
+
+    /** Remove a process from the active plan version only — deletes that
+     *  version's kd2_plan rows for the station, leaves the global catalog and
+     *  every other version alone. Returns true if it handled the removal. */
+    async function removeStationFromVersion(vehicle, stationCode) {
+        const vRoute = state.versionRoute?.get(vehicle);
+        if (!vRoute || !vRoute.has(stationCode)) return false;
+        if (!canManageKD2()) { toast('Only planners and operators can edit KD2 processes.', 'error'); return true; }
+        const name = state.stations.find(s => s.vehicle_type === vehicle && s.station_code === stationCode)?.station_name || stationCode;
+        if (!window.confirm(`Remove "${name}" from this plan version?\nThe process stays in the catalog and in other versions.`)) return true;
+        try {
+            const { error } = await PlanVersions.scoped(dbRef.from('kd2_plan').delete(), 'kd2')
+                .eq('vehicle_type', vehicle).eq('station_code', stationCode);
+            if (error) throw error;
+            await writeAudit('DELETE', 'kd2_plan', `${vehicle}:${stationCode}:version-remove`, { station_code: stationCode }, null);
+            vRoute.delete(stationCode);
+            toast(`"${name}" removed from this version.`, 'success');
+        } catch (error) {
+            toast('Remove failed: ' + (error.message || error), 'error');
+        }
+        return true;
     }
 
     async function deleteProcessStation(vehicle, stationCode) {
@@ -6779,7 +6919,10 @@ window.PPMSModuleRuntime = (() => {
     }
 
     function routeSequenceValue(row) {
-        const live = _liveStationSeq(row?.vehicle_type || row?.vehicle, row?.station_code);
+        const vt = row?.vehicle_type || row?.vehicle;
+        const vr = versionRouteFor(vt, row?.station_code);
+        if (vr) return vr.route_sequence;
+        const live = _liveStationSeq(vt, row?.station_code);
         return live ? live.route : (parseInt(row?.route_sequence, 10) || 9999);
     }
 
@@ -8129,7 +8272,9 @@ window.PPMSModuleRuntime = (() => {
                     const rowKey = rowKeyByCode.get(s.station_code) || s.station_name || s.station_code;
                     if (!rowKey || order.has(rowKey)) return;
                     const { line, rank } = stationTrack(s);
-                    const routeSeq = parseInt(s.route_sequence, 10) || 9999;
+                    // Active plan version's frozen/edited order, else the global catalog.
+                    const vr = versionRouteFor(s.vehicle_type, s.station_code);
+                    const routeSeq = vr ? vr.route_sequence : (parseInt(s.route_sequence, 10) || 9999);
                     order.set(rowKey, { line, sortKey: rank * 1000000 + routeSeq });
                 });
                 return order;
@@ -8206,6 +8351,7 @@ window.PPMSModuleRuntime = (() => {
         persistRouteOrder,
         persistCategoryOrder,
         deleteProcessStation,
+        removeStationFromVersion,
         openProcessModal,
         canManageKD2,
     };
