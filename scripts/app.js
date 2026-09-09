@@ -15561,6 +15561,7 @@ let _ganttSatAsked = false;
 let _ganttMoveMode = 'single';
 let _ganttSelectLaneMode = false;
 let _ganttReorderMode = false;
+let _ganttEditTask = 'reschedule'; // 'reschedule' | 'add' | 'reorder'
 let _openGanttBlockMenuPlanId = null;
 const _selectedGanttPlanIds = new Set();
 const _laneOrder = {};
@@ -15923,8 +15924,13 @@ function _syncSelectedBlockUi() {
     const count = _selectedGanttPlanIds.size;
     const countEl = document.getElementById('ganttSelectedCount');
     const delBtn = document.getElementById('btnDeleteSelectedBlocks');
+    const selStrip = document.getElementById('ganttSelStrip');
     if (countEl) countEl.textContent = String(count);
-    if (delBtn) delBtn.disabled = count === 0;
+    if (delBtn) {
+        delBtn.disabled = count === 0;
+        delBtn.textContent = count > 0 ? `Delete ${count} block${count === 1 ? '' : 's'}` : 'Delete selected';
+    }
+    if (selStrip) selStrip.hidden = count === 0;
     document.querySelectorAll('[data-gantt-lane-select]').forEach(btn => {
         const planId = btn.dataset.ganttLaneSelect;
         const anchor = currentData.find(row => String(row.id) === planId);
@@ -15965,30 +15971,54 @@ function setGanttLaneSelectMode(on) {
 function syncGanttModuleEditControls() {
     const isKd2 = isKD2Module() || isF100KD2Module();
     const isF100 = isF100KD2Module();
-    const kd2Tools = document.getElementById('ganttKd2EditTools');
     const planBtn = document.getElementById('gmtPlan');
     const fromBlockBtn = document.getElementById('gmtFromBlock');
     const fromBlockLaneBtn = document.getElementById('gmtFromBlockLane');
-    const satWrap = document.getElementById('ganttSatToggleWrap');
     const visualAddShell = document.getElementById('ganttVisualAddShell');
     const viewToggleWrap = document.getElementById('ganttViewToggleWrap');
     const templateBtn = document.getElementById('btnF100AddTemplate');
-    // "From Block · Lane" only makes sense in Process View — its whole point
-    // is moving everyone else queued at the same station, and a Unit View
-    // row already IS a single unit's whole route (that's what plain "From
-    // Block" already covers there).
+    const noWorkBtn = document.getElementById('btnGanttNoWorkDays');
+    const satWrap = document.getElementById('ganttSatToggleWrap');
     const isKd2ProcessView = isKD2Module() && getModuleRuntime()?.currentTimelineViewMode?.() === 'process';
-    if (kd2Tools) kd2Tools.style.display = _ganttEditMode && isKd2 ? 'inline-flex' : 'none';
-    if (visualAddShell) visualAddShell.style.display = _ganttEditMode && isKd2 ? 'inline-flex' : 'none';
-    if (templateBtn) templateBtn.style.display = _ganttEditMode && isF100 ? '' : 'none';
-    if (planBtn) planBtn.style.display = isKd2 ? 'none' : '';
-    if (fromBlockBtn) fromBlockBtn.style.display = isKd2 ? '' : 'none';
-    if (fromBlockLaneBtn) fromBlockLaneBtn.style.display = isKd2ProcessView ? '' : 'none';
-    if (satWrap) satWrap.style.display = isKd2 ? 'none' : '';
-    if (viewToggleWrap) viewToggleWrap.style.display = isKd2 ? '' : 'none';
+
+    // ── Which edit task is active ────────────────────────────────
+    const reorderBtn = document.getElementById('gmsReorder');
+    const canReorder = _ganttEditMode && isKd2ProcessView;
+    if (reorderBtn) reorderBtn.style.display = canReorder ? '' : 'none';
+    if (!canReorder && _ganttEditTask === 'reorder') _ganttEditTask = 'reschedule';
+    _ganttReorderMode = _ganttEditTask === 'reorder';
+
+    document.querySelectorAll('#ganttModeSeg .gms-btn').forEach(b => {
+        const on = b.dataset.task === _ganttEditTask;
+        b.classList.toggle('gms-active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    const ctx = {
+        reschedule: document.getElementById('ganttCtxReschedule'),
+        add: document.getElementById('ganttCtxAdd'),
+        reorder: document.getElementById('ganttCtxReorder'),
+    };
+    Object.entries(ctx).forEach(([task, el]) => { if (el) el.hidden = task !== _ganttEditTask; });
+
+    // Leaving Add cancels any armed visual placement.
+    if (_ganttEditTask !== 'add' && getModuleRuntime()?.toggleTimelineVisualMenu) {
+        getModuleRuntime().toggleTimelineVisualMenu(false);
+    }
     if ((!_ganttEditMode || !isKd2) && getModuleRuntime()?.toggleTimelineVisualMenu) {
         getModuleRuntime().toggleTimelineVisualMenu(false);
     }
+
+    // ── Reschedule: move-scope pills ─────────────────────────────
+    if (visualAddShell) visualAddShell.style.display = isKd2 ? 'inline-flex' : 'none';
+    if (templateBtn) templateBtn.style.display = isF100 ? '' : 'none';
+    if (planBtn) planBtn.style.display = isKd2 ? 'none' : '';
+    if (fromBlockBtn) fromBlockBtn.style.display = isKd2 ? '' : 'none';
+    if (fromBlockLaneBtn) fromBlockLaneBtn.style.display = isKd2ProcessView ? '' : 'none';
+    if (viewToggleWrap) viewToggleWrap.style.display = isKd2 ? '' : 'none';
+    // Saturdays / No-work Days live in the Options popover; No-work Days is KD2-only.
+    if (satWrap) satWrap.style.display = isKd2 ? 'none' : '';
+    if (noWorkBtn) noWorkBtn.style.display = isKd2 ? '' : 'none';
+
     if (isKd2 && _ganttMoveMode === 'plan') _ganttMoveMode = 'single';
     if (!isKd2 && _ganttMoveMode === 'from-block') _ganttMoveMode = 'single';
     if (!isKd2ProcessView && _ganttMoveMode === 'from-block-lane') _ganttMoveMode = 'from-block';
@@ -15999,31 +16029,32 @@ function syncGanttModuleEditControls() {
             btn.classList.toggle('gmt-active', btn.dataset.mode === _ganttMoveMode);
         });
     }
-    const btn = document.getElementById('gmtSelectLane');
-    if (btn) {
-        btn.classList.toggle('gmt-active', _ganttSelectLaneMode);
-        btn.setAttribute('aria-pressed', _ganttSelectLaneMode ? 'true' : 'false');
+    const laneBtn = document.getElementById('gmtSelectLane');
+    if (laneBtn) {
+        laneBtn.style.display = isKd2 ? '' : 'none';
+        laneBtn.classList.toggle('gmt-active', _ganttSelectLaneMode);
+        laneBtn.setAttribute('aria-pressed', _ganttSelectLaneMode ? 'true' : 'false');
     }
-    // Reorder-Processes toggle — KD2 process view only.
-    const reBtn = document.getElementById('gmtReorderProcesses');
-    if (reBtn) {
-        const canReorder = _ganttEditMode && isKd2ProcessView;
-        reBtn.style.display = canReorder ? '' : 'none';
-        if (!canReorder && _ganttReorderMode) _ganttReorderMode = false;
-        reBtn.classList.toggle('gmt-active', _ganttReorderMode);
-        reBtn.setAttribute('aria-pressed', _ganttReorderMode ? 'true' : 'false');
-    }
+
+    const scopeLabel = document.getElementById('ganttReorderScope');
+    if (scopeLabel) scopeLabel.textContent = 'Route order · this version';
+
     document.body.classList.toggle('gantt-reorder-active', _ganttEditMode && _ganttReorderMode);
 }
 
 /* ── Toggle edit mode ────────────────────────────────────────────── */
 function setGanttEditMode(on) {
     _ganttEditMode = on;
-    if (!on) {
+    if (on) {
+        _ganttEditTask = 'reschedule';
+    } else {
         _openGanttBlockMenuPlanId = null;
         _selectedGanttPlanIds.clear();
         _ganttSelectLaneMode = false;
         _ganttReorderMode = false;
+        _ganttEditTask = 'reschedule';
+        const pop = document.getElementById('ganttOptionsPopover');
+        if (pop) { pop.hidden = true; document.getElementById('btnGanttOptions')?.setAttribute('aria-expanded', 'false'); }
         if (isF100KD2Module()) cancelF100Placement();
     }
     document.getElementById('ganttEditBar').style.display = on ? 'flex' : 'none';
@@ -16611,19 +16642,45 @@ wireGanttControls = function () {
     document.getElementById('gmtSelectLane')?.addEventListener('click', () => {
         setGanttLaneSelectMode(!_ganttSelectLaneMode);
     });
-    document.getElementById('gmtReorderProcesses')?.addEventListener('click', () => {
-        _ganttReorderMode = !_ganttReorderMode;
-        if (_ganttReorderMode) {
-            _ganttSelectLaneMode = false;
-            _ganttMoveMode = 'single';
-            getModuleRuntime()?.toggleTimelineVisualMenu?.(false);
-        }
-        document.body.classList.toggle('gantt-reorder-active', _ganttEditMode && _ganttReorderMode);
+
+    // Primary edit-task switch (Reschedule / Add work / Reorder route)
+    document.getElementById('ganttModeSeg')?.addEventListener('click', function (e) {
+        const btn = e.target.closest('.gms-btn');
+        if (!btn || btn.style.display === 'none') return;
+        const task = btn.dataset.task;
+        if (task === _ganttEditTask) return;
+        _ganttEditTask = task;
+        if (task !== 'reschedule') _ganttSelectLaneMode = false;
+        if (task === 'reorder') _ganttMoveMode = 'single';
+        if (task !== 'add') getModuleRuntime()?.toggleTimelineVisualMenu?.(false);
         syncGanttModuleEditControls();
         const gsEl = document.getElementById('ganttStart');
         const geEl = document.getElementById('ganttEnd');
         renderGantt(currentData, gsEl?.value, geEl?.value);
     });
+
+    // Options popover (Saturdays + No-work days)
+    const optBtn = document.getElementById('btnGanttOptions');
+    optBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const pop = document.getElementById('ganttOptionsPopover');
+        if (!pop) return;
+        pop.hidden = !pop.hidden;
+        optBtn.setAttribute('aria-expanded', pop.hidden ? 'false' : 'true');
+    });
+    document.addEventListener('click', (e) => {
+        const pop = document.getElementById('ganttOptionsPopover');
+        if (!pop || pop.hidden) return;
+        if (e.target.closest('#ganttOptionsPopover') || e.target.closest('#btnGanttOptions')) return;
+        pop.hidden = true;
+        optBtn?.setAttribute('aria-expanded', 'false');
+    });
+
+    document.getElementById('btnGanttClearSel')?.addEventListener('click', () => {
+        _selectedGanttPlanIds.clear();
+        _syncSelectedBlockUi();
+    });
+
     document.getElementById('btnGanttNoWorkDays')?.addEventListener('click', () => {
         if (!isKD2Module() && !isF100KD2Module()) return;
         getModuleRuntime()?.openNoWorkModal?.();
