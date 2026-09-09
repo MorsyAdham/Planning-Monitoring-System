@@ -1630,29 +1630,11 @@ window.PPMSModuleRuntime = (() => {
         const routeChanges = normalizeRoute(vehicle, orderOverride);
         const routeByCode = new Map(routeChanges.map(c => [c.station_code, c]));
 
-        // new route_sequence per station (in-memory), for the seq-in-cat pass
-        const memRoute = new Map();
-        vStations().forEach(s => {
-            const c = routeByCode.get(s.station_code);
-            memRoute.set(s.station_code, c ? c.route_sequence
-                : orderOverride.has(s.station_code) ? orderOverride.get(s.station_code)
-                : (parseInt(s.route_sequence, 10) || 9999));
-        });
-
-        // re-densify station_sequence_in_category per category, in new route order
-        const seqCount = new Map();
-        const seqInCat = new Map();
-        vStations().slice()
-            .sort((a, b) => memRoute.get(a.station_code) - memRoute.get(b.station_code)
-                || String(a.station_code).localeCompare(String(b.station_code)))
-            .forEach(s => {
-                const k = s.category_code || '';
-                const n = (seqCount.get(k) || 0) + 1;
-                seqCount.set(k, n);
-                seqInCat.set(s.station_code, n);
-            });
-
-        // build the write set — any station whose stored values would change
+        // build the write set — any station whose stored values would change.
+        // station_sequence_in_category is deliberately NOT rewritten here: it
+        // carries a per-category unique constraint, so re-densifying it across
+        // many rows in parallel throws 409s, and route_sequence is what every
+        // consumer sorts by now anyway.
         const writes = [];
         vStations().forEach(s => {
             const b = before.find(x => x.station_code === s.station_code);
@@ -1661,12 +1643,11 @@ window.PPMSModuleRuntime = (() => {
             const newRoute = c ? c.route_sequence : (parseInt(s.route_sequence, 10) || 9999);
             const newPar = c ? !!c.parallel_with_previous : !!s.parallel_with_previous;
             const newCat = s.category_code; // already applied
-            const newSeq = seqInCat.get(s.station_code);
             if (b.route_sequence !== newRoute || b.category_code !== newCat
-                || b.station_sequence_in_category !== newSeq || (!!b.parallel_with_previous) !== newPar) {
+                || (!!b.parallel_with_previous) !== newPar) {
                 writes.push({
-                    station_code: s.station_code, route_sequence: newRoute, category_code: newCat,
-                    station_sequence_in_category: newSeq, parallel_with_previous: newPar,
+                    station_code: s.station_code, route_sequence: newRoute,
+                    category_code: newCat, parallel_with_previous: newPar,
                 });
             }
         });
@@ -1678,7 +1659,6 @@ window.PPMSModuleRuntime = (() => {
                 dbRef.from('kd2_process_stations').update({
                     route_sequence: w.route_sequence,
                     category_code: w.category_code,
-                    station_sequence_in_category: w.station_sequence_in_category,
                     parallel_with_previous: w.parallel_with_previous,
                 }).eq('vehicle_type', vehicle).eq('station_code', w.station_code),
                 dbRef.from('kd2_process_routes').update({

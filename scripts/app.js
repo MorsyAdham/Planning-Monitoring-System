@@ -17022,11 +17022,13 @@ async function handleKd2ReorderClick(btn) {
     }
     try {
         const changed = await rt.persistRouteOrder(vehicle, moves);
-        const gsEl = document.getElementById('ganttStart');
-        const geEl = document.getElementById('ganttEnd');
-        renderGantt(currentData, gsEl?.value, geEl?.value);
-        syncDataViewsAfterGanttEdit?.();
-        if (changed === false) showToast('Already in that position.', 'info');
+        if (changed === false) {
+            showToast('Already in that position.', 'info');
+        } else {
+            const gsEl = document.getElementById('ganttStart');
+            const geEl = document.getElementById('ganttEnd');
+            renderGantt(currentData, gsEl?.value, geEl?.value);
+        }
     } catch (err) {
         showToast('Reorder failed: ' + (err.message || err), 'error');
     }
