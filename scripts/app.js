@@ -138,6 +138,138 @@ function startSelfPermissionSync() {
         .subscribe();
 }
 
+/* ── Shared edit-activity feed (draggable panel while co-editing) ── */
+let _editActivityChannel = null;
+let _editActivityLog = [];       // {id, name, text, ts}
+let _editActivityDismissed = false;
+
+function startEditActivitySync() {
+    const user = getCurrentUser();
+    if (!user?.id || !db) return;
+    if (_editActivityChannel) { try { db.removeChannel(_editActivityChannel); } catch {} }
+    _editActivityChannel = db
+        .channel('ppms-edit-activity', { config: { broadcast: { self: true } } })
+        .on('broadcast', { event: 'edit' }, ({ payload }) => {
+            if (!payload?.text) return;
+            // Only care about edits to the module + plan version we're looking at.
+            if (payload.moduleId && payload.moduleId !== getActiveModuleId()) return;
+            const myVersion = window.PlanVersions?.getActiveId?.(getActiveModuleId()) ?? null;
+            if (String(payload.versionId ?? '') !== String(myVersion ?? '')) return;
+            _editActivityLog.unshift(payload);
+            if (_editActivityLog.length > 50) _editActivityLog.length = 50;
+            _editActivityDismissed = false;
+            _renderEditActivityPanel();
+        })
+        .subscribe();
+}
+
+function _broadcastEditActivity(text, createdAt) {
+    if (!_editActivityChannel || !text) return;
+    const u = getCurrentUser();
+    _editActivityChannel.send({
+        type: 'broadcast', event: 'edit',
+        payload: {
+            id: String(u?.id || u?.email || ''),
+            name: u?.name || u?.email || 'Someone',
+            text,
+            ts: Date.parse(createdAt) || Date.now(),
+            moduleId: getActiveModuleId(),
+            versionId: window.PlanVersions?.getActiveId?.(getActiveModuleId()) ?? null,
+        },
+    }).catch(() => {});
+}
+
+function _editActivityRelTime(ts) {
+    const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+    if (s < 5) return 'now';
+    if (s < 60) return s + 's ago';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + 'm ago';
+    return Math.floor(m / 60) + 'h ago';
+}
+
+let _editActivityDotColors = {};
+function _editActivityColor(id) {
+    if (!_editActivityDotColors[id]) {
+        const palette = ['#4f8ef7', '#f97316', '#22c55e', '#a855f7', '#ec4899', '#14b8a6', '#eab308'];
+        _editActivityDotColors[id] = palette[Object.keys(_editActivityDotColors).length % palette.length];
+    }
+    return _editActivityDotColors[id];
+}
+
+function _renderEditActivityPanel() {
+    let panel = document.getElementById('editActivityPanel');
+    const show = _ganttEditMode && _ganttCoEditors().length > 0 && !_editActivityDismissed;
+
+    if (!show) { if (panel) panel.hidden = true; return; }
+
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.id = 'editActivityPanel';
+        panel.innerHTML = `
+            <div class="eap-head" id="eapHead">
+                <span class="eap-live"></span>
+                <span class="eap-title">Live edits</span>
+                <button class="eap-close" id="eapClose" title="Hide" aria-label="Hide">&times;</button>
+            </div>
+            <div class="eap-body" id="eapBody"></div>`;
+        document.body.appendChild(panel);
+        try {
+            const pos = JSON.parse(localStorage.getItem('ppms_eap_pos') || 'null');
+            if (pos) { panel.style.left = pos.left + 'px'; panel.style.top = pos.top + 'px'; panel.style.right = 'auto'; }
+        } catch {}
+        panel.querySelector('#eapClose').addEventListener('click', () => {
+            _editActivityDismissed = true;
+            panel.hidden = true;
+        });
+        _wireEditActivityDrag(panel, panel.querySelector('#eapHead'));
+    }
+    panel.hidden = false;
+
+    const body = panel.querySelector('#eapBody');
+    body.innerHTML = _editActivityLog.slice(0, 30).map(e => `
+        <div class="eap-row">
+            <span class="eap-dot" style="background:${_editActivityColor(e.id)}"></span>
+            <span class="eap-who">${esc((e.name || 'Someone').split(' ')[0])}</span>
+            <span class="eap-what">${esc(e.text)}</span>
+            <span class="eap-when">${_editActivityRelTime(e.ts)}</span>
+        </div>`).join('') || '<div class="eap-empty">No edits yet</div>';
+}
+
+function _wireEditActivityDrag(panel, handle) {
+    let sx = 0, sy = 0, ox = 0, oy = 0, dragging = false;
+    handle.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('#eapClose')) return;
+        dragging = true;
+        handle.setPointerCapture(e.pointerId);
+        sx = e.clientX; sy = e.clientY;
+        const r = panel.getBoundingClientRect();
+        ox = r.left; oy = r.top;
+        panel.style.right = 'auto';
+    });
+    handle.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        const nx = Math.max(4, Math.min(window.innerWidth - 60, ox + e.clientX - sx));
+        const ny = Math.max(4, Math.min(window.innerHeight - 40, oy + e.clientY - sy));
+        panel.style.left = nx + 'px';
+        panel.style.top = ny + 'px';
+    });
+    handle.addEventListener('pointerup', (e) => {
+        dragging = false;
+        try { handle.releasePointerCapture(e.pointerId); } catch {}
+        try {
+            const r = panel.getBoundingClientRect();
+            localStorage.setItem('ppms_eap_pos', JSON.stringify({ left: Math.round(r.left), top: Math.round(r.top) }));
+        } catch {}
+    });
+}
+
+// Keep relative timestamps fresh while the panel is open.
+setInterval(() => {
+    const p = document.getElementById('editActivityPanel');
+    if (p && !p.hidden) _renderEditActivityPanel();
+}, 15000);
+
 async function sha256(str) {
     const buf = new TextEncoder().encode(str);
     const hash = await crypto.subtle.digest('SHA-256', buf);
@@ -178,6 +310,33 @@ async function auditLog(action, table, recId, before, after) {
     if (typeof _broadcastAuditEvent === 'function' && !AUDIT_NOTIF_EXCLUDED_ACTIONS.has(action)) {
         _broadcastAuditEvent(action, table, recId, user, createdAt);
     }
+    // Feed the shared "edit activity" panel while co-editing the plan.
+    if (_ganttEditMode && typeof _broadcastEditActivity === 'function' && _EDIT_ACTIVITY_TABLES.has(table)) {
+        _broadcastEditActivity(_editActivityText(action, table, recId, before, after), createdAt);
+    }
+}
+
+const _EDIT_ACTIVITY_TABLES = new Set([
+    'kd2_plan', 'f100_plans', 'kd2_progress',
+    'kd2_process_stations', 'kd2_process_routes', 'kd2_process_categories',
+]);
+
+function _editActivityText(action, table, recId, before, after) {
+    const rid = String(recId || '');
+    const st = after?.station_code || before?.station_code || after?.process_station || before?.process_station || '';
+    const stn = st ? ` ${st}` : '';
+    if (rid.includes('route-drag')) return 'reordered the route';
+    if (table === 'kd2_plan' || table === 'f100_plans') {
+        if (action === 'INSERT') return `added a block${stn}`;
+        if (action === 'DELETE') return `removed a block${stn}`;
+        const ns = after?.planned_start_date || after?.start_date;
+        const os = before?.planned_start_date || before?.start_date;
+        if (ns && os !== ns) return `moved${stn} → ${ns}`;
+        return `updated a block${stn}`;
+    }
+    if (table === 'kd2_progress') return `logged actuals${stn}`;
+    if (table.startsWith('kd2_process')) return 'changed process config';
+    return `${String(action).toLowerCase()} ${table}`;
 }
 
 window.__ppmsShared = {
@@ -1327,6 +1486,7 @@ async function initializeApp() {
     startAuditNotifSync();
     startAuditNotifPoll();
     startSelfPermissionSync();
+    startEditActivitySync();
     wireEvents();
     _applyExportVisibility(); // reads getCurrentUser().canExport, already fresh from refreshSessionFromServer() above
     getModuleRuntime()?.initialize?.(db, {
@@ -1579,6 +1739,7 @@ function _renderGanttCoEditors() {
     if (!badge) return;
 
     const iAmEditing = _ganttEditMode;
+    if (typeof _renderEditActivityPanel === 'function') _renderEditActivityPanel();
     if (!peers.length && !iAmEditing) {
         badge.hidden = true;
         badge.innerHTML = '';
@@ -16213,6 +16374,8 @@ function setGanttEditMode(on) {
     // Tell everyone else immediately (don't wait for the 30s heartbeat)
     _sendPresenceHeartbeat();
     _renderGanttCoEditors();
+    if (!on) { _editActivityDismissed = false; _editActivityLog = []; }
+    _renderEditActivityPanel();
 }
 
 /* ── Saturday modal (promise-based) ─────────────────────────────── */
