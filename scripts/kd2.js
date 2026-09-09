@@ -333,12 +333,28 @@ window.PPMSModuleRuntime = (() => {
         const basePar = s => versionMode
             ? !!vRoute.get(s.station_code)?.parallel_with_previous
             : !!s.parallel_with_previous;
-        const cur = s => (orderOverride && orderOverride.has(s.station_code))
-            ? orderOverride.get(s.station_code)
-            : baseRoute(s);
+        const catSeqOf = s => {
+            const c = (state.categories || []).find(x => x.vehicle_type === vehicle && x.category_code === s.category_code);
+            return parseInt(c?.category_sequence, 10) || 999;
+        };
+        const overridden = s => orderOverride && orderOverride.has(s.station_code);
+        const cur = s => overridden(s) ? orderOverride.get(s.station_code) : baseRoute(s);
         const curCat = s => parseInt(s.station_sequence_in_category, 10) || 9999;
-        const withinCmp = (a, b) => cur(a) - cur(b) || curCat(a) - curCat(b)
+        // Sort within a track: explicit route_sequence first, then fall back to
+        // the category order + position-in-category + code so a route whose
+        // route_sequence was never set still lands in a sensible order.
+        const withinCmp = (a, b) => cur(a) - cur(b)
+            || catSeqOf(a) - catSeqOf(b) || curCat(a) - curCat(b)
             || String(a.station_code).localeCompare(String(b.station_code));
+        // Two stations only run in parallel when they share an EXPLICIT
+        // route_sequence (or an explicit drag override) — never because both
+        // are missing one (9999).
+        const parallelPair = (a, b) => {
+            const ca = cur(a), cb = cur(b);
+            if (ca !== cb) return false;
+            if (overridden(a) || overridden(b)) return true;
+            return ca < 9999;
+        };
 
         const DOWN = 'Assembly & Processing & Testing';
         const tracks = new Map();
@@ -354,13 +370,12 @@ window.PPMSModuleRuntime = (() => {
         const numberTrack = (list, slotOffset) => {
             list.sort(withinCmp);
             let slot = slotOffset;
-            let prev = null;
+            let prevS = null;
             list.forEach(s => {
-                const c = cur(s);
-                const newSlot = (prev === null || c !== prev);
-                if (newSlot) slot += 1;
-                prev = c;
-                bySlot.set(s.station_code, { route_sequence: slot, parallel_with_previous: !newSlot });
+                const par = prevS !== null && parallelPair(prevS, s);
+                if (!par) slot += 1;
+                prevS = s;
+                bySlot.set(s.station_code, { route_sequence: slot, parallel_with_previous: par });
             });
             return slot - slotOffset;
         };
@@ -8266,16 +8281,45 @@ window.PPMSModuleRuntime = (() => {
             getStationLaneOrder(vehicle) {
                 const stations = (state.stations || []).filter(s => !vehicle || s.vehicle_type === vehicle);
                 const rowKeyByCode = buildStationRowKeyMap(vehicle);
+                const catSeqOf = code => {
+                    const c = (state.categories || []).find(x => x.vehicle_type === vehicle && x.category_code === code);
+                    return parseInt(c?.category_sequence, 10) || 999;
+                };
 
-                const order = new Map();
+                // One entry per rowKey, grouped by track.
+                const byTrack = new Map();
+                const seen = new Set();
                 stations.forEach(s => {
                     const rowKey = rowKeyByCode.get(s.station_code) || s.station_name || s.station_code;
-                    if (!rowKey || order.has(rowKey)) return;
+                    if (!rowKey || seen.has(rowKey)) return;
+                    seen.add(rowKey);
                     const { line, rank } = stationTrack(s);
-                    // Active plan version's frozen/edited order, else the global catalog.
                     const vr = versionRouteFor(s.vehicle_type, s.station_code);
-                    const routeSeq = vr ? vr.route_sequence : (parseInt(s.route_sequence, 10) || 9999);
-                    order.set(rowKey, { line, sortKey: rank * 1000000 + routeSeq });
+                    const rs = vr ? vr.route_sequence : (parseInt(s.route_sequence, 10) || 9999);
+                    if (!byTrack.has(line)) byTrack.set(line, []);
+                    byTrack.get(line).push({
+                        rowKey, rank, rs,
+                        cs: catSeqOf(s.category_code),
+                        sic: parseInt(s.station_sequence_in_category, 10) || 999,
+                        code: s.station_code,
+                    });
+                });
+
+                // Sort each track by route_sequence, then category/position
+                // fallbacks, and give each a dense position — stations that share
+                // an explicit route_sequence (< 9999) share a position (parallel);
+                // ones that are just both-missing don't.
+                const order = new Map();
+                byTrack.forEach((list, line) => {
+                    list.sort((a, b) => a.rs - b.rs || a.cs - b.cs || a.sic - b.sic
+                        || String(a.code).localeCompare(String(b.code)));
+                    let pos = 0, prev = null;
+                    list.forEach(it => {
+                        const par = prev && it.rs === prev.rs && it.rs < 9999;
+                        if (!par) pos += 1;
+                        prev = it;
+                        order.set(it.rowKey, { line, sortKey: it.rank * 1000000 + pos });
+                    });
                 });
                 return order;
             },

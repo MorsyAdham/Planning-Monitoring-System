@@ -17604,52 +17604,59 @@ async function handleKd2ReorderClick(btn) {
     const lane = rt.getStationLaneOrder(vehicle) || new Map();
     const codesByKey = rt.getStationRowKeyToCodes?.(vehicle) || new Map();
 
-    // ordered slots within this track: [{ routeSeq, rowKeys:[] }]
+    // Ordered slots within this track. Each slot = one or more rowKeys that
+    // sit at the same dense position (parallel). sortKey % 1e6 is that
+    // position after getStationLaneOrder densified it.
     const rowsInTrack = [...lane.entries()]
         .filter(([, info]) => info && info.line === line)
         .sort((a, b) => a[1].sortKey - b[1].sortKey);
-    if (!rowsInTrack.length) return;
+    if (rowsInTrack.length < 2) { showToast('Nothing to reorder in this track.', 'info'); return; }
     const slots = [];
     rowsInTrack.forEach(([rk, info]) => {
-        const routeSeq = info.sortKey % 1000000;
+        const pos = info.sortKey % 1000000;
         const last = slots[slots.length - 1];
-        if (last && last.routeSeq === routeSeq) last.rowKeys.push(rk);
-        else slots.push({ routeSeq, rowKeys: [rk] });
+        if (last && last.pos === pos) last.rowKeys.push(rk);
+        else slots.push({ pos, rowKeys: [rk] });
     });
     const idx = slots.findIndex(s => s.rowKeys.includes(rowKey));
-    if (idx < 0) return;
-
+    if (idx < 0) { showToast('Could not resolve this row for reordering.', 'error'); return; }
     const codesOf = keys => keys.flatMap(k => codesByKey.get(k) || []);
-    const rowCodesOfSlot = codesOf(slots[idx].rowKeys);
-    let moves = [];
 
+    // Work on a copy of the slot order, apply the move, then hand
+    // persistRouteOrder an EXPLICIT dense position for every station in the
+    // track (so it never has to guess from stale route_sequence values).
+    let neighbourLabel = '';
+    let verb = '';
     if (action === 'up') {
         if (idx === 0) { showToast('Already first in this track.', 'info'); return; }
-        // Slot just before the previous one, so normalizeRoute re-densifies it
-        // one step earlier (and bumps the previous slot one step later).
-        const target = slots[idx - 1].routeSeq - 0.5;
-        moves = rowCodesOfSlot.map(c => ({ station_code: c, order: target }));
+        [slots[idx - 1], slots[idx]] = [slots[idx], slots[idx - 1]];
+        neighbourLabel = slots[idx].rowKeys[0]; // the slot now after us
+        verb = `moved ${rowKey} before ${neighbourLabel}`;
     } else if (action === 'down') {
         if (idx === slots.length - 1) { showToast('Already last in this track.', 'info'); return; }
-        const target = slots[idx + 1].routeSeq + 0.5;
-        moves = rowCodesOfSlot.map(c => ({ station_code: c, order: target }));
+        [slots[idx], slots[idx + 1]] = [slots[idx + 1], slots[idx]];
+        neighbourLabel = slots[idx].rowKeys[0];
+        verb = `moved ${rowKey} after ${neighbourLabel}`;
     } else if (action === 'parallel') {
-        const rowCodes = codesByKey.get(rowKey) || [];
         if (slots[idx].rowKeys.length > 1) {
-            // currently parallel — split this row off just after the shared slot
-            moves = rowCodes.map(c => ({ station_code: c, order: slots[idx].routeSeq + 0.5 }));
+            // split this row into its own slot right after the shared one
+            slots[idx].rowKeys = slots[idx].rowKeys.filter(k => k !== rowKey);
+            slots.splice(idx + 1, 0, { pos: 0, rowKeys: [rowKey] });
+            verb = `split ${rowKey} out of its parallel group`;
         } else {
             if (idx === 0) { showToast('No row above to run this in parallel with.', 'info'); return; }
-            moves = rowCodes.map(c => ({ station_code: c, order: slots[idx - 1].routeSeq }));
+            slots[idx - 1].rowKeys.push(rowKey);
+            slots.splice(idx, 1);
+            verb = `set ${rowKey} to run parallel with ${slots[idx - 1].rowKeys[0]}`;
         }
-    }
-    if (!moves.length) {
-        showToast('Could not resolve this row for reordering.', 'error');
-        return;
-    }
-    const nextTo = action === 'up' ? slots[idx - 1]?.rowKeys[0]
-        : action === 'down' ? slots[idx + 1]?.rowKeys[0]
-        : slots[idx - 1]?.rowKeys[0];
+    } else return;
+
+    const moves = [];
+    slots.forEach((s, k) => {
+        codesOf(s.rowKeys).forEach(c => moves.push({ station_code: c, order: k + 1 }));
+    });
+    if (!moves.length) { showToast('Could not resolve this row for reordering.', 'error'); return; }
+
     try {
         const changed = await rt.persistRouteOrder(vehicle, moves);
         if (changed === false) {
@@ -17657,11 +17664,6 @@ async function handleKd2ReorderClick(btn) {
         } else {
             resetKd2LaneOrderCache();
             refreshAllViews();
-            const verb = action === 'up' ? `moved ${rowKey} before ${nextTo || 'the previous step'}`
-                : action === 'down' ? `moved ${rowKey} after ${nextTo || 'the next step'}`
-                : (slots[idx].rowKeys.length > 1
-                    ? `split ${rowKey} out of its parallel group`
-                    : `set ${rowKey} to run parallel with ${nextTo || 'the row above'}`);
             _broadcastEditActivity(`${verb} in the ${vehicle} route`);
         }
     } catch (err) {
