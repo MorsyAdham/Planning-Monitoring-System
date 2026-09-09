@@ -16037,6 +16037,11 @@ function setGanttLaneSelectMode(on) {
 function syncGanttModuleEditControls() {
     const isKd2 = isKD2Module() || isF100KD2Module();
     const isF100 = isF100KD2Module();
+    // Gate the Edit Plan button here too — populateNavbar() runs before the
+    // Gantt markup exists, so its own check silently no-ops; and a role change
+    // pushed live needs to take effect without a reload.
+    const editBtn = document.getElementById('btnGanttEdit');
+    if (editBtn && !_ganttEditMode) editBtn.style.display = canEditPlan() ? '' : 'none';
     const planBtn = document.getElementById('gmtPlan');
     const fromBlockBtn = document.getElementById('gmtFromBlock');
     const fromBlockLaneBtn = document.getElementById('gmtFromBlockLane');
@@ -16110,6 +16115,11 @@ function syncGanttModuleEditControls() {
 
 /* ── Toggle edit mode ────────────────────────────────────────────── */
 function setGanttEditMode(on) {
+    // Operators (and viewers) can log actuals but not restructure the plan.
+    if (on && !canEditPlan()) {
+        showToast('Your role can update actuals but not edit the plan schedule.', 'error');
+        return;
+    }
     _ganttEditMode = on;
     if (on) {
         _ganttEditTask = 'reschedule';
@@ -16125,7 +16135,7 @@ function setGanttEditMode(on) {
         if (isF100KD2Module()) cancelF100Placement();
     }
     document.getElementById('ganttEditBar').style.display = on ? 'flex' : 'none';
-    document.getElementById('btnGanttEdit').style.display = on ? 'none' : '';
+    document.getElementById('btnGanttEdit').style.display = (on || !canEditPlan()) ? 'none' : '';
     // Sync undo button states whenever edit mode changes
     _syncUndoButtons();
     syncGanttModuleEditControls();
