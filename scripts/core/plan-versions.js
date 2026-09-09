@@ -172,7 +172,6 @@ window.PlanVersions = (() => {
 
     async function setStatus(db, versionId, status, auditFn) {
         const { data: before } = await db.from('plan_versions').select('*').eq('id', versionId).single();
-        if (before?.is_baseline && status === 'archived') throw new Error('The baseline plan cannot be archived.');
         const { error } = await db.from('plan_versions').update({ status }).eq('id', versionId);
         if (error) throw error;
         if (auditFn) await auditFn('UPDATE', 'plan_versions', versionId, before, { ...before, status });
