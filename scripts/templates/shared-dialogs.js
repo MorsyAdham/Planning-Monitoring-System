@@ -1289,16 +1289,6 @@ export function renderSharedDialogs() {
                 <div class="modal-body">
                     <div class="modal-info" id="kd2ProcessSummary">Loading process stations…</div>
 
-                    <div class="kd2-process-view-row">
-                        <div class="kd2-template-editor-view" id="kd2ProcessViewToggle" aria-label="Process view">
-                            <button class="kd2-template-view-btn active" type="button" data-process-view="table">Table</button>
-                            <button class="kd2-template-view-btn" type="button" data-process-view="flow">Flow</button>
-                        </div>
-                        <div class="modal-info kd2-process-flow-hint" id="kd2ProcessFlowHint" style="display:none">
-                            One continuous route, not grouped by category — a station can go from Welding to Machining and back to Welding, so cards flow in actual route order with a color-coded category tag on each. Stations running in parallel stack together as one node. Drag a card between two others to reorder the route, or onto another card to make them run in parallel — the Gantt, VPX, and Plan Data all follow it automatically. Pick one Vehicle to reorder (each has its own route).
-                        </div>
-                    </div>
-
                     <div class="kd2-process-toolbar">
                         <div class="form-group">
                             <label class="form-label" for="kd2ProcessVehicleFilter">Vehicle</label>
@@ -1345,7 +1335,6 @@ export function renderSharedDialogs() {
                         <div class="ab-error" id="kd2AddCategoryError" style="display:none"></div>
                     </div>
                     <div class="kd2-process-shell" id="kd2ProcessBody"></div>
-                    <div class="kd2-process-flow" id="kd2ProcessFlow" style="display:none"></div>
                     <div class="ab-error" id="kd2ProcessError" style="display:none"></div>
                 </div>
                 <div class="modal-footer">

@@ -108,7 +108,6 @@ window.PPMSModuleRuntime = (() => {
         templatePreviewLegendOpen: false,
         templateEditorGroupFilter: '',
         templateEditingBlockId: null,   // editor_id of an existing (non-new) card currently showing its editable station/category fields
-        processView: 'table',           // 'table' | 'flow' — Manage Processes' Table vs. drag-to-reorder Flow view
         templateGanttMoveMode: 'from-block',
     };
     const placementPointer = { x: 0, y: 0, ready: false };
@@ -1533,26 +1532,11 @@ window.PPMSModuleRuntime = (() => {
 
     function renderProcessTable() {
         const container = document.getElementById('kd2ProcessBody');
-        const flowContainer = document.getElementById('kd2ProcessFlow');
         const summary = document.getElementById('kd2ProcessSummary');
         if (!container || !summary) return;
 
         syncProcessFilterCategoryOptions();
-
-        // Category/Search only make sense against the flat table — Flow view
-        // already groups by category and shows every station in one view.
-        setDisplay('kd2ProcessCategoryFilterGroup', state.processView !== 'flow');
-        setDisplay('kd2ProcessSearchGroup', state.processView !== 'flow');
-        setDisplay('kd2ProcessFlowHint', state.processView === 'flow');
-
-        if (state.processView === 'flow') {
-            container.style.display = 'none';
-            if (flowContainer) flowContainer.style.display = '';
-            renderProcessFlow();
-            return;
-        }
         container.style.display = '';
-        if (flowContainer) flowContainer.style.display = 'none';
 
         const vehicleFilter = document.getElementById('kd2ProcessVehicleFilter')?.value || '';
         const categoryFilter = document.getElementById('kd2ProcessCategoryFilter')?.value || '';
@@ -1606,262 +1590,6 @@ window.PPMSModuleRuntime = (() => {
         }
     }
 
-    // Deterministic color per category (not the fixed 4-slot Hull/Turret/
-    // Structure/Assembly palette the Template editor uses — categories are
-    // open-ended now that "+ Add Category" exists, so this hashes whatever
-    // category_code shows up to a slot in a wider palette, stable across
-    // renders/sessions without needing a lookup table to maintain.
-    const KD2_CATEGORY_FLOW_PALETTE = ['#3b82f6', '#f97316', '#22c55e', '#a855f7', '#ec4899', '#06b6d4', '#eab308', '#ef4444', '#14b8a6', '#6366f1'];
-    function categoryFlowColor(categoryCode) {
-        const str = String(categoryCode || '');
-        let hash = 0;
-        for (let i = 0; i < str.length; i += 1) hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
-        return KD2_CATEGORY_FLOW_PALETTE[hash % KD2_CATEGORY_FLOW_PALETTE.length];
-    }
-
-    function renderFlowCard(station, stepIndex, totalSteps, vehicle, laneKey) {
-        const category = state.categories.find(c => c.vehicle_type === vehicle && c.category_code === station.category_code);
-        return `
-            <article class="kd2-template-card kd2-process-flow-card" draggable="true"
-                style="--kd2-group-color:${categoryFlowColor(station.category_code)}"
-                data-process-flow-card data-vehicle="${escapeHtml(vehicle)}" data-lane="${escapeHtml(laneKey)}"
-                data-category-code="${escapeHtml(station.category_code)}" data-station-code="${escapeHtml(station.station_code)}">
-                <div class="kd2-process-flow-card-category">${escapeHtml(category?.category_name || station.category_code)}</div>
-                <div class="kd2-template-card-head">
-                    <div class="kd2-template-card-copy">
-                        <strong title="${escapeHtml(station.station_name)}">${escapeHtml(station.station_name)}</strong>
-                        <span title="${escapeHtml(station.work_center || station.station_code)}">${escapeHtml(station.work_center || station.station_code)}</span>
-                    </div>
-                    <div class="kd2-template-card-tools">
-                        <span class="kd2-template-route-pill" title="Position ${stepIndex + 1} of ${totalSteps} in this lane">${stepIndex + 1}</span>
-                        <span class="kd2-template-drag-handle" title="Drag to reorder">::</span>
-                    </div>
-                </div>
-            </article>`;
-    }
-
-    /** Consecutive stations sharing a route_sequence are one "step" — the
-     *  parallel group they represent. Order is already route_sequence-then-
-     *  station_sequence_in_category, so equal route_sequence values are
-     *  always adjacent going in. */
-    function groupStationsIntoSteps(stations) {
-        const steps = [];
-        stations.forEach(station => {
-            const last = steps[steps.length - 1];
-            if (last && last[0].route_sequence === station.route_sequence) last.push(station);
-            else steps.push([station]);
-        });
-        return steps;
-    }
-
-    /** One step (parallel group) as a single flowchart node — one card if
-     *  it's a solo station, a stack of cards if several run in parallel,
-     *  so they read as one thing happening at once rather than a sequence
-     *  of separate steps joined by a "some other" connector. */
-    function renderFlowStep(stepStations, stepIndex, totalSteps, vehicle, laneKey) {
-        const cardsHtml = stepStations.map(station => renderFlowCard(station, stepIndex, totalSteps, vehicle, laneKey)).join('');
-        return `<div class="kd2-process-flow-step${stepStations.length > 1 ? ' kd2-process-flow-step-parallel' : ''}" data-process-flow-step data-lane="${escapeHtml(laneKey)}">${cardsHtml}</div>`;
-    }
-
-    /** One lane's row: steps joined by arrows. */
-    function renderFlowLaneRow(stations, vehicle, laneKey) {
-        const steps = groupStationsIntoSteps(stations);
-        if (!steps.length) return '<div class="empty-state" style="padding:10px"><p>No stations in this lane yet.</p></div>';
-        return steps.map((step, i) => `
-            ${i > 0 ? '<span class="kd2-process-flow-arrow" aria-hidden="true"></span>' : ''}
-            ${renderFlowStep(step, i, steps.length, vehicle, laneKey)}
-        `).join('');
-    }
-
-    /** Drag-to-reorder view — the numeric Order field in Table view was the
-     *  actual complaint ("very hard to change and causes issues and
-     *  confusion"). Ordered (and, on drop, renumbered) by route_sequence,
-     *  the actual field the Gantt lane order, VPX columns, and Plan Data
-     *  table all sort by. Not grouped by category — the real route isn't
-     *  linear by category (a unit can go Welding → Machining → back to
-     *  Welding) — each card just carries a color-coded category tag so
-     *  that's still readable. Stations sharing a route_sequence (parallel)
-     *  stack together as one node, not a sequence of separate cards, so
-     *  they visibly read as happening at once. K9 is the one real
-     *  exception beyond that: Hull and Turret are two separate physical
-     *  lines that run in parallel and converge into the shared Assembly/
-     *  Processing/Final Test flow, so those get their own lanes instead of
-     *  being interleaved. */
-    function renderProcessFlow() {
-        const flowContainer = document.getElementById('kd2ProcessFlow');
-        const summary = document.getElementById('kd2ProcessSummary');
-        if (!flowContainer) return;
-
-        const vehicle = document.getElementById('kd2ProcessVehicleFilter')?.value || '';
-        if (!VEHICLES.includes(vehicle)) {
-            flowContainer.innerHTML = `<div class="empty-state"><p>Pick a single vehicle above to see its route as a flow.</p></div>`;
-            if (summary) summary.textContent = 'Select a vehicle to reorder its route.';
-            return;
-        }
-
-        const bySeq = (a, b) => (a.route_sequence || 0) - (b.route_sequence || 0) || (a.station_sequence_in_category || 0) - (b.station_sequence_in_category || 0);
-        const allStations = state.stations.filter(s => s.vehicle_type === vehicle);
-
-        if (!allStations.length) {
-            flowContainer.innerHTML = `<div class="empty-state"><p>No stations defined for ${escapeHtml(vehicle)} yet.</p></div>`;
-            if (summary) summary.textContent = `Select a vehicle to reorder its route.`;
-            return;
-        }
-
-        if (vehicle === 'K9') {
-            const hull = allStations.filter(s => s.component_group === 'Hull').sort(bySeq);
-            const turret = allStations.filter(s => s.component_group === 'Turret').sort(bySeq);
-            const downstream = allStations.filter(s => s.component_group !== 'Hull' && s.component_group !== 'Turret').sort(bySeq);
-            if (summary) summary.textContent = `${allStations.length} process stations shown · K9 · Hull and Turret run in parallel and converge into the shared flow below — drag within a lane to reorder it, or onto another card there to run them in parallel.`;
-            flowContainer.innerHTML = `
-                <div class="kd2-process-flow-lanes">
-                    <div class="kd2-process-flow-lane">
-                        <span class="kd2-process-flow-lane-label">Hull</span>
-                        <div class="kd2-process-flow-row" data-process-flow-vehicle="${escapeHtml(vehicle)}">${renderFlowLaneRow(hull, vehicle, 'hull')}</div>
-                    </div>
-                    <div class="kd2-process-flow-lane">
-                        <span class="kd2-process-flow-lane-label">Turret</span>
-                        <div class="kd2-process-flow-row" data-process-flow-vehicle="${escapeHtml(vehicle)}">${renderFlowLaneRow(turret, vehicle, 'turret')}</div>
-                    </div>
-                </div>
-                ${downstream.length ? `
-                <div class="kd2-process-flow-merge">
-                    <span class="kd2-process-flow-merge-arrow" aria-hidden="true"></span>
-                    <span class="kd2-process-flow-merge-label">Converges into</span>
-                </div>
-                <div class="kd2-process-flow-row" data-process-flow-vehicle="${escapeHtml(vehicle)}">${renderFlowLaneRow(downstream, vehicle, 'downstream')}</div>
-                ` : ''}`;
-            return;
-        }
-
-        const stations = allStations.slice().sort(bySeq);
-        if (summary) summary.textContent = `${stations.length} process station${stations.length === 1 ? '' : 's'} shown · ${vehicle} · drag a card anywhere in the sequence to reorder the route, or onto another card to run them in parallel.`;
-        flowContainer.innerHTML = `<div class="kd2-process-flow-row" data-process-flow-vehicle="${escapeHtml(vehicle)}">${renderFlowLaneRow(stations, vehicle, 'all')}</div>`;
-    }
-
-    let _processFlowDrag = null; // { stationCode, lane }
-
-    function wireProcessFlowDrag() {
-        const flowContainer = document.getElementById('kd2ProcessFlow');
-        if (!flowContainer || flowContainer.dataset.dragWired === 'true') return;
-        flowContainer.dataset.dragWired = 'true';
-
-        flowContainer.addEventListener('dragstart', e => {
-            const card = e.target.closest('[data-process-flow-card]');
-            if (!card) return;
-            _processFlowDrag = { stationCode: card.dataset.stationCode, vehicle: card.dataset.vehicle, lane: card.dataset.lane };
-            card.classList.add('kd2-process-flow-dragging');
-            e.dataTransfer.effectAllowed = 'move';
-        });
-        flowContainer.addEventListener('dragend', () => {
-            flowContainer.querySelectorAll('.kd2-process-flow-dragging').forEach(el => el.classList.remove('kd2-process-flow-dragging'));
-            flowContainer.querySelectorAll('.kd2-process-flow-drop-before, .kd2-process-flow-drop-after, .kd2-process-flow-drop-join')
-                .forEach(el => el.classList.remove('kd2-process-flow-drop-before', 'kd2-process-flow-drop-after', 'kd2-process-flow-drop-join'));
-            _processFlowDrag = null;
-        });
-        flowContainer.addEventListener('dragover', e => {
-            const card = e.target.closest('[data-process-flow-card]');
-            // Reordering only ever happens within one lane — Hull, Turret, and
-            // the downstream flow are separate physical/logical sequences.
-            if (!card || !_processFlowDrag || card.dataset.lane !== _processFlowDrag.lane || card.dataset.stationCode === _processFlowDrag.stationCode) return;
-            e.preventDefault();
-            flowContainer.querySelectorAll('.kd2-process-flow-drop-before, .kd2-process-flow-drop-after, .kd2-process-flow-drop-join')
-                .forEach(el => el.classList.remove('kd2-process-flow-drop-before', 'kd2-process-flow-drop-after', 'kd2-process-flow-drop-join'));
-            // Middle third of the card = join it (run in parallel); outer
-            // thirds = land as a new step before/after it in the sequence.
-            const frac = (e.clientX - card.getBoundingClientRect().left) / card.offsetWidth;
-            if (frac < 1 / 3) card.classList.add('kd2-process-flow-drop-before');
-            else if (frac > 2 / 3) card.classList.add('kd2-process-flow-drop-after');
-            else card.classList.add('kd2-process-flow-drop-join');
-        });
-        flowContainer.addEventListener('drop', async e => {
-            const row = e.target.closest('[data-process-flow-vehicle]');
-            const targetCard = e.target.closest('[data-process-flow-card]');
-            if (!row || !_processFlowDrag || !targetCard || targetCard.dataset.lane !== _processFlowDrag.lane) return;
-            e.preventDefault();
-            if (targetCard.dataset.stationCode === _processFlowDrag.stationCode) return;
-
-            const mode = targetCard.classList.contains('kd2-process-flow-drop-before') ? 'before'
-                : targetCard.classList.contains('kd2-process-flow-drop-after') ? 'after' : 'join';
-            const draggedCard = row.querySelector(`[data-station-code="${CSS.escape(_processFlowDrag.stationCode)}"]`);
-            if (!draggedCard) return;
-            const oldStep = draggedCard.closest('[data-process-flow-step]');
-            const targetStep = targetCard.closest('[data-process-flow-step]');
-
-            if (mode === 'join') {
-                draggedCard.remove();
-                if (oldStep && !oldStep.querySelector('[data-process-flow-card]')) oldStep.remove();
-                targetStep.appendChild(draggedCard);
-                targetStep.classList.add('kd2-process-flow-step-parallel');
-            } else {
-                draggedCard.remove();
-                if (oldStep && !oldStep.querySelector('[data-process-flow-card]')) oldStep.remove();
-                const newStep = document.createElement('div');
-                newStep.className = 'kd2-process-flow-step';
-                newStep.setAttribute('data-process-flow-step', '');
-                newStep.setAttribute('data-lane', _processFlowDrag.lane);
-                newStep.appendChild(draggedCard);
-                targetStep.insertAdjacentElement(mode === 'before' ? 'beforebegin' : 'afterend', newStep);
-            }
-
-            await persistFlowOrder(_processFlowDrag.vehicle);
-        });
-    }
-
-    /** Renumbers route_sequence to match the Flow view's current DOM —
-     *  every card inside one step shares that step's new number, so
-     *  reordering a step that isn't itself a parallel group leaves any
-     *  *other* parallel groups in the lane untouched (unlike a flat
-     *  per-card renumber, which would silently break every existing
-     *  parallel pair on any drag, not just the one being moved). K9 Hull
-     *  and Turret each number their steps 1..N independently (that's the
-     *  parallel portion of the route) and the downstream flow starts right
-     *  after whichever lane has more steps. Writes both
-     *  kd2_process_stations and kd2_process_routes. No temp-offset trick
-     *  needed — route_sequence has no uniqueness constraint, parallel
-     *  stations sharing a value is intentional. */
-    async function persistFlowOrder(vehicle) {
-        if (!dbRef || !canManageKD2()) return;
-        const flowContainer = document.getElementById('kd2ProcessFlow');
-        if (!flowContainer) return;
-
-        const stepsIn = lane => [...flowContainer.querySelectorAll('[data-process-flow-step]')].filter(el => el.dataset.lane === lane);
-        const assign = (steps, offset, assignments) => steps.forEach((step, i) => {
-            step.querySelectorAll('[data-process-flow-card]').forEach(card => assignments.push({ code: card.dataset.stationCode, seq: offset + i + 1 }));
-        });
-
-        const assignments = [];
-        if (flowContainer.querySelector('.kd2-process-flow-lanes')) {
-            const hullSteps = stepsIn('hull');
-            const turretSteps = stepsIn('turret');
-            const downstreamSteps = stepsIn('downstream');
-            const span = Math.max(hullSteps.length, turretSteps.length);
-            assign(hullSteps, 0, assignments);
-            assign(turretSteps, 0, assignments);
-            assign(downstreamSteps, span, assignments);
-        } else {
-            assign(stepsIn('all'), 0, assignments);
-        }
-        if (!assignments.length) return;
-
-        const before = state.stations
-            .filter(s => s.vehicle_type === vehicle)
-            .map(s => ({ station_code: s.station_code, route_sequence: s.route_sequence }));
-        try {
-            await Promise.all(assignments.map(({ code, seq }) => Promise.all([
-                dbRef.from('kd2_process_stations').update({ route_sequence: seq }).eq('vehicle_type', vehicle).eq('station_code', code),
-                dbRef.from('kd2_process_routes').update({ route_sequence: seq }).eq('vehicle_type', vehicle).eq('station_code', code),
-            ])));
-            await writeAudit('UPDATE', 'kd2_process_stations', `${vehicle}:route-reorder`, before,
-                assignments.map(a => ({ station_code: a.code, route_sequence: a.seq })));
-            await refreshWorkspace({ force: true });
-            await helpers.reloadAll?.();
-            renderProcessTable();
-        } catch (error) {
-            setProcessError('Failed to reorder: ' + error.message);
-            renderProcessTable(); // snap back to the last saved order
-        }
-    }
 
     /** Persist a drag-reorder of one vehicle's route from the Gantt process
      *  view. `moves` = [{ station_code, order, category_code? }] where `order`
@@ -2041,11 +1769,6 @@ window.PPMSModuleRuntime = (() => {
         if (categoryFilterEl) categoryFilterEl.value = '';
         const searchEl = document.getElementById('kd2ProcessSearch');
         if (searchEl) searchEl.value = '';
-        state.processView = 'table';
-        document.querySelectorAll('#kd2ProcessViewToggle .kd2-template-view-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.processView === 'table');
-        });
-        wireProcessFlowDrag();
         renderProcessTable();
         const overlay = document.getElementById('kd2ProcessOverlay');
         // Use the wide overlay layout so the modal aligns to top and can
@@ -8207,15 +7930,6 @@ window.PPMSModuleRuntime = (() => {
         document.getElementById('kd2ProcessVehicleFilter')?.addEventListener('change', renderProcessTable);
         document.getElementById('kd2ProcessCategoryFilter')?.addEventListener('change', renderProcessTable);
         document.getElementById('kd2ProcessSearch')?.addEventListener('input', renderProcessTable);
-        document.getElementById('kd2ProcessViewToggle')?.addEventListener('click', e => {
-            const btn = e.target.closest('[data-process-view]');
-            if (!btn) return;
-            state.processView = btn.dataset.processView === 'flow' ? 'flow' : 'table';
-            document.querySelectorAll('#kd2ProcessViewToggle .kd2-template-view-btn').forEach(b => {
-                b.classList.toggle('active', b === btn);
-            });
-            renderProcessTable();
-        });
         document.getElementById('kd2ProcessBody')?.addEventListener('change', event => {
             // The new-row's own Vehicle select changes which category list applies — re-render.
             if (event.target.id === 'peNewVehicle' && _processNewRowDraft) {
