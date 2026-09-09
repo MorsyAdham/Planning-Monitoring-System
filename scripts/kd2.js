@@ -1456,8 +1456,6 @@ window.PPMSModuleRuntime = (() => {
                 </td>
                 <td>${escapeHtml(station.work_center || '—')}</td>
                 <td>${station.vehicle_type === 'K9' ? escapeHtml(station.component_group || '—') : '—'}</td>
-                <td class="kd2-process-num">${station.station_sequence_in_category}</td>
-                <td class="kd2-process-num">${station.route_sequence}</td>
                 <td>${escapeHtml(leadTimeText(station.vehicle_type, station.category_code, station.station_code))}</td>
                 <td>${escapeHtml(lead?.lead_time_source || '—')}</td>
                 <td>${escapeHtml(station.notes || '—')}</td>
@@ -1515,9 +1513,7 @@ window.PPMSModuleRuntime = (() => {
                 ${field('Category', `<select id="peCategory" class="kd2-process-input">${categories.map(c => `<option value="${escapeHtml(c.category_code)}" ${c.category_code === categoryCode ? 'selected' : ''}>${escapeHtml(c.category_name)}</option>`).join('')}</select>`, { htmlFor: 'peCategory' })}
                 ${field('Station Name', `<input type="text" id="peName" class="kd2-process-input" value="${isNew ? '' : escapeHtml(station.station_name)}" placeholder="Station name" />`, { htmlFor: 'peName', wide: true })}
                 ${field('Work Center', `<input type="text" id="peWorkCenter" class="kd2-process-input" value="${isNew ? '' : escapeHtml(station.work_center || '')}" placeholder="Optional" />`, { htmlFor: 'peWorkCenter' })}
-                ${isK9 ? field('Component', `<select id="peComponent" class="kd2-process-input">${templateComponentOptions(isNew ? '' : station.component_group)}</select>`, { htmlFor: 'peComponent' }) : ''}
-                ${field('Order in Category', `<input type="number" id="peSequence" class="kd2-process-input" min="1" step="1" value="${isNew ? (categoryCode ? nextProcessCategorySequence(vehicle, categoryCode) : 1) : station.station_sequence_in_category}" />`, { htmlFor: 'peSequence' })}
-                ${field('Route Sequence', `<input type="number" id="peRoute" class="kd2-process-input" min="1" step="1" value="${isNew ? nextProcessRouteSequence(vehicle) : station.route_sequence}" />`, { htmlFor: 'peRoute' })}
+                ${isK9 ? field('Component Track', `<select id="peComponent" class="kd2-process-input">${templateComponentOptions(isNew ? '' : station.component_group)}</select>`, { htmlFor: 'peComponent' }) : ''}
                 ${field('Lead Time (days)', `<input type="number" id="peLeadTime" class="kd2-process-input" min="0.25" step="0.25" value="${lead?.lead_time_days ?? ''}" placeholder="Blank = pending" />`, { htmlFor: 'peLeadTime' })}
                 ${field('Lead Source', `<input type="text" id="peLeadSource" class="kd2-process-input" value="${escapeHtml(lead?.lead_time_source || '')}" placeholder="e.g. Time study, Engineering estimate" title="Where the duration estimate came from — for reference only, not used in scheduling" />`, { htmlFor: 'peLeadSource' })}
                 ${field('Notes', `<input type="text" id="peNotes" class="kd2-process-input" value="${isNew ? '' : escapeHtml(station.notes || '')}" placeholder="Optional" />`, { htmlFor: 'peNotes', wide: true })}
@@ -1593,11 +1589,11 @@ window.PPMSModuleRuntime = (() => {
                     <thead>
                         <tr>
                             <th>Vehicle</th><th>Category</th><th>Station</th><th>Work Center</th><th>Component</th>
-                            <th>Order</th><th>Route</th><th>Lead Time</th><th title="Where the duration estimate came from — for reference only, not used in scheduling">Lead Source</th>
+                            <th>Lead Time</th><th title="Where the duration estimate came from — for reference only, not used in scheduling">Lead Source</th>
                             <th>Notes</th><th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody>${rowsHtml.join('') || `<tr><td colspan="11" class="empty-state" style="padding:18px"><p>No process stations match these filters.</p></td></tr>`}</tbody>
+                    <tbody>${rowsHtml.join('') || `<tr><td colspan="9" class="empty-state" style="padding:18px"><p>No process stations match these filters.</p></td></tr>`}</tbody>
                 </table>
             </div>`;
 
@@ -2119,7 +2115,6 @@ window.PPMSModuleRuntime = (() => {
                             <thead>
                                 <tr>
                                     <th>Station</th>
-                                    <th>Route</th>
                                     <th>Lead Time (Days)</th>
                                     <th>Source</th>
                                     <th>Notes</th>
@@ -2133,9 +2128,6 @@ window.PPMSModuleRuntime = (() => {
                                             <td>
                                                 <strong>${escapeHtml(station.station_name)}</strong>
                                                 <span class="kd2-inline-meta">${escapeHtml(station.work_center || station.station_code)}</span>
-                                            </td>
-                                            <td>
-                                                <input type="number" min="1" step="1" class="filter-control kd2-route-sequence-input" data-field="routeSequence" value="${station.route_sequence}" title="Stations with the same route run in parallel" />
                                             </td>
                                             <td><input type="number" min="0.25" step="0.25" class="filter-control" data-field="leadTime" value="${stationLead?.lead_time_days ?? ''}" placeholder="Blank = pending" /></td>
                                             <td><input type="text" class="filter-control" data-field="source" value="${escapeHtml(stationLead?.lead_time_source || '')}" placeholder="Optional source" /></td>
@@ -2216,8 +2208,6 @@ window.PPMSModuleRuntime = (() => {
         const componentGroup = vehicle === 'K9' ? (document.getElementById('peComponent')?.value || '') : '';
         const stationNotes = document.getElementById('peNotes')?.value?.trim() || '';
         const leadSource = document.getElementById('peLeadSource')?.value?.trim() || '';
-        const stationSequence = parseRouteSequenceValue(document.getElementById('peSequence')?.value || '');
-        const routeSequence = parseRouteSequenceValue(document.getElementById('peRoute')?.value || '');
         const leadTime = parseLeadTimeValue(document.getElementById('peLeadTime')?.value || '');
         const requiresXray = !!document.getElementById('peRequiresXray')?.checked;
 
@@ -2229,31 +2219,26 @@ window.PPMSModuleRuntime = (() => {
             setProcessError('Station name is required.');
             return;
         }
-        if (Number.isNaN(stationSequence)) {
-            setProcessError('Station order must be a whole number greater than 0.');
-            return;
-        }
-        if (Number.isNaN(routeSequence)) {
-            setProcessError('Route must be a whole number greater than 0.');
-            return;
-        }
         if (Number.isNaN(leadTime)) {
             setProcessError('Lead time must be blank or greater than 0.');
-            return;
-        }
-        if (state.stations.some(row =>
-            row.vehicle_type === vehicle &&
-            row.category_code === categoryCode &&
-            String(row.station_code) !== String(originalStationCode) &&
-            (parseInt(row.station_sequence_in_category, 10) || 0) === stationSequence
-        )) {
-            setProcessError(`Station order ${stationSequence} is already used in this category.`);
             return;
         }
 
         const beforeStation = originalStationCode
             ? state.stations.find(row => row.vehicle_type === vehicle && row.station_code === originalStationCode) || null
             : null;
+
+        // Sequencing is not edited from this form — it lives on the Gantt reorder
+        // surface. Keep an existing station's slot; append a new one (and a
+        // category-changed one) to the end of the route, then normalizeRoute
+        // re-densifies per component track after the write.
+        const keepSlot = beforeStation && beforeStation.category_code === categoryCode;
+        const stationSequence = keepSlot
+            ? beforeStation.station_sequence_in_category
+            : nextProcessCategorySequence(vehicle, categoryCode);
+        const routeSequence = keepSlot
+            ? beforeStation.route_sequence
+            : nextProcessRouteSequence(vehicle);
         const beforeRoute = originalStationCode
             ? state.routes.find(row => row.vehicle_type === vehicle && row.station_code === originalStationCode) || null
             : null;
@@ -2331,6 +2316,22 @@ window.PPMSModuleRuntime = (() => {
             _processNewRowDraft = null;
             setProcessError('');
             await refreshWorkspace({ force: true });
+
+            // Re-densify route_sequence / parallel flags per component track so a
+            // newly appended (or re-categorised) station lands cleanly at the end
+            // of its track instead of on a sparse max+1 value.
+            const norm = normalizeRoute(vehicle);
+            if (norm.length) {
+                await Promise.all(norm.map(c => Promise.all([
+                    dbRef.from('kd2_process_stations')
+                        .update({ route_sequence: c.route_sequence, parallel_with_previous: c.parallel_with_previous })
+                        .eq('vehicle_type', vehicle).eq('station_code', c.station_code),
+                    dbRef.from('kd2_process_routes')
+                        .update({ route_sequence: c.route_sequence })
+                        .eq('vehicle_type', vehicle).eq('station_code', c.station_code),
+                ])));
+                await refreshWorkspace({ force: true });
+            }
             // Force template editor to rebuild from the refreshed station/route state so newly
             // added or updated processes appear immediately without a page reload.
             ensureTemplateEditorState(vehicle, { force: true });
@@ -2397,30 +2398,14 @@ window.PPMSModuleRuntime = (() => {
         const categoryNodes = [...document.querySelectorAll('[data-kd2-lead-category]')];
         const stationNodes = [...document.querySelectorAll('[data-kd2-lead-station]')];
         const before = state.leadTimes.filter(row => row.vehicle_type === vehicle);
-        const routeBefore = state.stations
-            .filter(row => row.vehicle_type === vehicle)
-            .map(row => ({ station_code: row.station_code, route_sequence: row.route_sequence }));
         const updates = [];
         const inserts = [];
-        const routeUpdates = [];
 
         for (const node of [...categoryNodes, ...stationNodes]) {
             const leadTime = parseLeadTimeValue(node.querySelector('[data-field="leadTime"]')?.value);
             if (Number.isNaN(leadTime)) {
                 setLeadTimeError('Lead time must be blank or greater than 0.');
                 return;
-            }
-            if (node.hasAttribute('data-kd2-lead-station')) {
-                const routeSequence = parseRouteSequenceValue(node.querySelector('[data-field="routeSequence"]')?.value);
-                if (Number.isNaN(routeSequence)) {
-                    setLeadTimeError('Route must be a whole number greater than 0. Use the same route number for parallel stations.');
-                    return;
-                }
-                routeUpdates.push({
-                    station_code: node.dataset.stationCode,
-                    category_code: node.dataset.categoryCode,
-                    route_sequence: routeSequence,
-                });
             }
             const payload = {
                 vehicle_type: vehicle,
@@ -2446,30 +2431,9 @@ window.PPMSModuleRuntime = (() => {
                 if (error) throw error;
             }
 
-            for (const route of routeUpdates) {
-                const { error: stationError } = await dbRef
-                    .from('kd2_process_stations')
-                    .update({ route_sequence: route.route_sequence })
-                    .eq('vehicle_type', vehicle)
-                    .eq('station_code', route.station_code);
-                if (stationError) throw stationError;
-
-                const { error: routeError } = await dbRef
-                    .from('kd2_process_routes')
-                    .upsert({
-                        vehicle_type: vehicle,
-                        category_code: route.category_code,
-                        station_code: route.station_code,
-                        route_sequence: route.route_sequence,
-                        is_active: true,
-                    }, { onConflict: 'vehicle_type,station_code' });
-                if (routeError) throw routeError;
-            }
-
             await writeAudit('UPSERT', 'kd2_process_lead_times', vehicle, before, [...updates, ...inserts]);
-            await writeAudit('UPDATE', 'kd2_process_routes', vehicle, routeBefore, routeUpdates);
             closeLeadTimeModal();
-            toast(`KD2 route and lead-time setup saved for ${vehicle}.`, 'success');
+            toast(`KD2 lead-time setup saved for ${vehicle}.`, 'success');
             await refreshWorkspace({ force: true });
             await helpers.reloadAll?.();
         } catch (error) {
