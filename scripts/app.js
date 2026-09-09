@@ -157,7 +157,6 @@ function startEditActivitySync() {
             if (String(payload.versionId ?? '') !== String(myVersion ?? '')) return;
             _editActivityLog.unshift(payload);
             if (_editActivityLog.length > 50) _editActivityLog.length = 50;
-            _editActivityDismissed = false;
             _renderEditActivityPanel();
         })
         .subscribe();
@@ -199,7 +198,19 @@ function _editActivityColor(id) {
 
 function _renderEditActivityPanel() {
     let panel = document.getElementById('editActivityPanel');
-    const show = _ganttEditMode && _ganttCoEditors().length > 0 && !_editActivityDismissed;
+    const coEditing = _ganttEditMode && _ganttCoEditors().length > 0;
+    const show = coEditing && !_editActivityDismissed;
+
+    // Toggle button in the edit bar — visible whenever co-editing, so there's
+    // always a way back after the panel is closed.
+    const toggleBtn = document.getElementById('btnEditActivity');
+    if (toggleBtn) {
+        toggleBtn.hidden = !coEditing;
+        toggleBtn.classList.toggle('gantt-activity-on', show);
+        toggleBtn.setAttribute('aria-pressed', show ? 'true' : 'false');
+        const cnt = document.getElementById('editActivityCount');
+        if (cnt) cnt.textContent = _editActivityLog.length ? String(_editActivityLog.length) : '';
+    }
 
     if (!show) { if (panel) panel.hidden = true; return; }
 
@@ -220,7 +231,7 @@ function _renderEditActivityPanel() {
         } catch {}
         panel.querySelector('#eapClose').addEventListener('click', () => {
             _editActivityDismissed = true;
-            panel.hidden = true;
+            _renderEditActivityPanel();
         });
         _wireEditActivityDrag(panel, panel.querySelector('#eapHead'));
     }
@@ -1766,14 +1777,17 @@ function _ganttCoEditors() {
     const myId = String(me?.id || me?.email || '');
     const myModule = getActiveModuleId();
     const myVersion = window.PlanVersions?.getActiveId?.(getActiveModuleId()) ?? null;
-    const cutoff = Date.now() - 60_000;
-    return Object.values(_presenceOnlineMap).filter(u =>
-        u && u.id && String(u.id) !== myId
-        && (u.ts || 0) >= cutoff
-        && u.editing
-        && u.editing.moduleId === myModule
-        && String(u.editing.versionId ?? '') === String(myVersion ?? '')
-    );
+    const cutoff = Date.now() - 75_000;
+    return Object.values(_presenceOnlineMap).filter(u => {
+        if (!u || !u.id || String(u.id) === myId) return false;
+        if ((u.ts || 0) < cutoff || !u.editing) return false;
+        if (u.editing.moduleId !== myModule) return false;
+        // Match on version when both sides actually have one; if either is
+        // missing (no version selected, older client), same module is enough.
+        const theirV = u.editing.versionId, mineV = myVersion;
+        if (theirV != null && mineV != null && String(theirV) !== String(mineV)) return false;
+        return true;
+    });
 }
 
 function _renderGanttCoEditors() {
@@ -1873,7 +1887,8 @@ function startPresenceTracking() {
             sendHeartbeat();
             // Ask all already-connected users to respond with their heartbeat now
             _presenceChannel?.send({ type: 'broadcast', event: 'ping', payload: { from: myId } }).catch(() => {});
-            _heartbeatTimer = setInterval(() => { sendHeartbeat(); pruneAndRender(); }, 30_000);
+            // 12s while editing (co-editor presence needs to feel live), 30s otherwise.
+            _heartbeatTimer = setInterval(() => { sendHeartbeat(); pruneAndRender(); }, 12_000);
         });
 }
 
@@ -17060,6 +17075,11 @@ wireGanttControls = function () {
         if (e.target.closest('#ganttOptionsPopover') || e.target.closest('#btnGanttOptions')) return;
         pop.hidden = true;
         optBtn?.setAttribute('aria-expanded', 'false');
+    });
+
+    document.getElementById('btnEditActivity')?.addEventListener('click', () => {
+        _editActivityDismissed = !_editActivityDismissed;
+        _renderEditActivityPanel();
     });
 
     document.getElementById('btnGanttClearSel')?.addEventListener('click', () => {

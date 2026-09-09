@@ -7616,6 +7616,26 @@ body {
     gap: 8px;
 }
 
+.gantt-activity-btn { position: relative; display: inline-flex; align-items: center; gap: 5px; }
+.gantt-activity-btn[hidden] { display: none; }
+.gantt-activity-btn.gantt-activity-on {
+    background: color-mix(in srgb, var(--clr-accent) 12%, transparent);
+    color: var(--clr-accent);
+}
+.gantt-activity-count {
+    font-size: .64rem;
+    font-weight: 700;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    border-radius: 999px;
+    background: var(--clr-accent);
+    color: #fff;
+    display: inline-grid;
+    place-items: center;
+}
+.gantt-activity-count:empty { display: none; }
+
 .gantt-opt-wrap { position: relative; display: inline-flex; }
 .gantt-opt-btn { padding: 5px 8px; }
 .gantt-opt-popover {

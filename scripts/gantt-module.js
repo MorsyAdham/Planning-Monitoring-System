@@ -205,6 +205,10 @@
                                 <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" style="width:12px;height:12px"><path d="M12 7a5 5 0 1 0-1.5 3.5" /><path d="M12 3.5V7H8.5" /></svg>
                             </button>
                         </div>
+                        <button class="btn btn-ghost btn-sm gantt-activity-btn" id="btnEditActivity" hidden aria-pressed="true" title="Show / hide the live edit feed">
+                            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" style="width:13px;height:13px"><path d="M1 7h2.5l1.5-4 2 8 1.5-4H13"/></svg>
+                            <span class="gantt-activity-count" id="editActivityCount"></span>
+                        </button>
                         <div class="gantt-opt-wrap">
                             <button class="btn btn-ghost btn-sm gantt-opt-btn" id="btnGanttOptions" aria-expanded="false" title="Options — Saturdays, no-work days">
                                 <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" style="width:13px;height:13px"><circle cx="7" cy="7" r="2.2"/><path d="M7 1v2M7 11v2M1 7h2M11 7h2M2.8 2.8l1.4 1.4M9.8 9.8l1.4 1.4M11.2 2.8 9.8 4.2M4.2 9.8 2.8 11.2"/></svg>
