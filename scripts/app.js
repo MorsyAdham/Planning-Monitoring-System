@@ -1527,19 +1527,14 @@ function _renderGanttCoEditors() {
         return `<span class="gce-avatar" title="${esc((p.name || p.email || '') + (p.editing?.task ? ' — ' + p.editing.task : ''))}">${esc(initial)}</span>`;
     }).join('');
 
-    if (inline) {
-        if (peers.length) {
-            inline.hidden = false;
-            inline.innerHTML = `<span class="gce-stack">${avatars}</span><span class="gce-text">${esc(names.join(', '))} ${peers.length === 1 ? 'is' : 'are'} also editing</span>`;
-        } else {
-            inline.hidden = true;
-            inline.innerHTML = '';
-        }
-    }
+    // The badge (always visible near the Gantt) covers this; the in-bar copy
+    // was redundant while co-editing.
+    if (inline) { inline.hidden = true; inline.innerHTML = ''; }
     if (badge) {
-        if (peers.length && !_ganttEditMode) {
+        if (peers.length) {
             badge.hidden = false;
-            badge.innerHTML = `<span class="gce-stack">${avatars}</span><span class="gce-text">${esc(names.join(', '))} editing this plan</span>`;
+            const verb = peers.length === 1 ? 'is editing' : 'are editing';
+            badge.innerHTML = `<span class="gce-stack">${avatars}</span><span class="gce-text">${esc(names.join(', '))} ${verb} this plan</span>`;
         } else {
             badge.hidden = true;
             badge.innerHTML = '';
