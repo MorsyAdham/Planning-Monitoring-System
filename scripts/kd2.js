@@ -1667,8 +1667,21 @@ window.PPMSModuleRuntime = (() => {
                 }).eq('vehicle_type', vehicle).eq('station_code', w.station_code),
             ])));
             await writeAudit('UPDATE', 'kd2_process_stations', `${vehicle}:route-drag`, before, writes);
-            await refreshWorkspace({ force: true });
-            await helpers.reloadAll?.();
+
+            // Patch state in memory instead of a full refetch — a reorder only
+            // touches a handful of route_sequence values, and getStationLaneOrder
+            // reads straight from state.stations. The caller re-renders.
+            const wByCode = new Map(writes.map(w => [w.station_code, w]));
+            state.stations.forEach(s => {
+                if (s.vehicle_type !== vehicle) return;
+                const w = wByCode.get(s.station_code);
+                if (w) { s.route_sequence = w.route_sequence; s.category_code = w.category_code; s.parallel_with_previous = w.parallel_with_previous; }
+            });
+            (state.routes || []).forEach(r => {
+                if (r.vehicle_type !== vehicle) return;
+                const w = wByCode.get(r.station_code);
+                if (w) { r.route_sequence = w.route_sequence; r.category_code = w.category_code; }
+            });
             return true;
         } catch (error) {
             catRevert.forEach(([s, c]) => { s.category_code = c; });

@@ -168,7 +168,7 @@
                         <button class="gmt-btn gantt-ctx-standalone" id="gmtSelectLane" aria-pressed="false">Select lane</button>
                     </div>
 
-                    <div class="gantt-ctx" id="ganttCtxAdd" style="display:none">
+                    <div class="gantt-ctx" id="ganttCtxAdd" hidden>
                         <span class="gantt-ctx-label">Add by</span>
                         <div class="kd2-visual-add-shell" id="ganttVisualAddShell" style="display:none">
                             <button class="btn btn-sm btn-visual-block" id="btnGanttVisualAdd" aria-expanded="false" aria-pressed="false">
@@ -186,7 +186,7 @@
                         </button>
                     </div>
 
-                    <div class="gantt-ctx" id="ganttCtxReorder" style="display:none">
+                    <div class="gantt-ctx" id="ganttCtxReorder" hidden>
                         <span class="gantt-ctx-label" id="ganttReorderScope">Route order</span>
                         <span class="gantt-ctx-hint">Use the arrows on each row &middot; &#8741; joins with the row above &middot; changes apply to this plan version</span>
                     </div>

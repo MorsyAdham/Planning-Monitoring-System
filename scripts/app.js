@@ -17098,9 +17098,8 @@ async function handleKd2ReorderClick(btn) {
         if (changed === false) {
             showToast('Already in that position.', 'info');
         } else {
-            const gsEl = document.getElementById('ganttStart');
-            const geEl = document.getElementById('ganttEnd');
-            renderGantt(currentData, gsEl?.value, geEl?.value);
+            resetKd2LaneOrderCache();
+            refreshAllViews();
         }
     } catch (err) {
         showToast('Reorder failed: ' + (err.message || err), 'error');
