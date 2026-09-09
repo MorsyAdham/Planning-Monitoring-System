@@ -7803,10 +7803,12 @@ function renderGantt(plans, startDate, endDate) {
               ${_kd2PctHtml}
             </div>
             ${(isKD2Module() || isF100KD2Module()) && _ganttEditMode && _ganttSelectLaneMode && anchorTask ? `<button type="button" class="gantt-lane-select-btn" data-gantt-lane-select="${anchorTask.id}" aria-pressed="${laneSelected ? 'true' : 'false'}">${laneSelected ? 'Clear lane' : 'Select lane'}</button>` : ''}
-            ${_kd2ReorderRow ? `<div class="gr-reorder-ctrls" data-vehicle="${esc(groupKey)}" data-row-key="${esc(unit)}" data-line="${esc(_rowLine)}">
+            ${_kd2ReorderRow ? `<div class="gr-reorder-ctrls" data-vehicle="${esc(groupKey)}" data-row-key="${esc(unit)}" data-line="${esc(_rowLine)}" data-station-codes="${esc((getModuleRuntime()?.getStationRowKeyToCodes?.(groupKey)?.get(unit) || []).join(','))}">
               <button type="button" class="gr-reorder-btn" data-kd2-reorder="up" title="Move earlier"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11V3"/><path d="M3.5 6.5 7 3l3.5 3.5"/></svg></button>
               <button type="button" class="gr-reorder-btn" data-kd2-reorder="down" title="Move later"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v8"/><path d="m3.5 7.5 3.5 3.5 3.5-3.5"/></svg></button>
               <button type="button" class="gr-reorder-btn gr-reorder-par" data-kd2-reorder="parallel" title="Toggle parallel with the row above">&#8741;</button>
+              <button type="button" class="gr-reorder-btn gr-reorder-del" data-kd2-reorder="remove" title="Remove this process from the route">&#128465;</button>
+              <button type="button" class="gr-reorder-btn gr-reorder-add" data-kd2-reorder="add" title="Add a process to this vehicle">&#43;</button>
             </div>` : ''}
           </div>
           <div class="gr-track" style="width:${totalW}px;height:${rowH}px"
@@ -16949,7 +16951,27 @@ async function handleKd2ReorderClick(btn) {
     const line = box.dataset.line || '';
     const action = btn.dataset.kd2Reorder;
     const rt = getModuleRuntime();
-    if (!vehicle || !rowKey || !rt?.persistRouteOrder) return;
+    if (!vehicle || !rt) return;
+
+    if (action === 'add') {
+        rt.openProcessModal?.(vehicle);
+        return;
+    }
+    if (action === 'remove') {
+        const codes = (box.dataset.stationCodes || '').split(',').filter(Boolean);
+        if (!codes.length) { showToast('No station is bound to this row.', 'error'); return; }
+        try {
+            for (const code of codes) await rt.deleteProcessStation?.(vehicle, code);
+            const gs = document.getElementById('ganttStart');
+            const ge = document.getElementById('ganttEnd');
+            renderGantt(currentData, gs?.value, ge?.value);
+        } catch (err) {
+            showToast('Remove failed: ' + (err.message || err), 'error');
+        }
+        return;
+    }
+
+    if (!rowKey || !rt.persistRouteOrder) return;
     if (!line) { showToast('This row is not bound to a component track.', 'error'); return; }
 
     const lane = rt.getStationLaneOrder(vehicle) || new Map();
@@ -16971,15 +16993,19 @@ async function handleKd2ReorderClick(btn) {
     if (idx < 0) return;
 
     const codesOf = keys => keys.flatMap(k => codesByKey.get(k) || []);
+    const rowCodesOfSlot = codesOf(slots[idx].rowKeys);
     let moves = [];
 
-    if (action === 'up' || action === 'down') {
-        const j = action === 'up' ? idx - 1 : idx + 1;
-        if (j < 0 || j >= slots.length) return;
-        moves = [
-            ...codesOf(slots[idx].rowKeys).map(c => ({ station_code: c, order: slots[j].routeSeq })),
-            ...codesOf(slots[j].rowKeys).map(c => ({ station_code: c, order: slots[idx].routeSeq })),
-        ];
+    if (action === 'up') {
+        if (idx === 0) { showToast('Already first in this track.', 'info'); return; }
+        // Slot just before the previous one, so normalizeRoute re-densifies it
+        // one step earlier (and bumps the previous slot one step later).
+        const target = slots[idx - 1].routeSeq - 0.5;
+        moves = rowCodesOfSlot.map(c => ({ station_code: c, order: target }));
+    } else if (action === 'down') {
+        if (idx === slots.length - 1) { showToast('Already last in this track.', 'info'); return; }
+        const target = slots[idx + 1].routeSeq + 0.5;
+        moves = rowCodesOfSlot.map(c => ({ station_code: c, order: target }));
     } else if (action === 'parallel') {
         const rowCodes = codesByKey.get(rowKey) || [];
         if (slots[idx].rowKeys.length > 1) {
@@ -16990,10 +17016,17 @@ async function handleKd2ReorderClick(btn) {
             moves = rowCodes.map(c => ({ station_code: c, order: slots[idx - 1].routeSeq }));
         }
     }
-    if (!moves.length) return;
+    if (!moves.length) {
+        showToast('Could not resolve this row for reordering.', 'error');
+        return;
+    }
     try {
-        await rt.persistRouteOrder(vehicle, moves);
+        const changed = await rt.persistRouteOrder(vehicle, moves);
+        const gsEl = document.getElementById('ganttStart');
+        const geEl = document.getElementById('ganttEnd');
+        renderGantt(currentData, gsEl?.value, geEl?.value);
         syncDataViewsAfterGanttEdit?.();
+        if (changed === false) showToast('Already in that position.', 'info');
     } catch (err) {
         showToast('Reorder failed: ' + (err.message || err), 'error');
     }

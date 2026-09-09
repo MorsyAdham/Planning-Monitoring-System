@@ -1454,7 +1454,7 @@ window.PPMSModuleRuntime = (() => {
                     ${station.requires_xray ? '<span class="kd2-xray-chip" title="Requires X-ray inspection">X-RAY</span>' : ''}
                 </td>
                 <td>${escapeHtml(station.work_center || '—')}</td>
-                <td>${station.vehicle_type === 'K9' ? escapeHtml(station.component_group || '—') : '—'}</td>
+                <td>${escapeHtml(stationTrack(station).line)}</td>
                 <td>${escapeHtml(leadTimeText(station.vehicle_type, station.category_code, station.station_code))}</td>
                 <td>${escapeHtml(lead?.lead_time_source || '—')}</td>
                 <td>${escapeHtml(station.notes || '—')}</td>
@@ -1572,7 +1572,7 @@ window.PPMSModuleRuntime = (() => {
                 <table class="table kd2-process-table kd2-process-table-flat">
                     <thead>
                         <tr>
-                            <th>Vehicle</th><th>Category</th><th>Station</th><th>Work Center</th><th>Component</th>
+                            <th>Vehicle</th><th>Category</th><th>Station</th><th>Work Center</th><th>Component Track</th>
                             <th>Lead Time</th><th title="Where the duration estimate came from — for reference only, not used in scheduling">Lead Source</th>
                             <th>Notes</th><th>Actions</th>
                         </tr>
@@ -1671,7 +1671,7 @@ window.PPMSModuleRuntime = (() => {
             }
         });
 
-        if (!writes.length) { catRevert.forEach(([s, c]) => { s.category_code = c; }); return; }
+        if (!writes.length) { catRevert.forEach(([s, c]) => { s.category_code = c; }); return false; }
 
         try {
             await Promise.all(writes.map(w => Promise.all([
@@ -1689,10 +1689,12 @@ window.PPMSModuleRuntime = (() => {
             await writeAudit('UPDATE', 'kd2_process_stations', `${vehicle}:route-drag`, before, writes);
             await refreshWorkspace({ force: true });
             await helpers.reloadAll?.();
+            return true;
         } catch (error) {
             catRevert.forEach(([s, c]) => { s.category_code = c; });
             toast('Failed to save the new order: ' + (error.message || error), 'error');
             await refreshWorkspace({ force: true });
+            throw error;
         }
     }
 
@@ -8210,6 +8212,8 @@ window.PPMSModuleRuntime = (() => {
         normalizeRoute,
         persistRouteOrder,
         persistCategoryOrder,
+        deleteProcessStation,
+        openProcessModal,
         canManageKD2,
     };
 })();
