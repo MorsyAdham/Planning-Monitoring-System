@@ -1391,6 +1391,10 @@ function startRealtimeSync() {
         _realtimeChannel = db
             .channel('kd2_plan_realtime')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'kd2_plan' }, onChange)
+            // kd2_progress holds actual start / completion / X-ray cycles — an
+            // edit there reshapes status, delay and the Gantt markers for every
+            // viewer, so it must trigger the same reload as a kd2_plan change.
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'kd2_progress' }, onChange)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'kd2_process_stations' }, onChange)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'kd2_process_categories' }, onChange)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'kd2_process_routes' }, onChange)
@@ -1856,6 +1860,22 @@ function refreshAllViews() {
     const gsEl = document.getElementById('ganttStart');
     const geEl = document.getElementById('ganttEnd');
     if (!gsEl?.value || !geEl?.value) setGanttRangeFromData(displayData);
+    renderGantt(displayData, gsEl?.value, geEl?.value);
+}
+
+/* Re-render every view that reads currentData EXCEPT the main table — for
+   the inline-edit paths that already patched the table row in place. Without
+   this, a Plan Data edit (actual start, completion, planned dates, X-ray)
+   updated the table and VPX but left the Gantt bars/markers, summary cards
+   and charts stale until a page reload. */
+function syncSiblingViews() {
+    const displayData = applyActiveFilters(currentData);
+    updateSummary(displayData);
+    renderCharts(displayData);
+    renderVPX(displayData);
+    if (isKD2Module()) getModuleRuntime()?.renderSchedule?.(displayData);
+    const gsEl = document.getElementById('ganttStart');
+    const geEl = document.getElementById('ganttEnd');
     renderGantt(displayData, gsEl?.value, geEl?.value);
 }
 
@@ -5496,7 +5516,7 @@ async function saveActualStart(planId, dateValue) {
                 row.status = newStatus;
                 const updated = updateF100TableRowInPlace(planId);
                 if (!updated) { const pos = saveScrollPos(); renderF100Table(currentData); restoreScrollPos(pos); }
-                renderF100VPX(currentData);
+                syncSiblingViews();
             } else {
                 const pos = saveScrollPos();
                 await loadData();
@@ -5555,7 +5575,7 @@ async function saveActualStart(planId, dateValue) {
             row.progress = snapAfter || row.progress || {};
             row.progress.actual_start_date = valueToSave;
             if (!updateTableRowInPlace(planId)) refreshAllViews();
-            else renderVPX(currentData);
+            else syncSiblingViews();
         } else {
             const pos = saveScrollPos();
             await loadData();
@@ -5593,7 +5613,7 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
                 row.status = newStatus;
                 const updated = updateF100TableRowInPlace(planId);
                 if (!updated) { const pos = saveScrollPos(); renderF100Table(currentData); restoreScrollPos(pos); }
-                renderF100VPX(currentData);
+                syncSiblingViews();
             } else {
                 const pos = saveScrollPos();
                 await loadData();
@@ -5647,7 +5667,7 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
             row2.progress.completed = !!valueToSave;
             row2.progress.completion_date = valueToSave;
             if (!updateTableRowInPlace(planId)) refreshAllViews();
-            else renderVPX(currentData);
+            else syncSiblingViews();
         } else {
             const pos = saveScrollPos();
             await loadData();
@@ -6240,7 +6260,7 @@ async function markComplete() {
             mRow.progress.completion_date = compDate;
             mRow.progress.notes = notes || null;
             if (!updateTableRowInPlace(planId)) refreshAllViews();
-            else renderVPX(currentData);
+            else syncSiblingViews();
         } else {
             const pos = saveScrollPos();
             await loadData();
@@ -12347,7 +12367,7 @@ async function _persistXrayCycles(planId, row, cycles, successMessage) {
         Object.assign(row.progress, after);
         showToast(successMessage, 'success');
         if (!updateTableRowInPlace(planId)) refreshAllViews();
-        else renderVPX(currentData);
+        else syncSiblingViews();
         openXrayModal(planId); // refresh the open modal to show the new stage
     } catch (err) {
         showToast('Error saving X-ray/repair status: ' + err.message, 'error');
