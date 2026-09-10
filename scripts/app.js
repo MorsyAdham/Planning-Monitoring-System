@@ -3042,10 +3042,7 @@ function updateF100TableRowInPlace(planId) {
 
     const actualStart = row.actual_start_date || '';
     if (cells[7]) {
-        cells[7].innerHTML = `<div class="inline-date-wrap">
-            <input type="date" class="inline-date-input" data-plan-id="${row.id}" value="${actualStart}" title="Actual start date" />
-            ${actualStart ? `<button class="inline-icon-btn inline-start-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
-        </div>`;
+        cells[7].innerHTML = _inlineDateCellHtml(actualStart, row.id, 'start');
         cells[7].querySelector('.inline-date-input')?.addEventListener('change', function () {
             saveActualStart(this.dataset.planId, this.value);
         });
@@ -3056,10 +3053,7 @@ function updateF100TableRowInPlace(planId) {
 
     const actualEnd = row.actual_end_date || '';
     if (cells[8]) {
-        cells[8].innerHTML = `<div class="inline-date-wrap">
-            <input type="date" class="inline-end-input" data-plan-id="${row.id}" value="${actualEnd}" title="Actual end date" />
-            ${actualEnd ? `<button class="inline-icon-btn inline-end-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
-        </div>`;
+        cells[8].innerHTML = _inlineDateCellHtml(actualEnd, row.id, 'end');
         cells[8].querySelector('.inline-end-input')?.addEventListener('change', function () {
             saveCompletionDate(this.dataset.planId, this.value);
         });
@@ -3107,10 +3101,7 @@ function updateTableRowInPlace(planId) {
 
     const actualStart = row.progress?.actual_start_date || '';
     if (cells[7]) {
-        cells[7].innerHTML = `<div class="inline-date-wrap">
-            <input type="date" class="inline-date-input" data-plan-id="${row.id}" value="${actualStart}" title="Actual start date" />
-            ${actualStart ? `<button class="inline-icon-btn inline-start-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
-        </div>`;
+        cells[7].innerHTML = _inlineDateCellHtml(actualStart, row.id, 'start');
         cells[7].querySelector('.inline-date-input')?.addEventListener('change', function () {
             saveActualStart(this.dataset.planId, this.value);
         });
@@ -3121,10 +3112,7 @@ function updateTableRowInPlace(planId) {
 
     const compDate = row.progress?.completion_date || null;
     if (cells[8]) {
-        cells[8].innerHTML = `<div class="inline-date-wrap">
-            <input type="date" class="inline-end-input" data-plan-id="${row.id}" value="${compDate || ''}" title="Completion date" />
-            ${compDate ? `<button class="inline-icon-btn inline-end-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
-        </div>`;
+        cells[8].innerHTML = _inlineDateCellHtml(compDate, row.id, 'end');
         cells[8].querySelector('.inline-end-input')?.addEventListener('change', function () {
             saveCompletionDate(this.dataset.planId, this.value);
         });
@@ -3370,16 +3358,10 @@ function renderF100Table(data) {
         }
 
         const actualStart = row.actual_start_date || '';
-        const startInputHtml = `<div class="inline-date-wrap">
-            <input type="date" class="inline-date-input" data-plan-id="${row.id}" value="${actualStart}" title="Actual start date" />
-            ${actualStart ? `<button class="inline-icon-btn inline-start-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
-        </div>`;
+        const startInputHtml = _inlineDateCellHtml(actualStart, row.id, 'start');
 
         const actualEnd = row.actual_end_date || '';
-        const endInputHtml = `<div class="inline-date-wrap">
-            <input type="date" class="inline-end-input" data-plan-id="${row.id}" value="${actualEnd}" title="Actual end date" />
-            ${actualEnd ? `<button class="inline-icon-btn inline-end-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
-        </div>`;
+        const endInputHtml = _inlineDateCellHtml(actualEnd, row.id, 'end');
 
         const comments = Array.isArray(row.comments) ? row.comments : [];
         const commentBtn = `<button class="btn-f100-comment" data-plan-id="${row.id}" title="${comments.length} comment${comments.length !== 1 ? 's' : ''}">
@@ -3926,16 +3908,10 @@ function renderTable(data) {
         }
 
         // Actual Start — inline input (same as F100)
-        const startInputHtml = `<div class="inline-date-wrap">
-            <input type="date" class="inline-date-input" data-plan-id="${row.id}" value="${actualStart}" title="Actual start date" />
-            ${actualStart ? `<button class="inline-icon-btn inline-start-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
-        </div>`;
+        const startInputHtml = _inlineDateCellHtml(actualStart, row.id, 'start');
 
         // Completed On — inline input (same pattern as F100 actual end)
-        const endInputHtml = `<div class="inline-date-wrap">
-            <input type="date" class="inline-end-input" data-plan-id="${row.id}" value="${compDate || ''}" title="Completion date" />
-            ${compDate ? `<button class="inline-icon-btn inline-end-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
-        </div>`;
+        const endInputHtml = _inlineDateCellHtml(compDate, row.id, 'end');
 
         // Comments button — identical to F100 pattern
         const comments = Array.isArray(row.comments) ? row.comments : [];
@@ -7275,6 +7251,25 @@ function formatDateShort(isoStr) {
     if (!isoStr || isoStr === '—') return '—';
     const d = new Date(isoStr + 'T00:00:00');
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+}
+
+/** Inline-editable "Actual Start" / "Completed On" date cell. Native
+ *  `<input type="date">` renders its text in the browser/OS locale format
+ *  (e.g. "09/07/2026" under en-US) which can't be restyled — so the real
+ *  date input sits invisible on top of a span showing formatDate()'s
+ *  "07 Aug 2026" style instead, keeping the native picker (click anywhere
+ *  in the box opens it) while controlling what's actually displayed. */
+function _inlineDateCellHtml(value, planId, kind) {
+    const inputClass = kind === 'start' ? 'inline-date-input' : 'inline-end-input';
+    const clearClass = kind === 'start' ? 'inline-start-clear' : 'inline-end-clear';
+    const title = kind === 'start' ? 'Actual start date' : 'Completion date';
+    return `<div class="inline-date-wrap">
+        <span class="inline-date-box">
+            <span class="inline-date-display">${formatDate(value)}</span>
+            <input type="date" class="${inputClass}" data-plan-id="${esc(String(planId))}" value="${value || ''}" title="${title}" />
+        </span>
+        ${value ? `<button class="inline-icon-btn ${clearClass}" data-plan-id="${esc(String(planId))}" title="Clear">✕</button>` : ''}
+    </div>`;
 }
 
 /** Return the unit code for a vehicle+unit combo, or ''. Pass `battalion` whenever
