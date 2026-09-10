@@ -8276,9 +8276,20 @@ function renderGantt(plans, startDate, endDate) {
                 <button type="button" class="gr-reorder-btn" data-kd2-reorder="up" title="Move earlier"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11V3"/><path d="M3.5 6.5 7 3l3.5 3.5"/></svg></button>
                 <button type="button" class="gr-reorder-btn" data-kd2-reorder="down" title="Move later"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v8"/><path d="m3.5 7.5 3.5 3.5 3.5-3.5"/></svg></button>
               </div>
-              <div class="gr-reorder-group">
-                <button type="button" class="gr-reorder-btn gr-reorder-del" data-kd2-reorder="remove" title="Remove this process from the route">&#128465;</button>
-                <button type="button" class="gr-reorder-btn gr-reorder-add" data-kd2-reorder="add" title="Add a process to this vehicle">&#43;</button>
+              <div class="gr-reorder-more">
+                <button type="button" class="gr-reorder-more-trigger" title="More actions" aria-haspopup="true" aria-expanded="false">
+                  <span class="gc-bar-menu-trigger-dots" aria-hidden="true"><span class="gc-bar-menu-trigger-dot"></span><span class="gc-bar-menu-trigger-dot"></span><span class="gc-bar-menu-trigger-dot"></span></span>
+                </button>
+                <div class="gr-reorder-more-menu" role="menu" aria-label="Row actions">
+                  <button type="button" class="gc-bar-menu-item" data-kd2-reorder="add" role="menuitem">
+                    <span class="gc-bar-menu-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M7 2v10M2 7h10"/></svg></span>
+                    <span class="gc-bar-menu-copy"><span class="gc-bar-menu-label">Add process</span></span>
+                  </button>
+                  <button type="button" class="gc-bar-menu-item gc-bar-menu-danger" data-kd2-reorder="remove" role="menuitem">
+                    <span class="gc-bar-menu-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h9"/><path d="M5.5 4V3h3v1"/><path d="M4.5 5.5v5a.75.75 0 0 0 .75.75h3.5A.75.75 0 0 0 9.5 10.5v-5"/></svg></span>
+                    <span class="gc-bar-menu-copy"><span class="gc-bar-menu-label">Remove</span></span>
+                  </button>
+                </div>
               </div>
             </div>` : ''}
           </div>
@@ -17537,8 +17548,9 @@ function _closeAllBarMenus() {
     document.querySelectorAll('.gc-bar-menu-open').forEach(bar => {
         bar.classList.remove('gc-bar-menu-open', 'gc-bar-menu-below');
     });
+    document.querySelectorAll('.gr-reorder-menu-open').forEach(wrap => wrap.classList.remove('gr-reorder-menu-open'));
     document.querySelectorAll('.gc-row-menu-open').forEach(row => row.classList.remove('gc-row-menu-open'));
-    document.querySelectorAll('.gc-bar-menu-trigger').forEach(btn => btn.setAttribute('aria-expanded', 'false'));
+    document.querySelectorAll('.gc-bar-menu-trigger, .gr-reorder-more-trigger').forEach(btn => btn.setAttribute('aria-expanded', 'false'));
     _openGanttBlockMenuPlanId = null;
 }
 
@@ -17558,8 +17570,8 @@ function wireBarDeleteButtons() {
 }
 
 function _ganttClickOutsideHandler(e) {
-    if (!_openGanttBlockMenuPlanId) return;
-    if (e.target.closest('.gc-bar-menu') || e.target.closest('.gc-bar-menu-trigger')) return;
+    if (!_openGanttBlockMenuPlanId && !document.querySelector('.gr-reorder-menu-open')) return;
+    if (e.target.closest('.gc-bar-menu') || e.target.closest('.gc-bar-menu-trigger') || e.target.closest('.gr-reorder-more')) return;
     _closeAllBarMenus();
 }
 
@@ -17579,10 +17591,12 @@ async function handleKd2ReorderClick(btn) {
     if (!vehicle || !rt) return;
 
     if (action === 'add') {
+        _closeAllBarMenus();
         rt.openProcessModal?.(vehicle);
         return;
     }
     if (action === 'remove') {
+        _closeAllBarMenus();
         const codes = (box.dataset.stationCodes || '').split(',').filter(Boolean);
         if (!codes.length) { showToast('No station is bound to this row.', 'error'); return; }
         try {
@@ -17672,6 +17686,19 @@ function _ganttBarClickHandler(e) {
         e.preventDefault();
         e.stopPropagation();
         handleKd2ReorderClick(reorderBtn);
+        return;
+    }
+    const reorderMoreTrigger = e.target.closest('.gr-reorder-more-trigger');
+    if (reorderMoreTrigger) {
+        e.stopPropagation();
+        const wrap = reorderMoreTrigger.closest('.gr-reorder-more');
+        const wasOpen = wrap?.classList.contains('gr-reorder-menu-open');
+        _closeAllBarMenus();
+        if (wrap && !wasOpen) {
+            wrap.classList.add('gr-reorder-menu-open');
+            reorderMoreTrigger.setAttribute('aria-expanded', 'true');
+            reorderMoreTrigger.closest('.gr')?.classList.add('gc-row-menu-open');
+        }
         return;
     }
     const placementTrack = e.target.closest('.gr-track[data-kd2-track="true"]');

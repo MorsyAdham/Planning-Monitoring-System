@@ -8178,17 +8178,78 @@ body {
     background: rgba(79, 142, 247, .2);
 }
 
-.gr-reorder-del {
-    border-color: rgba(239, 68, 68, .35);
-    background: rgba(239, 68, 68, .1);
-    color: #ef4444;
+/* "More actions" overflow menu (Add process / Remove) — reuses the
+   .gc-bar-menu-item family of classes for visual consistency with the
+   Gantt bar's own options menu. */
+.gr-reorder-more {
+    position: relative;
 }
 
-.gr-reorder-add {
-    border-color: rgba(34, 197, 94, .35);
-    background: rgba(34, 197, 94, .1);
-    color: #16a34a;
-    font-weight: 700;
+.gr-reorder-more-trigger {
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid color-mix(in srgb, var(--clr-border) 60%, transparent 40%);
+    background: color-mix(in srgb, var(--clr-surface-2) 85%, transparent 15%);
+    color: var(--clr-text-muted);
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.gr-reorder-more-trigger:hover,
+.gr-reorder-more-trigger:focus-visible,
+.gr-reorder-menu-open .gr-reorder-more-trigger {
+    background: color-mix(in srgb, var(--clr-accent-dim) 70%, var(--clr-surface-2) 30%);
+    border-color: color-mix(in srgb, var(--clr-accent) 42%, var(--clr-border) 58%);
+    color: var(--clr-text);
+}
+
+.gr-reorder-more-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    width: 150px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, 0)),
+        linear-gradient(180deg, color-mix(in srgb, var(--clr-surface) 92%, #0b1220 8%), var(--clr-surface));
+    border: 1px solid color-mix(in srgb, var(--clr-border) 78%, rgba(120, 169, 255, .42) 22%);
+    border-radius: 11px;
+    box-shadow: 0 18px 34px rgba(0, 0, 0, .34), 0 6px 14px rgba(15, 23, 42, .2);
+    padding: 6px;
+    display: grid;
+    gap: 4px;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(-6px) scale(.96);
+    transform-origin: top right;
+    transition: opacity .16s ease, transform .16s ease, visibility .16s ease;
+    z-index: 82;
+}
+
+.gr-reorder-menu-open .gr-reorder-more-menu {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+}
+
+.gr-reorder-more-menu .gc-bar-menu-item {
+    font-size: .68rem;
+    padding: 6px 7px;
+}
+
+.gr-reorder-more-menu .gc-bar-menu-icon {
+    width: 22px;
+    height: 22px;
+}
+
+.gr-reorder-more-menu .gc-bar-menu-icon svg {
+    width: 12px;
+    height: 12px;
 }
 
 body.gantt-reorder-active .gc-bar {
