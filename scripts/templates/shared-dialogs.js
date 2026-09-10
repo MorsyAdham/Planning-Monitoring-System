@@ -605,6 +605,7 @@ export function renderSharedDialogs() {
                                     <th>Role</th>
                                     <th>Action</th>
                                     <th>Module</th>
+                                    <th>Version</th>
                                     <th>Record</th>
                                     <th>IP Address</th>
                                     <th>Changes</th>
@@ -612,7 +613,7 @@ export function renderSharedDialogs() {
                             </thead>
                             <tbody id="alTableBody">
                                 <tr>
-                                    <td colspan="8" class="table-empty">
+                                    <td colspan="9" class="table-empty">
                                         <div class="empty-state"><p>Click to load audit log</p></div>
                                     </td>
                                 </tr>

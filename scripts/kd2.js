@@ -1011,6 +1011,10 @@ window.PPMSModuleRuntime = (() => {
             }
             const user = getCurrentUser();
             if (!user || !dbRef) return;
+            const versionId = window.PlanVersions?.getActiveId?.('kd2') ?? null;
+            const versionName = versionId
+                ? (window.PlanVersions?.getVersions?.('kd2') || []).find(v => String(v.id) === String(versionId))?.name ?? null
+                : null;
             await dbRef.from('planning_audit_log').insert({
                 user_id: user.id,
                 user_email: user.email,
@@ -1021,6 +1025,8 @@ window.PPMSModuleRuntime = (() => {
                 data_before: before ? JSON.parse(JSON.stringify(before)) : null,
                 data_after: after ? JSON.parse(JSON.stringify(after)) : null,
                 ip_address: window.__ppmsShared?.getCachedIP?.() || user.ip || 'unknown',
+                plan_version_id: versionId,
+                plan_version_name: versionName,
             });
         } catch (error) {
             console.warn('KD2 audit write skipped:', error.message);

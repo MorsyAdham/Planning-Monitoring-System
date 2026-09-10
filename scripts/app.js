@@ -166,6 +166,42 @@ function startSelfPermissionSync() {
         .subscribe();
 }
 
+/* ── Plan-version context for audit/notifications/activity feeds ──
+   Every audited action happens inside some plan version's context (or none,
+   for version-agnostic tables like user management). These resolve which
+   module + version a table/action belongs to, so the audit log, notification
+   bell and live-activity panel can all say which version was touched. */
+const AUDIT_TABLE_MODULE = {
+    assembly_plan: 'kd1', assembly_progress: 'kd1',
+    kd2_plan: 'kd2', kd2_progress: 'kd2', kd2_battalions: 'kd2',
+    kd2_process_stations: 'kd2', kd2_process_routes: 'kd2', kd2_process_categories: 'kd2',
+    kd2_process_lead_times: 'kd2', kd2_plan_route_order: 'kd2',
+    f100_plans: 'f100kd2',
+};
+function _auditTableModuleId(table) {
+    const t = String(table || '');
+    if (AUDIT_TABLE_MODULE[t]) return AUDIT_TABLE_MODULE[t];
+    if (t.startsWith('kd2')) return 'kd2';
+    if (t.startsWith('f100')) return 'f100kd2';
+    if (t.startsWith('assembly')) return 'kd1';
+    return null;
+}
+/** {id, name} of a module's active plan version, or null if none/not version-scoped. */
+function _activeVersionInfo(moduleId) {
+    if (!moduleId || !window.PlanVersions?.getActiveId) return null;
+    const id = window.PlanVersions.getActiveId(moduleId);
+    if (!id) return null;
+    const name = _planVersionName(moduleId, id);
+    return { id, name };
+}
+/** Looks up a specific version's name from PlanVersions' cache (already
+ *  loaded per module at page init) — null if unknown. */
+function _planVersionName(moduleId, versionId) {
+    if (!moduleId || !versionId || !window.PlanVersions?.getVersions) return null;
+    const v = window.PlanVersions.getVersions(moduleId).find(x => String(x.id) === String(versionId));
+    return v?.name || null;
+}
+
 /* ── Shared edit-activity feed (draggable panel while co-editing) ── */
 let _editActivityChannel = null;
 let _editActivityLog = [];       // {id, name, text, ts}
@@ -193,6 +229,8 @@ function startEditActivitySync() {
 function _broadcastEditActivity(text, createdAt) {
     if (!_editActivityChannel || !text || !_ganttEditMode) return;
     const u = getCurrentUser();
+    const moduleId = getActiveModuleId();
+    const versionId = window.PlanVersions?.getActiveId?.(moduleId) ?? null;
     _editActivityChannel.send({
         type: 'broadcast', event: 'edit',
         payload: {
@@ -200,8 +238,9 @@ function _broadcastEditActivity(text, createdAt) {
             name: u?.name || u?.email || 'Someone',
             text,
             ts: Date.parse(createdAt) || Date.now(),
-            moduleId: getActiveModuleId(),
-            versionId: window.PlanVersions?.getActiveId?.(getActiveModuleId()) ?? null,
+            moduleId,
+            versionId,
+            versionName: _planVersionName(moduleId, versionId),
         },
     }).catch(() => {});
 }
@@ -271,7 +310,7 @@ function _renderEditActivityPanel() {
     body.innerHTML = _editActivityLog.slice(0, 30).map(e => `
         <div class="eap-row">
             <span class="eap-dot" style="background:${_editActivityColor(e.id)}"></span>
-            <span class="eap-who">${esc((e.name || 'Someone').split(' ')[0])}</span>
+            <span class="eap-who">${esc((e.name || 'Someone').split(' ')[0])}${e.versionName ? ` <span class="eap-version" title="Plan version">${esc(e.versionName)}</span>` : ''}</span>
             <span class="eap-what">${esc(e.text)}</span>
             <span class="eap-when">${_editActivityRelTime(e.ts)}</span>
         </div>`).join('') || '<div class="eap-empty">No edits yet</div>';
@@ -328,8 +367,9 @@ async function auditLog(action, table, recId, before, after) {
     // created_at is generated client-side (not read back from the insert) so this
     // works even if the caller's role only has INSERT, not SELECT, on the table.
     const createdAt = new Date().toISOString();
+    const versionInfo = _activeVersionInfo(_auditTableModuleId(table));
     try {
-        await db.from('planning_audit_log').insert({
+        const basePayload = {
             user_id: user.id,
             user_email: user.email,
             user_role: user.role,
@@ -340,7 +380,18 @@ async function auditLog(action, table, recId, before, after) {
             data_after: after ? JSON.parse(JSON.stringify(after)) : null,
             ip_address: getCachedIP(),
             created_at: createdAt,
+        };
+        let { error } = await db.from('planning_audit_log').insert({
+            ...basePayload,
+            plan_version_id: versionInfo?.id ?? null,
+            plan_version_name: versionInfo?.name ?? null,
         });
+        if (error) {
+            // plan_version_id/name columns missing until migration 55 runs —
+            // fall back to the base write so audit logging never breaks.
+            ({ error } = await db.from('planning_audit_log').insert(basePayload));
+            if (error) throw error;
+        }
     } catch (e) {
         console.warn('Audit log write failed (non-fatal):', e.message);
     }
@@ -349,7 +400,7 @@ async function auditLog(action, table, recId, before, after) {
     // broadcast by action+table+record+timestamp so it dedupes against the same
     // event if the polling catch-up also picks it up.
     if (typeof _broadcastAuditEvent === 'function' && !AUDIT_NOTIF_EXCLUDED_ACTIONS.has(action)) {
-        _broadcastAuditEvent(action, table, recId, user, createdAt);
+        _broadcastAuditEvent(action, table, recId, user, createdAt, versionInfo);
     }
     // Feed the shared "edit activity" panel while co-editing the plan. Most
     // edits broadcast a rich line from their own handler; this is the
@@ -6367,7 +6418,7 @@ function openNotifDropdown() {
                         <span class="f100-notif-issue-tag" style="background:${color}26;color:${color}">${esc(verbLabel)}</span>
                         <span class="f100-notif-item-time">${formatCommentTime(n.audit?.createdAt)}</span>
                     </div>
-                    <div class="f100-notif-item-context">${esc(tableLabel)}</div>
+                    <div class="f100-notif-item-context">${esc(tableLabel)}${n.audit?.versionName ? ` · ${esc(n.audit.versionName)}` : ''}</div>
                     <div class="f100-notif-item-text">By ${esc(n.audit?.userEmail || '?')}</div>
                 </div>`;
             }
@@ -13857,7 +13908,7 @@ async function loadAuditLog(reset = false) {
     const tbody    = document.getElementById('alTableBody');
 
     if (reset) {
-        tbody.innerHTML = `<tr><td colspan="8" class="table-empty"><div class="empty-state"><span class="spinner"></span><p>Loading…</p></div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" class="table-empty"><div class="empty-state"><span class="spinner"></span><p>Loading…</p></div></td></tr>`;
     }
 
     let query = db
@@ -13875,7 +13926,7 @@ async function loadAuditLog(reset = false) {
     const { data, count, error } = await query;
 
     if (error) {
-        tbody.innerHTML = `<tr><td colspan="8" class="table-empty"><div class="empty-state"><p>Error: ${esc(error.message)}</p></div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" class="table-empty"><div class="empty-state"><p>Error: ${esc(error.message)}</p></div></td></tr>`;
         return;
     }
 
@@ -13897,6 +13948,7 @@ async function loadAuditLog(reset = false) {
       <td><span class="role-pill ${roleClass(role)}">${esc(roleLabel(role))}</span></td>
       <td><span class="al-action ${entry.action}">${entry.action}</span></td>
       <td class="al-cell-module">${esc(moduleLabel)}</td>
+      <td class="al-cell-version" title="${esc(entry.plan_version_name || '')}">${esc(entry.plan_version_name || '—')}</td>
       <td class="mono al-cell-record" title="${esc(entry.record_id || '')}">${esc(entry.record_id || '—')}</td>
       <td class="mono al-cell-ip">${esc(entry.ip_address || '—')}</td>
       <td>${hasDiff
@@ -13907,7 +13959,7 @@ async function loadAuditLog(reset = false) {
 
     if (reset) {
         tbody.innerHTML = rows.join('') ||
-            `<tr><td colspan="8" class="table-empty"><div class="empty-state"><p>No audit entries match the filters.</p></div></td></tr>`;
+            `<tr><td colspan="9" class="table-empty"><div class="empty-state"><p>No audit entries match the filters.</p></div></td></tr>`;
     } else {
         rows.forEach(r => tbody.insertAdjacentHTML('beforeend', r));
     }
@@ -13956,7 +14008,7 @@ function toggleDiff(btn, rowId) {
     ].join('');
 
     diffRow.innerHTML = `
-    <td colspan="8" style="padding:0">
+    <td colspan="9" style="padding:0">
       <div class="al-diff-wrap">
         <div class="al-diff-header">
           <span class="al-diff-badge al-diff-badge--changed">${changed.length} field${changed.length !== 1 ? 's' : ''} changed</span>
@@ -14000,7 +14052,7 @@ async function exportAuditLogExcel() {
     if (!rows) return;
 
     const wsData = [
-        ['Date / Time', 'User', 'Role', 'Action', 'Module', 'Record ID', 'IP Address', 'Fields Changed'],
+        ['Date / Time', 'User', 'Role', 'Action', 'Module', 'Plan Version', 'Record ID', 'IP Address', 'Fields Changed'],
         ...rows.map(r => {
             const dt = new Date(r.created_at);
             const changed = (() => {
@@ -14015,6 +14067,7 @@ async function exportAuditLogExcel() {
                 (r.user_role || '').replace(/_/g, ' '),
                 r.action || '—',
                 AL_TABLE_LABELS[r.table_name] || r.table_name || '—',
+                r.plan_version_name || '—',
                 r.record_id || '—',
                 r.ip_address || '—',
                 changed,
@@ -14054,7 +14107,7 @@ async function exportAuditLogPDF() {
     doc.setTextColor(186, 230, 253);
     doc.text(`Generated: ${now}   ·   ${rows.length.toLocaleString()} entries`, PAGE_W - MARGIN, 16, { align: 'right' });
 
-    const headers = ['Date / Time', 'User', 'Role', 'Action', 'Module', 'Record', 'IP Address'];
+    const headers = ['Date / Time', 'User', 'Role', 'Action', 'Module', 'Version', 'Record', 'IP Address'];
     const body = rows.map(r => {
         const dt = new Date(r.created_at);
         return [
@@ -14063,6 +14116,7 @@ async function exportAuditLogPDF() {
             (r.user_role || '').replace(/_/g, ' '),
             r.action || '—',
             AL_TABLE_LABELS[r.table_name] || r.table_name || '—',
+            r.plan_version_name || '—',
             r.record_id || '—',
             r.ip_address || '—',
         ];
@@ -14078,9 +14132,9 @@ async function exportAuditLogPDF() {
         headStyles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 6.5, halign: 'center' },
         alternateRowStyles: { fillColor: [248, 250, 252] },
         columnStyles: {
-            0: { cellWidth: 26 }, 1: { cellWidth: 50 }, 2: { cellWidth: 20 },
-            3: { cellWidth: 18, halign: 'center' }, 4: { cellWidth: 22 },
-            5: { cellWidth: 22 }, 6: { cellWidth: 22 },
+            0: { cellWidth: 26 }, 1: { cellWidth: 44 }, 2: { cellWidth: 18 },
+            3: { cellWidth: 18, halign: 'center' }, 4: { cellWidth: 20 },
+            5: { cellWidth: 24 }, 6: { cellWidth: 22 }, 7: { cellWidth: 22 },
         },
         didDrawCell(data) {
             if (data.section !== 'body' || data.column.index !== 3) return;
@@ -15977,6 +16031,7 @@ function _storeAuditNotification(entry) {
             table: entry.table_name,
             userEmail: entry.user_email,
             createdAt: entry.created_at,
+            versionName: entry.plan_version_name || null,
         },
     });
     if (snap.length > 300) snap = snap.slice(snap.length - 300); // cap growth
@@ -15989,7 +16044,7 @@ let _auditNotifChannel = null;
  *  `createdAt` is generated by the caller (auditLog()) before the insert and
  *  reused as-is, so this broadcast and the row the polling catch-up later
  *  reads back from the DB share the exact same timestamp for _auditNotifKey. */
-async function _broadcastAuditEvent(action, table, recId, user, createdAt) {
+async function _broadcastAuditEvent(action, table, recId, user, createdAt, versionInfo) {
     if (!_auditNotifChannel) return;
     try {
         await _auditNotifChannel.send({
@@ -15999,6 +16054,7 @@ async function _broadcastAuditEvent(action, table, recId, user, createdAt) {
                 action, table_name: table, record_id: recId,
                 user_email: user?.email || '',
                 created_at: createdAt || new Date().toISOString(),
+                plan_version_name: versionInfo?.name ?? null,
             },
         });
     } catch {}
@@ -16010,12 +16066,21 @@ async function _auditNotifCatchup() {
     if (!u || !db) return;
     try {
         const since = _auditNotifGetSeen();
-        const { data, error } = await db.from('planning_audit_log')
-            .select('action, table_name, record_id, user_email, created_at')
+        let { data, error } = await db.from('planning_audit_log')
+            .select('action, table_name, record_id, user_email, created_at, plan_version_name')
             .gt('created_at', since)
             .neq('user_email', u.email)
             .order('created_at', { ascending: true })
             .limit(200);
+        if (error) {
+            // plan_version_name column missing until migration 55 runs.
+            ({ data, error } = await db.from('planning_audit_log')
+                .select('action, table_name, record_id, user_email, created_at')
+                .gt('created_at', since)
+                .neq('user_email', u.email)
+                .order('created_at', { ascending: true })
+                .limit(200));
+        }
         if (error || !data?.length) return;
         data.forEach(entry => {
             if (AUDIT_NOTIF_EXCLUDED_ACTIONS.has(entry.action)) return;

@@ -6877,6 +6877,7 @@ body {
 .al-time       { color: var(--clr-text-muted); }
 .al-cell-user  { font-size: .78rem; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .al-cell-module{ font-size: .78rem; }
+.al-cell-version{ font-size: .72rem; color: var(--clr-text-muted); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .al-cell-record{ font-size: .72rem; color: var(--clr-text-muted); max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .al-cell-ip    { font-size: .72rem; color: var(--clr-text-muted); }
 .al-no-diff    { color: var(--clr-text-dim); font-size: .75rem; }
@@ -7827,6 +7828,19 @@ body {
 .eap-row + .eap-row { border-top: 1px solid color-mix(in srgb, var(--clr-border) 55%, transparent); }
 .eap-dot { grid-area: dot; width: 7px; height: 7px; border-radius: 50%; margin-top: 5px; }
 .eap-who { grid-area: who; font-weight: 700; }
+.eap-version {
+    display: inline-block;
+    font-weight: 500;
+    font-size: .6rem;
+    color: var(--clr-text-muted);
+    background: color-mix(in srgb, var(--clr-surface-2) 80%, transparent 20%);
+    border: 1px solid color-mix(in srgb, var(--clr-border) 70%, transparent 30%);
+    border-radius: 999px;
+    padding: 1px 6px;
+    margin-left: 4px;
+    white-space: nowrap;
+    vertical-align: middle;
+}
 .eap-what { grid-area: what; color: var(--clr-text); word-break: break-word; }
 .eap-when { grid-area: when; font-size: .66rem; color: var(--clr-text-muted); text-align: right; }
 .eap-empty { padding: 14px 12px; color: var(--clr-text-muted); }
