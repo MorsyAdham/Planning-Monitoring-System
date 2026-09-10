@@ -348,12 +348,18 @@ window.PPMSModuleRuntime = (() => {
             || String(a.station_code).localeCompare(String(b.station_code));
         // Two stations only run in parallel when they share an EXPLICIT
         // route_sequence (or an explicit drag override) — never because both
-        // are missing one (9999).
+        // are missing one (9999), AND (for pre-existing data) only when `b`'s
+        // own parallel_with_previous flag says so. Legacy K10/K11 route data
+        // has stale route_sequence numbers duplicated across unrelated
+        // categories (never true parallel steps, just never re-sequenced) —
+        // treating any numeric coincidence as "parallel" welded those rows
+        // into one reorder slot and made the up/down arrows unable to move
+        // either one independently ("Already first" on a row that wasn't).
         const parallelPair = (a, b) => {
             const ca = cur(a), cb = cur(b);
             if (ca !== cb) return false;
             if (overridden(a) || overridden(b)) return true;
-            return ca < 9999;
+            return ca < 9999 && basePar(b);
         };
 
         const DOWN = 'Assembly & Processing & Testing';
@@ -8296,9 +8302,10 @@ window.PPMSModuleRuntime = (() => {
                     const { line, rank } = stationTrack(s);
                     const vr = versionRouteFor(s.vehicle_type, s.station_code);
                     const rs = vr ? vr.route_sequence : (parseInt(s.route_sequence, 10) || 9999);
+                    const pwp = vr ? !!vr.parallel_with_previous : !!s.parallel_with_previous;
                     if (!byTrack.has(line)) byTrack.set(line, []);
                     byTrack.get(line).push({
-                        rowKey, rank, rs,
+                        rowKey, rank, rs, pwp,
                         cs: catSeqOf(s.category_code),
                         sic: parseInt(s.station_sequence_in_category, 10) || 999,
                         code: s.station_code,
@@ -8306,16 +8313,23 @@ window.PPMSModuleRuntime = (() => {
                 });
 
                 // Sort each track by route_sequence, then category/position
-                // fallbacks, and give each a dense position — stations that share
-                // an explicit route_sequence (< 9999) share a position (parallel);
-                // ones that are just both-missing don't.
+                // fallbacks, and give each a dense position — stations only
+                // share a position (parallel) when they share an explicit
+                // route_sequence (< 9999) AND the later one's own
+                // parallel_with_previous flag says so. Legacy K10/K11 data has
+                // stale route_sequence numbers duplicated across unrelated
+                // categories that were never actually parallel steps — treating
+                // the numeric coincidence alone as "parallel" welds unrelated
+                // rows into one reorder slot, so the up/down arrows can only
+                // move the whole slot (showing "Already first" on a row that
+                // visually isn't).
                 const order = new Map();
                 byTrack.forEach((list, line) => {
                     list.sort((a, b) => a.rs - b.rs || a.cs - b.cs || a.sic - b.sic
                         || String(a.code).localeCompare(String(b.code)));
                     let pos = 0, prev = null;
                     list.forEach(it => {
-                        const par = prev && it.rs === prev.rs && it.rs < 9999;
+                        const par = prev && it.rs === prev.rs && it.rs < 9999 && it.pwp;
                         if (!par) pos += 1;
                         prev = it;
                         order.set(it.rowKey, { line, sortKey: it.rank * 1000000 + pos });
