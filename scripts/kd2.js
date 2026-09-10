@@ -321,27 +321,18 @@ window.PPMSModuleRuntime = (() => {
     function normalizeRoute(vehicle, orderOverride) {
         const vRoute = state.versionRoute?.get(vehicle);
         const versionMode = !!(vRoute && vRoute.size);
-        // Always order the full vehicle route (not just the stations that
-        // already have rows in the active version) — a station whose plan
-        // was never generated for this version still shows up via the
-        // catalog fallback (see getStationLaneOrder), so it has to
-        // participate here too or a move touching it is a silent no-op even
-        // though it's a real, visible row.
-        const stations = (state.stations || []).filter(s => s.vehicle_type === vehicle);
+        // In version mode only the stations that belong to the active version
+        // are ordered — the global catalog may hold more.
+        let stations = (state.stations || []).filter(s => s.vehicle_type === vehicle);
+        if (versionMode) stations = stations.filter(s => vRoute.has(s.station_code));
         if (!stations.length) return [];
 
-        // Per-station base: the active version's own row when it has one,
-        // else the global catalog value (same fallback getStationLaneOrder
-        // uses for display) — so a station with no version-specific row yet
-        // still sorts and diffs correctly instead of defaulting to "missing".
-        const baseRoute = s => {
-            const v = versionMode ? vRoute.get(s.station_code) : null;
-            return v ? v.route_sequence : (parseInt(s.route_sequence, 10) || 9999);
-        };
-        const basePar = s => {
-            const v = versionMode ? vRoute.get(s.station_code) : null;
-            return v ? !!v.parallel_with_previous : !!s.parallel_with_previous;
-        };
+        const baseRoute = s => versionMode
+            ? (vRoute.get(s.station_code)?.route_sequence ?? 9999)
+            : (parseInt(s.route_sequence, 10) || 9999);
+        const basePar = s => versionMode
+            ? !!vRoute.get(s.station_code)?.parallel_with_previous
+            : !!s.parallel_with_previous;
         const catSeqOf = s => {
             const c = (state.categories || []).find(x => x.vehicle_type === vehicle && x.category_code === s.category_code);
             return parseInt(c?.category_sequence, 10) || 999;
@@ -1792,80 +1783,20 @@ window.PPMSModuleRuntime = (() => {
         }
     }
 
-    /** A station can be part of this vehicle's displayed route with no
-     *  kd2_plan rows of its own in the active version yet — its plan was
-     *  never generated there (the Gantt still shows it via the catalog
-     *  fallback in getStationLaneOrder/normalizeRoute). To move such a row
-     *  *within this version only*, it first needs real kd2_plan rows here:
-     *  copy its actual battalion/unit/schedule rows from the module's
-     *  baseline version (real data, not fabricated), re-tagged onto the
-     *  active version. Returns the inserted rows (empty if there was nothing
-     *  to copy — e.g. the baseline doesn't have this station either, or this
-     *  IS the baseline). */
-    async function seedStationsIntoActiveVersion(vehicle, stationCodes) {
-        if (!dbRef || !PlanVersions?.getVersions || !stationCodes.length) return [];
-        const activeId = PlanVersions.getActiveId('kd2');
-        if (!activeId) return [];
-        const baseline = (PlanVersions.getVersions('kd2') || []).find(v => v.is_baseline);
-        if (!baseline || baseline.id === activeId) return [];
-
-        const { data: sourceRows, error } = await dbRef.from('kd2_plan').select('*')
-            .eq('vehicle_type', vehicle).eq('plan_version_id', baseline.id).in('station_code', stationCodes);
-        if (error) throw error;
-        if (!sourceRows?.length) return [];
-
-        const inserts = sourceRows.map(r => ({
-            battalion_id: r.battalion_id, vehicle_type: r.vehicle_type,
-            unit_serial: r.unit_serial, unit_label: r.unit_label,
-            category_code: r.category_code, station_code: r.station_code,
-            category_sequence: r.category_sequence, station_sequence_in_category: r.station_sequence_in_category,
-            route_sequence: r.route_sequence, schedule_week: r.schedule_week,
-            planned_start_date: r.planned_start_date, planned_end_date: r.planned_end_date,
-            planning_source: r.planning_source, remark: r.remark, comments: r.comments || [],
-            plan_version_id: activeId, parallel_with_previous: r.parallel_with_previous,
-        }));
-        const { data: inserted, error: insErr } = await dbRef.from('kd2_plan').insert(inserts)
-            .select('station_code, route_sequence, parallel_with_previous, category_code');
-        if (insErr) throw insErr;
-        await writeAudit('INSERT', 'kd2_plan', `${vehicle}:version-seed-from-baseline`, null, inserted);
-        return inserted || [];
-    }
-
     /** Version-scoped reorder: writes route_sequence / parallel_with_previous
      *  (and category_code when a band move is included) onto every kd2_plan row
-     *  of the active plan version for the moved stations. Other versions are
-     *  untouched. A station with no rows here yet is seeded first (see
-     *  seedStationsIntoActiveVersion) so the move has something to write to. */
+     *  of the active plan version for the moved stations. Other versions and
+     *  the global catalog are untouched. */
     async function persistVersionRouteOrder(vehicle, moves, vRoute) {
-        const catMoves = new Map(moves.filter(m => m.category_code).map(m => [m.station_code, m.category_code]));
-        const orderOverride = new Map(moves.map(m => [m.station_code, m.order]));
-        let routeChanges = normalizeRoute(vehicle, orderOverride);
-        let routeByCode = new Map(routeChanges.map(c => [c.station_code, c]));
-
-        const untrackedCodes = state.stations
-            .filter(s => s.vehicle_type === vehicle && !vRoute.has(s.station_code) && routeByCode.has(s.station_code))
-            .map(s => s.station_code);
-        if (untrackedCodes.length) {
-            const seeded = await seedStationsIntoActiveVersion(vehicle, untrackedCodes);
-            seeded.forEach(r => {
-                if (!vRoute.has(r.station_code)) {
-                    vRoute.set(r.station_code, {
-                        route_sequence: parseInt(r.route_sequence, 10) || 9999,
-                        parallel_with_previous: !!r.parallel_with_previous,
-                        category_code: r.category_code || null,
-                    });
-                }
-            });
-            // Re-run now that the seeded stations have a real (baseline-copied)
-            // base value in vRoute instead of falling back to the catalog.
-            routeChanges = normalizeRoute(vehicle, orderOverride);
-            routeByCode = new Map(routeChanges.map(c => [c.station_code, c]));
-        }
-
         const before = [...vRoute.entries()].map(([code, v]) => ({
             station_code: code, route_sequence: v.route_sequence,
             parallel_with_previous: v.parallel_with_previous, category_code: v.category_code,
         }));
+        const catMoves = new Map(moves.filter(m => m.category_code).map(m => [m.station_code, m.category_code]));
+        const orderOverride = new Map(moves.map(m => [m.station_code, m.order]));
+        const routeChanges = normalizeRoute(vehicle, orderOverride);
+        const routeByCode = new Map(routeChanges.map(c => [c.station_code, c]));
+
         const writes = [];
         vRoute.forEach((v, code) => {
             const c = routeByCode.get(code);
