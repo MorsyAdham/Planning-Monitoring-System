@@ -5367,7 +5367,9 @@ body {
 .gr-unit-label {
     padding: 0 10px 0 12px;
     align-items: stretch;
-    gap: 0;
+    flex-wrap: wrap;
+    align-content: center;
+    gap: 3px 8px; /* row-gap column-gap — keeps buttons from crowding the text */
 }
 
 .gr-unit-dot {
@@ -10056,8 +10058,8 @@ th.vpx-grp-processing:first-of-type {
 .gr-unit-info {
     display: flex;
     flex-direction: column;
-    flex: 1;
-    min-width: 0;
+    flex: 1 1 120px;
+    min-width: 120px;
     overflow: hidden;
     justify-content: center;
     gap: 0;
