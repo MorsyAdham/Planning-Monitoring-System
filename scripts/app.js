@@ -8272,11 +8272,14 @@ function renderGantt(plans, startDate, endDate) {
             </div>
             ${(isKD2Module() || isF100KD2Module()) && _ganttEditMode && _ganttSelectLaneMode && anchorTask ? `<button type="button" class="gantt-lane-select-btn" data-gantt-lane-select="${anchorTask.id}" aria-pressed="${laneSelected ? 'true' : 'false'}">${laneSelected ? 'Clear lane' : 'Select lane'}</button>` : ''}
             ${_kd2ReorderRow ? `<div class="gr-reorder-ctrls" data-vehicle="${esc(groupKey)}" data-row-key="${esc(unit)}" data-line="${esc(_rowLine)}" data-station-codes="${esc((getModuleRuntime()?.getStationRowKeyToCodes?.(groupKey)?.get(unit) || []).join(','))}">
-              <button type="button" class="gr-reorder-btn" data-kd2-reorder="up" title="Move earlier"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11V3"/><path d="M3.5 6.5 7 3l3.5 3.5"/></svg></button>
-              <button type="button" class="gr-reorder-btn" data-kd2-reorder="down" title="Move later"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v8"/><path d="m3.5 7.5 3.5 3.5 3.5-3.5"/></svg></button>
-              <button type="button" class="gr-reorder-btn gr-reorder-par" data-kd2-reorder="parallel" title="Toggle parallel with the row above">&#8741;</button>
-              <button type="button" class="gr-reorder-btn gr-reorder-del" data-kd2-reorder="remove" title="Remove this process from the route">&#128465;</button>
-              <button type="button" class="gr-reorder-btn gr-reorder-add" data-kd2-reorder="add" title="Add a process to this vehicle">&#43;</button>
+              <div class="gr-reorder-group">
+                <button type="button" class="gr-reorder-btn" data-kd2-reorder="up" title="Move earlier"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11V3"/><path d="M3.5 6.5 7 3l3.5 3.5"/></svg></button>
+                <button type="button" class="gr-reorder-btn" data-kd2-reorder="down" title="Move later"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v8"/><path d="m3.5 7.5 3.5 3.5 3.5-3.5"/></svg></button>
+              </div>
+              <div class="gr-reorder-group">
+                <button type="button" class="gr-reorder-btn gr-reorder-del" data-kd2-reorder="remove" title="Remove this process from the route">&#128465;</button>
+                <button type="button" class="gr-reorder-btn gr-reorder-add" data-kd2-reorder="add" title="Add a process to this vehicle">&#43;</button>
+              </div>
             </div>` : ''}
           </div>
           <div class="gr-track" style="width:${totalW}px;height:${rowH}px"
@@ -17560,7 +17563,7 @@ function _ganttClickOutsideHandler(e) {
     _closeAllBarMenus();
 }
 
-/* ── KD2 process-view reorder (arrow buttons + parallel toggle) ──
+/* ── KD2 process-view reorder (up/down arrows) ──
    Operates strictly within one component track (data-line). Builds an
    `order` override for the affected rows and hands it to the runtime's
    persistRouteOrder, which re-normalises route_sequence for the whole
@@ -17637,18 +17640,6 @@ async function handleKd2ReorderClick(btn) {
         [slots[idx], slots[idx + 1]] = [slots[idx + 1], slots[idx]];
         neighbourLabel = slots[idx].rowKeys[0];
         verb = `moved ${rowKey} after ${neighbourLabel}`;
-    } else if (action === 'parallel') {
-        if (slots[idx].rowKeys.length > 1) {
-            // split this row into its own slot right after the shared one
-            slots[idx].rowKeys = slots[idx].rowKeys.filter(k => k !== rowKey);
-            slots.splice(idx + 1, 0, { pos: 0, rowKeys: [rowKey] });
-            verb = `split ${rowKey} out of its parallel group`;
-        } else {
-            if (idx === 0) { showToast('No row above to run this in parallel with.', 'info'); return; }
-            slots[idx - 1].rowKeys.push(rowKey);
-            slots.splice(idx, 1);
-            verb = `set ${rowKey} to run parallel with ${slots[idx - 1].rowKeys[0]}`;
-        }
     } else return;
 
     const moves = [];

@@ -8141,8 +8141,14 @@ body {
     flex-shrink: 0;
     align-self: center;
     display: flex;
-    gap: 3px;
+    align-items: center;
+    gap: 8px;
     margin-left: auto;
+}
+
+.gr-reorder-group {
+    display: flex;
+    gap: 3px;
 }
 
 .gr-reorder-btn {
@@ -8168,10 +8174,6 @@ body {
 
 .gr-reorder-btn:hover {
     background: rgba(79, 142, 247, .2);
-}
-
-.gr-reorder-par {
-    font-weight: 700;
 }
 
 .gr-reorder-del {
