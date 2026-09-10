@@ -321,18 +321,29 @@ window.PPMSModuleRuntime = (() => {
     function normalizeRoute(vehicle, orderOverride) {
         const vRoute = state.versionRoute?.get(vehicle);
         const versionMode = !!(vRoute && vRoute.size);
-        // In version mode only the stations that belong to the active version
-        // are ordered — the global catalog may hold more.
-        let stations = (state.stations || []).filter(s => s.vehicle_type === vehicle);
-        if (versionMode) stations = stations.filter(s => vRoute.has(s.station_code));
+        // Always order the full vehicle route, not just the stations that
+        // already have a version-scoped row — a station with no row in the
+        // active version yet still shows up via the catalog fallback (see
+        // getStationLaneOrder), so excluding it here means a move that
+        // crosses it doesn't shift the tracked stations at all (relative
+        // order among just the tracked subset stays identical), which
+        // silently no-ops as "Already in that position" even though the
+        // move should be a real change.
+        const stations = (state.stations || []).filter(s => s.vehicle_type === vehicle);
         if (!stations.length) return [];
 
-        const baseRoute = s => versionMode
-            ? (vRoute.get(s.station_code)?.route_sequence ?? 9999)
-            : (parseInt(s.route_sequence, 10) || 9999);
-        const basePar = s => versionMode
-            ? !!vRoute.get(s.station_code)?.parallel_with_previous
-            : !!s.parallel_with_previous;
+        // Per-station base: the active version's own row when it has one,
+        // else the global catalog value (same fallback getStationLaneOrder
+        // uses for display) — so a station with no version-specific row yet
+        // still sorts and diffs correctly instead of defaulting to "missing".
+        const baseRoute = s => {
+            const v = versionMode ? vRoute.get(s.station_code) : null;
+            return v ? v.route_sequence : (parseInt(s.route_sequence, 10) || 9999);
+        };
+        const basePar = s => {
+            const v = versionMode ? vRoute.get(s.station_code) : null;
+            return v ? !!v.parallel_with_previous : !!s.parallel_with_previous;
+        };
         const catSeqOf = s => {
             const c = (state.categories || []).find(x => x.vehicle_type === vehicle && x.category_code === s.category_code);
             return parseInt(c?.category_sequence, 10) || 999;
