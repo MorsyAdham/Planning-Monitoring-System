@@ -17660,7 +17660,15 @@ async function handleKd2ReorderClick(btn) {
     try {
         const changed = await rt.persistRouteOrder(vehicle, moves);
         if (changed === false) {
-            showToast('Already in that position.', 'info');
+            const clickedCodes = codesByKey.get(rowKey) || [];
+            const untracked = rt.isStationTrackedInActiveVersion
+                && clickedCodes.length && !clickedCodes.some(c => rt.isStationTrackedInActiveVersion(vehicle, c));
+            showToast(
+                untracked
+                    ? `${rowKey} isn't part of ${vehicle}'s route in this plan version yet (no plan rows for it) — it can't be reordered here until its plan is generated for this version.`
+                    : 'Already in that position.',
+                'info'
+            );
         } else {
             resetKd2LaneOrderCache();
             refreshAllViews();

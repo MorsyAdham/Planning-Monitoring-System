@@ -1830,6 +1830,21 @@ window.PPMSModuleRuntime = (() => {
         }
     }
 
+    /** Whether a station has its own row(s) in the active plan version's route
+     *  (state.versionRoute). When no version is active, or the version's route
+     *  isn't scoped for this vehicle at all, every station counts as "tracked"
+     *  (the catalog/global route applies). A station can be display-only via
+     *  the catalog fallback in getStationLaneOrder while having no kd2_plan
+     *  rows of its own — e.g. its plan was never generated for this version —
+     *  in which case persistVersionRouteOrder can never move it (there's
+     *  nothing to write), which otherwise surfaces as a confusing silent
+     *  "Already in that position." */
+    function isStationTrackedInActiveVersion(vehicle, stationCode) {
+        const vRoute = state.versionRoute?.get(vehicle);
+        if (!vRoute || !vRoute.size) return true;
+        return vRoute.has(stationCode);
+    }
+
     /** Persist a drag-reorder of one vehicle's category bands. `orderedCodes`
      *  is the full new order of that vehicle's category_codes. Renumbers
      *  category_sequence densely, then normalizeRoute so route_sequence agrees
@@ -8407,6 +8422,7 @@ window.PPMSModuleRuntime = (() => {
         stationTrack,
         normalizeRoute,
         persistRouteOrder,
+        isStationTrackedInActiveVersion,
         persistCategoryOrder,
         deleteProcessStation,
         removeStationFromVersion,
