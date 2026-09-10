@@ -3042,30 +3042,14 @@ function updateF100TableRowInPlace(planId) {
 
     const actualStart = row.actual_start_date || '';
     if (cells[7]) {
-        cells[7].innerHTML = `<div class="inline-date-wrap">
-            <input type="date" class="inline-date-input" data-plan-id="${row.id}" value="${actualStart}" title="Actual start date" />
-            ${actualStart ? `<button class="inline-icon-btn inline-start-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
-        </div>`;
-        cells[7].querySelector('.inline-date-input')?.addEventListener('change', function () {
-            saveActualStart(this.dataset.planId, this.value);
-        });
-        cells[7].querySelector('.inline-start-clear')?.addEventListener('click', function () {
-            saveActualStart(this.dataset.planId, '');
-        });
+        cells[7].innerHTML = _inlineDateCellHtml(actualStart, row.id, 'start');
+        _wireInlineDateWraps(cells[7]);
     }
 
     const actualEnd = row.actual_end_date || '';
     if (cells[8]) {
-        cells[8].innerHTML = `<div class="inline-date-wrap">
-            <input type="date" class="inline-end-input" data-plan-id="${row.id}" value="${actualEnd}" title="Actual end date" />
-            ${actualEnd ? `<button class="inline-icon-btn inline-end-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
-        </div>`;
-        cells[8].querySelector('.inline-end-input')?.addEventListener('change', function () {
-            saveCompletionDate(this.dataset.planId, this.value);
-        });
-        cells[8].querySelector('.inline-end-clear')?.addEventListener('click', function () {
-            saveCompletionDate(this.dataset.planId, '');
-        });
+        cells[8].innerHTML = _inlineDateCellHtml(actualEnd, row.id, 'end');
+        _wireInlineDateWraps(cells[8]);
     }
 
     return true;
@@ -3107,30 +3091,14 @@ function updateTableRowInPlace(planId) {
 
     const actualStart = row.progress?.actual_start_date || '';
     if (cells[7]) {
-        cells[7].innerHTML = `<div class="inline-date-wrap">
-            <input type="date" class="inline-date-input" data-plan-id="${row.id}" value="${actualStart}" title="Actual start date" />
-            ${actualStart ? `<button class="inline-icon-btn inline-start-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
-        </div>`;
-        cells[7].querySelector('.inline-date-input')?.addEventListener('change', function () {
-            saveActualStart(this.dataset.planId, this.value);
-        });
-        cells[7].querySelector('.inline-start-clear')?.addEventListener('click', function () {
-            saveActualStart(this.dataset.planId, '');
-        });
+        cells[7].innerHTML = _inlineDateCellHtml(actualStart, row.id, 'start');
+        _wireInlineDateWraps(cells[7]);
     }
 
     const compDate = row.progress?.completion_date || null;
     if (cells[8]) {
-        cells[8].innerHTML = `<div class="inline-date-wrap">
-            <input type="date" class="inline-end-input" data-plan-id="${row.id}" value="${compDate || ''}" title="Completion date" />
-            ${compDate ? `<button class="inline-icon-btn inline-end-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
-        </div>`;
-        cells[8].querySelector('.inline-end-input')?.addEventListener('change', function () {
-            saveCompletionDate(this.dataset.planId, this.value);
-        });
-        cells[8].querySelector('.inline-end-clear')?.addEventListener('click', function () {
-            saveCompletionDate(this.dataset.planId, '');
-        });
+        cells[8].innerHTML = _inlineDateCellHtml(compDate, row.id, 'end');
+        _wireInlineDateWraps(cells[8]);
     }
 
     return true;
@@ -3370,16 +3338,10 @@ function renderF100Table(data) {
         }
 
         const actualStart = row.actual_start_date || '';
-        const startInputHtml = `<div class="inline-date-wrap">
-            <input type="date" class="inline-date-input" data-plan-id="${row.id}" value="${actualStart}" title="Actual start date" />
-            ${actualStart ? `<button class="inline-icon-btn inline-start-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
-        </div>`;
+        const startInputHtml = _inlineDateCellHtml(actualStart, row.id, 'start');
 
         const actualEnd = row.actual_end_date || '';
-        const endInputHtml = `<div class="inline-date-wrap">
-            <input type="date" class="inline-end-input" data-plan-id="${row.id}" value="${actualEnd}" title="Actual end date" />
-            ${actualEnd ? `<button class="inline-icon-btn inline-end-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
-        </div>`;
+        const endInputHtml = _inlineDateCellHtml(actualEnd, row.id, 'end');
 
         const comments = Array.isArray(row.comments) ? row.comments : [];
         const commentBtn = `<button class="btn-f100-comment" data-plan-id="${row.id}" title="${comments.length} comment${comments.length !== 1 ? 's' : ''}">
@@ -3414,21 +3376,8 @@ function renderF100Table(data) {
 }
 
 function wireF100TableEvents(tbody) {
-    // Actual Start
-    tbody.querySelectorAll('.inline-date-input').forEach(input => {
-        input.addEventListener('change', () => saveActualStart(input.dataset.planId, input.value));
-    });
-    tbody.querySelectorAll('.inline-start-clear').forEach(btn => {
-        btn.addEventListener('click', () => saveActualStart(btn.dataset.planId, ''));
-    });
-
-    // Actual End — same inline pattern as Actual Start
-    tbody.querySelectorAll('.inline-end-input').forEach(input => {
-        input.addEventListener('change', () => saveCompletionDate(input.dataset.planId, input.value));
-    });
-    tbody.querySelectorAll('.inline-end-clear').forEach(btn => {
-        btn.addEventListener('click', () => saveCompletionDate(btn.dataset.planId, ''));
-    });
+    // Actual Start / Actual End — click-to-reveal date cells
+    _wireInlineDateWraps(tbody);
 
     // Comments popover — multi-user
     tbody.querySelectorAll('.btn-f100-comment').forEach(btn => {
@@ -3926,16 +3875,10 @@ function renderTable(data) {
         }
 
         // Actual Start — inline input (same as F100)
-        const startInputHtml = `<div class="inline-date-wrap">
-            <input type="date" class="inline-date-input" data-plan-id="${row.id}" value="${actualStart}" title="Actual start date" />
-            ${actualStart ? `<button class="inline-icon-btn inline-start-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
-        </div>`;
+        const startInputHtml = _inlineDateCellHtml(actualStart, row.id, 'start');
 
         // Completed On — inline input (same pattern as F100 actual end)
-        const endInputHtml = `<div class="inline-date-wrap">
-            <input type="date" class="inline-end-input" data-plan-id="${row.id}" value="${compDate || ''}" title="Completion date" />
-            ${compDate ? `<button class="inline-icon-btn inline-end-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
-        </div>`;
+        const endInputHtml = _inlineDateCellHtml(compDate, row.id, 'end');
 
         // Comments button — identical to F100 pattern
         const comments = Array.isArray(row.comments) ? row.comments : [];
@@ -3972,26 +3915,13 @@ function renderTable(data) {
 
     // ── Viewer mode: disable date inputs ─────────────────────────
     if (!canWrite()) {
-        tbody.querySelectorAll('.inline-date-input, .inline-end-input').forEach(el => {
+        tbody.querySelectorAll('.inline-date-input, .inline-end-input, .inline-date-display').forEach(el => {
             el.disabled = true;
         });
     }
 
-    // ── Actual Start ─────────────────────────────────────────────
-    tbody.querySelectorAll('.inline-date-input').forEach(input => {
-        input.addEventListener('change', () => saveActualStart(input.dataset.planId, input.value));
-    });
-    tbody.querySelectorAll('.inline-start-clear').forEach(btn => {
-        btn.addEventListener('click', () => saveActualStart(btn.dataset.planId, ''));
-    });
-
-    // ── Completed On (inline end input) ───────────────────────────
-    tbody.querySelectorAll('.inline-end-input').forEach(input => {
-        input.addEventListener('change', () => saveCompletionDate(input.dataset.planId, input.value));
-    });
-    tbody.querySelectorAll('.inline-end-clear').forEach(btn => {
-        btn.addEventListener('click', () => saveCompletionDate(btn.dataset.planId, ''));
-    });
+    // ── Actual Start / Completed On — click-to-reveal date cells ──
+    _wireInlineDateWraps(tbody);
 
     // ── Edit planned dates (pencil icon) ──────────────────────────
     // ── Comments popover — full F100-style threaded comments ──────
@@ -7275,6 +7205,60 @@ function formatDateShort(isoStr) {
     if (!isoStr || isoStr === '—') return '—';
     const d = new Date(isoStr + 'T00:00:00');
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+}
+
+/** Inline-editable "Actual Start" / "Completed On" date cell. A native
+ *  <input type="date"> shows its text in the browser/OS locale format
+ *  (e.g. "09/07/2026" under en-US) with no CSS way to restyle it, so by
+ *  default the cell shows a plain button with formatDate()'s "07 Aug
+ *  2026" style; clicking it reveals the real date input (and opens the
+ *  native picker) via _wireInlineDateWraps, and it reverts to the
+ *  formatted display on blur (or immediately via the row's own re-render
+ *  once a change is actually saved). */
+function _inlineDateCellHtml(value, planId, kind) {
+    const inputClass = kind === 'start' ? 'inline-date-input' : 'inline-end-input';
+    const clearClass = kind === 'start' ? 'inline-start-clear' : 'inline-end-clear';
+    const title = kind === 'start' ? 'Actual start date' : 'Completion date';
+    const id = esc(String(planId));
+    // Empty cells show a greyed "DD Mmm YYYY" placeholder in the same shape
+    // as a real date, rather than a bare dash.
+    const displayHtml = value
+        ? formatDate(value)
+        : '<span class="inline-date-ph">DD Mmm YYYY</span>';
+    return `<div class="inline-date-wrap" data-kind="${kind}">
+        <button type="button" class="inline-date-display${value ? '' : ' is-empty'}" data-plan-id="${id}">${displayHtml}</button>
+        <input type="date" class="${inputClass}" data-plan-id="${id}" value="${value || ''}" title="${title}" />
+        ${value ? `<button type="button" class="inline-icon-btn ${clearClass}" data-plan-id="${id}" title="Clear">✕</button>` : ''}
+    </div>`;
+}
+
+/** Wires every .inline-date-wrap under `scope` (a single <td> or a whole
+ *  <tbody>) — click-to-reveal on the display button, native picker, save
+ *  on change, revert-to-display on blur, and the clear button. Safe to
+ *  call repeatedly on freshly-inserted HTML (each call only touches wraps
+ *  inside `scope`, and re-running addEventListener on brand-new elements
+ *  never double-attaches). */
+function _wireInlineDateWraps(scope) {
+    scope.querySelectorAll('.inline-date-wrap').forEach(wrap => {
+        const saveFn = wrap.dataset.kind === 'start' ? saveActualStart : saveCompletionDate;
+        const display = wrap.querySelector('.inline-date-display');
+        const input = wrap.querySelector('.inline-date-input, .inline-end-input');
+        const clearBtn = wrap.querySelector('.inline-start-clear, .inline-end-clear');
+        if (!display || !input) return;
+        display.addEventListener('click', () => {
+            wrap.classList.add('editing');
+            input.focus();
+            try { input.showPicker?.(); } catch {}
+        });
+        input.addEventListener('change', () => saveFn(input.dataset.planId, input.value));
+        input.addEventListener('blur', () => {
+            // Change (if any) already fired and will re-render this cell —
+            // this only needs to drop rows the user opened but didn't edit
+            // back into display mode.
+            setTimeout(() => wrap.classList.remove('editing'), 120);
+        });
+        clearBtn?.addEventListener('click', () => saveFn(clearBtn.dataset.planId, ''));
+    });
 }
 
 /** Return the unit code for a vehicle+unit combo, or ''. Pass `battalion` whenever

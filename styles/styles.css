@@ -5860,15 +5860,69 @@ body {
 
 /* ─── Inline date wrapper + explicit clear button ───────────────── */
 .inline-date-wrap {
-    display: inline-flex;
+    position: relative;
+    display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 2px;
     width: 100%;
+    justify-content: center;
 }
 
-/* Inside F100 table the wrapper fills the cell */
-.f100-table .inline-date-wrap {
-    width: 100%;
+/* Click-to-reveal: by default the cell reads as plain "07 Aug 2026" text
+   (matching the Planned Start / Planned End columns) and only shows a
+   hover affordance; clicking swaps in the native <input type="date">
+   (locale-formatted, unstyleable) while the wrap is in .editing mode. */
+.inline-date-display {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--clr-text);
+    font-family: var(--ff-mono);
+    font-size: .8rem;
+    padding: 3px 6px;
+    outline: none;
+    width: 118px;
+    text-align: center;
+    cursor: pointer;
+    flex: 0 0 auto;
+    transition: background .15s, border-color .15s;
+}
+
+.inline-date-display:hover {
+    background: var(--clr-surface-2);
+    border-color: var(--clr-border);
+}
+
+/* Greyed "DD Mmm YYYY" shown for an unset date */
+.inline-date-ph {
+    color: var(--clr-text-dim);
+    letter-spacing: .3px;
+}
+
+.inline-date-wrap:not(.editing) .inline-date-input,
+.inline-date-wrap:not(.editing) .inline-end-input {
+    display: none;
+}
+
+.inline-date-wrap.editing .inline-date-display {
+    display: none;
+}
+
+/* Clear (✕) is pinned to the cell's right edge so it never nudges the
+   centered date; hidden until the row is hovered or being edited. */
+.inline-date-wrap .inline-icon-btn {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0;
+    transition: opacity .12s;
+}
+
+.inline-date-wrap:hover .inline-icon-btn,
+.inline-date-wrap.editing .inline-icon-btn,
+.inline-date-wrap:focus-within .inline-icon-btn {
+    opacity: 1;
 }
 
 .inline-date-clear {
@@ -7037,6 +7091,12 @@ body {
     pointer-events: none;
     opacity: .55;
     cursor: default;
+    background: transparent;
+    border-color: transparent;
+}
+
+.viewer-mode .inline-date-display {
+    pointer-events: none;
     background: transparent;
     border-color: transparent;
 }
