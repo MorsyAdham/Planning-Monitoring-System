@@ -5824,59 +5824,29 @@ body {
     line-height: 1;
 }
 
-/* ─── Inline actual-start / completed-on date cell ───────────────
-   The native <input type="date"> renders its text in the browser/OS
-   locale format (e.g. "09/07/2026" under en-US) — that can't be
-   restyled, so it sits invisible on top of .inline-date-display, which
-   shows formatDate()'s "07 Aug 2026" style instead. .inline-date-box is
-   the visible box (border/background) that used to live directly on the
-   input; clicking anywhere in it hits the transparent input underneath
-   and opens the native picker as normal. */
-.inline-date-box {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
+/* ─── Inline actual-start date input ───────────────────────────── */
+.inline-date-input,
+.inline-end-input {
     background: var(--clr-surface-2);
     border: 1px solid var(--clr-border);
     border-radius: var(--radius-sm);
+    color: var(--clr-text);
+    font-family: var(--ff-mono);
+    font-size: .78rem;
+    padding: 4px 8px;
+    outline: none;
     width: 132px;
-    height: 26px;
     transition: border-color .2s, box-shadow .2s;
     cursor: pointer;
 }
 
-.inline-date-display {
-    padding: 0 8px;
-    color: var(--clr-text);
-    font-family: var(--ff-mono);
-    font-size: .78rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    pointer-events: none;
-}
-
-.inline-date-input,
-.inline-end-input {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    padding: 0;
-    margin: 0;
-    border: 0;
-    background: transparent;
-    color: transparent;
-    opacity: 0;
-    outline: none;
-    cursor: pointer;
-}
-
-.inline-date-box:hover {
+.inline-date-input:hover,
+.inline-end-input:hover {
     border-color: var(--clr-text-dim);
 }
 
-.inline-date-box:focus-within {
+.inline-date-input:focus,
+.inline-end-input:focus {
     border-color: #f59e0b;
     box-shadow: 0 0 0 3px rgba(245, 158, 11, .15);
 }
@@ -7065,10 +7035,6 @@ body {
 .viewer-mode .inline-date-input,
 .viewer-mode .inline-end-input {
     pointer-events: none;
-    cursor: default;
-}
-
-.viewer-mode .inline-date-box {
     opacity: .55;
     cursor: default;
     background: transparent;
