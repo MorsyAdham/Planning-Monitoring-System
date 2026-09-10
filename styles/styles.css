@@ -5367,9 +5367,7 @@ body {
 .gr-unit-label {
     padding: 0 10px 0 12px;
     align-items: stretch;
-    flex-wrap: wrap;
-    align-content: center;
-    gap: 3px 8px; /* row-gap column-gap — keeps buttons from crowding the text */
+    gap: 8px; /* keeps the reorder buttons from crowding the text */
 }
 
 .gr-unit-dot {
