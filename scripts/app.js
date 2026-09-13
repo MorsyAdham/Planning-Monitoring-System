@@ -2829,8 +2829,10 @@ function calculateStatus(row) {
         const plannedEnd  = row.planned_end_date  || null;
         if (actualEnd && plannedEnd && actualEnd <= plannedEnd) return 'Completed';
         if (actualEnd && plannedEnd && actualEnd >  plannedEnd) return 'Late Completion';
-        if (!actualEnd && plannedEnd && today > plannedEnd)     return 'Overdue';
+        // A logged actual start means the task is In Progress even if it's now
+        // running past the planned end date — the delay is still shown separately.
         if (!actualEnd && actualStart)                          return 'In Progress';
+        if (!actualEnd && plannedEnd && today > plannedEnd)     return 'Overdue';
         return 'Planned';
     }
 
@@ -2844,10 +2846,11 @@ function calculateStatus(row) {
     if (completed && compDate && compDate <= endDate) return 'Completed';
     // Late: done but finished after the planned end date
     if (completed && compDate && compDate > endDate) return 'Late Completion';
-    // Overdue: not done and today is past the planned end date
-    if (!completed && today > endDate) return 'Overdue';
-    // In Progress: actual start date has been entered but not yet complete
+    // In Progress: actual start date has been entered but not yet complete —
+    // takes priority over Overdue so a started-but-late task isn't mislabeled.
     if (!completed && actualStart) return 'In Progress';
+    // Overdue: not done, never started, and today is past the planned end date
+    if (!completed && today > endDate) return 'Overdue';
     // Planned: nothing recorded yet
     return 'Planned';
 }
