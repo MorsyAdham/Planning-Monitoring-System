@@ -1011,9 +1011,11 @@ function normalizeKd2PlanRowForGantt(row) {
 
 async function fetchKd2LaneRowsForGantt(task) {
     if (!db || !task?.battalion_id || !(task.vehicle_type || task.vehicle)) return [];
-    let query = db
+    // Scoped to the active plan version — the same unit has rows in every
+    // version, and a lane move must never shift another (e.g. archived) plan.
+    let query = window.PlanVersions.scoped(db
         .from('kd2_plan')
-        .select('id, battalion_id, vehicle_type, unit_serial, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date')
+        .select('id, battalion_id, vehicle_type, unit_serial, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date'), 'kd2')
         .eq('battalion_id', task.battalion_id)
         .eq('vehicle_type', task.vehicle_type || task.vehicle);
     query = task.unit_serial === null
@@ -1030,9 +1032,9 @@ async function fetchKd2LaneRowsForGantt(task) {
 // whatever happens to be inside the Gantt's currently visible date range.
 async function fetchKd2StationRowsForGantt(task) {
     if (!db || !task?.station_code || !(task.vehicle_type || task.vehicle)) return [];
-    const { data, error } = await db
+    const { data, error } = await window.PlanVersions.scoped(db
         .from('kd2_plan')
-        .select('id, battalion_id, vehicle_type, unit_serial, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date')
+        .select('id, battalion_id, vehicle_type, unit_serial, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date'), 'kd2')
         .eq('vehicle_type', task.vehicle_type || task.vehicle)
         .eq('station_code', task.station_code);
     if (error) throw error;
@@ -1900,6 +1902,7 @@ function startCommentNotifSync() {
                 snap.push({
                     key, planId: row.id, comment: c, moduleId,
                     rowInfo: {
+                        battalion: row.battalion_code || unitRegistryRows.find(u => u.battalion_id === row.battalion_id)?.battalion_code || '',
                         vehicle:  row.vehicle_type || row.vehicle    || '',
                         unit:     row.unit_label   || row.vehicle_no || '',
                         process:  row.station_code || row.process_station || '',
@@ -2108,7 +2111,7 @@ function openActiveUsersDropdown() {
             ${users.map(u => {
                 const isMe = u.id === (me?.id || me?.email);
                 const roleLbl = roleLabel(u.role);
-                const initials = (u.name || u.email || '?').charAt(0).toUpperCase();
+                const initials = esc((u.name || u.email || '?').charAt(0).toUpperCase());
                 const loginTime  = u.joined ? new Date(u.joined).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
                 const sessionDur = u.joined ? _fmtDuration(Date.now() - u.joined) : '';
                 const modLbl = u.moduleId ? _moduleLabel(u.moduleId) : '';
@@ -2116,10 +2119,10 @@ function openActiveUsersDropdown() {
                     <div class="au-avatar" style="margin-top:2px;flex-shrink:0">${initials}</div>
                     <div class="au-info" style="flex:1;min-width:0">
                         <div style="display:flex;align-items:center;gap:6px">
-                            <span class="au-name" style="font-weight:600">${u.name || u.email || '—'}${isMe ? ' <span style="color:var(--clr-text-muted);font-weight:400">(you)</span>' : ''}</span>
+                            <span class="au-name" style="font-weight:600">${esc(u.name || u.email || '—')}${isMe ? ' <span style="color:var(--clr-text-muted);font-weight:400">(you)</span>' : ''}</span>
                             ${modLbl ? `<span style="display:inline-block;padding:1px 5px;border-radius:4px;background:rgba(59,130,246,.12);color:#3b82f6;font-size:.63rem;font-weight:600;flex-shrink:0">${modLbl}</span>` : ''}
                         </div>
-                        <span style="display:block;font-size:.71rem;color:var(--clr-text-muted);margin-top:1px">${u.email || ''}</span>
+                        <span style="display:block;font-size:.71rem;color:var(--clr-text-muted);margin-top:1px">${esc(u.email || '')}</span>
                         <span style="display:block;font-size:.71rem;color:var(--clr-text-muted);margin-top:3px">
                             ${roleLbl} · Logged in ${loginTime}${sessionDur ? ' · ' + sessionDur : ''}
                         </span>
@@ -2447,12 +2450,21 @@ async function populateF100GunPartFilter() {
 
 async function populateF100BattalionFilter() {
     try {
-        const { data, error } = await db
-            .from('f100_battalions')
-            .select('battalion_code, battalion_name')
-            .order('battalion_code');
+        const [{ data, error }, { data: units }, { data: plans }] = await Promise.all([
+            db.from('f100_battalions').select('id, battalion_code, battalion_name').order('battalion_code'),
+            db.from('f100_vehicle_units').select('battalion_id'),
+            window.PlanVersions.scoped(db.from('f100_plans').select('battalion_code'), 'f100kd2'),
+        ]);
         if (error) return;
-        filterOptions.f100Battalion = (data || []).map(b => ({
+        // Only battalions with registered units or plan rows — not every
+        // f100_battalions shell. Falls back to all when nothing is logged yet.
+        const codeById = new Map((data || []).map(b => [b.id, b.battalion_code]));
+        const logged = new Set([
+            ...(units || []).map(u => codeById.get(u.battalion_id)),
+            ...(plans || []).map(p => p.battalion_code),
+        ].filter(Boolean));
+        const battalions = logged.size ? (data || []).filter(b => logged.has(b.battalion_code)) : (data || []);
+        filterOptions.f100Battalion = battalions.map(b => ({
             value: b.battalion_code,
             label: b.battalion_name ? `${b.battalion_code} – ${b.battalion_name}` : b.battalion_code,
         }));
@@ -2519,13 +2531,25 @@ async function loadF100Data() {
 
     // 3. Load plans — filtered by battalion, vehicle type, and serial if selected
     let plansQ = window.PlanVersions.scoped(db.from('f100_plans').select('*'), 'f100kd2').in('part_id', partIds);
-    plansQ = applyInFilter(plansQ, 'battalion_code', battalionSet);
+    // Unit (serial) options are battalion-scoped ("BTL||K9||3") because serial
+    // numbers restart at 1 in every battalion — so a selected unit also implies
+    // its battalion, and rows are matched on battalion + serial, not serial alone.
+    const serialSelected = serialSet && !serialSet.has('all');
+    const effectiveBattalionSet = (!battalionSet.has('all') || !serialSelected)
+        ? battalionSet
+        : new Set(selectedUnitBattalions(serialSet));
+    plansQ = applyInFilter(plansQ, 'battalion_code', effectiveBattalionSet);
     if (vehicleTypeSet) plansQ = applyInFilter(plansQ, 'vehicle_type', vehicleTypeSet);
-    if (serialSet && !serialSet.has('all')) plansQ = plansQ.in('serial_number', [...serialSet].map(n => parseInt(n, 10)));
+    if (serialSelected) plansQ = plansQ.in('serial_number', selectedUnitNames(serialSet).map(n => parseInt(n, 10)));
     // Gun mode always restricts to K9
     if (mode === 'gun') plansQ = plansQ.eq('vehicle_type', 'K9');
-    const { data: plans, error: plansErr } = await plansQ;
+    const { data: plansRaw, error: plansErr } = await plansQ;
     if (plansErr) throw plansErr;
+    const plans = serialSelected
+        ? (plansRaw || []).filter(plan => rowMatchesUnitSet(serialSet, {
+            battalion_code: plan.battalion_code, vehicle_type: plan.vehicle_type, vehicle_no: String(plan.serial_number ?? ''),
+        }))
+        : plansRaw;
 
     // 4. Load unit labels from f100_vehicle_units + f100_battalions
     const [{ data: vehicleUnits }, { data: battalionsList }] = await Promise.all([
@@ -2552,12 +2576,19 @@ async function loadF100Data() {
             batCodes.map(code => battalionsList?.find(b => b.battalion_code === code)?.id).filter(Boolean)
         );
         const k9Units = (vehicleUnits || []).filter(u =>
-            u.vehicle_type === 'K9' && (!batIds.size || batIds.has(u.battalion_id))
-        ).sort((a, b) => (a.unit_serial ?? 0) - (b.unit_serial ?? 0));
-        filterOptions.f100Serial = k9Units.map(u => ({
-            value: String(u.unit_serial),
-            label: u.unit_label || u.unit_code || `Unit ${u.unit_serial}`,
-        }));
+            u.vehicle_type === 'K9' && batCodeById[u.battalion_id] && (!batIds.size || batIds.has(u.battalion_id))
+        ).sort((a, b) =>
+            String(batCodeById[a.battalion_id]).localeCompare(String(batCodeById[b.battalion_id]), undefined, { numeric: true })
+            || (a.unit_serial ?? 0) - (b.unit_serial ?? 0));
+        const multiBattalion = new Set(k9Units.map(u => u.battalion_id)).size > 1;
+        filterOptions.f100Serial = k9Units.map(u => {
+            const bc = batCodeById[u.battalion_id];
+            const base = u.unit_label || u.unit_code || `Unit ${u.unit_serial}`;
+            return {
+                value: kd2UnitValue(bc, 'K9', String(u.unit_serial)),
+                label: multiBattalion ? `${bc} · ${base}` : base,
+            };
+        });
         renderMultiSelectMenu('f100Serial');
     }
 
@@ -4166,7 +4197,7 @@ function _addWorkingDays(dateStr, n) {
         d.setDate(d.getDate() + 1);
         if (d.getDay() !== 5) added++;
     }
-    return d.toISOString().slice(0, 10);
+    return localDateStr(d);
 }
 
 function _updateDeliveryCard(data) {
@@ -6298,6 +6329,7 @@ function saveNotifSnapshot() {
                 comment:    c,
                 moduleId,
                 rowInfo: {
+                    battalion:       row.battalion_code || '',
                     vehicle:         row.vehicle      || row.vehicle_type  || '',
                     unit:            row.vehicle_no   || row.unit_code     || '',
                     process:         row.process_station || row.process_name || '',
@@ -6431,7 +6463,7 @@ function openNotifDropdown() {
                 </div>`;
             }
 
-            const ctx = [n.rowInfo?.vehicle, n.rowInfo?.unit, n.rowInfo?.process].filter(Boolean).join(' · ');
+            const ctx = [n.rowInfo?.battalion, n.rowInfo?.vehicle, n.rowInfo?.unit, n.rowInfo?.process].filter(Boolean).join(' · ');
             return `
             <div class="f100-notif-item${isCrossModule ? ' f100-notif-item-cross' : ''}" data-plan-id="${n.planId}" data-key="${esc(n.key)}" data-module-id="${esc(n.moduleId || currentModuleId)}" data-type="comment">
                 <div class="f100-notif-item-meta">
@@ -7252,7 +7284,7 @@ function vehicleSort(a, b) {
     return naturalSort(a, b);                   // same group → numeric order
 }
 function todayStr() {
-    return new Date().toISOString().slice(0, 10);
+    return localDateStr(new Date());
 }
 
 function formatDate(isoStr) {
@@ -7387,8 +7419,8 @@ function currentMonthRange() {
     const now = new Date();
     const y = now.getFullYear();
     const m = now.getMonth();
-    const monthStart = new Date(y, m, 1).toISOString().slice(0, 10);
-    const monthEnd = new Date(y, m + 1, 0).toISOString().slice(0, 10);
+    const monthStart = localDateStr(new Date(y, m, 1));
+    const monthEnd = localDateStr(new Date(y, m + 1, 0));
     return { monthStart, monthEnd };
 }
 
@@ -7398,7 +7430,7 @@ function generateDateRange(startStr, endStr) {
     const end = new Date(endStr + 'T00:00:00');
 
     while (cur <= end) {
-        dates.push(cur.toISOString().slice(0, 10));
+        dates.push(localDateStr(cur));
         cur.setDate(cur.getDate() + 1);
     }
     return dates;
@@ -9728,7 +9760,7 @@ async function exportPDF(typeKey, fromDate, toDate, category, preview) {
 
     // ── Save ─────────────────────────────────────────────────────────
     const catSuffix = category ? `_${category.replace(/\s+/g, '_')}` : '';
-    const dateSuffix = new Date().toISOString().slice(0, 10);
+    const dateSuffix = localDateStr(new Date());
     const doDownload = () => {
         doc.save(`${moduleBadge}_${def.label.replace(/\s+/g, '_')}${catSuffix}_${dateSuffix}.pdf`);
         showToast(`PDF exported — ${rows.length} rows`, 'success');
@@ -10123,7 +10155,7 @@ async function exportExcel(typeKey, fromDate, toDate, category, preview) {
         const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url; a.download = moduleBadge + '_' + def.label.replace(/\s+/g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+        a.href = url; a.download = moduleBadge + '_' + def.label.replace(/\s+/g, '_') + '_' + localDateStr(new Date()) + '.xlsx';
         document.body.appendChild(a); a.click();
         document.body.removeChild(a); URL.revokeObjectURL(url);
         showToast(`Excel exported — ${rows.length} rows`, 'success');
@@ -10292,7 +10324,7 @@ function exportKD2AnalyticsPDF(fromDate, toDate, category) {
         },
     });
 
-    doc.save(`${moduleBadge}_Station_Analytics_${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`${moduleBadge}_Station_Analytics_${localDateStr(new Date())}.pdf`);
     showToast(`Analytics PDF exported — ${aRows.length} stations`, 'success');
     } catch (err) {
         console.error('[exportKD2AnalyticsPDF]', err);
@@ -10453,7 +10485,7 @@ async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${moduleBadge}_Station_Analytics_${new Date().toISOString().slice(0,10)}.xlsx`;
+    a.download = `${moduleBadge}_Station_Analytics_${localDateStr(new Date())}.xlsx`;
     document.body.appendChild(a); a.click();
     document.body.removeChild(a); URL.revokeObjectURL(url);
     showToast(`Analytics Excel exported — ${aRows.length} stations`, 'success');
@@ -10516,7 +10548,7 @@ async function exportXrayStatusPDF() {
             columnStyles: { 5: { halign: 'center' } },
         });
 
-        doc.save(`${moduleBadge}_Xray_Status_${new Date().toISOString().slice(0, 10)}.pdf`);
+        doc.save(`${moduleBadge}_Xray_Status_${localDateStr(new Date())}.pdf`);
         showToast(`X-ray status report exported — ${items.length} units`, 'success');
     } catch (err) {
         console.error('[exportXrayStatusPDF]', err);
@@ -10593,7 +10625,7 @@ async function exportXrayStatusExcel() {
         const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url; a.download = `${moduleBadge}_Xray_Status_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        a.href = url; a.download = `${moduleBadge}_Xray_Status_${localDateStr(new Date())}.xlsx`;
         document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
         showToast(`X-ray status Excel exported — ${items.length} units`, 'success');
     } catch (err) {
@@ -10774,7 +10806,7 @@ function exportF100VpxPDF() {
     doc.text(meta.footerApp + ' · ' + mainTitle, MARGIN, fY);
     doc.text('Page 1 of ' + doc.internal.getNumberOfPages(), PAGE_W - MARGIN, fY, { align: 'right' });
 
-    doc.save(meta.filenamePrefix + '_' + new Date().toISOString().slice(0, 10) + '.pdf');
+    doc.save(meta.filenamePrefix + '_' + localDateStr(new Date()) + '.pdf');
     showToast('PDF exported — ' + rows.length + ' units × ' + cols.length + ' steps', 'success');
     } catch (err) {
         console.error('[exportF100VpxPDF]', err);
@@ -10952,7 +10984,7 @@ async function exportF100VpxExcel() {
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = meta.filenamePrefix + '_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+    a.href = url; a.download = meta.filenamePrefix + '_' + localDateStr(new Date()) + '.xlsx';
     document.body.appendChild(a); a.click();
     document.body.removeChild(a); URL.revokeObjectURL(url);
     showToast('Excel exported — ' + rows.length + ' units × ' + cols.length + ' steps', 'success');
@@ -11199,7 +11231,7 @@ async function exportVpxPDF(preview) {
     doc.text(meta.footerApp + ' · ' + _mainTitle, MARGIN, fY);
     doc.text(`Page 1 of ${doc.internal.getNumberOfPages()}`, PAGE_W - MARGIN, fY, { align: 'right' });
 
-    const ds = new Date().toISOString().slice(0, 10);
+    const ds = localDateStr(new Date());
     const doDownload = () => { doc.save(meta.filenamePrefix + '_' + ds + '.pdf'); showToast('PDF exported successfully.', 'success'); };
     if (preview) {
         _showGenericPreview({ title: _mainTitle, kind: 'pdf', src: doc.output('bloburl'), onDownload: doDownload });
@@ -11588,7 +11620,7 @@ async function exportVpxExcel(preview) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = meta.filenamePrefix + '_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+        a.download = meta.filenamePrefix + '_' + localDateStr(new Date()) + '.xlsx';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -12112,7 +12144,7 @@ async function exportVpxStationReportExcel(preview) {
     _addVpxStationReportSheet(wb, built, 'Station Report');
     _addStationReportKeySheet(wb, title);
 
-    const now = new Date().toISOString().slice(0, 10);
+    const now = localDateStr(new Date());
     const doDownload = async () => {
         const buf = await wb.xlsx.writeBuffer();
         const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -12309,7 +12341,7 @@ async function exportVpxStationReportPDF(preview) {
     doc.addPage('a4', 'portrait');
     _drawStationReportKeyPage(doc, title);
 
-    const now = new Date().toISOString().slice(0, 10);
+    const now = localDateStr(new Date());
     const doDownload = () => { doc.save(`vpx_station_report_${now}.pdf`); showToast('Station report PDF exported.', 'success'); };
     if (preview) {
         _showGenericPreview({ title, kind: 'pdf', src: doc.output('bloburl'), onDownload: doDownload });
@@ -12450,7 +12482,7 @@ async function exportExecutiveReportExcel(preview) {
     _addIssueStatusReportSheet(wb, issueRows, 'Issues Status Report', 'Production Issues Status Report — All Time');
     _addStationReportKeySheet(wb, title);
 
-    const now = new Date().toISOString().slice(0, 10);
+    const now = localDateStr(new Date());
     const doDownload = async () => {
         const buf = await wb.xlsx.writeBuffer();
         const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -12566,7 +12598,7 @@ async function exportExecutiveReportPDF(preview) {
     if (hasOutline) { try { doc.outline.add(null, 'Key & Legend', { pageNumber: pageNumberOf() }); } catch {} }
     _drawStationReportKeyPage(doc, title);
 
-    const now = new Date().toISOString().slice(0, 10);
+    const now = localDateStr(new Date());
     const doDownload = () => { doc.save(`executive_report_${now}.pdf`); showToast('Executive Report exported.', 'success'); };
     if (preview) {
         _showGenericPreview({ title, kind: 'pdf', src: doc.output('bloburl'), onDownload: doDownload });
@@ -12592,7 +12624,7 @@ async function exportExecutiveReportWord(preview) {
     body += `<h2>Production Issues Status Report (All Time)</h2>`;
     body += _issueStatusReportTableHtml(issueRows);
 
-    const now = new Date().toISOString().slice(0, 10);
+    const now = localDateStr(new Date());
     exportHtmlAsWord(`executive_report_${now}.doc`, 'Executive Report', body, preview);
 }
 
@@ -13431,19 +13463,28 @@ async function saveUnitCode() {
                     })
                     .eq('id', id));
             } else {
+                // Plain insert, not upsert: adding a unit that already exists must
+                // not silently overwrite that unit's serial number.
                 ({ error } = await db.from('kd2_vehicle_units')
-                    .upsert({
+                    .insert({
                         battalion_id: battalionId,
                         vehicle_type: vehicle,
                         unit_serial: unitEntry.unitSerial,
                         unit_label: unitEntry.label,
                         unit_code: code,
                         updated_at: new Date().toISOString()
-                    }, { onConflict: 'battalion_id,vehicle_type,unit_serial' }));
+                    }));
+            }
+            if (error?.code === '23505') {
+                const battalionLabel = document.getElementById('ucBattalion')?.selectedOptions?.[0]?.textContent || 'This battalion';
+                errEl.textContent = /unit_code/.test(error.message || '')
+                    ? `Serial "${code}" is already assigned to another ${vehicle} unit.`
+                    : `${battalionLabel} already has ${vehicle} ${unitEntry.label} — edit that unit instead of adding it again.`;
+                return;
             }
             if (error) throw error;
 
-            await loadUnitCodes();
+            await loadFilters(); // Battalion/Vehicle options follow the registered units
             populateUnitFilter(filterState.vehicle);
             refreshAllViews();
             closeUcForm();
@@ -13483,7 +13524,8 @@ async function deleteUnitCode(id) {
         const { error } = await db.from(table).delete().eq('id', id);
         if (error) throw error;
         if (!isF100KD2Module()) {
-            await loadUnitCodes();
+            if (isKD2Module()) await loadFilters(); // Battalion/Vehicle options follow the registered units
+            else await loadUnitCodes();
             populateUnitFilter(filterState.vehicle);
             refreshAllViews();
         }
@@ -14124,7 +14166,7 @@ async function exportAuditLogExcel() {
     const ws = XLSX.utils.aoa_to_sheet(wsData);
     ws['!cols'] = [{ wch: 20 }, { wch: 30 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 40 }];
     XLSX.utils.book_append_sheet(wb, ws, 'Audit Log');
-    const now = new Date().toISOString().slice(0, 10);
+    const now = localDateStr(new Date());
     XLSX.writeFile(wb, `audit_log_${now}.xlsx`);
     showToast('Excel exported.', 'success');
 }
@@ -14194,7 +14236,7 @@ async function exportAuditLogPDF() {
         },
     });
 
-    const exportDate = new Date().toISOString().slice(0, 10);
+    const exportDate = localDateStr(new Date());
     doc.save(`audit_log_${exportDate}.pdf`);
     showToast('PDF exported.', 'success');
 }
@@ -15332,7 +15374,7 @@ async function exportIssueReportExcel(opts) {
         : [5, 34, 18, 12, 14, 24, 22, 40, 40, 16, 16];
     colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
 
-    const now = new Date().toISOString().slice(0, 10);
+    const now = localDateStr(new Date());
     const doDownload = async () => {
         const buf = await wb.xlsx.writeBuffer();
         const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -15580,7 +15622,7 @@ async function exportIssueReportPDF(opts) {
     const { jsPDF } = window.jspdf;
     const title = _issueReportTitle(opts);
     const modLabel = _issueReportModuleLabel(opts);
-    const exportDate = new Date().toISOString().slice(0, 10);
+    const exportDate = localDateStr(new Date());
 
     if (opts.type === 'status_report' && opts.layout === 'report') {
         const reportDoc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -15701,7 +15743,7 @@ async function exportIssueReportWord(opts) {
     const isStatusReport = opts.type === 'status_report';
     const isByCategory    = opts.type === 'by_category';
 
-    const now = new Date().toISOString().slice(0, 10);
+    const now = localDateStr(new Date());
 
     if (isStatusReport && opts.layout === 'report') {
         // Real headings (h1/h2/h3) so Word's own Navigation Pane lists the
