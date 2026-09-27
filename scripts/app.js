@@ -3810,7 +3810,7 @@ function renderTable(data) {
             const done = s === 'Completed' || s === 'Late Completion';
             if (!_vehComp[r.vehicle]) _vehComp[r.vehicle] = { done: 0, total: 0 };
             _vehComp[r.vehicle].total++; if (done) _vehComp[r.vehicle].done++;
-            const uk = `${r.vehicle}||${r.vehicle_no}`;
+            const uk = `${r.battalion_code || ''}||${r.vehicle}||${r.vehicle_no}`; // unit labels repeat per battalion
             if (!_unitComp[uk]) _unitComp[uk] = { done: 0, total: 0 };
             _unitComp[uk].total++; if (done) _unitComp[uk].done++;
             const sk = `${r.vehicle}||${r.process_station}`;
@@ -3869,7 +3869,7 @@ function renderTable(data) {
                     </td></tr>`;
                 }
             } else if (_kd2TableView === 'unit') {
-                groupKey = `${row.vehicle}||${row.vehicle_no}`;
+                groupKey = `${row.battalion_code || ''}||${row.vehicle}||${row.vehicle_no}`;
                 if (groupKey !== prevGroupKey) {
                     groupHtml = `<tr class="f100-tbl-group-row f100-tbl-group-vehicle"><td colspan="12">
                         <span class="f100-tbl-veh-badge">${esc(row.vehicle)}</span>

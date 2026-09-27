@@ -1048,25 +1048,38 @@ window.PPMSModuleRuntime = (() => {
     }
 
     async function loadFilters(db) {
-        const [rows, categoryRows, battalions] = await Promise.all([
-            queryAll(PlanVersions.scoped(db.from('kd2_plan_live').select('vehicle, vehicle_no, week, category'), 'kd2')),
+        const [rows, categoryRows, battalions, units] = await Promise.all([
+            queryAll(PlanVersions.scoped(db.from('kd2_plan_live').select('battalion_code, vehicle, vehicle_no, week, category'), 'kd2')),
             queryAll(db.from('kd2_process_categories').select('category_code, category_name, category_sequence').eq('is_active', true).order('category_sequence')),
-            queryAll(db.from('kd2_battalions').select('battalion_code').order('battalion_code')),
+            queryAll(db.from('kd2_battalions').select('id, battalion_code').order('battalion_code')),
+            queryAll(db.from('kd2_vehicle_units').select('battalion_id, vehicle_type')),
         ]);
         // Category names, in kd2_process_categories' own category_sequence order,
         // deduped (the same category_code/name exists once per vehicle type) —
         // not filtered against a fixed list, so a newly-added category shows up
         // in the filter bar immediately.
         const categories = [...new Set(categoryRows.map(row => row.category_name).filter(Boolean))];
+        // Battalion and vehicle options come from the data actually logged —
+        // units registered in Unit Codes plus rows in the active plan — not from
+        // every kd2_battalions shell or a fixed vehicle list. Only when nothing
+        // is logged yet do they fall back to the full lists, so a brand-new setup
+        // still has something to select (and somewhere to place a first block).
+        const battalionCodeById = new Map(battalions.map(row => [row.id, row.battalion_code]));
+        const loggedBattalions = new Set([
+            ...units.map(row => battalionCodeById.get(row.battalion_id)),
+            ...rows.map(row => row.battalion_code),
+        ].filter(Boolean));
+        const loggedVehicles = new Set([
+            ...units.map(row => row.vehicle_type),
+            ...rows.map(row => row.vehicle),
+        ].filter(Boolean));
+        const allBattalions = battalions.map(row => row.battalion_code).filter(Boolean);
         return {
-            battalions: battalions.map(row => row.battalion_code).filter(Boolean),
-            // Always includes every supported vehicle type, not just ones with
-            // existing plan rows — otherwise a brand-new plan (zero kd2_plan
-            // rows yet) has an empty vehicle filter, which cascades into an
-            // empty Gantt with nothing to select and nowhere to place a first
-            // block, even though the stations to schedule against already
-            // exist in Manage Processes.
-            vehicles: [...new Set([...VEHICLES, ...rows.map(row => row.vehicle).filter(Boolean)])].sort(),
+            battalions: loggedBattalions.size
+                ? allBattalions.filter(code => loggedBattalions.has(code))
+                : allBattalions,
+            vehicles: VEHICLES.filter(v => !loggedVehicles.size || loggedVehicles.has(v))
+                .concat([...loggedVehicles].filter(v => !VEHICLES.includes(v)).sort()),
             units: [...new Set(rows.map(row => row.vehicle_no).filter(Boolean))].sort(),
             weeks: [...new Set(rows.map(row => row.week).filter(Boolean))].sort((a, b) => {
                 const aNum = parseInt(String(a).replace(/\D/g, ''), 10) || 0;
