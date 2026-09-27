@@ -1558,6 +1558,41 @@ function impliedVehiclesFromUnits() {
     return vehicles.size ? vehicles : null;
 }
 
+/** KD2 Unit filter values are battalion-scoped ("BTL-01||K9||M2") because unit
+ *  labels repeat across battalions; other modules use the bare vehicle_no. */
+function kd2UnitValue(battalion, vehicle, unit) {
+    return [battalion || '', vehicle || '', unit || ''].join('||');
+}
+function parseUnitFilterValue(value) {
+    const parts = String(value ?? '').split('||');
+    return parts.length === 3
+        ? { battalion: parts[0], vehicle: parts[1], unit: parts[2] }
+        : { battalion: '', vehicle: '', unit: String(value ?? '') };
+}
+/** Unit names (vehicle_no) in a Unit filter selection — [] for "All". */
+function selectedUnitNames(selected) {
+    if (!selected || selected.has('all')) return [];
+    return [...new Set([...selected].map(v => parseUnitFilterValue(v).unit).filter(Boolean))];
+}
+/** Battalions implied by a KD2 Unit filter selection — [] for "All" or none. */
+function selectedUnitBattalions(selected) {
+    if (!selected || selected.has('all')) return [];
+    return [...new Set([...selected].map(v => parseUnitFilterValue(v).battalion).filter(Boolean))];
+}
+/** True if a row matches a Unit filter selection (battalion + vehicle + unit for KD2 values). */
+function rowMatchesUnitSet(selected, row) {
+    if (!selected || selected.size === 0 || selected.has('all')) return true;
+    const rowUnit = String(row?.vehicle_no ?? '').trim();
+    const rowVehicle = row?.vehicle || row?.vehicle_type || '';
+    return [...selected].some(value => {
+        const p = parseUnitFilterValue(value);
+        if (p.unit !== rowUnit) return false;
+        if (p.vehicle && p.vehicle !== rowVehicle) return false;
+        if (p.battalion && p.battalion !== (row?.battalion_code || '')) return false;
+        return true;
+    });
+}
+
 /** Client-side pass: category (multi-select) + free-text search, ANDed together. */
 function applyActiveFilters(rows) {
     const q = (document.getElementById('filterSearch')?.value || '').trim().toLowerCase();
@@ -2194,6 +2229,15 @@ async function loadUnitCodes() {
             if (unitsError) throw unitsError;
             if (battalionError) throw battalionError;
             const battalionMap = Object.fromEntries((battalions || []).map(row => [row.id, row.battalion_code]));
+            // Count how many battalions share each bare vehicle||label key. A bare key
+            // shared by several battalions (every battalion has an "M2") is left unset,
+            // so a lookup without a battalion can never return another battalion's serial.
+            const plainKeyCounts = {};
+            (units || []).forEach(r => {
+                if (!r.unit_label) return;
+                const k = r.vehicle_type + '||' + r.unit_label;
+                plainKeyCounts[k] = (plainKeyCounts[k] || 0) + 1;
+            });
             (units || []).forEach(r => {
                 const code = r.unit_code || '';
                 const battalionCode = battalionMap[r.battalion_id] || '';
@@ -2210,9 +2254,11 @@ async function loadUnitCodes() {
                 const drEntry = { id: r.id, reasons: (r.delay_reason && typeof r.delay_reason === 'object') ? r.delay_reason : {} };
                 if (qkey1) { unitCodeMap[qkey1] = code; vpxDelayReasonMap[qkey1] = drEntry; }
                 if (qkey2) { unitCodeMap[qkey2] = code; vpxDelayReasonMap[qkey2] = drEntry; }
-                if (key1) unitCodeMap[key1] = code;
+                if (key1 && plainKeyCounts[key1] === 1) {
+                    unitCodeMap[key1] = code;
+                    vpxDelayReasonMap[key1] = drEntry;
+                }
                 unitCodeMap[key2] = code;
-                if (key1) vpxDelayReasonMap[key1] = drEntry;
                 vpxDelayReasonMap[key2] = drEntry;
                 unitRegistryRows.push({
                     battalion_id: r.battalion_id,
@@ -2263,26 +2309,37 @@ function getRegisteredUnitNames(vehicle = null, fallbackRows = currentData) {
 function populateUnitFilter(vehicleSet = null) {
     const scoped = (vehicleSet && !vehicleSet.has?.('all') && vehicleSet.size) ? vehicleSet : null;
     const singleVehicle = scoped && scoped.size === 1;
+    // KD2 unit labels repeat in every battalion (BTL-01 M2, BTL-02 M2), each with
+    // its own serial number — so KD2 gets one option per battalion, scoped to the
+    // Battalion filter when one is set.
+    const kd2 = isKD2Module();
+    const battalionScope = (kd2 && !filterState.battalion.has('all') && filterState.battalion.size) ? filterState.battalion : null;
+    const singleBattalion = battalionScope && battalionScope.size === 1;
 
     const pairs = [];
     const seen = new Set();
     [...unitRegistryRows, ...(currentData || [])].forEach(r => {
         const v = r.vehicle || r.vehicle_type || '';
         const u = r.vehicle_no || '';
+        const b = kd2 && r.battalion_code && r.battalion_code !== '—' ? r.battalion_code : '';
         if (!v || !u) return;
         if (scoped && !scoped.has(v)) return;
-        const key = v + '||' + u;
-        if (!seen.has(key)) { seen.add(key); pairs.push({ v, u }); }
+        if (battalionScope && !battalionScope.has(b)) return;
+        const key = kd2 ? kd2UnitValue(b, v, u) : v + '||' + u;
+        if (!seen.has(key)) { seen.add(key); pairs.push({ v, u, b }); }
     });
     pairs.sort((a, b) => {
+        const bc = String(a.b).localeCompare(String(b.b), undefined, { numeric: true });
+        if (bc !== 0) return bc;
         const vc = vehicleSort(a.v, b.v);
         return vc !== 0 ? vc : naturalSort(a.u, b.u);
     });
 
-    filterOptions.unit = pairs.map(({ v, u }) => {
-        const code = unitCodeMap[v + '||' + u] || '';
+    filterOptions.unit = pairs.map(({ v, u, b }) => {
+        const code = getUnitCode(v, u, b);
         const base = code ? u + ' · ' + code : u;
-        return { value: u, vehicle: v, label: singleVehicle ? base : v + ' · ' + base };
+        const prefix = [b && !singleBattalion ? b : '', singleVehicle ? '' : v].filter(Boolean);
+        return { value: kd2 ? kd2UnitValue(b, v, u) : u, vehicle: v, battalion: b, label: [...prefix, base].join(' · ') };
     });
     renderMultiSelectMenu('unit');
 }
@@ -2594,8 +2651,8 @@ async function loadData() {
                 : (impliedVehicles ? [...impliedVehicles] : []);
             currentData = await getModuleRuntime().loadData(db, {
                 vehicle: vehicleList,
-                battalion: filterState.battalion.has('all') ? [] : [...filterState.battalion],
-                unit: filterState.unit.has('all') ? [] : [...filterState.unit],
+                battalion: filterState.battalion.has('all') ? selectedUnitBattalions(filterState.unit) : [...filterState.battalion],
+                unit: selectedUnitNames(filterState.unit),
                 weekRanges,
                 timeFrame: getVal('filterTimeFrame'),
                 today: todayStr(),
@@ -6774,6 +6831,7 @@ function wireEvents() {
             handleMultiSelectMenuChange(key, e, () => {
                 if (ISSUE_FILTER_KEYS.has(key)) { loadIssuesDebounced(); return; }
                 if (key === 'vehicle') onVehicleFilterChange();
+                if (key === 'battalion' && isKD2Module()) populateUnitFilter(filterState.vehicle);
                 loadDataDebounced();
             });
         });
@@ -7818,7 +7876,7 @@ function renderGantt(plans, startDate, endDate) {
         unitRegistryRows
             .filter(row =>
                 (!effectiveVehicleSetG || effectiveVehicleSetG.has(row.vehicle)) &&
-                matchesMultiSet(unitSetG, row.vehicle_no) &&
+                rowMatchesUnitSet(unitSetG, row) &&
                 matchesMultiSet(battalionSetG, row.battalion_code)
             )
             .forEach(row => {
@@ -9140,7 +9198,7 @@ function applyReportModalFilters(rows) {
         return list.filter(r => {
             if (!matchesMultiSet(rv, r.vehicle)) return false;
             if (isKD2Module() && !matchesMultiSet(rb, r.battalion_code)) return false;
-            if (!matchesMultiSet(ru, r.vehicle_no)) return false;
+            if (!rowMatchesUnitSet(ru, r)) return false;
             if (!matchesMultiSet(rc, getModuleCategory(r.process_station, r))) return false;
             if (!matchesMultiSet(rw, r.week)) return false;
             if (needK9 && r.vehicle === 'K9') {

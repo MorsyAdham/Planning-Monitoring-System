@@ -541,7 +541,7 @@ window.PPMSModuleRuntime = (() => {
     }
 
     function templateLayoutMigrationMessage() {
-        return "Spaces in KD2 templates require the 'kd2_template_layout_items' table. Run 'PPMS/sql/migrations/kd2_template_layout_items.sql' in Supabase, then reload the page.";
+        return "Spaces in KD2 templates require the 'kd2_template_layout_items' table. Run 'database/migrations/kd2_template_layout_items.sql' in Supabase, then reload the page.";
     }
 
     function populateCategoryFilter(categories) {
@@ -1880,7 +1880,7 @@ window.PPMSModuleRuntime = (() => {
             const missingTable = isMissingSchemaTableError(error, 'kd2_plan_route_order');
             toast(
                 missingTable
-                    ? "Reordering within a plan version needs the 'kd2_plan_route_order' table — run production/sql/migrations/54_kd2_plan_route_order.sql in Supabase, then reload."
+                    ? "Reordering within a plan version needs the 'kd2_plan_route_order' table — run database/migrations/54_kd2_plan_route_order.sql in Supabase, then reload."
                     : 'Failed to save the new order: ' + (error.message || error),
                 'error'
             );
@@ -2493,7 +2493,9 @@ window.PPMSModuleRuntime = (() => {
 
     function getUnitFilterValue() {
         if (typeof filterState === 'undefined') return '';
-        return [...filterState.unit].find(v => v !== 'all') || '';
+        // Unit filter values are battalion-scoped ("BTL-01||K9||M2") — return the label part.
+        const value = [...filterState.unit].find(v => v !== 'all') || '';
+        return value.split('||').pop();
     }
 
     function formatUnitLabel(vehicle, unitSerial, preferredLabel = '') {
