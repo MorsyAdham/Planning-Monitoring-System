@@ -176,6 +176,10 @@
     color: #f5f2ed;
 }
 
+/* ── VPX: planned dates use the "Planned" status colour, not the red
+   accent — red must only ever mean late/overdue ─────────────────── */
+[data-theme="crimson"] .vpx-date-plan { color: var(--clr-planned); }
+
 /* ── Scrollbars ────────────────────────────────────────────────── */
 [data-theme="crimson"] ::-webkit-scrollbar-thumb {
     background: #3a2c2e;
