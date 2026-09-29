@@ -8241,6 +8241,7 @@ window.PPMSModuleRuntime = (() => {
     return {
         getActiveModule,
         getActiveConfig,
+        getAllowedModules,
         isKD2,
         isF100KD2,
         isF200Module,

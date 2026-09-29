@@ -66,34 +66,6 @@ export function initFeature() {
                         <input id="issueSearch" class="filter-control" placeholder="Search..." type="search" autocomplete="off" />
                     </div>
                     <div class="filter-item">
-                        <label class="filter-label">Category</label>
-                        <div class="ms-filter" id="issueFilterCategoryWrap">
-                            <button type="button" class="ms-trigger filter-control" id="issueFilterCategoryBtn">Category</button>
-                            <div class="ms-menu" id="issueFilterCategoryMenu" hidden></div>
-                        </div>
-                    </div>
-                    <div class="filter-item">
-                        <label class="filter-label">Status</label>
-                        <div class="ms-filter" id="issueFilterStatusWrap">
-                            <button type="button" class="ms-trigger filter-control" id="issueFilterStatusBtn">Status</button>
-                            <div class="ms-menu" id="issueFilterStatusMenu" hidden></div>
-                        </div>
-                    </div>
-                    <div class="filter-item">
-                        <label class="filter-label">Priority</label>
-                        <div class="ms-filter" id="issueFilterPriorityWrap">
-                            <button type="button" class="ms-trigger filter-control" id="issueFilterPriorityBtn">Priority</button>
-                            <div class="ms-menu" id="issueFilterPriorityMenu" hidden></div>
-                        </div>
-                    </div>
-                    <div class="filter-item">
-                        <label class="filter-label">Reporter</label>
-                        <div class="ms-filter" id="issueFilterReporterWrap">
-                            <button type="button" class="ms-trigger filter-control" id="issueFilterReporterBtn">Reporter</button>
-                            <div class="ms-menu" id="issueFilterReporterMenu" hidden></div>
-                        </div>
-                    </div>
-                    <div class="filter-item">
                         <label class="filter-label" for="issueFilterFrom">From</label>
                         <input type="date" id="issueFilterFrom" class="filter-control" />
                     </div>
@@ -102,11 +74,12 @@ export function initFeature() {
                         <input type="date" id="issueFilterTo" class="filter-control" />
                     </div>
                     <div class="filter-item filter-actions">
-                        <button class="btn btn-ghost" id="btnIssueReset" onclick="resetIssueFilters()">Reset</button>
+                        <button class="btn btn-ghost" id="btnIssueReset" onclick="resetIssueFilters()">Reset filters</button>
                     </div>
 
                     <div class="issues-toolbar-spacer"></div>
 
+                    <span class="issues-active-filters" id="issueActiveFilters" hidden></span>
                     <span class="issues-count" id="issueCount">— issues</span>
                     <button class="btn btn-ghost btn-sm" id="btnIssueReportModal" onclick="openIssueReportModal()">
                         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="width:13px;height:13px;vertical-align:-2px;margin-right:4px">
@@ -139,10 +112,34 @@ export function initFeature() {
                             <tr>
                                 <th class="issues-col-idx">#</th>
                                 <th class="issues-col-title">Title</th>
-                                <th class="issues-col-cat">Category</th>
-                                <th class="issues-col-pri">Priority</th>
-                                <th class="issues-col-status">Status</th>
-                                <th class="issues-col-reporter">Reporter</th>
+                                <th class="issues-col-cat th-filterable">
+                                    <span class="th-label">Category</span>
+                                    <button type="button" class="th-filter-btn" id="issueFilterCategoryBtn" title="Filter Category" aria-label="Filter Category">
+                                        <svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M1.5 2.5h9M3.5 6h5M5.5 9.5h1" stroke-linecap="round"/></svg>
+                                    </button>
+                                    <div class="ms-menu th-filter-menu" id="issueFilterCategoryMenu" hidden></div>
+                                </th>
+                                <th class="issues-col-pri th-filterable">
+                                    <span class="th-label">Priority</span>
+                                    <button type="button" class="th-filter-btn" id="issueFilterPriorityBtn" title="Filter Priority" aria-label="Filter Priority">
+                                        <svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M1.5 2.5h9M3.5 6h5M5.5 9.5h1" stroke-linecap="round"/></svg>
+                                    </button>
+                                    <div class="ms-menu th-filter-menu" id="issueFilterPriorityMenu" hidden></div>
+                                </th>
+                                <th class="issues-col-status th-filterable">
+                                    <span class="th-label">Status</span>
+                                    <button type="button" class="th-filter-btn" id="issueFilterStatusBtn" title="Filter Status" aria-label="Filter Status">
+                                        <svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M1.5 2.5h9M3.5 6h5M5.5 9.5h1" stroke-linecap="round"/></svg>
+                                    </button>
+                                    <div class="ms-menu th-filter-menu" id="issueFilterStatusMenu" hidden></div>
+                                </th>
+                                <th class="issues-col-reporter th-filterable">
+                                    <span class="th-label">Reporter</span>
+                                    <button type="button" class="th-filter-btn" id="issueFilterReporterBtn" title="Filter Reporter" aria-label="Filter Reporter">
+                                        <svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M1.5 2.5h9M3.5 6h5M5.5 9.5h1" stroke-linecap="round"/></svg>
+                                    </button>
+                                    <div class="ms-menu th-filter-menu" id="issueFilterReporterMenu" hidden></div>
+                                </th>
                                 <th class="issues-col-date">Reported On</th>
                                 <th class="issues-col-date">Updated</th>
                                 <th class="issues-col-actions">Actions</th>
