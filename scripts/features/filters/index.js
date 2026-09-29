@@ -1,138 +1,105 @@
+const ICONS = {
+    filter: '<path d="M3 5h18M6 12h12M10 19h4"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+    reset: '<path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4"/>',
+    report: '<path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
+};
+const svg = p => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+
+/** One multi-select filter (ids are used by app.js — keep them). */
+const ms = (group, label, key, { hidden = false, labelId = '' } = {}) => `
+                <div class="filter-item fx-item" id="${group}"${hidden ? ' style="display:none;"' : ''}>
+                    <label class="filter-label"${labelId ? ` id="${labelId}"` : ''}>${label}</label>
+                    <div class="ms-filter" id="${key}Wrap">
+                        <button type="button" class="ms-trigger filter-control" id="${key}Btn">All</button>
+                        <div class="ms-menu" id="${key}Menu" hidden></div>
+                    </div>
+                </div>`;
+
 export function initFeature() {
     return `
         <!-- ═══════════════════════════════════════════════ FILTER BAR -->
-        <section class="filter-section" aria-label="Filters">
-            <div class="filter-grid">
+        <section class="filter-section fx-panel" id="overviewSegment" aria-label="Filters">
+            <header class="fx-head">
+                <div class="fx-title">
+                    <span class="fx-title-icon">${svg(ICONS.filter)}</span>
+                    <span>Filters</span>
+                    <span class="fx-count" id="fxActiveCount" hidden>0 active</span>
+                </div>
+                <div class="fx-chips" id="fxChips" aria-label="Active filters"></div>
+                <div class="fx-head-actions">
+                    <div class="filter-item filter-actions">
+                        <button class="fx-btn fx-btn--ghost" id="btnReset" title="Clear every filter">${svg(ICONS.reset)}<span>Reset</span></button>
+                    </div>
+                    <div class="filter-item filter-exec-report-item">
+                        <button type="button" class="fx-btn fx-btn--primary btn-exec-report" id="btnExecReport" title="Executive Report — combined VPX Station Report + Issues Status Report">
+                            ${svg(ICONS.report)}<span>Executive Report</span>
+                        </button>
+                    </div>
+                </div>
+            </header>
+
+            <div class="filter-grid fx-grid">
                 <!-- ── F200 standard filters (hidden when F100-KD2 active) ─────── -->
-                <div class="filter-item" id="filterVehicleGroup">
-                    <label class="filter-label">Vehicle</label>
-                    <div class="ms-filter" id="filterVehicleWrap">
-                        <button type="button" class="ms-trigger filter-control" id="filterVehicleBtn">All</button>
-                        <div class="ms-menu" id="filterVehicleMenu" hidden></div>
-                    </div>
-                </div>
-                <div class="filter-item" id="filterK9ComponentGroup" style="display:none;">
-                    <label class="filter-label">K9 Component</label>
-                    <div class="ms-filter" id="filterK9ComponentWrap">
-                        <button type="button" class="ms-trigger filter-control" id="filterK9ComponentBtn">All</button>
-                        <div class="ms-menu" id="filterK9ComponentMenu" hidden></div>
-                    </div>
-                </div>
-                <div class="filter-item" id="filterBattalionGroup" style="display:none;">
-                    <label class="filter-label">Battalion</label>
-                    <div class="ms-filter" id="filterBattalionWrap">
-                        <button type="button" class="ms-trigger filter-control" id="filterBattalionBtn">All</button>
-                        <div class="ms-menu" id="filterBattalionMenu" hidden></div>
-                    </div>
-                </div>
-                <div class="filter-item" id="filterUnitGroup">
-                    <label class="filter-label" id="filterUnitLabel">Unit</label>
-                    <div class="ms-filter" id="filterUnitWrap">
-                        <button type="button" class="ms-trigger filter-control" id="filterUnitBtn">All</button>
-                        <div class="ms-menu" id="filterUnitMenu" hidden></div>
-                    </div>
-                </div>
-                <div class="filter-item" id="filterCategoryGroup">
-                    <label class="filter-label">Category</label>
-                    <div class="ms-filter" id="filterCategoryWrap">
-                        <button type="button" class="ms-trigger filter-control" id="filterCategoryBtn">All</button>
-                        <div class="ms-menu" id="filterCategoryMenu" hidden></div>
-                    </div>
-                </div>
-                <div class="filter-item" id="filterWeekGroup">
-                    <label class="filter-label">Week</label>
-                    <div class="ms-filter" id="filterWeekWrap">
-                        <button type="button" class="ms-trigger filter-control" id="filterWeekBtn">All</button>
-                        <div class="ms-menu" id="filterWeekMenu" hidden></div>
-                    </div>
-                </div>
-                <div class="filter-item" id="filterTimeFrameGroup">
-                    <label class="filter-label" for="filterTimeFrame">Time Frame</label>
-                    <select id="filterTimeFrame" class="filter-control">
-                        <option value="all">All Time</option>
-                        <option value="day">Today</option>
-                        <option value="week">This Week</option>
-                        <option value="month">This Month</option>
-                        <option value="custom">Custom Range</option>
-                    </select>
-                </div>
-                <div class="filter-item" id="customDateStart" style="display:none;">
-                    <label class="filter-label" for="filterStartDate">Start Date</label>
-                    <input type="date" id="filterStartDate" class="filter-control" />
-                </div>
-                <div class="filter-item" id="customDateEnd" style="display:none;">
-                    <label class="filter-label" for="filterEndDate">End Date</label>
-                    <input type="date" id="filterEndDate" class="filter-control" />
-                </div>
-                <div class="filter-item" id="filterSearchGroup">
-                    <label class="filter-label" for="filterSearch">Search</label>
-                    <input type="text" id="filterSearch" class="filter-control" placeholder="Search..." autocomplete="off" />
-                </div>
+                ${ms('filterVehicleGroup', 'Vehicle', 'filterVehicle')}
+                ${ms('filterK9ComponentGroup', 'K9 Component', 'filterK9Component', { hidden: true })}
+                ${ms('filterBattalionGroup', 'Battalion', 'filterBattalion', { hidden: true })}
+                ${ms('filterUnitGroup', 'Unit', 'filterUnit', { labelId: 'filterUnitLabel' })}
+                ${ms('filterCategoryGroup', 'Category', 'filterCategory')}
+                ${ms('filterWeekGroup', 'Week', 'filterWeek')}
 
                 <!-- ── F100-KD2 filters (shown only when F100-KD2 active) ────────── -->
-                <div class="filter-item" id="f100BattalionGroup" style="display:none;">
-                    <label class="filter-label">Battalion</label>
-                    <div class="ms-filter" id="f100BattalionWrap">
-                        <button type="button" class="ms-trigger filter-control" id="f100BattalionBtn">All</button>
-                        <div class="ms-menu" id="f100BattalionMenu" hidden></div>
-                    </div>
-                </div>
-                <div class="filter-item" id="f100ModeGroup" style="display:none;">
+                ${ms('f100BattalionGroup', 'Battalion', 'f100Battalion', { hidden: true })}
+                <div class="filter-item fx-item" id="f100ModeGroup" style="display:none;">
                     <label class="filter-label" for="f100Mode">Mode</label>
                     <select id="f100Mode" class="filter-control">
                         <option value="gun" selected>Gun Parts</option>
                         <option value="vehicle">Vehicle Parts</option>
                     </select>
                 </div>
-                <div class="filter-item" id="f100GunPartGroup" style="display:none;">
-                    <label class="filter-label">Gun Part</label>
-                    <div class="ms-filter" id="f100GunPartWrap">
-                        <button type="button" class="ms-trigger filter-control" id="f100GunPartBtn">All</button>
-                        <div class="ms-menu" id="f100GunPartMenu" hidden></div>
-                    </div>
-                </div>
-                <div class="filter-item" id="f100SerialGroup" style="display:none;">
-                    <label class="filter-label">Unit</label>
-                    <div class="ms-filter" id="f100SerialWrap">
-                        <button type="button" class="ms-trigger filter-control" id="f100SerialBtn">All</button>
-                        <div class="ms-menu" id="f100SerialMenu" hidden></div>
-                    </div>
-                </div>
-                <div class="filter-item" id="f100ManufacturerGroup" style="display:none;">
-                    <label class="filter-label">Manufacturer</label>
-                    <div class="ms-filter" id="f100ManufacturerWrap">
-                        <button type="button" class="ms-trigger filter-control" id="f100ManufacturerBtn">All</button>
-                        <div class="ms-menu" id="f100ManufacturerMenu" hidden></div>
-                    </div>
-                </div>
-                <div class="filter-item" id="f100VehicleTypeGroup" style="display:none;">
-                    <label class="filter-label">Vehicle</label>
-                    <div class="ms-filter" id="f100VehicleTypeWrap">
-                        <button type="button" class="ms-trigger filter-control" id="f100VehicleTypeBtn">All</button>
-                        <div class="ms-menu" id="f100VehicleTypeMenu" hidden></div>
-                    </div>
-                </div>
-                <div class="filter-item" id="f100ManageProcessesGroup" style="display:none;">
+                ${ms('f100GunPartGroup', 'Gun Part', 'f100GunPart', { hidden: true })}
+                ${ms('f100SerialGroup', 'Unit', 'f100Serial', { hidden: true })}
+                ${ms('f100ManufacturerGroup', 'Manufacturer', 'f100Manufacturer', { hidden: true })}
+                ${ms('f100VehicleTypeGroup', 'Vehicle', 'f100VehicleType', { hidden: true })}
+                <div class="filter-item fx-item" id="f100ManageProcessesGroup" style="display:none;">
                     <label class="filter-label">&nbsp;</label>
                     <button class="btn btn-outline btn-sm" id="btnF100ManageProcesses">Manage Parts &amp; Processes</button>
                 </div>
 
-                <div class="filter-item filter-actions">
-                    <button class="btn btn-ghost" id="btnReset">Reset</button>
+                <div class="filter-item fx-item fx-item--time" id="filterTimeFrameGroup">
+                    <label class="filter-label" for="filterTimeFrame">Time frame</label>
+                    <!-- The select stays the source of truth for app.js; the pills drive it. -->
+                    <select id="filterTimeFrame" class="filter-control fx-time-select" aria-hidden="true" tabindex="-1">
+                        <option value="all">All Time</option>
+                        <option value="day">Today</option>
+                        <option value="week">This Week</option>
+                        <option value="month">This Month</option>
+                        <option value="custom">Custom Range</option>
+                    </select>
+                    <div class="fx-seg" id="fxTimeSeg" role="radiogroup" aria-label="Time frame">
+                        <button type="button" class="fx-seg-btn is-active" data-tf="all" role="radio" aria-checked="true">All time</button>
+                        <button type="button" class="fx-seg-btn" data-tf="day" role="radio" aria-checked="false">Today</button>
+                        <button type="button" class="fx-seg-btn" data-tf="week" role="radio" aria-checked="false">This week</button>
+                        <button type="button" class="fx-seg-btn" data-tf="month" role="radio" aria-checked="false">This month</button>
+                        <button type="button" class="fx-seg-btn" data-tf="custom" role="radio" aria-checked="false">Custom</button>
+                    </div>
                 </div>
-
-                <div class="filter-item filter-exec-report-item">
-                    <button type="button" class="btn-exec-report" id="btnExecReport" title="Executive Report — combined VPX Station Report + Issues Status Report">
-                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M4 3h9l3 3v11H4z" />
-                            <path d="M13 3v3h3" />
-                            <path d="M7 10h6M7 13h6M7 16h3" />
-                        </svg>
-                        Executive Report
-                    </button>
+                <div class="filter-item fx-item fx-item--date" id="customDateStart" style="display:none;">
+                    <label class="filter-label" for="filterStartDate">From</label>
+                    <input type="date" id="filterStartDate" class="filter-control" />
+                </div>
+                <div class="filter-item fx-item fx-item--date" id="customDateEnd" style="display:none;">
+                    <label class="filter-label" for="filterEndDate">To</label>
+                    <input type="date" id="filterEndDate" class="filter-control" />
+                </div>
+                <div class="filter-item fx-item fx-item--search" id="filterSearchGroup">
+                    <label class="filter-label" for="filterSearch">Search</label>
+                    <div class="fx-search">
+                        ${svg(ICONS.search)}
+                        <input type="text" id="filterSearch" class="filter-control" placeholder="Station, unit, code…" autocomplete="off" />
+                    </div>
                 </div>
             </div>
         </section>
 `.trim();
 }
-

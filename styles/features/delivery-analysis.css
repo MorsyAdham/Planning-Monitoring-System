@@ -1,0 +1,112 @@
+/* ================================================================
+   DELIVERY DELAY ANALYSIS (opened from the Executive Summary's
+   Delivery card) — verdict, timeline, ranked causes with actions.
+   ================================================================ */
+.modal.dda { max-width: 760px; width: 100%; max-height: 90vh; display: flex; flex-direction: column; }
+.dda .modal-header { align-items: flex-start; }
+.dda-sub { margin: 2px 0 0; font-size: .78rem; color: var(--clr-text-muted); }
+.dda-body { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 18px; padding: 18px 22px 22px; }
+.dda svg { width: 16px; height: 16px; flex-shrink: 0; }
+
+/* Verdict */
+.dda-verdict { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border-radius: 12px; border: 1px solid; }
+.dda-verdict p { margin: 0; font-size: .92rem; line-height: 1.55; color: var(--clr-text); }
+.dda-verdict-icon { width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #fff; }
+.dda-verdict-icon svg { width: 18px; height: 18px; }
+.dda-verdict.is-late { background: color-mix(in srgb, var(--clr-overdue) 8%, var(--clr-surface)); border-color: color-mix(in srgb, var(--clr-overdue) 35%, transparent); }
+.dda-verdict.is-late .dda-verdict-icon { background: var(--clr-overdue); }
+.dda-verdict.is-ok { background: color-mix(in srgb, var(--clr-completed) 8%, var(--clr-surface)); border-color: color-mix(in srgb, var(--clr-completed) 35%, transparent); }
+.dda-verdict.is-ok .dda-verdict-icon { background: var(--clr-completed); }
+
+/* Planned → expected timeline */
+.dda-timeline { display: flex; align-items: center; gap: 14px; padding: 4px 2px; }
+.dda-tl-point { display: flex; flex-direction: column; gap: 2px; min-width: 110px; }
+.dda-tl-point span { font-size: .64rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--clr-text-dim); }
+.dda-tl-point strong { font-family: var(--ff-display); font-size: 1.15rem; color: var(--clr-text); }
+.dda-tl-point.is-late strong { color: var(--clr-overdue); }
+.dda-tl-point:last-child { text-align: right; }
+.dda-tl-track { position: relative; flex: 1; height: 6px; border-radius: 999px; background: var(--clr-border-soft); }
+.dda-tl-track i { position: absolute; inset: 0; border-radius: 999px; background: linear-gradient(90deg, var(--clr-completed), var(--clr-late) 60%, var(--clr-overdue)); }
+.dda-tl-track em {
+    position: absolute; left: 50%; top: -24px; transform: translateX(-50%);
+    font-style: normal; font-size: .72rem; font-weight: 700;
+    padding: 1px 8px; border-radius: 999px;
+    background: var(--clr-overdue); color: #fff; white-space: nowrap;
+}
+
+/* Stats */
+.dda-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.dda-stats div { padding: 10px 14px; border-radius: 10px; border: 1px solid var(--clr-border); background: var(--clr-surface-2); display: flex; flex-direction: column; }
+.dda-stats strong { font-family: var(--ff-display); font-size: 1.4rem; line-height: 1.1; color: var(--clr-text); }
+.dda-stats span { font-size: .72rem; color: var(--clr-text-muted); }
+
+/* Section headings */
+.dda-h { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: .8rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--clr-text); }
+.dda-h svg { color: var(--clr-accent); }
+.dda-hint { margin: 0 0 10px; font-size: .8rem; line-height: 1.5; color: var(--clr-text-muted); }
+
+/* Ranked causes */
+.dda-causes { display: flex; flex-direction: column; gap: 8px; }
+.dda-cause {
+    display: grid; grid-template-columns: 28px 1fr auto; gap: 12px; align-items: start;
+    padding: 12px 14px; border-radius: 12px;
+    border: 1px solid var(--clr-border); background: var(--clr-surface);
+}
+.dda-cause.is-top { border-color: color-mix(in srgb, var(--clr-overdue) 45%, var(--clr-border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--clr-overdue) 10%, transparent); }
+.dda-rank { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: .8rem; background: var(--clr-surface-2); color: var(--clr-text-muted); }
+.dda-cause.is-top .dda-rank { background: var(--clr-overdue); color: #fff; }
+.dda-cause-main { min-width: 0; }
+.dda-cause-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dda-cause-title strong { font-size: .92rem; color: var(--clr-text); }
+.dda-chip { font-size: .66rem; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--clr-accent-dim); color: var(--clr-accent); }
+.dda-chip--muted { background: var(--clr-surface-2); color: var(--clr-text-muted); }
+.dda-cause-line { margin: 4px 0 8px; font-size: .78rem; color: var(--clr-text-muted); }
+.dda-cause-line b { color: var(--clr-overdue); }
+.dda-bar { height: 5px; border-radius: 999px; background: var(--clr-border-soft); margin-bottom: 10px; }
+.dda-bar span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--clr-late), var(--clr-overdue)); }
+.dda-delay { font-family: var(--ff-display); font-size: 1.35rem; font-weight: 700; color: var(--clr-overdue); white-space: nowrap; }
+.dda-delay small { font-size: .7rem; margin-left: 2px; color: var(--clr-text-muted); }
+.dda-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.dda-act {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 30px; padding: 0 11px; border-radius: 8px;
+    border: none; background: var(--clr-accent); color: #fff;
+    font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer;
+}
+.dda-act svg { width: 14px; height: 14px; }
+.dda-act:hover { filter: brightness(1.08); }
+.dda-act--ghost { background: transparent; color: var(--clr-accent); border: 1px solid color-mix(in srgb, var(--clr-accent) 40%, var(--clr-border)); }
+.dda-act--ghost:hover { background: var(--clr-accent-dim); filter: none; }
+
+/* Category accordion */
+.dda-cats { display: flex; flex-direction: column; gap: 6px; }
+.dda-cat { border: 1px solid var(--clr-border); border-radius: 10px; background: var(--clr-surface); overflow: hidden; }
+.dda-cat summary { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; list-style: none; font-size: .85rem; }
+.dda-cat summary::-webkit-details-marker { display: none; }
+.dda-cat summary svg { color: var(--clr-text-dim); transition: transform .15s; }
+.dda-cat[open] summary svg { transform: rotate(90deg); }
+.dda-cat summary:hover { background: var(--clr-surface-2); }
+.dda-cat-name { font-weight: 700; color: var(--clr-text); }
+.dda-cat-meta { font-size: .74rem; color: var(--clr-text-muted); }
+.dda-cat-delay { margin-left: auto; font-weight: 700; color: var(--clr-overdue); }
+.dda-cat-list { list-style: none; margin: 0; padding: 0 12px 8px; }
+.dda-cat-list li { display: grid; grid-template-columns: auto 1fr auto auto auto; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--clr-border-soft); font-size: .8rem; }
+.dda-cat-station { color: var(--clr-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dda-cat-count { color: var(--clr-text-muted); font-size: .74rem; }
+.dda-cat-worst { font-weight: 700; color: var(--clr-text); }
+.dda-link { display: inline-flex; align-items: center; gap: 3px; border: none; background: none; color: var(--clr-accent); font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
+.dda-link svg { width: 13px; height: 13px; }
+.dda-link:hover { background: var(--clr-accent-dim); }
+
+.dda-note { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: .74rem; line-height: 1.5; color: var(--clr-text-dim); }
+.dda-note svg { width: 15px; height: 15px; margin-top: 1px; }
+
+@media (max-width: 620px) {
+    .dda-stats { grid-template-columns: 1fr 1fr 1fr; }
+    .dda-cause { grid-template-columns: 24px 1fr; }
+    .dda-delay { grid-column: 2; }
+    .dda-cat-list li { grid-template-columns: auto 1fr auto; }
+    .dda-cat-count { display: none; }
+}
+
+[data-theme="crimson"] .dda-act:not(.dda-act--ghost) { background: var(--clr-crimson); color: #f5f2ed; }

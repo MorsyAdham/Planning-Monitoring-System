@@ -83,7 +83,7 @@ window.PPMSModuleRuntime = (() => {
         nonWorkDaySet: new Set(),
         routeVehicle: 'K9',
         timelineRows: [],
-        timelineViewMode: 'unit',
+        timelineViewMode: 'process', // Gantt opens in Process view by default
         timelineProcessVehicle: 'K9',
         timelineEditMode: false,
         timelineMoveMode: 'block',

@@ -1,92 +1,74 @@
+const svg = p => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+
+/** KPI tile (value id is written by updateSummary() in app.js). */
+const tile = (cls, id, label, icon, sub = '') => `
+                    <div class="summary-card ex-tile ${cls}">
+                        <div class="card-icon">${svg(icon)}</div>
+                        <div class="card-body">
+                            <span class="card-value" id="${id}">0</span>
+                            <span class="card-label">${label}</span>
+                            ${sub ? `<span class="ex-tile-sub" id="${id}Sub">${sub}</span>` : ''}
+                        </div>
+                    </div>`;
+
 export function initFeature() {
     return `
-        <!-- ═══════════════════════════════════════════════ SUMMARY CARDS -->
-        <section class="summary-section" id="summarySection" aria-label="Summary">
-            <div class="ppms-section-header">
-                <h3 class="ppms-section-heading">Production Overview</h3>
-                <span class="ppms-section-sub">Total planned · Completed · In progress · Overdue</span>
+        <!-- ═══════════════════════════════════════════════ EXECUTIVE SUMMARY -->
+        <section class="summary-section ex-summary" id="summarySection" aria-label="Executive Summary">
+            <div class="ppms-section-header ex-head">
+                <div>
+                    <h3 class="ppms-section-heading">Executive Summary</h3>
+                    <span class="ppms-section-sub">Where production stands for the current filters</span>
+                </div>
+                <span class="ex-scope" id="exScope" title="What these numbers cover">All data</span>
             </div>
-            <div class="summary-grid">
-                <div class="summary-card card-planned">
-                    <div class="card-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                            <rect x="3" y="4" width="18" height="18" rx="2" />
-                            <path d="M16 2v4M8 2v4M3 10h18" />
-                        </svg>
-                    </div>
-                    <div class="card-body">
-                        <span class="card-value" id="sumPlanned">0</span>
-                        <span class="card-label">Total Planned</span>
-                    </div>
-                </div>
-                <div class="summary-card card-completed">
-                    <div class="card-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                            <path d="M20 6L9 17l-5-5" />
-                        </svg>
-                    </div>
-                    <div class="card-body">
-                        <span class="card-value" id="sumCompleted">0</span>
-                        <span class="card-label">Completed</span>
-                    </div>
-                </div>
-                <div class="summary-card card-late">
-                    <div class="card-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                            <circle cx="12" cy="12" r="9" />
-                            <path d="M12 7v5l3 3" />
-                        </svg>
-                    </div>
-                    <div class="card-body">
-                        <span class="card-value" id="sumLate">0</span>
-                        <span class="card-label">Late Completion</span>
-                    </div>
-                </div>
-                <div class="summary-card card-overdue">
-                    <div class="card-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                            <path
-                                d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                        </svg>
-                    </div>
-                    <div class="card-body">
-                        <span class="card-value" id="sumOverdue">0</span>
-                        <span class="card-label">Overdue</span>
-                    </div>
-                </div>
-                <div class="summary-card card-progress">
-                    <div class="card-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                            <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-                        </svg>
-                    </div>
-                    <div class="card-body">
-                        <span class="card-value" id="sumProgress">0%</span>
-                        <span class="card-label">Progress</span>
-                    </div>
-                    <div class="progress-bar-wrap">
-                        <div class="progress-bar-fill" id="progressBarFill" style="width:0%"></div>
-                    </div>
-                </div>
 
-                <div class="summary-card card-delivery">
-                    <div class="card-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                            <rect x="3" y="4" width="18" height="18" rx="2"/>
-                            <path d="M16 2v4M8 2v4M3 10h18"/>
-                            <path d="M8 15l2.5 2.5L16 13" stroke-linecap="round" stroke-linejoin="round"/>
+            <div class="ex-grid">
+                <!-- Headline: overall progress ring + status split -->
+                <article class="ex-hero">
+                    <div class="ex-ring" id="exRing" style="--pct:0">
+                        <svg viewBox="0 0 120 120" aria-hidden="true">
+                            <circle class="ex-ring-track" cx="60" cy="60" r="52"/>
+                            <circle class="ex-ring-fill" cx="60" cy="60" r="52" pathLength="100"/>
                         </svg>
+                        <div class="ex-ring-text">
+                            <span class="ex-ring-value" id="sumProgress">0%</span>
+                            <span class="ex-ring-label">complete</span>
+                        </div>
                     </div>
-                    <div class="card-body">
-                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-                            <span class="card-label">Delivery Date</span>
-                            <span class="delivery-detail-hint" title="Click for delay breakdown">
-                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;opacity:.55">
-                                    <circle cx="8" cy="8" r="6.5"/>
-                                    <path d="M8 7v4M8 5.5v.5" stroke-linecap="round"/>
-                                </svg>
-                                <span style="font-size:.68rem;opacity:.6;letter-spacing:.02em">Details</span>
-                            </span>
+                    <div class="ex-hero-body">
+                        <p class="ex-hero-line"><strong id="exDoneCount">0</strong> of <strong id="exTotalCount">0</strong> planned tasks are done</p>
+                        <div class="ex-split" id="exSplit" role="img" aria-label="Status split">
+                            <span class="ex-split-seg ex-c-completed" data-k="completed"></span>
+                            <span class="ex-split-seg ex-c-late" data-k="late"></span>
+                            <span class="ex-split-seg ex-c-progress" data-k="inprogress"></span>
+                            <span class="ex-split-seg ex-c-overdue" data-k="overdue"></span>
+                            <span class="ex-split-seg ex-c-planned" data-k="planned" style="flex-grow:1"></span>
+                        </div>
+                        <ul class="ex-legend">
+                            <li><i class="ex-c-completed"></i>On time <b id="exLegCompleted">0</b></li>
+                            <li><i class="ex-c-late"></i>Late <b id="exLegLate">0</b></li>
+                            <li><i class="ex-c-progress"></i>In progress <b id="exLegProgress">0</b></li>
+                            <li><i class="ex-c-overdue"></i>Overdue <b id="exLegOverdue">0</b></li>
+                            <li><i class="ex-c-planned"></i>Not started <b id="exLegPlanned">0</b></li>
+                        </ul>
+                        <!-- kept for older callers; the ring shows progress now -->
+                        <div class="progress-bar-wrap" hidden><div class="progress-bar-fill" id="progressBarFill" style="width:0%"></div></div>
+                    </div>
+                </article>
+
+                <div class="summary-grid ex-tiles">
+                    ${tile('card-planned', 'sumPlanned', 'Total planned', '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>', 'tasks in scope')}
+                    ${tile('card-completed', 'sumCompleted', 'Completed on time', '<path d="M20 6L9 17l-5-5"/>', '')}
+                    ${tile('card-inprogress', 'sumInProgress', 'In progress', '<path d="M12 3a9 9 0 109 9"/><path d="M12 7v5l3 2"/>', '')}
+                    ${tile('card-late', 'sumLate', 'Late completion', '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>', '')}
+                    ${tile('card-overdue', 'sumOverdue', 'Overdue', '<path d="M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/>', 'past planned end')}
+
+                    <div class="summary-card card-delivery ex-delivery" role="button" tabindex="0" title="Click for the delay breakdown">
+                        <div class="ex-delivery-head">
+                            <span class="card-icon">${svg('<path d="M3 7h11v9H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="1.8"/><circle cx="17" cy="18" r="1.8"/>')}</span>
+                            <span class="card-label">Delivery</span>
+                            <span class="ex-delivery-link">Delay breakdown ${svg('<path d="M5 12h14M13 6l6 6-6 6"/>')}</span>
                         </div>
                         <div class="delivery-rows">
                             <div class="delivery-row">
@@ -95,7 +77,7 @@ export function initFeature() {
                             </div>
                             <div class="delivery-row">
                                 <span class="delivery-lbl">Expected</span>
-                                <span class="delivery-date" id="sumDeliveryExpected">—</span>
+                                <span class="delivery-date delivery-date--expected" id="sumDeliveryExpected">—</span>
                                 <span class="delivery-delta" id="sumDeliveryDelta" style="display:none"></span>
                             </div>
                         </div>
@@ -134,5 +116,3 @@ export function initFeature() {
         </section>
 `.trim();
 }
-
-

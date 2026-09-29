@@ -20,13 +20,13 @@ export function clearSession() {
     sessionStorage.removeItem(SESSION_KEY);
 }
 
-// Six themes: 'dark' is the no-attribute default; the other five set
+// Seven themes: 'dark' is the no-attribute default; the other five set
 // data-theme explicitly. Shared with app.js's own theme functions
 // (THEME_KEY_BASE + '_last') via the same localStorage key, so this
 // pre-load anti-flash pass (run by bootstrapPage() before the DOM paints,
 // on every page including login) picks the right one of all 6 themes
 // instead of just light/dark.
-const THEME_ORDER = ['dark', 'light', 'nord', 'dracula', 'midnight', 'catppuccin'];
+const THEME_ORDER = ['dark', 'light', 'nord', 'dracula', 'midnight', 'catppuccin', 'crimson'];
 const SHARED_THEME_KEY = 'ppms_theme_last';
 
 export function getTheme() {
