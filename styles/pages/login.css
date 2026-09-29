@@ -91,6 +91,20 @@
     --clr-error:       #f38ba8;
 }
 
+[data-theme="crimson"] {
+    --la: #b3182a; --la2: #8b0d1a; --la-glow: rgba(139,13,26,.35);
+    --clr-bg:          #0b0b0b;
+    --clr-surface:     #141212;
+    --clr-surface-2:   #1c1819;
+    --clr-border:      #342a2b;
+    --clr-border-soft: rgba(52,42,43,.7);
+    --clr-text:        #f5f2ed;
+    --clr-muted:       #b5ada5;
+    --clr-dim:         #756d68;
+    --clr-accent:      #d8475a;
+    --clr-accent-dim:  rgba(139,13,26,.28);
+    --clr-error:       #ff5b4f;
+}
 html, body { height: 100%; overflow: hidden; }
 html { font-size: 15px; -webkit-font-smoothing: antialiased; }
 body { font-family: var(--ff-body); color: var(--clr-text); height: 100vh; background: var(--clr-bg); }
@@ -133,6 +147,11 @@ body { font-family: var(--ff-body); color: var(--clr-text); height: 100vh; backg
     border-right-color: rgba(245,194,231,.16);
 }
 
+[data-theme="crimson"] .lp-hero {
+    background: linear-gradient(152deg, #050505 0%, #0b0b0b 55%, #2a060b 100%);
+    border-right-color: rgba(139,13,26,.35);
+}
+
 /* Decorative layer (glows/scan/particles/rings/corners/flow diagram) is drawn
    in a fixed blue — hue-shift the whole layer per theme instead of
    duplicating every gradient/stroke color individually. */
@@ -143,6 +162,7 @@ body { font-family: var(--ff-body); color: var(--clr-text); height: 100vh; backg
 [data-theme="nord"] .lp-hero-decor       { filter: hue-rotate(332deg); }
 [data-theme="dracula"] .lp-hero-decor    { filter: hue-rotate(109deg); }
 [data-theme="catppuccin"] .lp-hero-decor { filter: hue-rotate(100deg); }
+[data-theme="crimson"] .lp-hero-decor    { filter: hue-rotate(140deg) saturate(1.4); }
 
 /* Glows */
 .lp-hero-bg { position: absolute; inset: 0; pointer-events: none; }

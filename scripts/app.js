@@ -1458,6 +1458,8 @@ function updateMultiSelectButtonLabel(key) {
         btn.title = active ? `Filter ${base}: ${filterLabel(key)}` : `Filter ${base}`;
         return;
     }
+    // Main filter bar: keep the highlight + active-filter chips in sync
+    if (!ISSUE_FILTER_KEYS.has(key) && !REPORT_FILTER_KEYS.has(key)) queueMicrotask(() => window.PPMSFilterUI?.refresh?.());
 
     if (!selected || selected.has('all') || selected.size === 0) {
         btn.textContent = filterAllLabels[key] || 'All';
@@ -4223,14 +4225,34 @@ function updateSummary(data) {
     const completed = data.filter(r => calculateStatus(r) === 'Completed').length;
     const late = data.filter(r => calculateStatus(r) === 'Late Completion').length;
     const overdue = data.filter(r => calculateStatus(r) === 'Overdue').length;
+    const inProgress = data.filter(r => calculateStatus(r) === 'In Progress').length;
+    const notStarted = Math.max(0, total - completed - late - overdue - inProgress);
     const pct = total ? Math.round(((completed + late) / total) * 100) : 0;
 
     animateCount('sumPlanned', total);
     animateCount('sumCompleted', completed);
     animateCount('sumLate', late);
     animateCount('sumOverdue', overdue);
-    document.getElementById('sumProgress').textContent = `${pct}%`;
-    document.getElementById('progressBarFill').style.width = `${pct}%`;
+    if (document.getElementById('sumInProgress')) animateCount('sumInProgress', inProgress);
+    const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    setText('sumProgress', `${pct}%`);
+    const bar = document.getElementById('progressBarFill');
+    if (bar) bar.style.width = `${pct}%`;
+
+    // Executive Summary: ring, done count, status split and legend
+    document.getElementById('exRing')?.style.setProperty('--pct', pct);
+    setText('exDoneCount', (completed + late).toLocaleString());
+    setText('exTotalCount', total.toLocaleString());
+    const split = { completed, late, inprogress: inProgress, overdue, planned: notStarted };
+    document.querySelectorAll('#exSplit .ex-split-seg').forEach(seg => {
+        const n = split[seg.dataset.k] || 0;
+        seg.style.flexGrow = total ? n : (seg.dataset.k === 'planned' ? 1 : 0);
+        seg.title = `${seg.dataset.k === 'inprogress' ? 'In progress' : seg.dataset.k === 'planned' ? 'Not started' : seg.dataset.k[0].toUpperCase() + seg.dataset.k.slice(1)}: ${n}`;
+    });
+    setText('exLegCompleted', completed); setText('exLegLate', late); setText('exLegProgress', inProgress);
+    setText('exLegOverdue', overdue); setText('exLegPlanned', notStarted);
+    document.querySelector('.summary-card.card-overdue')?.classList.toggle('has-alert', overdue > 0);
+    window.PPMSFilterUI?.refresh?.();
     _updateDeliveryCard(data);
 }
 
@@ -4308,148 +4330,142 @@ function _updateDeliveryCard(data) {
 }
 
 function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, totalDelay) {
-    // Build: category → { maxDelay, delayed, vehicles: Map<vtype,maxDelay>, stations: Map<vtype||station, {name,vtype,delayed,maxDelay}> }
+    const stationOf = r => r.process_station || r.station_name || r.process_name || r.part_name || '(Unknown)';
+    const unitOf = r => [r.battalion_code, r.vehicle_no || r.unit_label || (r.serial_number != null ? `#${r.serial_number}` : '')].filter(Boolean).join(' ');
+
+    // category → stations → delayed rows
     const catMap = new Map();
+    const causeMap = new Map(); // vtype||station → cause
+    const units = new Set();
+    let delayedCount = 0;
     data.forEach(r => {
         const d = Math.max(0, delayDays(r));
         if (d === 0) return;
-        const cat   = getModuleCategory(r.process_station, r) || 'Other';
-        const vtype = _getVehicleType(r.vehicle) || 'Unknown';
-        const sname = r.process_station || '(Unknown)';
-        if (!catMap.has(cat)) catMap.set(cat, { maxDelay: 0, delayed: 0, vehicles: new Map(), stations: new Map() });
-        const c = catMap.get(cat);
-        c.delayed++;
-        if (d > c.maxDelay) c.maxDelay = d;
-        if (!c.vehicles.has(vtype) || d > c.vehicles.get(vtype)) c.vehicles.set(vtype, d);
-        const sk = `${vtype}||${sname}`;
-        if (!c.stations.has(sk)) c.stations.set(sk, { name: sname, vtype, delayed: 0, maxDelay: 0 });
-        const s = c.stations.get(sk);
-        s.delayed++;
-        if (d > s.maxDelay) s.maxDelay = d;
+        delayedCount++;
+        const cat = getModuleCategory(r.process_station, r) || 'Other';
+        const vtype = _getVehicleType(r.vehicle || r.vehicle_type) || r.vehicle_type || '—';
+        const sname = stationOf(r);
+        const unit = unitOf(r);
+        if (unit) units.add(`${vtype} ${unit}`);
+        const key = `${vtype}||${sname}`;
+        if (!causeMap.has(key)) causeMap.set(key, { station: sname, vtype, cat, count: 0, maxDelay: 0, units: new Set(), overdue: 0 });
+        const c = causeMap.get(key);
+        c.count++;
+        c.maxDelay = Math.max(c.maxDelay, d);
+        if (unit) c.units.add(unit);
+        if (calculateStatus(r) === 'Overdue') c.overdue++;
+        if (!catMap.has(cat)) catMap.set(cat, { maxDelay: 0, delayed: 0, causes: [] });
+        const cm = catMap.get(cat);
+        cm.delayed++;
+        cm.maxDelay = Math.max(cm.maxDelay, d);
     });
+    causeMap.forEach(c => catMap.get(c.cat).causes.push(c));
+    const causes = [...causeMap.values()].sort((a, b) => b.maxDelay - a.maxDelay || b.count - a.count);
+    const cats = [...catMap.entries()].sort((a, b) => b[1].maxDelay - a[1].maxDelay);
+    const top = causes[0];
+    const worst = totalDelay || 1;
+    const late = totalDelay > 0;
 
-    const catRows = [...catMap.entries()].sort((a, b) => b[1].maxDelay - a[1].maxDelay);
-    const overallMax  = catRows[0]?.[1].maxDelay || 1;
-    const delayedCount = data.filter(r => delayDays(r) > 0).length;
-    const worstCat    = catRows[0]?.[0] || '—';
-    const worstCatDelay = catRows[0]?.[1].maxDelay || 0;
+    const icon = p => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+    const unitList = c => {
+        const u = [...c.units];
+        return u.length ? `${u.slice(0, 4).map(esc).join(', ')}${u.length > 4 ? ` +${u.length - 4} more` : ''}` : '';
+    };
+    const actBtns = c => `
+        <div class="dda-acts">
+            <button type="button" class="dda-act" data-dda="table" data-station="${esc(c.station)}" title="Filter the Plan Table to this station — update dates or add a delay reason there">
+                ${icon('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/>')} Show in Plan Table</button>
+            <button type="button" class="dda-act dda-act--ghost" data-dda="gantt" data-station="${esc(c.station)}" title="Open the schedule in Process view">
+                ${icon('<path d="M4 6h9M8 12h10M6 18h7"/><path d="M3 3v18"/>')} View on Schedule</button>
+        </div>`;
 
-    const thSt = 'padding:5px 10px;text-align:left;font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-dim);border-bottom:1px solid var(--clr-border)';
+    const causeCard = (c, i) => `
+        <article class="dda-cause${i === 0 ? ' is-top' : ''}">
+            <span class="dda-rank">${i + 1}</span>
+            <div class="dda-cause-main">
+                <div class="dda-cause-title">
+                    <strong>${esc(c.station)}</strong>
+                    <span class="dda-chip">${esc(c.vtype)}</span>
+                    <span class="dda-chip dda-chip--muted">${esc(c.cat)}</span>
+                </div>
+                <p class="dda-cause-line">${c.count} task${c.count === 1 ? '' : 's'} late${c.overdue ? ` · <b>${c.overdue} still open</b>` : ''}${unitList(c) ? ` · ${unitList(c)}` : ''}</p>
+                <div class="dda-bar"><span style="width:${Math.max(6, Math.round(c.maxDelay / worst * 100))}%"></span></div>
+                ${actBtns(c)}
+            </div>
+            <span class="dda-delay">+${c.maxDelay}<small>wd</small></span>
+        </article>`;
 
-    const catListHtml = catRows.map(([cat, c], i) => {
-        const pct      = Math.round((c.maxDelay / overallMax) * 100);
-        const barColor = i === 0 ? '#f87171' : i === 1 ? '#fb923c' : '#facc15';
-        const vtags    = [...c.vehicles.entries()].sort((a,b) => b[1]-a[1])
-            .map(([v, mx]) => `<span style="font-size:.68rem;font-weight:700;padding:1px 6px;border-radius:8px;background:var(--clr-surface-3,var(--clr-border));color:var(--clr-text-dim)">${esc(v)}</span>`)
-            .join(' ');
-        const stRows = [...c.stations.values()].sort((a,b) => b.maxDelay - a.maxDelay);
-        const stHtml = stRows.map(s => `
-            <tr style="border-top:1px solid var(--clr-border)">
-                <td style="padding:5px 10px 5px 28px;color:var(--clr-text-dim)">↳ ${esc(s.name)}</td>
-                <td style="padding:5px 10px;text-align:center">
-                    <span style="font-size:.72rem;font-weight:700;padding:1px 6px;border-radius:8px;background:var(--clr-surface-3,var(--clr-border));color:var(--clr-text-dim)">${esc(s.vtype)}</span>
-                </td>
-                <td style="padding:5px 10px;text-align:center;color:var(--clr-text-dim);font-size:.82rem">${s.delayed}</td>
-                <td style="padding:5px 10px;text-align:right;font-weight:600;font-size:.82rem;color:${s.maxDelay===c.maxDelay?barColor:'var(--clr-text)'}">+${s.maxDelay} wd</td>
-            </tr>`).join('');
-
-        return `
-        <tbody class="dda-cat-body" data-cat-idx="${i}">
-            <tr class="dda-cat-row" data-cat-idx="${i}" style="cursor:pointer;border-top:1px solid var(--clr-border)">
-                <td style="padding:8px 10px">
-                    <div style="display:flex;align-items:center;gap:7px">
-                        <svg class="dda-chevron" data-cat-idx="${i}" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px;flex-shrink:0;transition:transform .2s;transform:rotate(-90deg)"><path d="M3 4.5l3 3 3-3"/></svg>
-                        <span style="font-weight:${i===0?'700':'500'}">${esc(cat)}</span>
-                        <span style="margin-left:4px">${vtags}</span>
-                    </div>
-                </td>
-                <td style="padding:8px 10px;text-align:center">${c.delayed}</td>
-                <td style="padding:8px 10px">
-                    <div style="display:flex;align-items:center;gap:8px">
-                        <div style="flex:1;height:6px;background:var(--clr-border);border-radius:3px;min-width:50px">
-                            <div style="width:${pct}%;height:100%;background:${barColor};border-radius:3px"></div>
-                        </div>
-                        <span style="white-space:nowrap;font-weight:700;color:${barColor}">${c.maxDelay} wd</span>
-                    </div>
-                </td>
-            </tr>
-            <tr class="dda-st-row" data-cat-idx="${i}" style="display:none">
-                <td colspan="3" style="padding:0">
-                    <table style="width:100%;border-collapse:collapse;font-size:.82rem">
-                        <thead><tr>
-                            <th style="${thSt}">Station</th>
-                            <th style="${thSt};text-align:center">Vehicle</th>
-                            <th style="${thSt};text-align:center">Delayed</th>
-                            <th style="${thSt};text-align:right">Worst Delay</th>
-                        </tr></thead>
-                        <tbody>${stHtml}</tbody>
-                    </table>
-                </td>
-            </tr>
-        </tbody>`;
-    }).join('');
+    const catHtml = cats.map(([cat, cm], i) => `
+        <details class="dda-cat"${i === 0 ? ' open' : ''}>
+            <summary>
+                ${icon('<path d="M9 6l6 6-6 6"/>')}
+                <span class="dda-cat-name">${esc(cat)}</span>
+                <span class="dda-cat-meta">${cm.delayed} late task${cm.delayed === 1 ? '' : 's'}</span>
+                <span class="dda-cat-delay">+${cm.maxDelay} wd</span>
+            </summary>
+            <ul class="dda-cat-list">
+                ${cm.causes.sort((a, b) => b.maxDelay - a.maxDelay).map(c => `
+                    <li>
+                        <span class="dda-chip">${esc(c.vtype)}</span>
+                        <span class="dda-cat-station">${esc(c.station)}</span>
+                        <span class="dda-cat-count">${c.count} late</span>
+                        <span class="dda-cat-worst">+${c.maxDelay} wd</span>
+                        <button type="button" class="dda-link" data-dda="table" data-station="${esc(c.station)}">Show ${icon('<path d="M5 12h14M13 6l6 6-6 6"/>')}</button>
+                    </li>`).join('')}
+            </ul>
+        </details>`).join('');
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
     overlay.innerHTML = `
-        <div class="modal" style="max-width:620px;max-height:88vh;display:flex;flex-direction:column">
-            <div class="modal-header" style="flex-shrink:0">
-                <h4 class="modal-title">Delivery Delay Analysis</h4>
+        <div class="modal dda">
+            <div class="modal-header">
+                <div>
+                    <h4 class="modal-title">Delivery Delay Analysis</h4>
+                    <p class="dda-sub">Why delivery may be late, and where to act</p>
+                </div>
                 <button class="modal-close" type="button" aria-label="Close">&times;</button>
             </div>
-            <div class="modal-body" style="overflow-y:auto;flex:1;padding:18px 20px;display:flex;flex-direction:column;gap:18px">
-
-                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
-                    <div style="background:var(--clr-surface-2);border:1px solid var(--clr-border);border-radius:8px;padding:12px 14px">
-                        <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--clr-text-dim);margin-bottom:4px">Planned End</div>
-                        <div style="font-size:.95rem;font-weight:600">${_fmtDeliveryDate(plannedDelivery)}</div>
-                    </div>
-                    <div style="background:var(--clr-surface-2);border:1px solid rgba(248,113,113,.3);border-radius:8px;padding:12px 14px">
-                        <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--clr-text-dim);margin-bottom:4px">Expected End</div>
-                        <div style="font-size:.95rem;font-weight:600;color:#f87171">${_fmtDeliveryDate(expectedDelivery)}</div>
-                    </div>
-                    <div style="background:var(--clr-surface-2);border:1px solid rgba(248,113,113,.3);border-radius:8px;padding:12px 14px">
-                        <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--clr-text-dim);margin-bottom:4px">Worst Delay</div>
-                        <div style="font-size:.95rem;font-weight:700;color:#f87171">+${totalDelay} wd</div>
-                        <div style="font-size:.72rem;color:var(--clr-text-dim);margin-top:2px">${delayedCount} delayed task${delayedCount!==1?'s':''}</div>
-                    </div>
+            <div class="modal-body dda-body">
+                <div class="dda-verdict ${late ? 'is-late' : 'is-ok'}">
+                    <span class="dda-verdict-icon">${icon(late ? '<path d="M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/>' : '<path d="M20 6L9 17l-5-5"/>')}</span>
+                    <p>${late
+                        ? `Delivery is expected <b>${totalDelay} working day${totalDelay === 1 ? '' : 's'} late</b> — ${_fmtDeliveryDate(expectedDelivery)} instead of ${_fmtDeliveryDate(plannedDelivery)}.${top ? ` The biggest cause is <b>${esc(top.station)}</b> on <b>${esc(top.vtype)}</b>.` : ''}`
+                        : `No delays — delivery is on track for <b>${_fmtDeliveryDate(plannedDelivery)}</b>.`}</p>
                 </div>
 
-                ${totalDelay === 0
-                    ? `<div style="text-align:center;padding:20px;color:var(--clr-text-dim)">No delays — delivery is on track.</div>`
-                    : `<div>
-                        <div style="font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--clr-text-dim);margin-bottom:8px">
-                            Delay by Category &nbsp;·&nbsp; click a row to see stations
-                            &nbsp;·&nbsp; <span style="color:#f87171">${esc(worstCat)}</span> is worst (${worstCatDelay} wd)
-                        </div>
-                        <table style="width:100%;border-collapse:collapse;font-size:.84rem">
-                            <thead><tr style="border-bottom:2px solid var(--clr-border)">
-                                <th style="padding:6px 10px;text-align:left;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-dim)">Category &amp; Vehicles</th>
-                                <th style="padding:6px 10px;text-align:center;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-dim)">Delayed</th>
-                                <th style="padding:6px 10px;text-align:left;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-dim)">Worst Delay</th>
-                            </tr></thead>
-                            ${catListHtml}
-                        </table>
-                    </div>`
-                }
+                <div class="dda-timeline">
+                    <div class="dda-tl-point"><span>Planned end</span><strong>${_fmtDeliveryDate(plannedDelivery)}</strong></div>
+                    <div class="dda-tl-track"><i></i>${late ? `<em>+${totalDelay} wd</em>` : ''}</div>
+                    <div class="dda-tl-point ${late ? 'is-late' : ''}"><span>Expected end</span><strong>${_fmtDeliveryDate(expectedDelivery)}</strong></div>
+                </div>
+
+                ${late ? `
+                <div class="dda-stats">
+                    <div><strong>${delayedCount}</strong><span>delayed tasks</span></div>
+                    <div><strong>${causes.length}</strong><span>stations affected</span></div>
+                    <div><strong>${units.size || '—'}</strong><span>units affected</span></div>
+                </div>
+
+                <section>
+                    <h5 class="dda-h">${icon('<circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/>')} Where to act first</h5>
+                    <p class="dda-hint">Fix these first — the top one sets the delivery date. <b>Show in Plan Table</b> filters the table to that station so you can record actual dates or add a delay reason.</p>
+                    <div class="dda-causes">${causes.slice(0, 5).map(causeCard).join('')}</div>
+                </section>
+
+                <section>
+                    <h5 class="dda-h">${icon('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>')} All delays by category</h5>
+                    <div class="dda-cats">${catHtml}</div>
+                </section>` : ''}
+
+                <p class="dda-note">${icon('<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>')}
+                    Expected end = the latest planned end, pushed back by the single worst task delay (working days, Fridays excluded). It reflects the current filters.</p>
             </div>
         </div>`;
 
     document.body.appendChild(overlay);
-
-    // Toggle category rows
-    overlay.querySelectorAll('.dda-cat-row').forEach(row => {
-        row.addEventListener('click', () => {
-            const idx     = row.dataset.catIdx;
-            const stRow   = overlay.querySelector(`.dda-st-row[data-cat-idx="${idx}"]`);
-            const chevron = overlay.querySelector(`.dda-chevron[data-cat-idx="${idx}"]`);
-            const open    = stRow.style.display !== 'none';
-            stRow.style.display   = open ? 'none' : '';
-            chevron.style.transform = open ? 'rotate(-90deg)' : 'rotate(0deg)';
-        });
-    });
 
     function close() {
         document.removeEventListener('keydown', onKey, true);
@@ -4457,7 +4473,22 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
     }
     function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); close(); } }
     overlay.querySelector('.modal-close').addEventListener('click', close);
-    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    overlay.addEventListener('click', e => {
+        if (e.target === overlay) { close(); return; }
+        const btn = e.target.closest('[data-dda]');
+        if (!btn) return;
+        close();
+        // Narrow every view to that station via the normal search box
+        const search = document.getElementById('filterSearch');
+        if (search) { search.value = btn.dataset.station; search.dispatchEvent(new Event('input', { bubbles: true })); }
+        if (btn.dataset.dda === 'gantt') {
+            getModuleRuntime()?.setTimelineViewMode?.('process');
+            document.getElementById('ganttNavAnchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else {
+            document.getElementById('tableSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        showToast(`Showing "${btn.dataset.station}" — clear the Search chip in Filters to see everything again.`, 'info');
+    });
     document.addEventListener('keydown', onKey, true);
 }
 
@@ -5492,7 +5523,7 @@ function renderF100ExtraCharts(data) {
                 datasets: [{
                     data: activeCounts,
                     backgroundColor: activeStatuses.map(k => STATUS_COLORS[k]),
-                    borderColor: getCurrentTheme() === 'light' ? '#f8fafc' : '#161b27',
+                    borderColor: getComputedStyle(document.documentElement).getPropertyValue('--clr-surface').trim() || '#161b27',
                     borderWidth: 2,
                     hoverOffset: 6,
                 }],
@@ -7590,7 +7621,7 @@ function escNl(str) {
    ================================================================ */
 const THEME_KEY_BASE = 'ppms_theme';
 
-const THEME_ORDER = ['dark', 'light', 'nord', 'dracula', 'midnight', 'catppuccin'];
+const THEME_ORDER = ['dark', 'light', 'nord', 'dracula', 'midnight', 'catppuccin', 'crimson'];
 const THEME_META = {
     dark:       { label: 'Dark' },
     light:      { label: 'Light' },
@@ -7598,6 +7629,7 @@ const THEME_META = {
     dracula:    { label: 'Dracula' },
     midnight:   { label: 'Midnight' },
     catppuccin: { label: 'Catppuccin' },
+    crimson:    { label: 'Crimson Red' },
 };
 const THEME_ICON_SVG = {
     dark: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17.5 12A7.5 7.5 0 018 2.5a7.5 7.5 0 100 15 7.5 7.5 0 009.5-5.5z"/></svg>`,
@@ -7606,6 +7638,7 @@ const THEME_ICON_SVG = {
     dracula: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 2C10 2 4.5 9.5 4.5 13a5.5 5.5 0 0011 0C15.5 9.5 10 2 10 2z"/></svg>`,
     midnight: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M10 2l1.8 5.2L17 9l-5.2 1.8L10 16l-1.8-5.2L3 9l5.2-1.8L10 2z"/></svg>`,
     catppuccin: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 4l2 4M15 4l-2 4"/><circle cx="10" cy="11" r="6"/><path d="M7.5 11h.01M12.5 11h.01M9 13.5c.5.5 1.5.5 2 0"/></svg>`,
+    crimson: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M10 2.5l6 3.2v4.6c0 3.6-2.6 6.3-6 7.2-3.4-.9-6-3.6-6-7.2V5.7l6-3.2z"/><path d="M10 6.5v7M7 9.5h6"/></svg>`,
 };
 
 function _applyThemeAttr(theme) {
@@ -7685,6 +7718,20 @@ function applyUserTheme() {
 /** Return the correct colour set for charts based on current theme */
 function themeChartColors() {
     const light = getCurrentTheme() === 'light';
+    if (!light && getCurrentTheme() !== 'dark') {
+        // Other dark themes: take the colours from the theme's own variables
+        const css = getComputedStyle(document.documentElement);
+        const v = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
+        return {
+            text: v('--clr-text-muted', '#7a8baa'),
+            grid: v('--clr-border', '#2a3350'),
+            tooltipBg: v('--clr-surface', '#161b27'),
+            tooltipBdr: v('--clr-border', '#2a3350'),
+            tooltipTtl: v('--clr-text', '#e2e8f4'),
+            tooltipBdy: v('--clr-text-muted', '#7a8baa'),
+            axisLabel: v('--clr-text-dim', '#4a5575'),
+        };
+    }
     return {
         text: light ? '#475569' : '#7a8baa',
         grid: light ? '#e2e8f0' : '#2a3350',
@@ -12457,56 +12504,93 @@ async function exportVpxStationReportPDF(preview) {
  *  Actual row-pair layout and colour rules (green/red/overdue/grey) using
  *  inline styles. `categoryForReason` is threaded through explicitly (see
  *  `_addVpxStationReportSheet` above) rather than read from the global. */
+/** Most station columns that fit one A4-landscape table at the compact
+ *  print size; wider segments are split into several blocks. */
+const VPX_WORD_MAX_COLS = 14;
+
 function _vpxStationReportSegmentHtml(built, categoryForReason) {
     const { rows, activeCols, allCols } = built;
     const grpColor = label => {
         const c = VPX_REPORT_GRP_COLOR[label] || { bg: 'FF334155', fg: 'FFffffff' };
         return { bg: '#' + c.bg.slice(2), fg: '#' + c.fg.slice(2) };
     };
-    const stationHeaderText = col => (col.name && col.name !== col.code) ? `${esc(col.code)}<br>${esc(col.name)}` : esc(col.code);
+    const stationHeaderText = col => (col.name && col.name !== col.code)
+        ? `<b>${esc(col.code)}</b><br><span style="font-weight:normal">${esc(col.name)}</span>`
+        : `<b>${esc(col.code)}</b>`;
 
-    let groupCells = '';
-    let i = 0;
-    while (i < activeCols.length) {
-        let j = i;
-        while (j + 1 < activeCols.length && activeCols[j + 1].group === activeCols[i].group) j++;
-        const { bg, fg } = grpColor(activeCols[i].group);
-        groupCells += `<th colspan="${j - i + 1}" style="background:${bg};color:${fg};text-align:center">${esc(activeCols[i].group)}</th>`;
-        i = j + 1;
-    }
+    // Every row's cells once, then sliced per column block
+    const projected = rows.map(row => ({ row, ..._vpxProjectRow(row, allCols, activeCols) }));
 
-    let html = `<table><tr><th style="background:#1e293b;color:#fff">Vehicle</th>${groupCells}<th colspan="2" style="background:#1e293b;color:#fff"></th></tr>`;
-    html += `<tr><th style="background:#1e293b;color:#fff"></th>${activeCols.map(c => `<th style="background:#f1f5f9;color:#1e293b">${stationHeaderText(c)}</th>`).join('')}<th style="background:#1e293b;color:#fff">Delay</th><th style="background:#1e293b;color:#fff">${categoryForReason ? `Delay Reason (${esc(categoryForReason)})` : 'Delay Reason'}</th></tr>`;
+    const blocks = [];
+    for (let s = 0; s < activeCols.length; s += VPX_WORD_MAX_COLS) blocks.push([s, Math.min(s + VPX_WORD_MAX_COLS, activeCols.length)]);
+    if (!blocks.length) blocks.push([0, 0]);
 
-    rows.forEach(row => {
-        const { cells, finalDelay } = _vpxProjectRow(row, allCols, activeCols);
-        const code = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
-        const label = `${esc(row.vehicle)} #${esc(row.vehicle_no || '')}${code ? '<br>' + esc(code) : ''}`;
-        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, categoryForReason, row.battalion_code);
+    // Exact line height stops Word padding every cell with the body font's line spacing
+    const TH = 'border:0.5pt solid #94a3b8;padding:1pt 2pt;font-size:6.5pt;mso-line-height-rule:exactly;line-height:8pt;mso-para-margin:0;margin:0;vertical-align:middle';
+    const TD = 'border:0.5pt solid #cbd5e1;padding:1pt 2pt;font-size:6.5pt;mso-line-height-rule:exactly;line-height:8pt;mso-para-margin:0;margin:0;text-align:center;vertical-align:middle';
 
-        html += `<tr>`;
-        html += `<td rowspan="2" style="background:#334155;color:#fff;font-weight:bold;text-align:center;vertical-align:middle">${label}</td>`;
-        cells.forEach(c => {
-            html += `<td style="background:#f8fafc;color:#475569;text-align:center">${c.planned ? esc(formatDateShort(c.planned)) : ''}</td>`;
+    return blocks.map(([from, to], bi) => {
+        const cols = activeCols.slice(from, to);
+        const last = bi === blocks.length - 1;
+        const stationW = 100 - 9 - 4 - (last ? 16 : 0); // % left after Vehicle / label / Delay+Reason
+        const colW = cols.length ? (stationW / cols.length).toFixed(2) : 0;
+
+        let groupCells = '';
+        let i = 0;
+        while (i < cols.length) {
+            let j = i;
+            while (j + 1 < cols.length && cols[j + 1].group === cols[i].group) j++;
+            const { bg, fg } = grpColor(cols[i].group);
+            groupCells += `<th colspan="${j - i + 1}" style="${TH};background:${bg};color:${fg};text-align:center">${esc(cols[i].group)}</th>`;
+            i = j + 1;
+        }
+
+        // Each extra column block starts on a fresh page instead of mid-page
+        const part = (bi > 0 ? `<br clear="all" style="page-break-before:always">` : '') + (blocks.length > 1
+            ? `<p class="vpx-word-part">Stations ${from + 1}–${to} of ${activeCols.length}${last ? '' : ' — continued in the next table'}</p>` : '');
+
+        let html = `${part}<table class="vpx-word" style="width:100%;table-layout:fixed;border-collapse:collapse;margin:0 0 8pt">`;
+        html += `<colgroup><col style="width:9%"><col style="width:4%">${cols.map(() => `<col style="width:${colW}%">`).join('')}${last ? '<col style="width:5%"><col style="width:11%">' : ''}</colgroup>`;
+        // Header rows repeat on every page the table runs onto
+        html += `<thead style="display:table-header-group">`;
+        html += `<tr style="mso-yfti-firstrow:yes"><th style="${TH};background:#1e293b;color:#fff">Vehicle</th><th style="${TH};background:#1e293b;color:#fff"></th>${groupCells}${last ? `<th colspan="2" style="${TH};background:#1e293b;color:#fff"></th>` : ''}</tr>`;
+        html += `<tr style="mso-yfti-firstrow:yes"><th style="${TH};background:#1e293b;color:#fff"></th><th style="${TH};background:#1e293b;color:#fff"></th>${cols.map(c => `<th style="${TH};background:#f1f5f9;color:#1e293b;text-align:center">${stationHeaderText(c)}</th>`).join('')}`
+            + (last ? `<th style="${TH};background:#1e293b;color:#fff">Delay</th><th style="${TH};background:#1e293b;color:#fff">${categoryForReason ? `Delay Reason (${esc(categoryForReason)})` : 'Delay Reason'}</th>` : '') + `</tr>`;
+        html += `</thead><tbody>`;
+
+        projected.forEach(({ row, cells, finalDelay }) => {
+            const blockCells = cells.slice(from, to);
+            const code = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
+            const label = `${esc(row.vehicle)} #${esc(row.vehicle_no || '')}${code ? '<br>' + esc(code) : ''}`;
+            const delayReason = last ? getDelayReason(row.vehicle, row.vehicle_no, categoryForReason, row.battalion_code) : '';
+
+            // Plan row + Actual row stay together on one page
+            // page-break-after:avoid = Word's "keep with next" — Plan stays with its Actual row
+            html += `<tr style="page-break-inside:avoid;page-break-after:avoid">`;
+            html += `<td rowspan="2" nowrap style="${TD};white-space:nowrap;background:#334155;color:#fff;font-weight:bold">${label}</td>`;
+            html += `<td style="${TD};color:#94a3b8;font-style:italic">Plan</td>`;
+            blockCells.forEach(c => { html += `<td style="${TD};background:#f8fafc;color:#475569">${c.planned ? esc(formatDateShort(c.planned)) : ''}</td>`; });
+            if (last) {
+                const delayColor = finalDelay > 0 ? '#b91c1c' : '#15803d';
+                html += `<td rowspan="2" style="${TD};color:${delayColor};font-weight:bold">${finalDelay > 0 ? '+' + finalDelay + 'd' : '0d'}</td>`;
+                html += `<td rowspan="2" style="${TD};text-align:left;background:${delayReason ? '#fffbeb' : '#ffffff'};color:${delayReason ? '#78350f' : '#94a3b8'};font-style:${delayReason ? 'normal' : 'italic'}">${esc(delayReason || '—')}</td>`;
+            }
+            html += `</tr><tr style="page-break-before:avoid">`;
+            html += `<td style="${TD};color:#1e293b;font-style:italic">Actual</td>`;
+            blockCells.forEach(c => {
+                let bg = '#ffffff', color = '#1e293b', weight = 'normal', italic = false, text;
+                if (c.overdue) { bg = '#fee2e2'; color = '#b91c1c'; weight = 'bold'; text = formatDateShort(c.expected); }
+                else if (c.projected) { color = '#94a3b8'; italic = true; text = c.actual ? formatDateShort(c.actual) : ''; }
+                else if (c.actual) { bg = c.late ? '#dbeafe' : '#dcfce7'; color = c.late ? '#1d4ed8' : '#15803d'; weight = c.late ? 'bold' : 'normal'; text = formatDateShort(c.actual); }
+                else { text = c.planned ? '' : '—'; }
+                html += `<td style="${TD};background:${bg};color:${color};font-weight:${weight};font-style:${italic ? 'italic' : 'normal'}">${esc(text || '')}</td>`;
+            });
+            html += `</tr>`;
         });
-        html += `<td style="color:#94a3b8;font-style:italic;text-align:center">Plan</td>`;
-        html += `<td rowspan="2" style="background:${delayReason ? '#fffbeb' : '#ffffff'};color:${delayReason ? '#78350f' : '#94a3b8'};font-style:${delayReason ? 'normal' : 'italic'};vertical-align:middle">${esc(delayReason || '—')}</td>`;
-        html += `</tr><tr>`;
-        cells.forEach(c => {
-            let bg = '#ffffff', color = '#1e293b', weight = 'normal', italic = false, text;
-            if (c.overdue) { bg = '#fee2e2'; color = '#b91c1c'; weight = 'bold'; text = formatDateShort(c.expected); }
-            else if (c.projected) { color = '#94a3b8'; italic = true; text = c.actual ? formatDateShort(c.actual) : ''; }
-            else if (c.actual) { bg = c.late ? '#dbeafe' : '#dcfce7'; color = c.late ? '#1d4ed8' : '#15803d'; weight = c.late ? 'bold' : 'normal'; text = formatDateShort(c.actual); }
-            else { text = c.planned ? '' : '—'; }
-            html += `<td style="background:${bg};color:${color};font-weight:${weight};font-style:${italic ? 'italic' : 'normal'};text-align:center">${esc(text || '')}</td>`;
-        });
-        const delayColor = finalDelay > 0 ? '#b91c1c' : '#15803d';
-        html += `<td style="color:${delayColor};font-weight:bold;text-align:center">${finalDelay > 0 ? '+' + finalDelay + 'd' : '0d'}</td>`;
-        html += `</tr>`;
-    });
 
-    html += `</table>`;
-    return html;
+        html += `</tbody></table>`;
+        return html;
+    }).join('');
 }
 
 /** Walks K9 → K10 → K11, each split into its own component tabs (Hull/
@@ -12711,16 +12795,34 @@ async function exportExecutiveReportWord(preview) {
     const issueRows = await _buildIssueStatusReportRowsAllTime();
     if (!segments.length && !issueRows.length) { showToast('No data available for the Executive Report.', 'error'); return; }
 
-    let body = `<h1>Executive Report</h1><p class="doc-sub">Generated: ${esc(new Date().toLocaleString('en-GB'))}</p>`;
-    segments.forEach(seg => {
-        body += `<h2>${esc(seg.heading)}</h2>`;
+    // Landscape, one vehicle/component segment per page, compact VPX tables
+    // (see _vpxStationReportSegmentHtml) so nothing spills across pages.
+    const pageBreak = `<br clear="all" style="page-break-before:always">`;
+    let body = `<h1>Executive Report</h1><p class="doc-sub">${esc(getModuleBadge?.() || 'F200-KD2')} &middot; Generated: ${esc(new Date().toLocaleString('en-GB'))}</p>`;
+    body += `<p class="exec-legend"><span style="background:#dcfce7;color:#15803d">on time</span> <span style="background:#dbeafe;color:#1d4ed8">late</span> <span style="background:#fee2e2;color:#b91c1c">overdue (expected date)</span> <span style="color:#94a3b8;font-style:italic">projected</span></p>`;
+    segments.forEach((seg, i) => {
+        if (i > 0) body += pageBreak;
+        body += `<h2>VPX Station Report — ${esc(seg.heading)}</h2>`;
         body += _vpxStationReportSegmentHtml(seg, seg.cat);
     });
+    if (segments.length) body += pageBreak;
     body += `<h2>Production Issues Status Report (All Time)</h2>`;
     body += _issueStatusReportTableHtml(issueRows);
 
     const now = localDateStr(new Date());
-    exportHtmlAsWord(`executive_report_${now}.doc`, 'Executive Report', body, preview);
+    exportHtmlAsWord(`executive_report_${now}.doc`, 'Executive Report', body, preview, {
+        landscape: true,
+        style: `
+            h1 { font-size: 18pt; margin: 0 0 2pt; }
+            .doc-sub { font-size: 9pt; margin: 0 0 4pt; }
+            h2 { font-size: 12pt; margin: 0 0 4pt; padding-bottom: 2pt; page-break-after: avoid; }
+            .exec-legend { font-size: 7.5pt; margin: 0 0 8pt; }
+            .exec-legend span { padding: 0 4pt; }
+            .vpx-word-part { font-size: 7.5pt; font-weight: bold; color: #475569; margin: 4pt 0 2pt; page-break-after: avoid; }
+            table.vpx-word th, table.vpx-word td { font-size: 6.5pt; }
+            table.vpx-word tr { page-break-inside: avoid; }
+        `,
+    });
 }
 
 /* ─── VPX "Generate Report" popup — replaces the 4 standalone export
@@ -15473,12 +15575,20 @@ const WORD_DOC_STYLE = `
     .issue-report-pic { color: #b45309; font-weight: bold; }
 `;
 
-function exportHtmlAsWord(filename, titleText, bodyHtml, preview) {
+/** Word page setup: A4 landscape with narrow margins (Word reads @page + the
+ *  WordSection1 div; browsers in the preview simply ignore it). */
+const WORD_LANDSCAPE_STYLE = `
+    @page WordSection1 { size: 841.9pt 595.3pt; mso-page-orientation: landscape; margin: 28pt 24pt 28pt 24pt; mso-header-margin: 14pt; mso-footer-margin: 14pt; }
+    div.WordSection1 { page: WordSection1; }
+`;
+
+function exportHtmlAsWord(filename, titleText, bodyHtml, preview, opts = {}) {
+    const extraStyle = (opts.landscape ? WORD_LANDSCAPE_STYLE : '') + (opts.style || '');
     const doDownload = () => {
         const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
 <head><meta charset="utf-8"><title>${esc(titleText)}</title>
-<style>${WORD_DOC_STYLE}</style>
-</head><body>${bodyHtml}</body></html>`;
+<style>${WORD_DOC_STYLE}${extraStyle}</style>
+</head><body>${opts.landscape ? `<div class="WordSection1">${bodyHtml}</div>` : bodyHtml}</body></html>`;
         const blob = new Blob(['﻿', html], { type: 'application/msword' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
@@ -15488,7 +15598,7 @@ function exportHtmlAsWord(filename, titleText, bodyHtml, preview) {
         showToast('Word document exported.', 'success');
     };
     if (preview) {
-        _showGenericPreview({ title: titleText, kind: 'html', html: `<style>${WORD_DOC_STYLE}</style>${bodyHtml}`, onDownload: doDownload });
+        _showGenericPreview({ title: titleText, kind: 'html', html: `<style>${WORD_DOC_STYLE}${opts.style || ''}</style>${bodyHtml}`, onDownload: doDownload });
     } else {
         doDownload();
     }

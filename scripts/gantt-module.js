@@ -109,7 +109,7 @@
                 </div>
                 <div class="filter-item" id="ganttViewToggleWrap" style="padding-top:18px;display:none">
                     <div class="gantt-view-seg" id="ganttViewToggle" role="group" aria-label="Gantt view mode">
-                        <button class="gantt-view-seg-btn gantt-view-seg-active" id="btnGanttViewUnit" type="button" data-view="unit">
+                        <button class="gantt-view-seg-btn" id="btnGanttViewUnit" type="button" data-view="unit">
                             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" style="width:11px;height:11px">
                                 <rect x="1" y="1" width="12" height="3" rx="1"/>
                                 <rect x="1" y="5.5" width="12" height="3" rx="1"/>
@@ -117,7 +117,7 @@
                             </svg>
                             Unit
                         </button>
-                        <button class="gantt-view-seg-btn" id="btnGanttViewProcess" type="button" data-view="process">
+                        <button class="gantt-view-seg-btn gantt-view-seg-active" id="btnGanttViewProcess" type="button" data-view="process">
                             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" style="width:11px;height:11px">
                                 <path d="M2 4h10M2 7h10M2 10h10" stroke-dasharray="3 2"/>
                             </svg>

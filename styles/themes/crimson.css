@@ -1,0 +1,185 @@
+/* ================================================================
+   CRIMSON RED THEME
+   Built from three brand colours:
+     black      #0b0b0b  — page background (surfaces are slightly lifted)
+     crimson    #8b0d1a  — filled accents: primary buttons, active tabs,
+                           selected states, highlight strips
+     off-white  #f5f2ed  — text
+   #8b0d1a is too dark to read as text or thin lines on black (~2:1), so
+   --clr-accent (used for accent TEXT, icons, borders, focus rings) is a
+   lighter tint of the same crimson; --clr-crimson is the exact brand colour
+   for filled areas. Status colours (planned/completed/late/overdue) keep
+   their meaning and are only warmed slightly.
+   Loaded after every other stylesheet so these overrides win.
+   ================================================================ */
+
+[data-theme="crimson"] {
+    --clr-crimson: #8b0d1a;
+    --clr-crimson-hover: #a3121f;
+    --clr-crimson-rgb: 139, 13, 26;
+
+    --clr-bg: #0b0b0b;
+    --clr-surface: #141212;
+    --clr-surface-2: #1c1819;
+    --clr-border: #342a2b;
+    --clr-border-soft: #262021;
+
+    --clr-text: #f5f2ed;
+    --clr-text-muted: #b5ada5;
+    --clr-text-dim: #756d68;
+
+    --clr-planned: #6f8fd8;
+    --clr-completed: #3fbf7f;
+    --clr-late: #e8913a;
+    --clr-overdue: #ff5b4f;
+    --clr-xray-active: #b07ce0;
+
+    --clr-accent: #d8475a;
+    --clr-accent-dim: rgba(139, 13, 26, .28);
+    --clr-accent-rgb: 216, 71, 90;
+
+    --shadow-card: 0 2px 16px rgba(0, 0, 0, .6), 0 1px 3px rgba(0, 0, 0, .45);
+    --shadow-modal: 0 20px 60px rgba(0, 0, 0, .85);
+
+    color-scheme: dark;
+}
+
+[data-theme="crimson"] body { background: var(--clr-bg); }
+[data-theme="crimson"] ::selection { background: var(--clr-crimson); color: #f5f2ed; }
+
+/* ── Primary actions: exact brand crimson with off-white text ───── */
+[data-theme="crimson"] .btn-primary {
+    background: var(--clr-crimson);
+    color: #f5f2ed;
+}
+[data-theme="crimson"] .btn-primary:hover {
+    background: var(--clr-crimson-hover);
+    box-shadow: 0 4px 14px rgba(139, 13, 26, .45);
+}
+[data-theme="crimson"] .btn-exec-report {
+    background: linear-gradient(135deg, var(--clr-crimson), #5a0811);
+    color: #f5f2ed;
+}
+
+/* ── Active / selected toggles and tabs ─────────────────────────── */
+[data-theme="crimson"] .kd2-create-mode-btn.active,
+[data-theme="crimson"] .vpx-type-tab.active,
+[data-theme="crimson"] .gantt-view-seg-btn.gantt-view-seg-active,
+[data-theme="crimson"] .gantt-legend-toggle-btn[aria-expanded="true"],
+[data-theme="crimson"] .gantt-fullscreen-btn[aria-pressed="true"],
+[data-theme="crimson"] .vpx-fullscreen-btn[aria-pressed="true"],
+[data-theme="crimson"] .kd2-template-insert-btn[aria-expanded="true"],
+[data-theme="crimson"] .f100-placement-chip.kd2-pc-active {
+    background: var(--clr-crimson);
+    border-color: var(--clr-crimson);
+    color: #f5f2ed;
+}
+[data-theme="crimson"] .vpx-type-tab:hover,
+[data-theme="crimson"] .f100-placement-chip:hover,
+[data-theme="crimson"] .kd2-timeline-palette-item:hover,
+[data-theme="crimson"] .gantt-lane-select-btn:hover,
+[data-theme="crimson"] .gr-reorder-btn:hover,
+[data-theme="crimson"] .note-edit-btn:hover,
+[data-theme="crimson"] .btn-kd2-edit-inline:hover,
+[data-theme="crimson"] .btn-f100-comment:hover,
+[data-theme="crimson"] .vpx-delay-reason-btn:hover,
+[data-theme="crimson"] .gantt-undo-btn:not(:disabled):hover {
+    background: rgba(139, 13, 26, .22);
+    border-color: rgba(216, 71, 90, .55);
+    color: #f5f2ed;
+}
+[data-theme="crimson"] .report-type-card input:checked + .rtc-inner {
+    border-color: var(--clr-accent);
+    background: var(--clr-accent-dim);
+    box-shadow: 0 0 0 2px rgba(139, 13, 26, .35);
+}
+[data-theme="crimson"] .issue-report-check-pill.is-checked,
+[data-theme="crimson"] .issues-filter-chip {
+    border-color: rgba(216, 71, 90, .55);
+}
+
+/* ── Focus rings on text inputs ─────────────────────────────────── */
+[data-theme="crimson"] input:focus,
+[data-theme="crimson"] select:focus,
+[data-theme="crimson"] textarea:focus {
+    border-color: var(--clr-accent);
+    box-shadow: 0 0 0 3px rgba(139, 13, 26, .35);
+}
+
+/* ── Tables: crimson header rule, warm row hover ───────────────── */
+[data-theme="crimson"] .data-table th {
+    background: #171314;
+    border-bottom: 2px solid var(--clr-crimson);
+}
+[data-theme="crimson"] .data-table tbody tr:hover td {
+    background: rgba(139, 13, 26, .10);
+}
+
+/* ── Gantt: hover row/column and selection strip ───────────────── */
+[data-theme="crimson"] .gc-cell.gantt-hover-col,
+[data-theme="crimson"] .gh-day.gantt-hover-col,
+[data-theme="crimson"] .gr.gantt-hover-row .gr-track,
+[data-theme="crimson"] .gr.gantt-hover-row > .gr-label,
+[data-theme="crimson"] .gr.gantt-hover-row .gc-cell.gantt-hover-col {
+    background: rgba(139, 13, 26, .12);
+}
+[data-theme="crimson"] .gantt-sel-strip,
+[data-theme="crimson"] .kd2-timeline-editbar {
+    background: rgba(139, 13, 26, .18);
+    border-color: rgba(216, 71, 90, .45);
+}
+[data-theme="crimson"] .gc-bar-dragging,
+[data-theme="crimson"] .kd2-timeline-bar.kd2-timeline-bar-dragging {
+    box-shadow: 0 0 0 2px var(--clr-accent), 0 8px 20px rgba(0, 0, 0, .6);
+}
+
+/* ── Menus, popovers, badges ───────────────────────────────────── */
+[data-theme="crimson"] .gc-bar-menu-item:focus-visible,
+[data-theme="crimson"] .kd2-template-insert-option:focus-visible {
+    background: rgba(139, 13, 26, .25);
+}
+[data-theme="crimson"] .nav-role-badge,
+[data-theme="crimson"] .f100-notif-module-badge,
+[data-theme="crimson"] .issue-drafts-badge,
+[data-theme="crimson"] .f100-comment-count {
+    background: rgba(139, 13, 26, .3);
+    color: #f5f2ed;
+    border-color: rgba(216, 71, 90, .45);
+}
+[data-theme="crimson"] .issue-category-badge {
+    background: rgba(139, 13, 26, .22);
+    color: #f0c9ce;
+    border-color: rgba(216, 71, 90, .35);
+}
+
+/* ── Panels that were tinted blue ──────────────────────────────── */
+[data-theme="crimson"] .kd2-phase-card {
+    background: linear-gradient(135deg, #1a1414, #120e0e);
+    border-color: rgba(216, 71, 90, .25);
+}
+[data-theme="crimson"] .kd2-plan-create-modal .modal-header {
+    background:
+        linear-gradient(180deg, rgba(139, 13, 26, .22), rgba(139, 13, 26, 0)),
+        var(--clr-surface);
+}
+[data-theme="crimson"] .modal-header {
+    border-bottom: 1px solid var(--clr-border);
+    box-shadow: inset 0 3px 0 var(--clr-crimson);
+}
+[data-theme="crimson"] .report-preview-bar {
+    background: rgba(139, 13, 26, .16);
+    border-color: rgba(216, 71, 90, .45);
+}
+[data-theme="crimson"] .report-section-step,
+[data-theme="crimson"] .issue-reporter-avatar {
+    background: var(--clr-crimson);
+    color: #f5f2ed;
+}
+
+/* ── Scrollbars ────────────────────────────────────────────────── */
+[data-theme="crimson"] ::-webkit-scrollbar-thumb {
+    background: #3a2c2e;
+    border-radius: 6px;
+}
+[data-theme="crimson"] ::-webkit-scrollbar-thumb:hover { background: var(--clr-crimson); }
+[data-theme="crimson"] * { scrollbar-color: #3a2c2e transparent; }

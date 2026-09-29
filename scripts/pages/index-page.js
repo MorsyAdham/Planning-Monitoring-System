@@ -15,6 +15,9 @@ import { initFeature as initKd2ShellFeature } from '../features/kd2/shell/index.
 import { renderPageChrome } from '../features/shell/page-chrome.js';
 import { renderPageTail } from '../features/shell/page-tail.js';
 import { renderModalRegistry } from '../templates/modal-registry.js';
+import { renderHelp, wireHelp } from '../features/help/index.js';
+import { renderAssistant, wireAssistant } from '../features/assistant/index.js';
+import { wireFilterUI } from '../features/filters/behavior.js';
 
 function renderIndexPage() {
     return [
@@ -28,6 +31,8 @@ function renderIndexPage() {
         initPlanningTableFeature(),
         initIssuesFeature(),
         renderModalRegistry(),
+        renderHelp(),
+        renderAssistant(),
         renderPageTail(),
     ].join('\n');
 }
@@ -116,6 +121,10 @@ async function initPage() {
         { src: 'scripts/kd2.js' },
         { src: 'scripts/app.js' },
     ]);
+
+    wireFilterUI();
+    wireHelp();
+    wireAssistant();
 }
 
 initPage().catch(error => {

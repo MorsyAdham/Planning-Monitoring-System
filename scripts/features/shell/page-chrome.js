@@ -19,7 +19,7 @@ export function renderPageChrome() {
 
             <!-- Centre nav -->
             <nav class="section-nav" id="sectionNav" aria-label="Page sections">
-                <a class="section-nav-link" href="#summarySection"  data-target="summarySection">Overview</a>
+                <a class="section-nav-link" href="#overviewSegment" data-target="overviewSegment" title="Filters &amp; Executive Summary">Summary</a>
                 <a class="section-nav-link" href="#ganttNavAnchor" data-target="ganttNavAnchor">Schedule</a>
                 <a class="section-nav-link" href="#vpxSection"     data-target="vpxSection">Progress</a>
                 <a class="section-nav-link" href="#chartsSection"  data-target="chartsSection">Analytics</a>
@@ -100,6 +100,14 @@ export function renderPageChrome() {
                             </svg>
                         </button>
                         <div class="nav-more-dropdown" id="navMoreDropdown" style="display:none" role="menu">
+                            <!-- Help & User Manual (everyone) -->
+                            <button class="nav-more-btn" id="btnHelpManual" role="menuitem">
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                                    <circle cx="10" cy="10" r="8" />
+                                    <path d="M7.8 7.6a2.3 2.3 0 014.4.8c0 1.5-2.2 2-2.2 3.3M10 14.2h.01" stroke-linecap="round" />
+                                </svg>
+                                <span>Help &amp; User Manual</span>
+                            </button>
                             <!-- Audit Log (master_admin only) -->
                             <button class="nav-more-btn" id="btnAuditLog" role="menuitem" style="display:none">
                                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">

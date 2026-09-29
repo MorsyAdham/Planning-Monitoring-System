@@ -6,7 +6,7 @@ import { applyStoredTheme, applyTheme, getTheme, saveSession } from '../core/ses
 import { createSupabaseClient } from '../core/supabase-client.js';
 import { renderLoginLayout } from '../templates/login-layout.js';
 
-const THEME_ORDER = ['dark', 'light', 'nord', 'dracula', 'midnight', 'catppuccin'];
+const THEME_ORDER = ['dark', 'light', 'nord', 'dracula', 'midnight', 'catppuccin', 'crimson'];
 const THEME_META = {
     dark:       { label: 'Dark' },
     light:      { label: 'Light' },
@@ -14,6 +14,7 @@ const THEME_META = {
     dracula:    { label: 'Dracula' },
     midnight:   { label: 'Midnight' },
     catppuccin: { label: 'Catppuccin' },
+    crimson:    { label: 'Crimson Red' },
 };
 const THEME_ICON_SVG = {
     dark: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17.5 12A7.5 7.5 0 018 2.5a7.5 7.5 0 100 15 7.5 7.5 0 009.5-5.5z"/></svg>`,
@@ -22,6 +23,7 @@ const THEME_ICON_SVG = {
     dracula: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 2C10 2 4.5 9.5 4.5 13a5.5 5.5 0 0011 0C15.5 9.5 10 2 10 2z"/></svg>`,
     midnight: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M10 2l1.8 5.2L17 9l-5.2 1.8L10 16l-1.8-5.2L3 9l5.2-1.8L10 2z"/></svg>`,
     catppuccin: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 4l2 4M15 4l-2 4"/><circle cx="10" cy="11" r="6"/><path d="M7.5 11h.01M12.5 11h.01M9 13.5c.5.5 1.5.5 2 0"/></svg>`,
+    crimson: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M10 2.5l6 3.2v4.6c0 3.6-2.6 6.3-6 7.2-3.4-.9-6-3.6-6-7.2V5.7l6-3.2z"/><path d="M10 6.5v7M7 9.5h6"/></svg>`,
 };
 
 function renderThemePicker() {
