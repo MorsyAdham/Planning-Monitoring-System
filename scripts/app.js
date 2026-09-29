@@ -12504,93 +12504,201 @@ async function exportVpxStationReportPDF(preview) {
  *  Actual row-pair layout and colour rules (green/red/overdue/grey) using
  *  inline styles. `categoryForReason` is threaded through explicitly (see
  *  `_addVpxStationReportSheet` above) rather than read from the global. */
-/** Most station columns that fit one A4-landscape table at the compact
- *  print size; wider segments are split into several blocks. */
-const VPX_WORD_MAX_COLS = 14;
+/* ─── Executive Report — shared model + one-page sizing ──────────────
+   Every VPX segment (vehicle + component) is printed as ONE table on ONE
+   page: all station columns, all units. _execSegmentLayout() picks the
+   paper (A4 landscape, else A3 landscape) and the largest font that makes
+   the whole table fit, so neither Word nor the PDF ever splits columns or
+   rows across pages. Both exporters draw from the same model. ── */
 
-function _vpxStationReportSegmentHtml(built, categoryForReason) {
-    const { rows, activeCols, allCols } = built;
-    const grpColor = label => {
-        const c = VPX_REPORT_GRP_COLOR[label] || { bg: 'FF334155', fg: 'FFffffff' };
-        return { bg: '#' + c.bg.slice(2), fg: '#' + c.fg.slice(2) };
-    };
-    const stationHeaderText = col => (col.name && col.name !== col.code)
-        ? `<b>${esc(col.code)}</b><br><span style="font-weight:normal">${esc(col.name)}</span>`
-        : `<b>${esc(col.code)}</b>`;
+const EXEC_PAGES = {
+    a4: { key: 'a4', w: 297, h: 210, label: 'A4' },   // landscape, mm
+    a3: { key: 'a3', w: 420, h: 297, label: 'A3' },
+};
+const EXEC_MARGIN = 8;           // mm, all sides
+const EXEC_HEADER_H = 34;        // mm reserved above the table (title band + chips)
+const EXEC_FOOTER_H = 9;         // mm reserved below
+const MM_PER_PT = 25.4 / 72;
+const PT_PER_MM = 72 / 25.4;
 
-    // Every row's cells once, then sliced per column block
-    const projected = rows.map(row => ({ row, ..._vpxProjectRow(row, allCols, activeCols) }));
+const _execHex = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
 
-    const blocks = [];
-    for (let s = 0; s < activeCols.length; s += VPX_WORD_MAX_COLS) blocks.push([s, Math.min(s + VPX_WORD_MAX_COLS, activeCols.length)]);
-    if (!blocks.length) blocks.push([0, 0]);
+/** Colours + text for one VPX cell, shared by PDF and Word. */
+function _execCellSpec(c, planRow) {
+    if (planRow) return { text: c.planned ? formatDateShort(c.planned) : '', bg: '#f8fafc', color: '#475569' };
+    if (c.overdue) return { text: formatDateShort(c.expected), bg: '#fee2e2', color: '#b91c1c', bold: true };
+    if (c.projected) return { text: c.actual ? formatDateShort(c.actual) : '', bg: '#ffffff', color: '#94a3b8', italic: true };
+    if (c.actual) return c.late
+        ? { text: formatDateShort(c.actual), bg: '#dbeafe', color: '#1d4ed8', bold: true }
+        : { text: formatDateShort(c.actual), bg: '#dcfce7', color: '#15803d' };
+    return { text: c.planned ? '' : '—', bg: '#ffffff', color: '#94a3b8' };
+}
 
-    // Exact line height stops Word padding every cell with the body font's line spacing
-    const TH = 'border:0.5pt solid #94a3b8;padding:1pt 2pt;font-size:6.5pt;mso-line-height-rule:exactly;line-height:8pt;mso-para-margin:0;margin:0;vertical-align:middle';
-    const TD = 'border:0.5pt solid #cbd5e1;padding:1pt 2pt;font-size:6.5pt;mso-line-height-rule:exactly;line-height:8pt;mso-para-margin:0;margin:0;text-align:center;vertical-align:middle';
-
-    return blocks.map(([from, to], bi) => {
-        const cols = activeCols.slice(from, to);
-        const last = bi === blocks.length - 1;
-        const stationW = 100 - 9 - 4 - (last ? 16 : 0); // % left after Vehicle / label / Delay+Reason
-        const colW = cols.length ? (stationW / cols.length).toFixed(2) : 0;
-
-        let groupCells = '';
-        let i = 0;
-        while (i < cols.length) {
-            let j = i;
-            while (j + 1 < cols.length && cols[j + 1].group === cols[i].group) j++;
-            const { bg, fg } = grpColor(cols[i].group);
-            groupCells += `<th colspan="${j - i + 1}" style="${TH};background:${bg};color:${fg};text-align:center">${esc(cols[i].group)}</th>`;
-            i = j + 1;
-        }
-
-        // Each extra column block starts on a fresh page instead of mid-page
-        const part = (bi > 0 ? `<br clear="all" style="page-break-before:always">` : '') + (blocks.length > 1
-            ? `<p class="vpx-word-part">Stations ${from + 1}–${to} of ${activeCols.length}${last ? '' : ' — continued in the next table'}</p>` : '');
-
-        let html = `${part}<table class="vpx-word" style="width:100%;table-layout:fixed;border-collapse:collapse;margin:0 0 8pt">`;
-        html += `<colgroup><col style="width:9%"><col style="width:4%">${cols.map(() => `<col style="width:${colW}%">`).join('')}${last ? '<col style="width:5%"><col style="width:11%">' : ''}</colgroup>`;
-        // Header rows repeat on every page the table runs onto
-        html += `<thead style="display:table-header-group">`;
-        html += `<tr style="mso-yfti-firstrow:yes"><th style="${TH};background:#1e293b;color:#fff">Vehicle</th><th style="${TH};background:#1e293b;color:#fff"></th>${groupCells}${last ? `<th colspan="2" style="${TH};background:#1e293b;color:#fff"></th>` : ''}</tr>`;
-        html += `<tr style="mso-yfti-firstrow:yes"><th style="${TH};background:#1e293b;color:#fff"></th><th style="${TH};background:#1e293b;color:#fff"></th>${cols.map(c => `<th style="${TH};background:#f1f5f9;color:#1e293b;text-align:center">${stationHeaderText(c)}</th>`).join('')}`
-            + (last ? `<th style="${TH};background:#1e293b;color:#fff">Delay</th><th style="${TH};background:#1e293b;color:#fff">${categoryForReason ? `Delay Reason (${esc(categoryForReason)})` : 'Delay Reason'}</th>` : '') + `</tr>`;
-        html += `</thead><tbody>`;
-
-        projected.forEach(({ row, cells, finalDelay }) => {
-            const blockCells = cells.slice(from, to);
-            const code = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
-            const label = `${esc(row.vehicle)} #${esc(row.vehicle_no || '')}${code ? '<br>' + esc(code) : ''}`;
-            const delayReason = last ? getDelayReason(row.vehicle, row.vehicle_no, categoryForReason, row.battalion_code) : '';
-
-            // Plan row + Actual row stay together on one page
-            // page-break-after:avoid = Word's "keep with next" — Plan stays with its Actual row
-            html += `<tr style="page-break-inside:avoid;page-break-after:avoid">`;
-            html += `<td rowspan="2" nowrap style="${TD};white-space:nowrap;background:#334155;color:#fff;font-weight:bold">${label}</td>`;
-            html += `<td style="${TD};color:#94a3b8;font-style:italic">Plan</td>`;
-            blockCells.forEach(c => { html += `<td style="${TD};background:#f8fafc;color:#475569">${c.planned ? esc(formatDateShort(c.planned)) : ''}</td>`; });
-            if (last) {
-                const delayColor = finalDelay > 0 ? '#b91c1c' : '#15803d';
-                html += `<td rowspan="2" style="${TD};color:${delayColor};font-weight:bold">${finalDelay > 0 ? '+' + finalDelay + 'd' : '0d'}</td>`;
-                html += `<td rowspan="2" style="${TD};text-align:left;background:${delayReason ? '#fffbeb' : '#ffffff'};color:${delayReason ? '#78350f' : '#94a3b8'};font-style:${delayReason ? 'normal' : 'italic'}">${esc(delayReason || '—')}</td>`;
-            }
-            html += `</tr><tr style="page-break-before:avoid">`;
-            html += `<td style="${TD};color:#1e293b;font-style:italic">Actual</td>`;
-            blockCells.forEach(c => {
-                let bg = '#ffffff', color = '#1e293b', weight = 'normal', italic = false, text;
-                if (c.overdue) { bg = '#fee2e2'; color = '#b91c1c'; weight = 'bold'; text = formatDateShort(c.expected); }
-                else if (c.projected) { color = '#94a3b8'; italic = true; text = c.actual ? formatDateShort(c.actual) : ''; }
-                else if (c.actual) { bg = c.late ? '#dbeafe' : '#dcfce7'; color = c.late ? '#1d4ed8' : '#15803d'; weight = c.late ? 'bold' : 'normal'; text = formatDateShort(c.actual); }
-                else { text = c.planned ? '' : '—'; }
-                html += `<td style="${TD};background:${bg};color:${color};font-weight:${weight};font-style:${italic ? 'italic' : 'normal'}">${esc(text || '')}</td>`;
-            });
-            html += `</tr>`;
+/** Rows, cells and headline numbers for one segment. */
+function _execSegmentModel(seg) {
+    const cols = seg.activeCols || [];
+    const battalions = new Set(seg.rows.map(r => r.battalion_code).filter(Boolean));
+    let overdue = 0, onTime = 0, late = 0, worst = 0, delayedUnits = 0;
+    const units = seg.rows.map(row => {
+        const { cells, finalDelay } = _vpxProjectRow(row, seg.allCols, cols);
+        cells.forEach(c => {
+            if (c.overdue) overdue++;
+            else if (c.actual && !c.projected) (c.late ? late++ : onTime++);
         });
+        worst = Math.max(worst, finalDelay);
+        if (finalDelay > 0) delayedUnits++;
+        const code = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code) || '';
+        const line1 = battalions.size > 1
+            ? `${row.battalion_code || ''} · ${row.vehicle_no || ''}`
+            : `${row.vehicle} ${row.vehicle_no || ''}`;
+        return {
+            line1: line1.trim(), line2: code, cells, finalDelay,
+            reason: getDelayReason(row.vehicle, row.vehicle_no, seg.cat, row.battalion_code) || '',
+        };
+    });
+    // group bands over consecutive stations of the same group
+    const groups = [];
+    cols.forEach(c => {
+        const last = groups[groups.length - 1];
+        if (last && last.label === c.group) last.span++;
+        else groups.push({ label: c.group, span: 1 });
+    });
+    return {
+        vtype: seg.vtype, cat: seg.cat, heading: seg.heading, cols, groups, units,
+        stats: { units: units.length, stations: cols.length, overdue, onTime, late, worst, delayedUnits },
+    };
+}
 
-        html += `</tbody></table>`;
-        return html;
-    }).join('');
+/** Paper + font that fit the whole table on one page (mm / pt). */
+function _execSegmentLayout(model, { word = false, maxFont = null } = {}) {
+    const n = Math.max(model.cols.length, 1);
+    const u = Math.max(model.units.length, 1);
+    const tryFit = (page, font) => {
+        const W = page.w - 2 * EXEC_MARGIN;
+        // Word adds its own paragraph spacing around tables — keep 10 mm spare there
+        const H = page.h - EXEC_HEADER_H - EXEC_FOOTER_H - (word ? 10 : 2);
+        const k = font / 7;
+        const w = { unit: 20 * k, tag: 8.5 * k, delay: 10 * k, reason: 40 * k };
+        const colW = (W - w.unit - w.tag - w.delay - w.reason) / n;
+        const lineH = font * MM_PER_PT * 1.18;
+        const pad = Math.max(0.3, font * 0.075);
+        const rowH = lineH + 2 * pad;
+        const headH = (lineH + 2 * pad) + (3 * lineH * 0.92 + 2 * pad);   // group band + code/name (3 lines)
+        const fitsW = colW >= font * MM_PER_PT * 3.7 + 2 * pad;           // "10 Sept"
+        // Word draws each row ~0.55 mm taller than asked (borders + cell spacing),
+        // measured from Word's own PDF output — budget for it so nothing spills
+        const ROW_EXTRA = word ? 0.55 : 0;
+        const fitsH = headH + 2 * ROW_EXTRA + u * 2 * (rowH + ROW_EXTRA) <= H;
+        return fitsW && fitsH ? { page, font, pad, lineH, rowH, colW, w, W, H, headH } : null;
+    };
+    for (const page of [EXEC_PAGES.a4, EXEC_PAGES.a3]) {
+        for (let font = maxFont ?? (word ? 7 : 7.5); font >= (page.key === 'a4' ? 5 : 3.6); font -= 0.25) {
+            const fit = tryFit(page, font);
+            if (fit) return fit;
+        }
+    }
+    // Last resort: smallest A3 setting, whatever it takes
+    return tryFit(EXEC_PAGES.a3, 3.6) || (() => {
+        const page = EXEC_PAGES.a3, font = 3.6, k = font / 7;
+        const W = page.w - 2 * EXEC_MARGIN;
+        const w = { unit: 20 * k, tag: 8.5 * k, delay: 10 * k, reason: 40 * k };
+        const lineH = font * MM_PER_PT * 1.18, pad = 0.3;
+        return { page, font, pad, lineH, rowH: lineH + 2 * pad, colW: (W - w.unit - w.tag - w.delay - w.reason) / n, w, W, H: page.h - EXEC_HEADER_H - EXEC_FOOTER_H, headH: 0 };
+    })();
+}
+
+/** Clip text so it fits `lines` lines of a column `widthMm` wide at `fontPt`. */
+function _execClip(text, widthMm, fontPt, lines = 1) {
+    const s = String(text || '');
+    const perLine = Math.max(4, Math.floor(widthMm / (fontPt * MM_PER_PT * 0.58)));
+    const max = perLine * lines;
+    return s.length > max ? s.slice(0, max - 1).trimEnd() + '…' : s;
+}
+
+/** Headline numbers for the cover page (current filters). */
+function _execCoverSummary() {
+    const data = applyActiveFilters(currentData);
+    const count = st => data.filter(r => calculateStatus(r) === st).length;
+    const completed = count('Completed'), late = count('Late Completion'), overdue = count('Overdue'), inProgress = count('In Progress');
+    const total = data.length;
+    let plannedDelivery = null;
+    data.forEach(r => { const e = r.end_date || r.planned_end_date; if (e && (!plannedDelivery || e > plannedDelivery)) plannedDelivery = e; });
+    const worst = data.reduce((m, r) => Math.max(m, delayDays(r)), 0);
+    const expected = plannedDelivery ? _addWorkingDays(plannedDelivery, worst) : null;
+    const version = _activeVersionInfo('kd2');
+    return {
+        total, completed, late, overdue, inProgress,
+        pct: total ? Math.round((completed + late) / total * 100) : 0,
+        plannedDelivery: plannedDelivery ? _fmtDeliveryDate(plannedDelivery) : '—',
+        expectedDelivery: expected ? _fmtDeliveryDate(expected) : '—',
+        worst, module: getModuleBadge(), version: version?.name || '',
+        generated: new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+    };
+}
+
+const EXEC_LEGEND = [
+    ['On time', '#dcfce7', '#15803d'],
+    ['Late', '#dbeafe', '#1d4ed8'],
+    ['Overdue (expected date)', '#fee2e2', '#b91c1c'],
+    ['Projected', '#ffffff', '#94a3b8'],
+    ['Planned', '#f8fafc', '#475569'],
+];
+
+/* ─── Word: one section per page, each with its own paper size ─── */
+function _execWordSegmentHtml(model, L) {
+    const pt = mm => (mm * PT_PER_MM).toFixed(1) + 'pt';
+    const F = L.font, pad = (L.pad * PT_PER_MM).toFixed(2) + 'pt', lh = (L.lineH * PT_PER_MM).toFixed(2) + 'pt';
+    const base = `font-family:Calibri,Arial,sans-serif;font-size:${F}pt;mso-line-height-rule:exactly;line-height:${lh};mso-para-margin:0;margin:0;padding:${pad} ${pad};border:0.5pt solid #cbd5e1;text-align:center;vertical-align:middle`;
+    const TH = `${base};font-weight:bold`;
+    // Word ignores <col> widths when it autofits, so every cell carries its own
+    // width, and every row an exact height — the table then fits by construction.
+    const cw = { unit: pt(L.w.unit), tag: pt(L.w.tag), st: pt(L.colW), delay: pt(L.w.delay), reason: pt(L.w.reason) };
+    const rowPt = (L.rowH * PT_PER_MM).toFixed(2) + 'pt';
+    const grpPt = (L.rowH * PT_PER_MM).toFixed(2) + 'pt';
+    const stPt = ((L.headH - L.rowH) * PT_PER_MM).toFixed(2) + 'pt';
+    const trH = h => `height:${h};mso-height-rule:exactly;page-break-inside:avoid`;
+    const grp = label => {
+        const c = VPX_REPORT_GRP_COLOR[label] || { bg: 'FF334155', fg: 'FFffffff' };
+        return `background:#${c.bg.slice(2)};color:#${c.fg.slice(2)}`;
+    };
+    const nameF = +(F * 0.85).toFixed(2);
+    const s = model.stats;
+
+    let h = `<table style="width:100%;border-collapse:collapse;margin:0 0 4pt;mso-table-lspace:0;mso-table-rspace:0"><tr>
+        <td style="background:#1e3a8a;padding:6pt 10pt;border:none">
+            <p style="margin:0;font-family:Calibri,Arial;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#bfdbfe">VPX STATION REPORT</p>
+            <p style="margin:0;font-family:Calibri,Arial;font-size:15pt;font-weight:bold;color:#ffffff">${esc(model.vtype)} · ${esc(model.cat)}</p></td>
+        <td style="background:#1e3a8a;padding:6pt 10pt;border:none;text-align:right;vertical-align:bottom">
+            <p style="margin:0;font-family:Calibri,Arial;font-size:7.5pt;color:#dbeafe">${esc(L.meta)}</p></td></tr></table>`;
+    const chip = (label, value, color = '#0f172a') =>
+        `<td style="padding:2pt 8pt 2pt 0;border:none;font-family:Calibri,Arial;font-size:7.5pt;color:#64748b;white-space:nowrap">${label} <b style="font-size:9pt;color:${color}">${value}</b></td>`;
+    h += `<table style="width:${pt(L.W)};border-collapse:collapse;margin:0 0 4pt"><tr>
+        ${chip('Units', s.units)}${chip('Stations', s.stations)}${chip('On time', s.onTime, '#15803d')}${chip('Late', s.late, '#1d4ed8')}
+        ${chip('Overdue', s.overdue, '#b91c1c')}${chip('Worst delay', s.worst > 0 ? '+' + s.worst + 'd' : '0d', s.worst > 0 ? '#b91c1c' : '#15803d')}
+        <td style="border:none;text-align:right;white-space:nowrap;font-family:Calibri,Arial;font-size:6.5pt;color:#64748b">Key:&nbsp;
+        ${EXEC_LEGEND.map(([l, bg, fg]) => `<span style="background:${bg};color:${fg};border:0.5pt solid #cbd5e1;padding:0 3pt;white-space:nowrap">&nbsp;${l}&nbsp;</span>`).join('&nbsp;')}</td>
+        </tr></table>`;
+
+    h += `<table style="width:${pt(L.W)};table-layout:fixed;border-collapse:collapse">`;
+    h += `<col style="width:${pt(L.w.unit)}"><col style="width:${pt(L.w.tag)}">${model.cols.map(() => `<col style="width:${pt(L.colW)}">`).join('')}<col style="width:${pt(L.w.delay)}"><col style="width:${pt(L.w.reason)}">`;
+    h += `<tr style="${trH(grpPt)}"><td rowspan="2" style="${TH};width:${cw.unit};background:#0f172a;color:#fff">Unit</td><td rowspan="2" style="${TH};width:${cw.tag};background:#0f172a;color:#fff"></td>`
+        + model.groups.map(g => `<td colspan="${g.span}" style="${TH};${grp(g.label)}">${esc(_execClip(g.label, L.colW * g.span, F))}</td>`).join('')
+        + `<td rowspan="2" style="${TH};width:${cw.delay};background:#0f172a;color:#fff">Delay</td><td rowspan="2" style="${TH};width:${cw.reason};background:#0f172a;color:#fff">Delay reason (${esc(model.cat)})</td></tr>`;
+    h += `<tr style="${trH(stPt)}">${model.cols.map(c => `<td style="${TH};width:${cw.st};background:#f1f5f9;color:#0f172a">${esc(c.code)}${c.name && c.name !== c.code ? `<br><span style="font-size:${nameF}pt;font-weight:normal;color:#475569">${esc(_execClip(c.name, L.colW, nameF, 2))}</span>` : ''}</td>`).join('')}</tr>`;
+
+    model.units.forEach((u, i) => {
+        const zebra = i % 2 ? '#f8fafc' : '#ffffff';
+        h += `<tr style="${trH(rowPt)}"><td rowspan="2" style="${TH};width:${cw.unit};background:#334155;color:#fff;white-space:nowrap">${esc(u.line1)}${u.line2 ? `<br><span style="font-weight:normal;color:#cbd5e1">${esc(u.line2)}</span>` : ''}</td>`
+            + `<td style="${base};width:${cw.tag};color:#94a3b8;font-style:italic;background:${zebra}">Plan</td>`
+            + u.cells.map(c => { const x = _execCellSpec(c, true); return `<td style="${base};width:${cw.st};white-space:nowrap;background:${x.bg};color:${x.color}">${esc(x.text)}</td>`; }).join('')
+            + `<td rowspan="2" style="${TH};width:${cw.delay};color:${u.finalDelay > 0 ? '#b91c1c' : '#15803d'};background:${zebra}">${u.finalDelay > 0 ? '+' + u.finalDelay + 'd' : '0d'}</td>`
+            + `<td rowspan="2" style="${base};width:${cw.reason};text-align:left;background:${u.reason ? '#fffbeb' : zebra};color:${u.reason ? '#78350f' : '#94a3b8'}">${esc(_execClip(u.reason || '—', L.w.reason, F, 2))}</td></tr>`;
+        h += `<tr style="${trH(rowPt)}"><td style="${base};width:${cw.tag};font-style:italic;color:#0f172a;background:${zebra}">Actual</td>`
+            + u.cells.map(c => { const x = _execCellSpec(c, false); return `<td style="${base};width:${cw.st};white-space:nowrap;background:${x.bg};color:${x.color};font-weight:${x.bold ? 'bold' : 'normal'};font-style:${x.italic ? 'italic' : 'normal'}">${esc(x.text)}</td>`; }).join('')
+            + `</tr>`;
+    });
+    h += `</table>`;
+    return h;
 }
 
 /** Walks K9 → K10 → K11, each split into its own component tabs (Hull/
@@ -12689,93 +12797,234 @@ async function exportExecutiveReportPDF(preview) {
     const issueRows = await _buildIssueStatusReportRowsAllTime();
     if (!segments.length && !issueRows.length) { showToast('No data available for the Executive Report.', 'error'); return; }
     const title = 'Executive Report';
+    const cover = _execCoverSummary();
+    const meta = [cover.module, cover.version, `Generated ${cover.generated}`].filter(Boolean).join('  ·  ');
+    const models = segments.map(_execSegmentModel);
+    const layouts = models.map(_execSegmentLayout);
 
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    const pageNumberOf = () => doc.internal.getCurrentPageInfo().pageNumber;
     const hasOutline = !!doc.outline?.add;
+    const M = EXEC_MARGIN;
 
-    segments.forEach((seg, i) => {
-        if (i > 0) doc.addPage('a4', 'landscape');
-        _drawVpxStationReportTable(doc, seg, seg.heading, seg.cat);
-        if (hasOutline) { try { doc.outline.add(null, seg.heading, { pageNumber: pageNumberOf() }); } catch {} }
-    });
+    const band = (pageW, label, heading, right) => {
+        doc.setFillColor(30, 58, 138);
+        doc.rect(0, 0, pageW, 20, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(191, 219, 254);
+        doc.text(label.toUpperCase(), M, 7.5, { charSpace: 0.4 });
+        doc.setFontSize(15); doc.setTextColor(255, 255, 255);
+        doc.text(heading, M, 15);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(219, 234, 254);
+        doc.text(right, pageW - M, 15, { align: 'right' });
+    };
+    const chip = (x, y, label, value, rgb = [15, 23, 42]) => {
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
+        const lw = doc.getTextWidth(label + ' ');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+        const vw = doc.getTextWidth(String(value));
+        const w = lw + vw + 5;
+        doc.setFillColor(241, 245, 249); doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.2);
+        doc.roundedRect(x, y - 4, w, 6, 1.2, 1.2, 'FD');
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 116, 139);
+        doc.text(label, x + 2.5, y);
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...rgb);
+        doc.text(String(value), x + 2.5 + lw, y);
+        return x + w + 2;
+    };
+    const legend = (xRight, y) => {
+        let x = xRight;
+        [...EXEC_LEGEND].reverse().forEach(([label, bg, fg]) => {
+            doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5);
+            const w = doc.getTextWidth(label) + 4;
+            x -= w;
+            doc.setFillColor(..._execHex(bg)); doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.15);
+            doc.rect(x, y - 3.4, w, 4.6, 'FD');
+            doc.setTextColor(..._execHex(fg));
+            doc.text(label, x + 2, y);
+            x -= 1.5;
+        });
+    };
 
-    // ── Production Issues Status Report — same flat table-layout as the
-    // standalone Issues Status Report PDF export (table layout branch).
-    // Only start a new page if a VPX segment already used page 1. ──
-    if (segments.length) doc.addPage('a4', 'landscape');
-    if (hasOutline) { try { doc.outline.add(null, 'Production Issues Status Report (All Time)', { pageNumber: pageNumberOf() }); } catch {} }
+    // ── Cover ──
     {
-        const PAGE_W = doc.internal.pageSize.getWidth();
-        const PAGE_H = doc.internal.pageSize.getHeight();
-        const MARGIN = 14;
-        const issueTitle = 'Production Issues Status Report — All Time';
-
-        doc.setFillColor(248, 250, 252);
-        doc.rect(0, 0, PAGE_W, 22, 'F');
-        doc.setFillColor(37, 99, 235);
-        doc.rect(0, 0, 4, 22, 'F');
-        doc.setDrawColor(226, 232, 240);
-        doc.setLineWidth(0.3);
-        doc.line(0, 22, PAGE_W, 22);
-        doc.setTextColor(15, 23, 42);
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(13);
-        doc.text(issueTitle, MARGIN + 2, 10);
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(7.5);
-        doc.setTextColor(100, 116, 139);
-        doc.text(`Generated: ${new Date().toLocaleString('en-GB')}   ·   ${issueRows.length} issue${issueRows.length !== 1 ? 's' : ''}`, PAGE_W - MARGIN, 17, { align: 'right' });
-
-        let pillX = MARGIN;
-        const pillY = 26.5;
-        _categoryCounts(issueRows).forEach(([label, count]) => {
-            const text = `${label}: ${count}`;
-            doc.setFontSize(6.5);
-            const tw = doc.getTextWidth(text) + 8;
-            doc.setFillColor(37, 99, 235);
-            try { doc.setGState(new doc.GState({ opacity: 0.15 })); } catch {}
-            doc.roundedRect(pillX, pillY - 3.5, tw, 5.5, 1, 1, 'F');
-            try { doc.setGState(new doc.GState({ opacity: 1 })); } catch {}
-            doc.setTextColor(37, 99, 235);
-            doc.setFont('helvetica', 'bold');
-            doc.text(text, pillX + 4, pillY + 0.5);
-            pillX += tw + 4;
+        const W = 297, H = 210;
+        doc.setFillColor(30, 58, 138); doc.rect(0, 0, 105, H, 'F');
+        doc.setFillColor(37, 99, 235); doc.rect(105, 0, 2, H, 'F');
+        doc.setTextColor(191, 219, 254); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+        doc.text('PPMS', 14, 30, { charSpace: 1.5 });
+        doc.setTextColor(255, 255, 255); doc.setFontSize(28);
+        doc.text(['Executive', 'Report'], 14, 50);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(219, 234, 254);
+        doc.text(doc.splitTextToSize('Production Planning & Monitoring System — VPX station status for every vehicle and component, plus the Production Issues status report.', 78), 14, 74);
+        doc.setFontSize(8.5);
+        [['Module', cover.module], ['Plan version', cover.version || '—'], ['Generated', cover.generated]].forEach(([k, v], i) => {
+            doc.setTextColor(147, 197, 253); doc.text(k.toUpperCase(), 14, 150 + i * 14, { charSpace: 0.3 });
+            doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.text(String(v), 14, 155.5 + i * 14);
+            doc.setFont('helvetica', 'normal');
         });
 
-        const headers = ['Category', 'Title', 'Issue/Problem', 'Proposed Solution', 'Action Taken', 'Reported', 'Resolved', 'PIC'];
-        const body = issueRows.map(r => [
-            ISSUE_CATEGORY_LABELS[r.category] || r.category || '—',
-            (r.title || '').slice(0, 36),
-            (r.description || '—').slice(0, 44),
-            (r.proposed_solution || '—').slice(0, 44),
-            (r.notes || '—').slice(0, 44),
-            formatIssueDate(r.created_at),
-            r.resolved_at ? formatIssueDate(r.resolved_at) : '—',
-            (r.person_in_charge || '—').slice(0, 18),
-        ]);
+        // KPI tiles
+        const tiles = [
+            ['Complete', `${cover.pct}%`, [15, 23, 42]],
+            ['Planned tasks', cover.total, [15, 23, 42]],
+            ['In progress', cover.inProgress, [37, 99, 235]],
+            ['Overdue', cover.overdue, [185, 28, 28]],
+            ['Planned delivery', cover.plannedDelivery, [15, 23, 42]],
+            ['Expected delivery', cover.expectedDelivery, cover.worst > 0 ? [185, 28, 28] : [21, 128, 61]],
+        ];
+        const tx = 122, tw = 50, th = 24;
+        doc.setTextColor(15, 23, 42); doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+        doc.text('At a glance', tx, 26);
+        tiles.forEach(([label, value, rgb], i) => {
+            const x = tx + (i % 3) * (tw + 6), y = 32 + Math.floor(i / 3) * (th + 6);
+            doc.setFillColor(248, 250, 252); doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.3);
+            doc.roundedRect(x, y, tw, th, 2, 2, 'FD');
+            doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 116, 139);
+            doc.text(label.toUpperCase(), x + 4, y + 7, { charSpace: 0.2 });
+            doc.setFont('helvetica', 'bold'); doc.setFontSize(String(value).length > 8 ? 12 : 17); doc.setTextColor(...rgb);
+            doc.text(String(value), x + 4, y + 18);
+        });
+
+        // Contents
+        let y = 104;
+        doc.setTextColor(15, 23, 42); doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+        doc.text('Contents', tx, y); y += 7;
+        const entries = models.map((m, i) => [`VPX Station Report — ${m.vtype} · ${m.cat}`, `${m.stats.units} units · ${m.stats.stations} stations`, i + 2]);
+        entries.push(['Production Issues Status Report', `${issueRows.length} issues · all time`, models.length + 2]);
+        doc.setFontSize(8.5);
+        entries.forEach(([name, sub, page]) => {
+            doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 23, 42); doc.text(name, tx, y);
+            doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 116, 139); doc.text(sub, tx + 95, y);
+            doc.setTextColor(30, 58, 138); doc.setFont('helvetica', 'bold'); doc.text(String(page), W - 14, y, { align: 'right' });
+            doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.2); doc.line(tx, y + 2, W - 14, y + 2);
+            y += 7;
+        });
+        if (hasOutline) { try { doc.outline.add(null, 'Cover', { pageNumber: 1 }); } catch {} }
+    }
+
+    // ── One page per VPX segment, sized so the table always fits ──
+    const drawSegment = (m, L) => {
+        doc.addPage(L.page.key, 'landscape');
+        const pageNo = doc.internal.getCurrentPageInfo().pageNumber;
+        band(L.page.w, 'VPX Station Report', `${m.vtype} · ${m.cat}`, meta);
+
+        const s = m.stats;
+        let x = M;
+        x = chip(x, 27, 'Units', s.units);
+        x = chip(x, 27, 'Stations', s.stations);
+        x = chip(x, 27, 'On time', s.onTime, [21, 128, 61]);
+        x = chip(x, 27, 'Late', s.late, [29, 78, 216]);
+        x = chip(x, 27, 'Overdue', s.overdue, [185, 28, 28]);
+        chip(x, 27, 'Worst delay', s.worst > 0 ? `+${s.worst}d` : '0d', s.worst > 0 ? [185, 28, 28] : [21, 128, 61]);
+        legend(L.page.w - M, 27);
+
+        const F = L.font, nameF = +(F * 0.85).toFixed(2);
+        const grp = label => {
+            const c = VPX_REPORT_GRP_COLOR[label] || { bg: 'FF334155', fg: 'FFffffff' };
+            return { fillColor: _execHex('#' + c.bg.slice(2)), textColor: _execHex('#' + c.fg.slice(2)) };
+        };
+        const dark = { fillColor: [15, 23, 42], textColor: [255, 255, 255] };
+        const head = [
+            [{ content: 'Unit', rowSpan: 2, styles: dark }, { content: '', rowSpan: 2, styles: dark },
+             ...m.groups.map(g => ({ content: _execClip(g.label, L.colW * g.span, F), colSpan: g.span, styles: grp(g.label) })),
+             { content: 'Delay', rowSpan: 2, styles: dark }, { content: `Delay reason (${m.cat})`, rowSpan: 2, styles: dark }],
+            m.cols.map(c => ({ content: c.name && c.name !== c.code ? `${c.code}\n${_execClip(c.name, L.colW, nameF, 2)}` : c.code,
+                styles: { fillColor: [241, 245, 249], textColor: [15, 23, 42] } })),
+        ];
+        const body = [];
+        m.units.forEach((u, ui) => {
+            const zebra = ui % 2 ? [248, 250, 252] : [255, 255, 255];
+            body.push([
+                { content: u.line2 ? `${u.line1}\n${u.line2}` : u.line1, rowSpan: 2, styles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontStyle: 'bold' } },
+                { content: 'Plan', styles: { textColor: [148, 163, 184], fontStyle: 'italic', fillColor: zebra } },
+                ...u.cells.map(c => { const x = _execCellSpec(c, true); return { content: x.text, styles: { fillColor: _execHex(x.bg), textColor: _execHex(x.color) } }; }),
+                { content: u.finalDelay > 0 ? `+${u.finalDelay}d` : '0d', rowSpan: 2, styles: { fontStyle: 'bold', textColor: u.finalDelay > 0 ? [185, 28, 28] : [21, 128, 61], fillColor: zebra } },
+                { content: _execClip(u.reason || '—', L.w.reason, F, 2), rowSpan: 2,
+                  styles: { halign: 'left', fillColor: u.reason ? [255, 251, 235] : zebra, textColor: u.reason ? [120, 53, 15] : [148, 163, 184] } },
+            ]);
+            body.push([
+                { content: 'Actual', styles: { fontStyle: 'italic', textColor: [15, 23, 42], fillColor: zebra } },
+                ...u.cells.map(c => { const x = _execCellSpec(c, false); return { content: x.text, styles: { fillColor: _execHex(x.bg), textColor: _execHex(x.color), fontStyle: x.bold ? 'bold' : (x.italic ? 'italic' : 'normal') } }; }),
+            ]);
+        });
+
+        const columnStyles = { 0: { cellWidth: L.w.unit }, 1: { cellWidth: L.w.tag } };
+        m.cols.forEach((_, ci) => { columnStyles[ci + 2] = { cellWidth: L.colW }; });
+        columnStyles[m.cols.length + 2] = { cellWidth: L.w.delay };
+        columnStyles[m.cols.length + 3] = { cellWidth: L.w.reason };
+
         doc.autoTable({
-            startY: 33,
-            head: [headers], body,
-            margin: { left: MARGIN, right: MARGIN },
-            styles: { fontSize: 6.5, cellPadding: [2, 2.5], font: 'helvetica', textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.18 },
-            headStyles: { fillColor: [30, 58, 138], textColor: [241, 245, 249], fontStyle: 'bold', fontSize: 6.2, halign: 'center', cellPadding: [3, 2.5] },
+            startY: EXEC_HEADER_H - 2,
+            margin: { left: M, right: M, top: M, bottom: EXEC_FOOTER_H },
+            tableWidth: L.W,
+            head, body, columnStyles,
+            theme: 'grid',
+            pageBreak: 'avoid', rowPageBreak: 'avoid', horizontalPageBreak: false,
+            styles: { font: 'helvetica', fontSize: F, cellPadding: L.pad, halign: 'center', valign: 'middle',
+                      lineColor: [203, 213, 225], lineWidth: 0.12, overflow: 'linebreak', minCellHeight: L.rowH, textColor: [15, 23, 42] },
+            headStyles: { fontStyle: 'bold', fontSize: F, lineColor: [148, 163, 184] },
+        });
+        return pageNo;
+    };
+    models.forEach((m, i) => {
+        let L = layouts[i];
+        // Safety net: the table must start on this page and end on it. If the
+        // PDF library pushed or split it, drop the attempt and go one size down.
+        for (let tries = 0; tries < 40; tries++) {
+            const pageNo = drawSegment(m, L);
+            const last = doc.internal.getNumberOfPages();
+            const t = doc.lastAutoTable || {};
+            const ok = last === pageNo && (t.startPageNumber ?? pageNo) === pageNo;
+            if (ok) {
+                if (hasOutline) { try { doc.outline.add(null, `${m.vtype} · ${m.cat}`, { pageNumber: pageNo }); } catch {} }
+                break;
+            }
+            const next = _execSegmentLayout(m, { maxFont: L.font - 0.25 });
+            if (next.font >= L.font && next.page.key === L.page.key) break; // nothing smaller left — keep this attempt
+            for (let p = last; p >= pageNo; p--) doc.deletePage(p);
+            L = next;
+        }
+    });
+
+    // ── Production Issues Status Report (list — may run over several pages) ──
+    doc.addPage('a4', 'landscape');
+    const issuesStart = doc.internal.getCurrentPageInfo().pageNumber;
+    if (hasOutline) { try { doc.outline.add(null, 'Production Issues Status Report', { pageNumber: issuesStart }); } catch {} }
+    band(297, 'Production Issues', 'Status Report — All Time', meta);
+    {
+        let x = M;
+        x = chip(x, 27, 'Issues', issueRows.length);
+        _categoryCounts(issueRows).slice(0, 8).forEach(([label, count]) => { x = chip(x, 27, label, count, [30, 58, 138]); });
+        const statusLabel = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Closed' };
+        doc.autoTable({
+            startY: EXEC_HEADER_H - 2,
+            margin: { left: M, right: M, top: 26, bottom: EXEC_FOOTER_H },
+            head: [['Category', 'Title', 'Status', 'Issue / Problem', 'Proposed Solution', 'Action Taken', 'Reported', 'Resolved', 'PIC']],
+            body: issueRows.map(r => [
+                ISSUE_CATEGORY_LABELS[r.category] || r.category || '—', r.title || '', statusLabel[r.status] || r.status || '',
+                r.description || '—', r.proposed_solution || '—', r.notes || '—',
+                formatIssueDate(r.created_at), r.resolved_at ? formatIssueDate(r.resolved_at) : '—', r.person_in_charge || '—',
+            ]),
+            theme: 'grid', rowPageBreak: 'avoid',
+            styles: { font: 'helvetica', fontSize: 7, cellPadding: 1.6, lineColor: [226, 232, 240], lineWidth: 0.15, textColor: [30, 41, 59], valign: 'top' },
+            headStyles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontStyle: 'bold' },
             alternateRowStyles: { fillColor: [248, 250, 252] },
-            didDrawPage(data) {
-                const pageCount = doc.internal.getNumberOfPages();
-                doc.setFont('helvetica', 'normal');
-                doc.setFontSize(6);
-                doc.setTextColor(148, 163, 184);
-                doc.text(issueTitle, MARGIN, PAGE_H - 5);
-                doc.text(`Page ${data.pageNumber} of ${pageCount}`, PAGE_W - MARGIN, PAGE_H - 5, { align: 'right' });
-            },
+            columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 34, fontStyle: 'bold' }, 2: { cellWidth: 17 }, 6: { cellWidth: 21 }, 7: { cellWidth: 21 }, 8: { cellWidth: 20 } },
+            didDrawPage: data => { if (data.pageNumber > 1) band(297, 'Production Issues', 'Status Report — All Time (continued)', meta); },
         });
     }
 
-    doc.addPage('a4', 'portrait');
-    if (hasOutline) { try { doc.outline.add(null, 'Key & Legend', { pageNumber: pageNumberOf() }); } catch {} }
-    _drawStationReportKeyPage(doc, title);
+    // ── Footer on every page except the cover ──
+    const total = doc.internal.getNumberOfPages();
+    for (let p = 2; p <= total; p++) {
+        doc.setPage(p);
+        const mb = doc.internal.getPageInfo(p).pageContext.mediaBox;
+        const w = (mb.topRightX - mb.bottomLeftX) * MM_PER_PT, h = (mb.topRightY - mb.bottomLeftY) * MM_PER_PT;
+        doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.2); doc.line(M, h - 7, w - M, h - 7);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(148, 163, 184);
+        doc.text(`PPMS · Executive Report · ${cover.module}`, M, h - 3.5);
+        doc.text(`Page ${p} of ${total}`, w - M, h - 3.5, { align: 'right' });
+    }
 
     const now = localDateStr(new Date());
     const doDownload = () => { doc.save(`executive_report_${now}.pdf`); showToast('Executive Report exported.', 'success'); };
@@ -12795,34 +13044,91 @@ async function exportExecutiveReportWord(preview) {
     const issueRows = await _buildIssueStatusReportRowsAllTime();
     if (!segments.length && !issueRows.length) { showToast('No data available for the Executive Report.', 'error'); return; }
 
-    // Landscape, one vehicle/component segment per page, compact VPX tables
-    // (see _vpxStationReportSegmentHtml) so nothing spills across pages.
-    const pageBreak = `<br clear="all" style="page-break-before:always">`;
-    let body = `<h1>Executive Report</h1><p class="doc-sub">${esc(getModuleBadge?.() || 'F200-KD2')} &middot; Generated: ${esc(new Date().toLocaleString('en-GB'))}</p>`;
-    body += `<p class="exec-legend"><span style="background:#dcfce7;color:#15803d">on time</span> <span style="background:#dbeafe;color:#1d4ed8">late</span> <span style="background:#fee2e2;color:#b91c1c">overdue (expected date)</span> <span style="color:#94a3b8;font-style:italic">projected</span></p>`;
-    segments.forEach((seg, i) => {
-        if (i > 0) body += pageBreak;
-        body += `<h2>VPX Station Report — ${esc(seg.heading)}</h2>`;
-        body += _vpxStationReportSegmentHtml(seg, seg.cat);
-    });
-    if (segments.length) body += pageBreak;
-    body += `<h2>Production Issues Status Report (All Time)</h2>`;
-    body += _issueStatusReportTableHtml(issueRows);
+    const cover = _execCoverSummary();
+    const meta = [cover.module, cover.version, `Generated ${cover.generated}`].filter(Boolean).join('  ·  ');
+    const models = segments.map(_execSegmentModel);
+    const layouts = models.map(m => ({ ..._execSegmentLayout(m, { word: true }), meta }));
+    const { body, style } = _execWordDocument(cover, models, layouts, issueRows, meta);
 
     const now = localDateStr(new Date());
-    exportHtmlAsWord(`executive_report_${now}.doc`, 'Executive Report', body, preview, {
-        landscape: true,
-        style: `
-            h1 { font-size: 18pt; margin: 0 0 2pt; }
-            .doc-sub { font-size: 9pt; margin: 0 0 4pt; }
-            h2 { font-size: 12pt; margin: 0 0 4pt; padding-bottom: 2pt; page-break-after: avoid; }
-            .exec-legend { font-size: 7.5pt; margin: 0 0 8pt; }
-            .exec-legend span { padding: 0 4pt; }
-            .vpx-word-part { font-size: 7.5pt; font-weight: bold; color: #475569; margin: 4pt 0 2pt; page-break-after: avoid; }
-            table.vpx-word th, table.vpx-word td { font-size: 6.5pt; }
-            table.vpx-word tr { page-break-inside: avoid; }
-        `,
+    exportHtmlAsWord(`executive_report_${now}.doc`, 'Executive Report', body, preview, { style });
+}
+
+/** Word document body + page-setup styles. Each page is its own Word
+ *  section, so every VPX page can have its own paper size (A4 or A3). */
+function _execWordDocument(cover, models, layouts, issueRows, meta) {
+    const mPt = (EXEC_MARGIN * PT_PER_MM).toFixed(1) + 'pt';
+    const pageCss = (name, page) => `@page ${name} { size: ${(page.w * PT_PER_MM).toFixed(1)}pt ${(page.h * PT_PER_MM).toFixed(1)}pt; mso-page-orientation: landscape; margin: ${mPt}; }
+        div.${name} { page: ${name}; }`;
+    const style = `
+        ${pageCss('ExecA4', EXEC_PAGES.a4)}
+        ${pageCss('ExecA3', EXEC_PAGES.a3)}
+        body { font-family: Calibri, Arial, sans-serif; }
+        table { margin: 0; }
+        th, td { font-size: 8pt; }
+        h2.exec-h { font-size: 13pt; color: #1e3a8a; border-bottom: 2pt solid #1e3a8a; margin: 0 0 6pt; padding-bottom: 2pt; }`;
+    const sectionBreak = `<br clear="all" style="page-break-before:always;mso-break-type:section-break">`;
+    const divFor = page => page.key === 'a3' ? 'ExecA3' : 'ExecA4';
+
+    // Cover
+    const tile = (label, value, color = '#0f172a') => `<td style="width:33%;padding:8pt 10pt;border:0.75pt solid #e2e8f0;background:#f8fafc;vertical-align:top">
+        <p style="margin:0;font-size:7pt;color:#64748b;letter-spacing:0.5pt">${label.toUpperCase()}</p>
+        <p style="margin:2pt 0 0;font-size:17pt;font-weight:bold;color:${color}">${esc(String(value))}</p></td>`;
+    let body = `<div class="ExecA4">
+        <table style="width:100%;border-collapse:collapse"><tr style="height:470pt">
+        <td style="width:34%;background:#1e3a8a;padding:24pt 18pt;vertical-align:top;border:none">
+            <p style="margin:0;font-size:9pt;font-weight:bold;letter-spacing:2pt;color:#bfdbfe">PPMS</p>
+            <p style="margin:10pt 0 0;font-size:30pt;font-weight:bold;line-height:32pt;color:#ffffff">Executive<br>Report</p>
+            <p style="margin:12pt 0 60pt;font-size:9.5pt;color:#dbeafe">Production Planning &amp; Monitoring System — VPX station status for every vehicle and component, plus the Production Issues status report.</p>
+            ${[['Module', cover.module], ['Plan version', cover.version || '—'], ['Generated', cover.generated]].map(([k, v]) =>
+                `<p style="margin:10pt 0 0;font-size:7.5pt;letter-spacing:0.5pt;color:#93c5fd">${k.toUpperCase()}</p><p style="margin:0;font-size:10pt;font-weight:bold;color:#ffffff">${esc(v)}</p>`).join('')}
+        </td>
+        <td style="padding:18pt 0 0 20pt;vertical-align:top;border:none">
+            <p style="margin:0 0 6pt;font-size:12pt;font-weight:bold;color:#0f172a">At a glance</p>
+            <table style="width:100%;border-collapse:separate;border-spacing:5pt">
+                <tr>${tile('Complete', cover.pct + '%')}${tile('Planned tasks', cover.total)}${tile('In progress', cover.inProgress, '#2563eb')}</tr>
+                <tr>${tile('Overdue', cover.overdue, '#b91c1c')}${tile('Planned delivery', cover.plannedDelivery)}${tile('Expected delivery', cover.expectedDelivery, cover.worst > 0 ? '#b91c1c' : '#15803d')}</tr>
+            </table>
+            <p style="margin:14pt 0 4pt;font-size:12pt;font-weight:bold;color:#0f172a">Contents</p>
+            <table style="width:100%;border-collapse:collapse">
+                ${models.map(m => `<tr><td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:9pt;font-weight:bold;color:#0f172a">VPX Station Report — ${esc(m.vtype)} · ${esc(m.cat)}</td>
+                    <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">${m.stats.units} units · ${m.stats.stations} stations</td></tr>`).join('')}
+                <tr><td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:9pt;font-weight:bold;color:#0f172a">Production Issues Status Report</td>
+                    <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">${issueRows.length} issues · all time</td></tr>
+            </table>
+            <p style="margin:10pt 0 0;font-size:7.5pt;color:#94a3b8">Each VPX report fits on one page: all stations and units, sized automatically (A4, or A3 for very large segments).</p>
+        </td></tr></table></div>`;
+
+    // One section per VPX segment
+    models.forEach((m, i) => {
+        body += sectionBreak + `<div class="${divFor(layouts[i].page)}">${_execWordSegmentHtml(m, layouts[i])}</div>`;
     });
+
+    // Issues
+    const statusLabel = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Closed' };
+    const td = 'padding:2pt 3pt;border:0.5pt solid #e2e8f0;font-size:7.5pt;vertical-align:top';
+    body += sectionBreak + `<div class="ExecA4">
+        <table style="width:100%;border-collapse:collapse;margin:0 0 6pt"><tr><td style="background:#1e3a8a;padding:6pt 10pt;border:none">
+            <p style="margin:0;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#bfdbfe">PRODUCTION ISSUES</p>
+            <p style="margin:0;font-size:15pt;font-weight:bold;color:#ffffff">Status Report — All Time</p></td>
+            <td style="background:#1e3a8a;padding:6pt 10pt;border:none;text-align:right;vertical-align:bottom"><p style="margin:0;font-size:7.5pt;color:#dbeafe">${esc(meta)}</p></td></tr></table>
+        <p style="margin:0 0 6pt;font-size:8pt;color:#475569"><b>${issueRows.length}</b> issues &nbsp;·&nbsp; ${_categoryCounts(issueRows).map(([l, c]) => `${esc(l)} <b>${c}</b>`).join(' &nbsp;·&nbsp; ')}</p>
+        <table style="width:100%;border-collapse:collapse">
+            <thead style="display:table-header-group"><tr style="mso-yfti-firstrow:yes">${['Category', 'Title', 'Status', 'Issue / Problem', 'Proposed Solution', 'Action Taken', 'Reported', 'Resolved', 'PIC']
+                .map(hd => `<td style="${td};background:#1e3a8a;color:#ffffff;font-weight:bold">${hd}</td>`).join('')}</tr></thead>
+            ${issueRows.map((r, i) => `<tr style="page-break-inside:avoid;background:${i % 2 ? '#f8fafc' : '#ffffff'}">
+                <td style="${td}">${esc(ISSUE_CATEGORY_LABELS[r.category] || r.category || '—')}</td>
+                <td style="${td};font-weight:bold">${esc(r.title || '')}</td>
+                <td style="${td}">${esc(statusLabel[r.status] || r.status || '')}</td>
+                <td style="${td}">${escNl(r.description || '—')}</td>
+                <td style="${td}">${escNl(r.proposed_solution || '—')}</td>
+                <td style="${td}">${escNl(r.notes || '—')}</td>
+                <td style="${td};white-space:nowrap">${esc(formatIssueDate(r.created_at))}</td>
+                <td style="${td};white-space:nowrap">${r.resolved_at ? esc(formatIssueDate(r.resolved_at)) : '—'}</td>
+                <td style="${td}">${esc(r.person_in_charge || '—')}</td></tr>`).join('')}
+        </table></div>`;
+
+    return { body, style };
 }
 
 /* ─── VPX "Generate Report" popup — replaces the 4 standalone export
