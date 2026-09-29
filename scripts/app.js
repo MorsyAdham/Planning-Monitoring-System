@@ -723,6 +723,27 @@ function getCategory(processStation) {
     return 'Other';
 }
 
+/** Runs `query` page by page (1,000 rows each) so results aren't silently
+ *  cut off at Supabase's default row limit. The query must have a stable order. */
+async function _selectAllPages(query, pageSize = 1000) {
+    const rows = [];
+    for (let from = 0; ; from += pageSize) {
+        const { data, error } = await query.range(from, from + pageSize - 1);
+        if (error) return { data: null, error };
+        rows.push(...(data || []));
+        if (!data || data.length < pageSize) break;
+    }
+    return { data: rows, error: null };
+}
+
+/** PostgREST `.or()` "contains" filter value for free text: escapes LIKE
+ *  wildcards and quotes the value so commas, dots and brackets typed by the
+ *  user can't break the filter syntax. */
+function _orIlikeValue(text) {
+    const pattern = '%' + String(text).replace(/[\\%_]/g, m => '\\' + m) + '%';
+    return '"' + pattern.replace(/[\\"]/g, m => '\\' + m) + '"';
+}
+
 function getModuleRuntime() {
     return window.PPMSModuleRuntime || null;
 }
@@ -1429,6 +1450,15 @@ function updateMultiSelectButtonLabel(key) {
     const selected = filterState[key];
     const options = filterOptions[key];
 
+    // Column-header filter (icon-only button) — show state as a highlight, not text
+    if (btn.classList.contains('th-filter-btn')) {
+        const active = !!selected && !selected.has('all') && selected.size > 0;
+        btn.classList.toggle('th-filter-btn--active', active);
+        const base = filterAllLabels[key] || key;
+        btn.title = active ? `Filter ${base}: ${filterLabel(key)}` : `Filter ${base}`;
+        return;
+    }
+
     if (!selected || selected.has('all') || selected.size === 0) {
         btn.textContent = filterAllLabels[key] || 'All';
         return;
@@ -1498,6 +1528,19 @@ function toggleMultiSelectMenu(key) {
         if (m) m.hidden = true;
     });
     menu.hidden = !shouldOpen;
+    // Column-header menus live inside a scrolling table wrapper that would clip
+    // them — pin them to the viewport under their button instead.
+    if (shouldOpen && menu.classList.contains('th-filter-menu')) {
+        const btn = document.getElementById(cfg.btn);
+        const r = btn?.getBoundingClientRect();
+        if (r) {
+            menu.style.position = 'fixed';
+            menu.style.marginTop = '0';
+            menu.style.top = `${r.bottom + 4}px`;
+            const w = menu.offsetWidth || 200;
+            menu.style.left = `${Math.max(8, Math.min(r.left - 8, window.innerWidth - w - 8))}px`;
+        }
+    }
 }
 
 /** Rebuild filterOptions[key] from a plain array of values, then re-render its menu. */
@@ -2452,8 +2495,8 @@ async function populateF100BattalionFilter() {
     try {
         const [{ data, error }, { data: units }, { data: plans }] = await Promise.all([
             db.from('f100_battalions').select('id, battalion_code, battalion_name').order('battalion_code'),
-            db.from('f100_vehicle_units').select('battalion_id'),
-            window.PlanVersions.scoped(db.from('f100_plans').select('battalion_code'), 'f100kd2'),
+            _selectAllPages(db.from('f100_vehicle_units').select('battalion_id').order('id')),
+            _selectAllPages(window.PlanVersions.scoped(db.from('f100_plans').select('battalion_code'), 'f100kd2').order('id')),
         ]);
         if (error) return;
         // Only battalions with registered units or plan rows — not every
@@ -2543,7 +2586,7 @@ async function loadF100Data() {
     if (serialSelected) plansQ = plansQ.in('serial_number', selectedUnitNames(serialSet).map(n => parseInt(n, 10)));
     // Gun mode always restricts to K9
     if (mode === 'gun') plansQ = plansQ.eq('vehicle_type', 'K9');
-    const { data: plansRaw, error: plansErr } = await plansQ;
+    const { data: plansRaw, error: plansErr } = await _selectAllPages(plansQ.order('id'));
     if (plansErr) throw plansErr;
     const plans = serialSelected
         ? (plansRaw || []).filter(plan => rowMatchesUnitSet(serialSet, {
@@ -2703,8 +2746,15 @@ async function loadData() {
                 .map(row => row.progress.id);
             if (xrayProgressIds.length) {
                 try {
-                    const { data: xrayRows, error: xrayErr } = await db.from('kd2_progress').select('id, xray_cycles, final_qa_date').in('id', xrayProgressIds);
-                    if (xrayErr) throw xrayErr;
+                    // Chunked — hundreds of ids in one .in() list can exceed the URL length limit
+                    const xrayRows = [];
+                    for (let i = 0; i < xrayProgressIds.length; i += 150) {
+                        const { data: chunk, error: xrayErr } = await db.from('kd2_progress')
+                            .select('id, xray_cycles, final_qa_date')
+                            .in('id', xrayProgressIds.slice(i, i + 150));
+                        if (xrayErr) throw xrayErr;
+                        xrayRows.push(...(chunk || []));
+                    }
                     const xrayMap = new Map((xrayRows || []).map(r => [r.id, r]));
                     currentData.forEach(row => {
                         const x = row.progress?.id ? xrayMap.get(row.progress.id) : null;
@@ -2894,6 +2944,7 @@ async function loadData() {
                 filterOptions.issueReporter = [];
                 filterState.issueReporter = new Set(['all']);
                 _populateIssueReporterFilter().catch(() => {}).finally(() => loadIssues(true).catch(() => {}));
+                _syncIssueDraftsWithServer().catch(() => {});
             }
         }
 
@@ -6251,7 +6302,12 @@ async function saveF100Comment(planId, text) {
     const userName = user?.name || user?.email || 'Unknown';
     const newComment = { user: userName, text: text.trim(), at: new Date().toISOString() };
     const row = currentData.find(t => String(t.id) === String(planId));
-    const current = Array.isArray(row?.comments) ? row.comments : [];
+    // Append to the comments as they are in the database now, not this page's
+    // copy — otherwise a comment another user added since the last refresh
+    // would be overwritten.
+    const { data: fresh, error: readErr } = await db.from('f100_plans').select('comments').eq('id', planId).single();
+    if (readErr) throw readErr;
+    const current = Array.isArray(fresh?.comments) ? fresh.comments : [];
     const updated = [...current, newComment];
     const { error } = await db
         .from('f100_plans')
@@ -6269,7 +6325,12 @@ async function saveKd2Comment(planId, text) {
     const userName = user?.name || user?.email || 'Unknown';
     const newComment = { user: userName, text: text.trim(), at: new Date().toISOString() };
     const row = currentData.find(t => String(t.id) === String(planId));
-    const current = Array.isArray(row?.comments) ? row.comments : [];
+    // Append to the comments as they are in the database now, not this page's
+    // copy — otherwise a comment another user added since the last refresh
+    // would be overwritten.
+    const { data: fresh, error: readErr } = await db.from('kd2_plan').select('comments').eq('id', planId).single();
+    if (readErr) throw readErr;
+    const current = Array.isArray(fresh?.comments) ? fresh.comments : [];
     const updated = [...current, newComment];
     const { error } = await db
         .from('kd2_plan')
@@ -6996,6 +7057,19 @@ function wireEvents() {
         if (id) { _closeIssueModal(); openIssueModal(Number(id)); }
     });
     document.getElementById('btnIssueSave')?.addEventListener('click', saveIssue);
+    wireIssueForm();
+    ['btnIssueViewPrev', 'btnIssueViewNext'].forEach(btnId => {
+        document.getElementById(btnId)?.addEventListener('click', function () {
+            if (this.dataset.issueId) openIssueView(Number(this.dataset.issueId));
+        });
+    });
+    document.addEventListener('keydown', e => {
+        const overlay = document.getElementById('issueModalOverlay');
+        if (!overlay || overlay.style.display === 'none' || overlay.dataset.viewMode !== '1') return;
+        if (e.target.closest?.('input, textarea, select')) return;
+        if (e.key === 'ArrowLeft')  document.getElementById('btnIssueViewPrev')?.click();
+        if (e.key === 'ArrowRight') document.getElementById('btnIssueViewNext')?.click();
+    });
     document.getElementById('btnIssueCancel')?.addEventListener('click', () => _closeIssueModal());
     document.getElementById('issueModalClose')?.addEventListener('click', () => _closeIssueModal());
     document.getElementById('issueModalOverlay')?.addEventListener('click', function (e) {
@@ -7011,12 +7085,33 @@ function wireEvents() {
         el?.addEventListener('change', _autoSaveIssueDraft);
     });
     window.addEventListener('beforeunload', _flushIssueDraft);
-    document.addEventListener('visibilitychange', () => { if (document.hidden) _flushIssueDraft(); });
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) return;
+        _flushIssueDraft();
+        clearTimeout(_issueDraftPushTimer);
+        _pushIssueDrafts(_loadIssueDrafts().filter(d => !d._synced)).catch(() => {});
+    });
     wireIssueDraftsModal();
     _updateIssueDraftsBadge();
     document.getElementById('issueSearch')?.addEventListener('input', () => loadIssuesDebounced());
     document.getElementById('issueFilterFrom')?.addEventListener('change', () => loadIssues(true));
     document.getElementById('issueFilterTo')?.addEventListener('change', () => loadIssues(true));
+    // Column-header filter menus are viewport-pinned — close them when their anchor scrolls away
+    const _hideIssueHeaderMenus = () => ISSUE_FILTER_KEYS.forEach(k => {
+        const m = document.getElementById(filterConfig[k].menu);
+        if (m) m.hidden = true;
+    });
+    document.querySelector('#issuesSection .issues-table-wrap')?.addEventListener('scroll', _hideIssueHeaderMenus, { passive: true });
+    window.addEventListener('scroll', _hideIssueHeaderMenus, { passive: true });
+    window.addEventListener('resize', _hideIssueHeaderMenus);
+    document.getElementById('issueActiveFilters')?.addEventListener('click', e => {
+        const chip = e.target.closest('[data-clear-issue-filter]');
+        if (!chip) return;
+        const key = chip.dataset.clearIssueFilter;
+        filterState[key] = new Set(['all']);
+        renderMultiSelectMenu(key);
+        loadIssues(true);
+    });
     // ── More menu toggle ──────────────────────────────────────────────
     const btnNavMore  = document.getElementById('btnNavMore');
     const moreDropdown = document.getElementById('navMoreDropdown');
@@ -13970,7 +14065,7 @@ const AL_TABLE_LABELS = {
     kd2_plan: 'KD2 Plan', kd2_progress: 'KD2 Progress', kd2_battalions: 'KD2 Battalions',
     assembly_plan: 'F100 Plan', assembly_progress: 'F100 Progress', f100_plans: 'F100 Plans',
     planning_app_users: 'Users',
-    production_issues: 'Production Issue', f100_parts: 'F100 Part', f100_processes: 'F100 Process',
+    production_issues: 'Production Issue', production_issue_categories: 'Issue Category', f100_parts: 'F100 Part', f100_processes: 'F100 Process',
     ppms_export_permissions: 'Export Permissions',
 };
 
@@ -14249,6 +14344,9 @@ let _issuesOffset = 0;
 const ISSUES_PAGE_SIZE = 50;
 let _issuesTotalCount = 0;
 
+/** code → label. Starts as the built-in list; replaced by the
+ *  production_issue_categories table (migration 57) once loaded, so users can
+ *  add their own. Key order = display order. */
 const ISSUE_CATEGORY_LABELS = {
     cutting: 'Cutting',
     part_machining: 'Part Machining',
@@ -14261,6 +14359,173 @@ const ISSUE_CATEGORY_LABELS = {
     quality: 'Quality',
     other: 'Other',
 };
+
+/** Statuses that mean the problem is dealt with — both carry a resolved date. */
+const ISSUE_DONE_STATUSES = ['resolved', 'closed'];
+
+let _issueCategoriesFromDb = false; // false until migration 57's table answers
+
+async function loadIssueCategories() {
+    try {
+        const { data, error } = await db
+            .from('production_issue_categories')
+            .select('code, label, sort_order')
+            .order('sort_order')
+            .order('label');
+        if (error) throw error;
+        if (data?.length) {
+            Object.keys(ISSUE_CATEGORY_LABELS).forEach(k => { delete ISSUE_CATEGORY_LABELS[k]; });
+            data.forEach(c => { ISSUE_CATEGORY_LABELS[c.code] = c.label; });
+            _issueCategoriesFromDb = true;
+        }
+    } catch (_) {
+        // Table not created yet (migration 57) — keep the built-in list
+        _issueCategoriesFromDb = false;
+    }
+    _renderIssueCategoryControls();
+}
+
+/** Rebuilds every category picker (form select, table header filter, report
+ *  tick-boxes) from ISSUE_CATEGORY_LABELS, keeping current selections. */
+function _renderIssueCategoryControls() {
+    const entries = Object.entries(ISSUE_CATEGORY_LABELS);
+
+    const sel = document.getElementById('issueCategory');
+    if (sel) {
+        const current = sel.value;
+        sel.innerHTML = '<option value="">— Select —</option>'
+            + entries.map(([code, label]) => `<option value="${esc(code)}">${esc(label)}</option>`).join('');
+        if (current) _setIssueField('issueCategory', current);
+    }
+
+    filterOptions.issueCategory = entries.map(([value, label]) => ({ value, label }));
+    renderMultiSelectMenu('issueCategory');
+
+    const list = document.getElementById('issueReportCategoryChecklist');
+    if (list) {
+        const unchecked = new Set([...list.querySelectorAll('input:not(:checked)')].map(el => el.value));
+        list.innerHTML = entries.map(([code, label]) => `
+            <label class="issue-report-check-pill"><input type="checkbox" value="${esc(code)}" ${unchecked.has(code) ? '' : 'checked'} /> ${esc(label)}</label>`).join('');
+        list.dispatchEvent(new Event('sync'));
+    }
+}
+
+function _issueCategoryCode(label) {
+    return label.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+}
+
+function _toggleIssueCategoryNewRow(show) {
+    const row = document.getElementById('issueCategoryNewRow');
+    if (!row) return;
+    row.hidden = !show;
+    const msg = document.getElementById('issueCategoryNewMsg');
+    if (msg) msg.textContent = '';
+    const input = document.getElementById('issueCategoryNewName');
+    if (show && input) { input.value = ''; input.focus(); }
+}
+
+async function addIssueCategory() {
+    const input = document.getElementById('issueCategoryNewName');
+    const msg = document.getElementById('issueCategoryNewMsg');
+    const saveBtn = document.getElementById('btnIssueCategoryNewSave');
+    const label = (input?.value || '').trim().replace(/\s+/g, ' ');
+    const say = t => { if (msg) msg.textContent = t; };
+    if (!label) { say('Type a category name.'); input?.focus(); return; }
+
+    const pick = code => {
+        _setIssueField('issueCategory', code);
+        document.getElementById('issueCategory')?.classList.remove('is-invalid');
+        _toggleIssueCategoryNewRow(false);
+        _autoSaveIssueDraft();
+    };
+    const existing = Object.entries(ISSUE_CATEGORY_LABELS).find(([, l]) => l.toLowerCase() === label.toLowerCase());
+    if (existing) { pick(existing[0]); showToast(`"${existing[1]}" already exists — selected it.`, 'info'); return; }
+    if (!_issueCategoriesFromDb) { say('Adding categories needs database update 57 — ask the administrator to run it.'); return; }
+
+    let code = _issueCategoryCode(label) || 'category';
+    if (ISSUE_CATEGORY_LABELS[code]) code = `${code}_${Date.now().toString(36).slice(-4)}`;
+    const u = getCurrentUser();
+    const row = {
+        code, label, sort_order: 500,
+        created_by_name: u?.name || u?.full_name || null,
+        created_by_email: u?.email || null,
+    };
+
+    if (saveBtn) saveBtn.disabled = true;
+    try {
+        const { error } = await db.from('production_issue_categories').insert(row);
+        if (error) {
+            // Someone else just added the same name — use theirs
+            if (error.code === '23505') {
+                await loadIssueCategories();
+                const match = Object.entries(ISSUE_CATEGORY_LABELS).find(([, l]) => l.toLowerCase() === label.toLowerCase());
+                if (match) { pick(match[0]); return; }
+            }
+            throw error;
+        }
+        auditLog('INSERT', 'production_issue_categories', code, null, row);
+        await loadIssueCategories();
+        pick(code);
+        showToast(`Category "${label}" added.`, 'success');
+    } catch (err) {
+        say('Could not add: ' + (err?.message || err));
+    } finally {
+        if (saveBtn) saveBtn.disabled = false;
+    }
+}
+
+/** Grow a textarea with its content (up to a cap) so long text stays readable. */
+function _autoGrowTextarea(el) {
+    if (!el || !el.offsetParent) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight + 2, 320) + 'px';
+}
+
+/** Small visual state of the Report/Edit Issue form, refreshed each time it opens. */
+function _syncIssueFormDecor() {
+    const name = (document.getElementById('issueReporterName')?.textContent || '').trim();
+    const avatar = document.getElementById('issueReporterAvatar');
+    if (avatar) avatar.textContent = (name && name !== '—' ? name : '?').charAt(0).toUpperCase();
+    ['issuePriority', 'issueStatus'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.dataset.tone = el.value;
+    });
+    document.querySelectorAll('#issueModalOverlay .is-invalid').forEach(el => el.classList.remove('is-invalid'));
+    document.querySelectorAll('#issueModalOverlay .issue-form-textarea').forEach(el => { el.style.height = ''; _autoGrowTextarea(el); });
+    _toggleIssueCategoryNewRow(false);
+}
+
+function wireIssueForm() {
+    document.getElementById('btnIssueCategoryAdd')?.addEventListener('click', () => {
+        const row = document.getElementById('issueCategoryNewRow');
+        _toggleIssueCategoryNewRow(!!row?.hidden);
+    });
+    document.getElementById('btnIssueCategoryNewCancel')?.addEventListener('click', () => _toggleIssueCategoryNewRow(false));
+    document.getElementById('btnIssueCategoryNewSave')?.addEventListener('click', addIssueCategory);
+    document.getElementById('issueCategoryNewName')?.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); addIssueCategory(); }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); _toggleIssueCategoryNewRow(false); }
+    });
+    ['issuePriority', 'issueStatus'].forEach(id => {
+        document.getElementById(id)?.addEventListener('change', e => { e.target.dataset.tone = e.target.value; });
+    });
+    ['issueTitle', 'issueCategory'].forEach(id => {
+        const el = document.getElementById(id);
+        ['input', 'change'].forEach(ev => el?.addEventListener(ev, () => el.classList.remove('is-invalid')));
+    });
+    document.querySelectorAll('#issueModalOverlay .issue-form-textarea').forEach(el => {
+        el.addEventListener('input', () => _autoGrowTextarea(el));
+    });
+    // Ctrl/Cmd + Enter saves (form mode only)
+    document.getElementById('issueModalOverlay')?.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' || !(e.ctrlKey || e.metaKey)) return;
+        const overlay = e.currentTarget;
+        if (overlay.dataset.viewMode === '1') return;
+        e.preventDefault();
+        const saveBtn = document.getElementById('btnIssueSave');
+        if (saveBtn && !saveBtn.disabled) saveIssue();
+    });
+}
 
 function formatIssueDate(ts) {
     if (!ts) return '—';
@@ -14334,6 +14599,8 @@ async function initIssuesSection() {
     await Promise.all([
         _issueNotifUpdateBadge(),
         _populateIssueReporterFilter(),
+        loadIssueCategories(),
+        _syncIssueDraftsWithServer().catch(() => {}),
         loadIssues(true),
     ]);
     _issueNotifClearBadge();
@@ -14342,10 +14609,11 @@ async function initIssuesSection() {
 async function loadIssuesOverview() {
     const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
     try {
-        const { data, error } = await db
+        const { data, error } = await _selectAllPages(db
             .from('production_issues')
             .select('status, priority')
-            .eq('module', getActiveModuleId());
+            .eq('module', getActiveModuleId())
+            .order('id'));
         if (error) throw error;
 
         let open = 0, inProgress = 0, resolved = 0, critical = 0;
@@ -14374,7 +14642,9 @@ function loadIssuesDebounced(delay = 350) {
 
 async function _populateReporterSelect(selectId) {
     const sel = document.getElementById(selectId);
-    if (!sel || sel.options.length > 1) return;
+    if (!sel) return;
+    // Rebuilt on every open so it follows module switches and new reporters
+    while (sel.options.length > 1) sel.remove(1);
     try {
         const { data } = await db
             .from('production_issues')
@@ -14446,11 +14716,12 @@ async function loadIssues(reset = false, opts = {}) {
         .from('production_issues')
         .select('id, title, category, priority, status, reporter_name, reporter_email, created_at, updated_at', { count: 'estimated' })
         .eq('module', getActiveModuleId())
-        .order('created_at', { ascending: true })
+        .order('created_at', { ascending: false }) // newest first — recent issues must not hide behind "Load more"
+        .order('id', { ascending: false })
         .range(_issuesOffset, _issuesOffset + ISSUES_PAGE_SIZE - 1);
 
     if (search) {
-        query = query.or(`title.ilike.%${search}%,description.ilike.%${search}%`);
+        query = query.or(`title.ilike.${_orIlikeValue(search)},description.ilike.${_orIlikeValue(search)}`);
     }
     query = applyInFilter(query, 'category', filterState.issueCategory);
     query = applyInFilter(query, 'status', filterState.issueStatus);
@@ -14473,6 +14744,7 @@ async function loadIssues(reset = false, opts = {}) {
 
     const countEl = document.getElementById('issueCount');
     if (countEl) countEl.textContent = `${_issuesTotalCount.toLocaleString()} issue${_issuesTotalCount !== 1 ? 's' : ''}`;
+    _renderIssueActiveFilters();
 
     const startIdx = _issuesOffset;
     const rows = (data || []).map((issue, i) => renderIssueRow(issue, startIdx + i));
@@ -14497,6 +14769,27 @@ async function loadIssues(reset = false, opts = {}) {
     if (silent && wrap) wrap.scrollTop = savedScrollTop;
 }
 
+/** Removable chips summarising the active column-header filters, e.g. "Status: Open ×". */
+function _renderIssueActiveFilters() {
+    const el = document.getElementById('issueActiveFilters');
+    if (!el) return;
+    const active = [...ISSUE_FILTER_KEYS].filter(k => {
+        const sel = filterState[k];
+        return sel && sel.size && !sel.has('all');
+    });
+    el.hidden = !active.length;
+    el.innerHTML = active.map(k => {
+        const names = [...filterState[k]].map(v => {
+            const opt = filterOptions[k].find(o => o.value === v);
+            // Reporter labels are "Name (email)" — the name alone is enough for a chip
+            return (opt?.label || v).replace(/\s*\(.*\)$/, '');
+        });
+        const text = names.length > 2 ? `${names.length} selected` : names.join(', ');
+        return `<button type="button" class="issues-filter-chip" data-clear-issue-filter="${k}" title="Clear ${esc(filterAllLabels[k])} filter">
+            <span class="issues-filter-chip-key">${esc(filterAllLabels[k])}:</span> ${esc(text)} <span aria-hidden="true">&times;</span></button>`;
+    }).join('');
+}
+
 function resetIssueFilters() {
     clearTimeout(_issuesLoadDebounceTimer); // drop any pending debounced call from a just-changed filter
     ['issueSearch', 'issueFilterFrom', 'issueFilterTo'].forEach(id => {
@@ -14510,15 +14803,21 @@ function resetIssueFilters() {
 function _setIssueField(id, val) {
     const el = document.getElementById(id);
     if (!el) return;
+    if (el.tagName === 'SELECT' && val && ![...el.options].some(o => o.value === val)) {
+        el.add(new Option(ISSUE_CATEGORY_LABELS[val] || val, val));
+    }
     if ('value' in el) el.value = val ?? '';
     else el.textContent = val ?? '—';
 }
 
-/* ── Issue drafts — local-only autosave so a new issue survives an
-   accidental tab close before it's reported. Multiple drafts supported,
-   per user + module, stored in localStorage (same convention as
-   _issueNotifSeenKey/_issueNotifSnapKey). Drafts never touch the server —
-   they only become visible to other users once actually reported. ── */
+/* ── Issue drafts — autosave so a new issue survives an accidental tab
+   close before it's reported. Multiple drafts per user + module.
+   Stored with the user's account (production_issue_drafts, migration 58)
+   so they follow the user to any device; localStorage keeps a copy for
+   instant autosave and tab-close safety, and is the only store if the
+   table is missing. Drafts are private — only reported issues are shared.
+   Local drafts carry `_synced: true` once the server has them, so a draft
+   deleted on another device is dropped here instead of re-uploaded. ── */
 const ISSUE_DRAFT_FIELD_IDS = ['issueTitle', 'issueCategory', 'issuePriority', 'issueStatus',
     'issuePIC', 'issueDescription', 'issueProposedSolution', 'issueNotes'];
 let _currentIssueDraftId = null;
@@ -14552,6 +14851,89 @@ function _deleteIssueDraft(draftId) {
     if (!draftId) return;
     _saveIssueDraftsList(_loadIssueDrafts().filter(d => d.id !== draftId));
     _updateIssueDraftsBadge();
+    const u = getCurrentUser();
+    if (_issueDraftsServer !== false && u?.email && db) {
+        db.from('production_issue_drafts').delete().eq('id', draftId).eq('user_email', u.email)
+            .then(({ error }) => { if (error) console.warn('Draft delete (server):', error.message); });
+    }
+}
+
+let _issueDraftsServer = null;      // null = not checked yet, false = table missing (local only)
+let _issueDraftPushTimer = null;
+
+function _issueDraftServerRow(draft) {
+    const { _synced, ...data } = draft;
+    return {
+        id: draft.id,
+        user_email: getCurrentUser()?.email,
+        module: getActiveModuleId(),
+        data,
+        updated_at: draft.updated_at || new Date().toISOString(),
+    };
+}
+
+/** Upload local drafts the server doesn't have yet (or has older copies of). */
+async function _pushIssueDrafts(drafts) {
+    const u = getCurrentUser();
+    if (_issueDraftsServer === false || !u?.email || !db || !drafts.length) return;
+    const { error } = await db.from('production_issue_drafts').upsert(drafts.map(_issueDraftServerRow));
+    if (error) { console.warn('Draft sync (server):', error.message); return; }
+    // Mark as synced — unless the draft was edited again while uploading
+    const sent = new Map(drafts.map(d => [d.id, d.updated_at]));
+    const list = _loadIssueDrafts();
+    list.forEach(d => { if (sent.get(d.id) === d.updated_at) d._synced = true; });
+    _saveIssueDraftsList(list);
+}
+
+function _scheduleIssueDraftPush() {
+    clearTimeout(_issueDraftPushTimer);
+    _issueDraftPushTimer = setTimeout(() => {
+        _pushIssueDrafts(_loadIssueDrafts().filter(d => !d._synced)).catch(() => {});
+    }, 1500);
+}
+
+/** Two-way merge of this user's drafts (current module) between the
+ *  browser and their account. Newest copy of each draft wins. */
+async function _syncIssueDraftsWithServer() {
+    const u = getCurrentUser();
+    if (!u?.email || !db) return;
+    let remote;
+    try {
+        const { data, error } = await db.from('production_issue_drafts')
+            .select('id, data, updated_at')
+            .eq('user_email', u.email)
+            .eq('module', getActiveModuleId());
+        if (error) throw error;
+        remote = data || [];
+        _issueDraftsServer = true;
+    } catch (_) {
+        _issueDraftsServer = false; // migration 58 not run — browser-only drafts
+        _updateIssueDraftsBadge();
+        return;
+    }
+
+    const local = _loadIssueDrafts();
+    const localById = new Map(local.map(d => [d.id, d]));
+    const remoteIds = new Set(remote.map(r => r.id));
+    const merged = [];
+    const toPush = [];
+    remote.forEach(r => {
+        const l = localById.get(r.id);
+        const remoteDraft = { ...(r.data || {}), id: r.id, updated_at: r.updated_at, _synced: true };
+        if (l && new Date(l.updated_at || 0) > new Date(r.updated_at || 0)) {
+            merged.push(l); toPush.push(l);         // edited here since last upload
+        } else {
+            merged.push(remoteDraft);
+        }
+    });
+    local.forEach(l => {
+        if (remoteIds.has(l.id)) return;
+        if (l._synced) return;                      // deleted on another device
+        merged.push(l); toPush.push(l);             // never uploaded yet
+    });
+    _saveIssueDraftsList(merged);
+    _updateIssueDraftsBadge();
+    if (toPush.length) await _pushIssueDrafts(toPush);
 }
 
 /** Immediate (non-debounced) save of the currently-open new-issue form
@@ -14567,12 +14949,13 @@ function _flushIssueDraft() {
     const idx = list.findIndex(d => d.id === _currentIssueDraftId);
 
     if (_isIssueDraftEmpty(draft)) {
-        if (idx !== -1) { list.splice(idx, 1); _saveIssueDraftsList(list); _updateIssueDraftsBadge(); }
+        if (idx !== -1) _deleteIssueDraft(_currentIssueDraftId);
         return;
     }
     if (idx !== -1) list[idx] = draft; else list.push(draft);
     _saveIssueDraftsList(list);
     _updateIssueDraftsBadge();
+    _scheduleIssueDraftPush();
 
     const statusEl = document.getElementById('issueDraftStatus');
     if (statusEl) {
@@ -14601,10 +14984,19 @@ function _newIssueDraftId() {
     return (crypto?.randomUUID ? crypto.randomUUID() : `draft_${Date.now()}_${Math.random().toString(36).slice(2)}`);
 }
 
-function openIssueDraftsList() {
+async function openIssueDraftsList() {
     const overlay = document.getElementById('issueDraftsModalOverlay');
     const listEl = document.getElementById('issueDraftsList');
     if (!overlay || !listEl) return;
+    listEl.innerHTML = `<div class="issue-drafts-empty"><span class="spinner"></span></div>`;
+    overlay.style.display = 'flex';
+    await _syncIssueDraftsWithServer();
+    const hint = document.getElementById('issueDraftsHint');
+    if (hint) {
+        hint.textContent = _issueDraftsServer
+            ? 'Your drafts are saved to your account as you type, so you can finish them on any device. Nobody else can see them until you report them.'
+            : 'Drafts are saved on this device as you type, even if you close the tab by mistake. Nobody else can see them until you report them.';
+    }
 
     const drafts = _loadIssueDrafts().sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
     listEl.innerHTML = drafts.length
@@ -14655,6 +15047,7 @@ function wireIssueDraftsModal() {
 async function openIssueModal(id = null, resumeDraft = null) {
     const overlay = document.getElementById('issueModalOverlay');
     if (!overlay) { console.warn('issueModalOverlay not found'); return; }
+    loadIssueCategories(); // pick up categories other users added (no need to wait)
 
     const titleEl  = document.getElementById('issueModalTitleText');
     const deleteBtn = document.getElementById('btnIssueDelete');
@@ -14711,6 +15104,8 @@ async function openIssueModal(id = null, resumeDraft = null) {
     }
 
     overlay.style.display = 'flex';
+    _syncIssueFormDecor();
+    if (id === null && !resumeDraft) document.getElementById('issueTitle')?.focus();
 }
 
 /** If `error` names a column present in `payload` via either (a) Postgres
@@ -14752,11 +15147,13 @@ async function saveIssue() {
     // Validation
     if (!title) {
         if (errEl) { errEl.textContent = 'Title is required.'; errEl.style.display = ''; }
+        document.getElementById('issueTitle')?.classList.add('is-invalid');
         document.getElementById('issueTitle')?.focus();
         return;
     }
     if (!category) {
         if (errEl) { errEl.textContent = 'Category is required.'; errEl.style.display = ''; }
+        document.getElementById('issueCategory')?.classList.add('is-invalid');
         document.getElementById('issueCategory')?.focus();
         return;
     }
@@ -14770,6 +15167,11 @@ async function saveIssue() {
         if (editId) {
             // Fetch before state for audit log
             const { data: beforeData } = await db.from('production_issues').select('*').eq('id', editId).single();
+            // Keep the original resolved date when an already resolved/closed
+            // issue is edited; stamp it only when the issue first becomes
+            // resolved or closed; clear it if the issue is reopened.
+            const isDone = ISSUE_DONE_STATUSES.includes(status);
+            const keepResolved = isDone && ISSUE_DONE_STATUSES.includes(beforeData?.status) && beforeData?.resolved_at;
             const payload = {
                 title, category, priority, status,
                 description: description || null,
@@ -14778,7 +15180,7 @@ async function saveIssue() {
                 person_in_charge: person_in_charge || null,
                 updated_by_name:  u?.name  || u?.full_name || null,
                 updated_by_email: u?.email || null,
-                resolved_at: status === 'resolved' ? new Date().toISOString() : null,
+                resolved_at: keepResolved ? beforeData.resolved_at : (isDone ? new Date().toISOString() : null),
             };
             let { error } = await db.from('production_issues').update(payload).eq('id', editId);
             if (error) {
@@ -14801,7 +15203,7 @@ async function saveIssue() {
                 reporter_email: u?.email || 'unknown',
                 updated_by_name:  null,
                 updated_by_email: null,
-                resolved_at: status === 'resolved' ? new Date().toISOString() : null,
+                resolved_at: ISSUE_DONE_STATUSES.includes(status) ? new Date().toISOString() : null,
             };
 
             // Try with module + PIC columns; drop whichever column the DB
@@ -14872,67 +15274,147 @@ async function openIssueView(id) {
     document.getElementById('btnIssueSave')?.style && (document.getElementById('btnIssueSave').style.display = 'none');
     const cancelBtn = document.getElementById('btnIssueCancel');
     if (cancelBtn) cancelBtn.textContent = 'Close';
+    const u = getCurrentUser();
+    // Same rule as the table's Edit button: original reporter, or master_admin
+    const canEdit = isMasterAdmin() || !!(data.reporter_email && u?.email && data.reporter_email === u.email);
     const editBtn = document.getElementById('btnIssueEdit');
     if (editBtn) {
-        const u = getCurrentUser();
-        const canEdit = !!(data.reporter_email && u?.email && data.reporter_email === u.email);
         editBtn.style.display = canEdit ? '' : 'none';
         editBtn.dataset.issueId = id;
     }
 
     // Show view panel, hide form
+    overlay.querySelector('.issue-modal')?.classList.add('issue-modal--view');
     document.getElementById('issueViewBody').style.display = '';
     document.querySelector('#issueModalOverlay .issue-modal-grid').style.display = 'none';
     document.getElementById('issueFormError').style.display = 'none';
 
-    // Build view HTML
-    const STATUS_LABELS   = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Closed' };
-    const PRIORITY_LABELS = { low: 'Low', medium: 'Medium', high: 'High', critical: 'Critical' };
-    const statusLabel   = STATUS_LABELS[data.status]   || data.status   || '';
-    const priorityLabel = PRIORITY_LABELS[data.priority] || data.priority || '';
-    const categoryLabel = ISSUE_CATEGORY_LABELS[data.category] || data.category || '';
-    const statusCls   = (data.status || 'open').replace('_', '-');
-    const priorityCls = data.priority || 'medium';
+    // Prev / Next through the rows currently listed in the table
+    const listedIds = [...document.querySelectorAll('#issuesTableBody tr[data-issue-id]')].map(tr => tr.dataset.issueId);
+    const pos = listedIds.indexOf(String(id));
+    const nav = document.getElementById('issueViewNav');
+    if (nav) {
+        nav.style.display = pos !== -1 && listedIds.length > 1 ? '' : 'none';
+        const prevBtn = document.getElementById('btnIssueViewPrev');
+        const nextBtn = document.getElementById('btnIssueViewNext');
+        if (prevBtn) { prevBtn.disabled = pos <= 0; prevBtn.dataset.issueId = listedIds[pos - 1] || ''; }
+        if (nextBtn) { nextBtn.disabled = pos === -1 || pos >= listedIds.length - 1; nextBtn.dataset.issueId = listedIds[pos + 1] || ''; }
+        const posEl = document.getElementById('issueViewNavPos');
+        if (posEl) posEl.textContent = pos !== -1 ? `${pos + 1} of ${listedIds.length}` : '';
+    }
+    document.querySelectorAll('#issuesTableBody tr.is-viewing').forEach(tr => tr.classList.remove('is-viewing'));
+    document.querySelector(`#issuesTableBody tr[data-issue-id="${id}"]`)?.classList.add('is-viewing');
 
-    const infoItems = [
-        { label: 'Reported by',  value: esc(data.reporter_name  || '—'), sub: esc(data.reporter_email || '') },
-        { label: 'Reported on',  value: esc(formatIssueDate(data.created_at)) },
-        { label: 'Last updated', value: esc(formatIssueDate(data.updated_at)),
-          sub: data.updated_by_name ? `by ${esc(data.updated_by_name)}` : '' },
-    ];
-    if (data.resolved_at) infoItems.push({ label: 'Resolved on', value: esc(formatIssueDate(data.resolved_at)) });
-    if (data.person_in_charge) infoItems.push({ label: 'Person in Charge', value: esc(data.person_in_charge) });
-
-    const sections = [];
-    if (data.description)        sections.push({ label: 'Description',       text: esc(data.description),        cls: '' });
-    if (data.proposed_solution)  sections.push({ label: 'Proposed Solution', text: esc(data.proposed_solution),  cls: '' });
-    if (data.notes)              sections.push({ label: 'Action Taken',       text: esc(data.notes),              cls: ' issue-view-section-text--notes' });
-
-    document.getElementById('issueViewBody').innerHTML = `
-        <div class="issue-view-meta-row">
-            <span class="issue-status-badge issue-status--${statusCls}">${statusLabel}</span>
-            <span class="issue-priority-badge issue-priority--${priorityCls}">${priorityLabel}</span>
-            ${categoryLabel ? `<span class="issue-category-badge">${categoryLabel}</span>` : ''}
-        </div>
-        <p class="issue-view-title">${esc(data.title || '—')}</p>
-        <div class="issue-view-info-row">
-            ${infoItems.map(it => `
-                <div class="issue-view-info-item">
-                    <span class="issue-view-info-label">${it.label}</span>
-                    <span class="issue-view-info-value">${it.value}</span>
-                    ${it.sub ? `<span class="issue-view-info-sub">${it.sub}</span>` : ''}
-                </div>`).join('')}
-        </div>
-        ${sections.length
-            ? sections.map(s => `
-                <div class="issue-view-section">
-                    <div class="issue-view-section-label">${s.label}</div>
-                    <div class="issue-view-section-text${s.cls}">${s.text}</div>
-                </div>`).join('')
-            : `<p class="issue-view-empty">No additional details provided.</p>`}
-    `;
+    document.getElementById('issueViewBody').innerHTML = renderIssueViewHtml(data);
+    overlay.querySelector('.issue-modal-body')?.scrollTo?.(0, 0);
 
     overlay.style.display = 'flex';
+}
+
+const ISSUE_STATUS_FLOW = [
+    { value: 'open',        label: 'Reported' },
+    { value: 'in_progress', label: 'In Progress' },
+    { value: 'resolved',    label: 'Resolved' },
+    { value: 'closed',      label: 'Closed' },
+];
+
+/** "3 days", "5 hours", "12 minutes" — coarse, human-readable duration. */
+function _issueDurationText(ms) {
+    if (!(ms > 0)) return '';
+    const mins = Math.floor(ms / 60000);
+    if (mins < 60) return `${mins || 1} minute${mins === 1 ? '' : 's'}`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'}`;
+    const days = Math.floor(hours / 24);
+    return `${days} day${days === 1 ? '' : 's'}`;
+}
+
+/** Read-only detail layout for one production issue (Issue Details dialog). */
+function renderIssueViewHtml(data) {
+    const status   = data.status || 'open';
+    const priority = data.priority || 'medium';
+    const stepIdx  = Math.max(0, ISSUE_STATUS_FLOW.findIndex(s => s.value === status));
+    const isActive = status === 'open' || status === 'in_progress';
+
+    let ageText = '';
+    if (isActive && data.created_at) {
+        ageText = `Open for ${_issueDurationText(Date.now() - new Date(data.created_at))}`;
+    } else if (data.resolved_at && data.created_at) {
+        const d = _issueDurationText(new Date(data.resolved_at) - new Date(data.created_at));
+        if (d) ageText = `Resolved in ${d}`;
+    }
+
+    const stepDate = v => {
+        if (v === 'open') return formatIssueDate(data.created_at);
+        if (v === 'resolved' && data.resolved_at) return formatIssueDate(data.resolved_at);
+        return '';
+    };
+    const track = ISSUE_STATUS_FLOW.map((s, i) => {
+        const state = i < stepIdx ? 'done' : (i === stepIdx ? 'current' : 'todo');
+        const date = i <= stepIdx ? stepDate(s.value) : '';
+        return `<li class="iv-step iv-step--${state}">
+            <span class="iv-step-dot">${state === 'done' ? '&#10003;' : i + 1}</span>
+            <span class="iv-step-label">${s.label}</span>
+            ${date ? `<span class="iv-step-date">${esc(date)}</span>` : ''}
+        </li>`;
+    }).join('');
+
+    const icons = {
+        issue:    '<path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>',
+        solution: '<path d="M9 18h6M10 21h4M12 3a6 6 0 00-3.5 10.9c.6.4 1 1.1 1 1.8V16h5v-.3c0-.7.4-1.4 1-1.8A6 6 0 0012 3z"/>',
+        action:   '<path d="M20 6L9 17l-5-5"/>',
+    };
+    const block = (kind, label, text, emptyText) => `
+        <section class="iv-block iv-block--${kind}">
+            <h5 class="iv-block-label">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${icons[kind]}</svg>
+                ${label}
+            </h5>
+            ${text ? `<div class="iv-block-text">${esc(text)}</div>` : `<div class="iv-block-empty">${emptyText}</div>`}
+        </section>`;
+
+    const fact = (label, value, sub = '') => `
+        <div class="iv-fact">
+            <dt>${label}</dt>
+            <dd>${value}${sub ? `<span class="iv-fact-sub">${sub}</span>` : ''}</dd>
+        </div>`;
+
+    return `
+        <div class="iv iv--${esc(priority)}">
+            <header class="iv-head">
+                <div class="iv-head-top">
+                    <span class="iv-id">Issue #${esc(String(data.id))}</span>
+                    ${renderIssueCategoryBadge(data.category)}
+                    ${ageText ? `<span class="iv-age${isActive ? ' iv-age--active' : ''}">${esc(ageText)}</span>` : ''}
+                </div>
+                <h3 class="iv-title">${esc(data.title || '—')}</h3>
+                <div class="iv-head-badges">
+                    ${renderIssueStatusBadge(status)}
+                    ${renderIssuePriorityBadge(priority)}
+                    <span class="iv-priority-hint">priority</span>
+                </div>
+            </header>
+
+            <ol class="iv-track" aria-label="Issue progress">${track}</ol>
+
+            <div class="iv-grid">
+                <div class="iv-main">
+                    ${block('issue', 'Issue / Problem', data.description, 'No description was given.')}
+                    ${block('solution', 'Proposed Solution', data.proposed_solution, 'No solution proposed yet.')}
+                    ${block('action', 'Action Taken', data.notes, isActive ? 'No action recorded yet.' : 'No action was recorded.')}
+                </div>
+                <aside class="iv-side">
+                    <dl class="iv-facts">
+                        ${fact('Person in Charge', data.person_in_charge ? esc(data.person_in_charge) : '<span class="iv-muted">Not assigned</span>')}
+                        ${fact('Reported by', esc(data.reporter_name || data.reporter_email || '—'), data.reporter_name ? esc(data.reporter_email || '') : '')}
+                        ${fact('Reported on', esc(formatIssueDate(data.created_at)))}
+                        ${fact('Last updated', esc(formatIssueDate(data.updated_at)), data.updated_by_name ? `by ${esc(data.updated_by_name)}` : '')}
+                        ${data.resolved_at ? fact('Resolved on', esc(formatIssueDate(data.resolved_at))) : ''}
+                        ${data.module ? fact('Module', esc(ISSUE_REPORT_MODULE_LABELS[data.module] || data.module)) : ''}
+                    </dl>
+                </aside>
+            </div>
+        </div>`;
 }
 
 function _closeIssueModal() {
@@ -14953,6 +15435,10 @@ function _closeIssueModal() {
         if (editBtn)   editBtn.style.display = 'none';
         if (cancelBtn) cancelBtn.textContent = 'Cancel';
     }
+    overlay.querySelector('.issue-modal')?.classList.remove('issue-modal--view');
+    const nav = document.getElementById('issueViewNav');
+    if (nav) nav.style.display = 'none';
+    document.querySelectorAll('#issuesTableBody tr.is-viewing').forEach(tr => tr.classList.remove('is-viewing'));
     clearTimeout(_issueDraftAutosaveTimer);
     _flushIssueDraft(); // capture any edit made since the last debounced save
     _currentIssueDraftId = null;
@@ -15013,15 +15499,22 @@ function exportHtmlAsWord(filename, titleText, bodyHtml, preview) {
    ================================================================ */
 
 const ISSUE_REPORT_TYPE_LABELS = {
-    all: 'All Issues', open: 'Open Issues', in_progress: 'In-Progress Issues',
+    list: 'Issues Report', all: 'All Issues', open: 'Open Issues', in_progress: 'In-Progress Issues',
     resolved: 'Resolved Issues', closed: 'Closed Issues',
-    by_category: 'Issues by Category', status_report: 'Status Report',
+    by_category: 'Issues by Category', status_report: 'Issues Status Report',
 };
 const ISSUE_REPORT_MODULE_LABELS = { kd1: 'KD1', kd2: 'F200-KD2', f100kd2: 'F100-KD2' };
 const ISSUE_REPORT_PERIOD_LABELS = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', all_time: 'All Time' };
 
-function _issueReportPeriodWindow(period) {
+function _issueReportPeriodWindow(period, periodFrom = '', periodTo = '') {
     const now = new Date();
+    if (period === 'custom') {
+        // Either end may be left blank = open-ended on that side
+        return {
+            from: periodFrom ? new Date(periodFrom + 'T00:00:00') : new Date(0),
+            to:   periodTo   ? new Date(periodTo + 'T23:59:59.999') : new Date(8640000000000000),
+        };
+    }
     if (period === 'all_time') {
         return { from: new Date(0), to: new Date(8640000000000000) };
     }
@@ -15043,7 +15536,6 @@ function _issueReportCategorySort(a, b) {
 }
 
 const ISSUE_REPORT_ALL_STATUSES = ['open', 'in_progress', 'resolved', 'closed'];
-const ISSUE_REPORT_ALL_CATEGORIES = Object.keys(ISSUE_CATEGORY_LABELS);
 
 /** Fetch + filter issues for the report popup. Shared by preview + every export format. */
 const ISSUE_REPORT_PAGE_SIZE = 1000;
@@ -15066,12 +15558,12 @@ async function _fetchAllReportRows(buildQuery) {
 
 async function buildIssueReportRows(type, opts = {}) {
     const { from = '', to = '', category = '', priority = '', reporter = '', search = '',
-        moduleScope = 'current', period = 'daily', statuses = null, categories = null } = opts;
+        moduleScope = 'current', period = 'daily', periodFrom = '', periodTo = '', statuses = null, categories = null } = opts;
 
     const buildBase = () => {
         let q = db.from('production_issues').select('*');
         return (moduleScope === 'all')
-            ? q.in('module', ['kd2', 'f100kd2'])
+            ? q.in('module', _issueReportAllModules())
             : q.eq('module', getActiveModuleId());
     };
 
@@ -15080,20 +15572,20 @@ async function buildIssueReportRows(type, opts = {}) {
         const categorySet = (categories && categories.length) ? categories : null;
         const { data, error } = await _fetchAllReportRows(() => {
             let q = buildBase().in('status', statusSet);
-            if (categorySet && categorySet.length < ISSUE_REPORT_ALL_CATEGORIES.length) {
+            if (categorySet && categorySet.length < Object.keys(ISSUE_CATEGORY_LABELS).length) {
                 q = q.in('category', categorySet);
             }
             return q.order('created_at', { ascending: true });
         });
         if (error) { showToast('Report failed: ' + error.message, 'error'); return []; }
-        const win = _issueReportPeriodWindow(period);
+        const win = _issueReportPeriodWindow(period, periodFrom, periodTo);
         const rows = (data || []).filter(r => {
-            // Daily/Weekly/Monthly = activity within the window: reported in
-            // the window, or resolved in the window. All Time is unfiltered.
+            // Daily/Weekly/Monthly/Custom = activity within the window: reported
+            // in the window, or resolved in the window. All Time is unfiltered.
             if (period === 'all_time') return true;
             const created = new Date(r.created_at);
             if (created >= win.from && created <= win.to) return true;
-            if (r.status === 'resolved' && r.resolved_at) {
+            if (ISSUE_DONE_STATUSES.includes(r.status) && r.resolved_at) {
                 const resolved = new Date(r.resolved_at);
                 if (resolved >= win.from && resolved <= win.to) return true;
             }
@@ -15107,8 +15599,15 @@ async function buildIssueReportRows(type, opts = {}) {
         if (category) q = q.eq('category', category);
         if (priority) q = q.eq('priority', priority);
         if (reporter) q = q.eq('reporter_email', reporter);
-        if (search)   q = q.or(`title.ilike.%${search}%,description.ilike.%${search}%`);
-        if (type !== 'all' && type !== 'by_category') q = q.eq('status', type);
+        if (search)   q = q.or(`title.ilike.${_orIlikeValue(search)},description.ilike.${_orIlikeValue(search)}`);
+        if (statuses && statuses.length) {
+            if (statuses.length < ISSUE_REPORT_ALL_STATUSES.length) q = q.in('status', statuses);
+        } else if (!['all', 'list', 'by_category'].includes(type)) {
+            q = q.eq('status', type); // legacy single-status report types
+        }
+        if (categories && categories.length && categories.length < Object.keys(ISSUE_CATEGORY_LABELS).length) {
+            q = q.in('category', categories);
+        }
         if (from) q = q.gte('created_at', from + 'T00:00:00');
         if (to)   q = q.lte('created_at', to + 'T23:59:59');
         return q.order('created_at', { ascending: true });
@@ -15129,41 +15628,139 @@ function _categoryCounts(rows) {
 }
 
 function _getIssueReportOpts() {
-    const type       = document.querySelector('input[name="issueReportType"]:checked')?.value || 'all';
+    const type       = document.querySelector('input[name="issueReportType"]:checked')?.value || 'list';
     const period     = document.querySelector('#issueReportPeriodToggle .kd2-create-mode-btn.active')?.dataset.period || 'all_time';
     const layout     = document.querySelector('#issueReportLayoutToggle .kd2-create-mode-btn.active')?.dataset.layout || 'table';
     const moduleScope = document.querySelector('#issueReportModuleToggle .kd2-create-mode-btn.active')?.dataset.scope || 'current';
+    const periodFrom = period === 'custom' ? (document.getElementById('issueReportPeriodFrom')?.value || '') : '';
+    const periodTo   = period === 'custom' ? (document.getElementById('issueReportPeriodTo')?.value || '') : '';
     const from     = document.getElementById('issueReportDateFrom')?.value || '';
     const to       = document.getElementById('issueReportDateTo')?.value || '';
-    const category = document.getElementById('issueReportCategory')?.value || '';
     const priority = document.getElementById('issueReportPriority')?.value || '';
     const reporter = document.getElementById('issueReportReporter')?.value || '';
     const search   = document.getElementById('issueReportSearch')?.value?.trim() || '';
     const statuses   = Array.from(document.querySelectorAll('#issueReportStatusChecklist input:checked')).map(el => el.value);
     const categories = Array.from(document.querySelectorAll('#issueReportCategoryChecklist input:checked')).map(el => el.value);
     const preview  = !!document.getElementById('issueReportPreviewToggle')?.checked;
-    return { type, period, layout, moduleScope, from, to, category, priority, reporter, search, statuses, categories, preview };
+    const excludeIds = [..._issueReportExcluded];
+    return { type, period, periodFrom, periodTo, layout, moduleScope, from, to, priority, reporter, search, statuses, categories, preview, excludeIds };
 }
 
 function _issueReportTitle(opts) {
+    if (opts.type === 'status_report') {
+        return `${ISSUE_REPORT_TYPE_LABELS.status_report} — ${_issueReportPeriodLabel(opts)}`;
+    }
     const base = ISSUE_REPORT_TYPE_LABELS[opts.type] || 'Issues Report';
-    return opts.type === 'status_report'
-        ? `${base} — ${ISSUE_REPORT_PERIOD_LABELS[opts.period] || ''}`
-        : base;
+    // Name the statuses in the title when the report doesn't cover all of them
+    const st = opts.statuses || [];
+    if (st.length && st.length < ISSUE_REPORT_ALL_STATUSES.length) {
+        const labels = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Closed' };
+        return `${base} — ${st.map(s => labels[s] || s).join(', ')}`;
+    }
+    return base;
+}
+
+/** "Weekly", "All Time", or for Custom dates "01/09/2026 – 29/09/2026". */
+function _issueReportPeriodLabel(opts) {
+    if (opts.period !== 'custom') return ISSUE_REPORT_PERIOD_LABELS[opts.period] || '';
+    const fmt = d => new Date(d + 'T00:00:00').toLocaleDateString('en-GB');
+    if (opts.periodFrom && opts.periodTo) return `${fmt(opts.periodFrom)} – ${fmt(opts.periodTo)}`;
+    if (opts.periodFrom) return `From ${fmt(opts.periodFrom)}`;
+    if (opts.periodTo)   return `Up to ${fmt(opts.periodTo)}`;
+    return ISSUE_REPORT_PERIOD_LABELS.all_time;
+}
+
+/** Modules the signed-in user may open (master_admin: all of them). */
+function _issueReportAllModules() {
+    const allowed = getModuleRuntime()?.getAllowedModules?.();
+    return Array.isArray(allowed) && allowed.length ? allowed : Object.keys(ISSUE_REPORT_MODULE_LABELS);
 }
 
 function _issueReportModuleLabel(opts) {
     return opts.moduleScope === 'all'
-        ? 'All Modules (F200-KD2 + F100-KD2)'
+        ? `All Modules (${_issueReportAllModules().map(m => ISSUE_REPORT_MODULE_LABELS[m] || m).join(' + ')})`
         : (ISSUE_REPORT_MODULE_LABELS[getActiveModuleId()] || getActiveModuleId());
+}
+
+/** Issue ids the user unticked in the report dialog's review list. Reset each
+ *  time the dialog opens; never written to the database. */
+const _issueReportExcluded = new Set();
+/** Every issue matching the dialog's current settings (before exclusions). */
+let _issueReportCandidates = [];
+let _issueReportPreviewSeq = 0;
+let _issueReportSearchTimer = null;
+
+/** Rows that actually go into an export: dialog filters minus unticked issues. */
+async function _issueReportFinalRows(opts) {
+    if (!opts.statuses?.length || !opts.categories?.length) return [];
+    const matching = await buildIssueReportRows(opts.type, opts);
+    const excluded = new Set((opts.excludeIds || []).map(String));
+    return matching.filter(r => !excluded.has(String(r.id)));
+}
+
+function _setToggleActive(toggleId, attr, value) {
+    document.querySelectorAll(`#${toggleId} .kd2-create-mode-btn`).forEach(b => {
+        b.classList.toggle('active', b.dataset[attr] === value);
+    });
+}
+
+function _syncIssueReportTypeUI() {
+    const type = document.querySelector('input[name="issueReportType"]:checked')?.value || 'list';
+    const isStatusReport = type === 'status_report';
+    document.getElementById('issueReportPeriodGroup').style.display      = isStatusReport ? '' : 'none';
+    const period = document.querySelector('#issueReportPeriodToggle .kd2-create-mode-btn.active')?.dataset.period;
+    document.getElementById('issueReportPeriodRange').style.display      = period === 'custom' ? '' : 'none';
+    document.getElementById('issueReportLayoutGroup').style.display      = isStatusReport ? '' : 'none';
+    document.getElementById('issueReportDateGroup').style.display        = isStatusReport ? 'none' : '';
+    document.getElementById('issueReportMoreFiltersGroup').style.display = isStatusReport ? 'none' : '';
+    const layout = document.querySelector('#issueReportLayoutToggle .kd2-create-mode-btn.active')?.dataset.layout || 'table';
+    const hint = document.getElementById('issueReportLayoutHint');
+    if (hint) {
+        hint.textContent = layout === 'report'
+            ? 'Written summary grouped by category — each issue with its problem, proposed solution and action taken. PDF and Word only; Excel always uses the table.'
+            : 'A grid with one row per issue. Works for PDF, Excel and Word.';
+    }
 }
 
 function openIssueReportModal() {
     const overlay = document.getElementById('issueReportModalOverlay');
     if (!overlay) { console.warn('issueReportModalOverlay not found'); return; }
+
+    // Start from whatever the Issues table is currently filtered to
+    loadIssueCategories();
+    _issueReportExcluded.clear();
+    _issueReportCandidates = [];
+    const fromTable = (key, listId) => {
+        const sel = filterState[key];
+        const all = !sel || sel.has('all') || sel.size === 0;
+        document.querySelectorAll(`#${listId} input`).forEach(el => { el.checked = all || sel.has(el.value); });
+        document.getElementById(listId)?.dispatchEvent(new Event('sync'));
+    };
+    fromTable('issueStatus', 'issueReportStatusChecklist');
+    fromTable('issueCategory', 'issueReportCategoryChecklist');
+    const pri = filterState.issuePriority;
+    const priEl = document.getElementById('issueReportPriority');
+    if (priEl) priEl.value = (pri && pri.size === 1 && !pri.has('all')) ? [...pri][0] : '';
+    const fromEl = document.getElementById('issueReportDateFrom');
+    const toEl   = document.getElementById('issueReportDateTo');
+    if (fromEl) fromEl.value = document.getElementById('issueFilterFrom')?.value || '';
+    if (toEl)   toEl.value   = document.getElementById('issueFilterTo')?.value || '';
+    const searchEl = document.getElementById('issueReportSearch');
+    if (searchEl) searchEl.value = document.getElementById('issueSearch')?.value?.trim() || '';
+    const reviewSearch = document.getElementById('issueReportReviewSearch');
+    if (reviewSearch) reviewSearch.value = '';
+
+    const allBtn = document.querySelector('#issueReportModuleToggle [data-scope="all"]');
+    if (allBtn) allBtn.textContent = _issueReportModuleLabel({ moduleScope: 'all' });
+
+    _syncIssueReportTypeUI();
     overlay.style.display = 'flex';
-    _populateReporterSelect('issueReportReporter').catch(() => {});
-    updateIssueReportPreview();
+    _populateReporterSelect('issueReportReporter').then(() => {
+        const rep = filterState.issueReporter;
+        const repEl = document.getElementById('issueReportReporter');
+        if (repEl) repEl.value = (rep && rep.size === 1 && !rep.has('all')) ? [...rep][0] : '';
+        updateIssueReportPreview();
+    }).catch(() => updateIssueReportPreview());
 }
 
 function wireIssueReportModal() {
@@ -15176,41 +15773,18 @@ function wireIssueReportModal() {
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
     overlay.querySelectorAll('input[name="issueReportType"]').forEach(radio => {
-        radio.addEventListener('change', () => {
-            const isStatusReport = document.querySelector('input[name="issueReportType"]:checked')?.value === 'status_report';
-            document.getElementById('issueReportPeriodGroup').style.display            = isStatusReport ? '' : 'none';
-            document.getElementById('issueReportLayoutGroup').style.display            = isStatusReport ? '' : 'none';
-            document.getElementById('issueReportStatusChecklistGroup').style.display   = isStatusReport ? '' : 'none';
-            document.getElementById('issueReportCategoryChecklistGroup').style.display = isStatusReport ? '' : 'none';
-            document.getElementById('issueReportDateGroup').style.display           = isStatusReport ? 'none' : '';
-            document.getElementById('issueReportCategorySimpleGroup').style.display = isStatusReport ? 'none' : '';
-            document.getElementById('issueReportMoreFiltersGroup').style.display    = isStatusReport ? 'none' : 'flex';
-            updateIssueReportPreview();
+        radio.addEventListener('change', () => { _syncIssueReportTypeUI(); updateIssueReportPreview(); });
+    });
+
+    [['issueReportPeriodToggle', 'period'], ['issueReportLayoutToggle', 'layout'], ['issueReportModuleToggle', 'scope']].forEach(([id, attr]) => {
+        document.getElementById(id)?.addEventListener('click', e => {
+            const btn = e.target.closest('.kd2-create-mode-btn');
+            if (!btn) return;
+            _setToggleActive(id, attr, btn.dataset[attr]);
+            _syncIssueReportTypeUI();
+            // Layout only changes how the file looks, not which issues are in it
+            if (id !== 'issueReportLayoutToggle') updateIssueReportPreview();
         });
-    });
-
-    document.getElementById('issueReportPeriodToggle')?.addEventListener('click', e => {
-        const btn = e.target.closest('.kd2-create-mode-btn');
-        if (!btn) return;
-        document.querySelectorAll('#issueReportPeriodToggle .kd2-create-mode-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        updateIssueReportPreview();
-    });
-
-    document.getElementById('issueReportLayoutToggle')?.addEventListener('click', e => {
-        const btn = e.target.closest('.kd2-create-mode-btn');
-        if (!btn) return;
-        document.querySelectorAll('#issueReportLayoutToggle .kd2-create-mode-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        updateIssueReportPreview();
-    });
-
-    document.getElementById('issueReportModuleToggle')?.addEventListener('click', e => {
-        const btn = e.target.closest('.kd2-create-mode-btn');
-        if (!btn) return;
-        document.querySelectorAll('#issueReportModuleToggle .kd2-create-mode-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        updateIssueReportPreview();
     });
 
     // Checklist pills — reflect checked state visually + refresh preview
@@ -15221,6 +15795,7 @@ function wireIssueReportModal() {
             pill.classList.toggle('is-checked', pill.querySelector('input')?.checked);
         });
         sync();
+        list.addEventListener('sync', sync);
         list.addEventListener('change', () => { sync(); updateIssueReportPreview(); });
     };
     wireChecklist('issueReportStatusChecklist');
@@ -15241,10 +15816,33 @@ function wireIssueReportModal() {
 
     document.getElementById('issueReportDateFrom')?.addEventListener('change', updateIssueReportPreview);
     document.getElementById('issueReportDateTo')?.addEventListener('change', updateIssueReportPreview);
-    document.getElementById('issueReportCategory')?.addEventListener('change', updateIssueReportPreview);
+    document.getElementById('issueReportPeriodFrom')?.addEventListener('change', updateIssueReportPreview);
+    document.getElementById('issueReportPeriodTo')?.addEventListener('change', updateIssueReportPreview);
     document.getElementById('issueReportPriority')?.addEventListener('change', updateIssueReportPreview);
     document.getElementById('issueReportReporter')?.addEventListener('change', updateIssueReportPreview);
-    document.getElementById('issueReportSearch')?.addEventListener('input', updateIssueReportPreview);
+    document.getElementById('issueReportSearch')?.addEventListener('input', () => {
+        clearTimeout(_issueReportSearchTimer);
+        _issueReportSearchTimer = setTimeout(updateIssueReportPreview, 350);
+    });
+
+    // Review list — tick/untick issues (and whole category groups)
+    const list = document.getElementById('issueReportReviewList');
+    list?.addEventListener('change', e => {
+        const input = e.target;
+        if (!input.matches('input[type="checkbox"]')) return;
+        const ids = input.dataset.groupIds ? input.dataset.groupIds.split(',') : [input.dataset.issueId];
+        ids.forEach(id => { if (input.checked) _issueReportExcluded.delete(id); else _issueReportExcluded.add(id); });
+        _renderIssueReportReview();
+    });
+    document.getElementById('issueReportReviewSearch')?.addEventListener('input', _renderIssueReportReview);
+    const setVisible = include => {
+        _issueReportVisibleRows().forEach(r => {
+            if (include) _issueReportExcluded.delete(String(r.id)); else _issueReportExcluded.add(String(r.id));
+        });
+        _renderIssueReportReview();
+    };
+    document.getElementById('btnIssueReportIncludeAll')?.addEventListener('click', () => setVisible(true));
+    document.getElementById('btnIssueReportExcludeAll')?.addEventListener('click', () => setVisible(false));
 
     document.getElementById('btnIssueReportPDF')?.addEventListener('click', () => exportIssueReportPDF(_getIssueReportOpts()));
     document.getElementById('btnIssueReportExcel')?.addEventListener('click', () => exportIssueReportExcel(_getIssueReportOpts()));
@@ -15253,13 +15851,101 @@ function wireIssueReportModal() {
 
 async function updateIssueReportPreview() {
     const opts = _getIssueReportOpts();
+    const seq = ++_issueReportPreviewSeq;
+    const listEl = document.getElementById('issueReportReviewList');
+    if (listEl && !_issueReportCandidates.length) {
+        listEl.innerHTML = `<div class="irm-review-empty"><span class="spinner"></span></div>`;
+    }
+    const rows = (opts.statuses.length && opts.categories.length) ? await buildIssueReportRows(opts.type, opts) : [];
+    if (seq !== _issueReportPreviewSeq) return; // a newer settings change is already loading
+    _issueReportCandidates = rows;
+    _renderIssueReportReview();
+}
+
+/** Candidate rows narrowed by the review list's own "Find in this list" box. */
+function _issueReportVisibleRows() {
+    const q = (document.getElementById('issueReportReviewSearch')?.value || '').trim().toLowerCase();
+    if (!q) return _issueReportCandidates;
+    return _issueReportCandidates.filter(r =>
+        [r.title, r.description, r.person_in_charge, r.reporter_name, ISSUE_CATEGORY_LABELS[r.category]]
+            .some(v => (v || '').toLowerCase().includes(q)));
+}
+
+function _renderIssueReportReview() {
+    const listEl = document.getElementById('issueReportReviewList');
+    const opts = _getIssueReportOpts();
+    const total = _issueReportCandidates.length;
+    const included = _issueReportCandidates.filter(r => !_issueReportExcluded.has(String(r.id))).length;
+    const removed = total - included;
+
     const bar  = document.getElementById('issueReportPreviewBar');
     const cnt  = document.getElementById('issueReportPreviewCount');
     const hint = bar?.querySelector('.report-preview-hint');
-    const rows = await buildIssueReportRows(opts.type, opts);
-    if (cnt)  cnt.textContent = `${rows.length} issue${rows.length !== 1 ? 's' : ''} match`;
-    if (hint) hint.textContent = rows.length ? 'Ready to export' : 'No issues match — adjust filters';
-    if (bar)  bar.style.borderColor = rows.length ? 'rgba(79,142,247,.4)' : 'rgba(239,68,68,.4)';
+    if (cnt) cnt.textContent = total ? `${included} of ${total} issue${total !== 1 ? 's' : ''} in report` : 'No issues';
+    if (hint) {
+        const badRange = (opts.type === 'status_report' && opts.periodFrom && opts.periodTo && opts.periodFrom > opts.periodTo)
+            || (opts.type !== 'status_report' && opts.from && opts.to && opts.from > opts.to);
+        hint.textContent = badRange ? 'The start date is after the end date'
+            : !opts.statuses.length ? 'Tick at least one status'
+            : !opts.categories.length ? 'Tick at least one category'
+            : !total ? 'Nothing matches — widen the settings'
+            : !included ? 'Every issue is removed'
+            : removed ? `${removed} removed` : 'Ready to export';
+    }
+    bar?.classList.toggle('is-empty', !included);
+    ['btnIssueReportPDF', 'btnIssueReportExcel', 'btnIssueReportWord'].forEach(id => {
+        const b = document.getElementById(id);
+        if (b) b.disabled = !included;
+    });
+
+    if (!listEl) return;
+    const visible = _issueReportVisibleRows();
+    if (!visible.length) {
+        listEl.innerHTML = `<div class="irm-review-empty">${total ? 'No issue in the list matches your search.' : 'No issues match these settings.'}</div>`;
+        return;
+    }
+
+    const itemHtml = r => {
+        const id = String(r.id);
+        const on = !_issueReportExcluded.has(id);
+        const desc = (r.description || '').replace(/\s+/g, ' ').trim();
+        return `
+        <label class="irm-item${on ? '' : ' is-excluded'}" role="listitem">
+            <input type="checkbox" data-issue-id="${esc(id)}" ${on ? 'checked' : ''} aria-label="Include ${esc(r.title || 'issue')}" />
+            <div class="irm-item-body">
+                <div class="irm-item-title">${esc(r.title || 'Untitled')}</div>
+                <div class="irm-item-meta">
+                    ${renderIssueStatusBadge(r.status)}
+                    ${renderIssuePriorityBadge(r.priority)}
+                    ${opts.type === 'list' ? renderIssueCategoryBadge(r.category) : ''}
+                    <span class="irm-item-date">${esc(formatIssueDate(r.created_at))}</span>
+                </div>
+                ${desc ? `<div class="irm-item-desc">${esc(desc)}</div>` : ''}
+            </div>
+        </label>`;
+    };
+
+    if (opts.type === 'list') {
+        listEl.innerHTML = visible.map(itemHtml).join('');
+        return;
+    }
+    // Grouped report types — mirror the export's category grouping, with a
+    // tick box per group to add/remove a whole category at once.
+    listEl.innerHTML = _issueStatusReportGroups(visible).map(({ label, rows }) => {
+        const ids = rows.map(r => String(r.id));
+        const onCount = ids.filter(id => !_issueReportExcluded.has(id)).length;
+        return `
+        <div class="irm-group">
+            <label class="irm-group-head">
+                <input type="checkbox" data-group-ids="${esc(ids.join(','))}" ${onCount === ids.length ? 'checked' : ''}
+                    ${onCount > 0 && onCount < ids.length ? 'data-indeterminate="1"' : ''} />
+                <span class="irm-group-label">${esc(label)}</span>
+                <span class="irm-group-count">${onCount} / ${ids.length}</span>
+            </label>
+            ${rows.map(itemHtml).join('')}
+        </div>`;
+    }).join('');
+    listEl.querySelectorAll('input[data-indeterminate]').forEach(el => { el.indeterminate = true; });
 }
 
 /* ── Excel export (general list + status report) ─────────────────── */
@@ -15267,7 +15953,8 @@ async function exportIssueReportExcel(opts) {
     if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (typeof ExcelJS === 'undefined') { showToast('Excel library not loaded — please refresh.', 'error'); return; }
     showToast('Preparing Excel export…', 'info');
-    const rows = await buildIssueReportRows(opts.type, opts);
+    const rows = await _issueReportFinalRows(opts);
+    if (!rows.length) { showToast('No issues in the report — tick at least one issue.', 'error'); return; }
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'PPMS';
@@ -15617,7 +16304,8 @@ async function exportIssueReportPDF(opts) {
     if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (!window.jspdf) { showToast('PDF library not loaded — please refresh.', 'error'); return; }
     showToast('Preparing PDF export…', 'info');
-    const rows = await buildIssueReportRows(opts.type, opts);
+    const rows = await _issueReportFinalRows(opts);
+    if (!rows.length) { showToast('No issues in the report — tick at least one issue.', 'error'); return; }
 
     const { jsPDF } = window.jspdf;
     const title = _issueReportTitle(opts);
@@ -15737,7 +16425,8 @@ async function exportIssueReportPDF(opts) {
 async function exportIssueReportWord(opts) {
     if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     showToast('Preparing Word export…', 'info');
-    const rows = await buildIssueReportRows(opts.type, opts);
+    const rows = await _issueReportFinalRows(opts);
+    if (!rows.length) { showToast('No issues in the report — tick at least one issue.', 'error'); return; }
     const title = _issueReportTitle(opts);
     const modLabel = _issueReportModuleLabel(opts);
     const isStatusReport = opts.type === 'status_report';
