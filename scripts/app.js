@@ -1731,6 +1731,7 @@ async function initializeApp() {
                 storage: _noopStorage,
             },
         });
+        _markPlanWritesAsLocal(db);
         setConnStatus('connected', 'Connected');
     } catch (err) {
         setConnStatus('error', 'Connection Error');
@@ -1782,6 +1783,7 @@ async function initializeApp() {
             markLocalSave();
             await loadFilters();
             await loadData();
+            markLocalSave(); // late echoes of the write that preceded this reload
         },
     });
 
@@ -1816,7 +1818,73 @@ let _realtimeChannel = null;
 let _realtimePending = false;
 let _lastLocalSaveMs = 0; // timestamp of most recent local write — suppress echo toast
 
+/* Called when this tab writes plan data (and again when a multi-row save
+   finishes) — the realtime echoes of our own writes arrive during and
+   shortly after the save and must not be reported as another user's edit. */
 function markLocalSave() { _lastLocalSaveMs = Date.now(); }
+/* Every insert/update/upsert/delete on a plan table made through this tab's
+   client (app.js and kd2.js share it) marks a local save when it starts and
+   again when it completes — so no edit path can forget to, and the realtime
+   listener never mistakes our own change for someone else's. */
+const _REALTIME_PLAN_TABLES = new Set([
+    'kd2_plan', 'kd2_progress', 'kd2_process_stations', 'kd2_process_categories',
+    'kd2_process_routes', 'kd2_process_lead_times', 'kd2_plan_route_order', 'f100_plans',
+]);
+function _markPlanWritesAsLocal(client) {
+    if (!client?.from || client.__planWritesMarked) return;
+    client.__planWritesMarked = true;
+    const from = client.from.bind(client);
+    client.from = table => {
+        const qb = from(table);
+        if (!_REALTIME_PLAN_TABLES.has(table)) return qb;
+        ['insert', 'update', 'upsert', 'delete'].forEach(m => {
+            const fn = qb[m];
+            if (typeof fn !== 'function') return;
+            qb[m] = (...args) => {
+                markLocalSave();
+                const builder = fn.apply(qb, args);
+                const then = builder?.then;
+                if (typeof then === 'function') {
+                    builder.then = (onOk, onErr) => then.call(builder, v => { markLocalSave(); return onOk ? onOk(v) : v; }, onErr);
+                }
+                return builder;
+            };
+        });
+        return qb;
+    };
+}
+const LOCAL_ECHO_MS = 6000;
+function _isLocalEcho() { return Date.now() - _lastLocalSaveMs < LOCAL_ECHO_MS; }
+
+/* Who really changed the plan: every write is followed by an audit broadcast
+   carrying the editor's email (see startAuditNotifSync). A realtime change is
+   attributed to another user only when such a broadcast arrived recently. */
+let _recentForeignPlanEdit = null; // { email, at }
+function _noteForeignPlanEdit(payload) {
+    if (!payload?.user_email) return;
+    if (_auditTableModuleId(payload.table_name) !== getActiveModuleId()) return;
+    _recentForeignPlanEdit = { email: payload.user_email, at: Date.now() };
+}
+function _takeForeignPlanEdit(maxAgeMs = 10000) {
+    const e = _recentForeignPlanEdit;
+    if (!e || Date.now() - e.at > maxAgeMs) return null;
+    _recentForeignPlanEdit = null;
+    return e;
+}
+function _peekForeignPlanEdit(maxAgeMs = 10000) {
+    const e = _recentForeignPlanEdit;
+    return e && Date.now() - e.at <= maxAgeMs ? e : null;
+}
+function _planEditorLabel(email) {
+    const known = Object.values(typeof _presenceOnlineMap !== 'undefined' ? _presenceOnlineMap : {})
+        .find(p => p?.email === email && p?.name);
+    return known?.name || String(email || '').split('@')[0] || 'another user';
+}
+/** Toast for a reload triggered by a remote change — names the editor when known. */
+function _remotePlanChangeToast() {
+    const foreign = _takeForeignPlanEdit();
+    showToast(foreign ? `Plan updated by ${_planEditorLabel(foreign.email)}.` : 'Plan refreshed with the latest changes.', 'info');
+}
 
 function startRealtimeSync() {
     if (_realtimeChannel) {
@@ -1828,13 +1896,14 @@ function startRealtimeSync() {
         _realtimeChannel = db
             .channel('f100_plans_realtime')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'f100_plans' }, (payload) => {
+                // Echo of our own save (judged on arrival, not after the debounce)
+                if (_isLocalEcho() && !_peekForeignPlanEdit()) return;
                 if (_realtimePending) return;
                 _realtimePending = true;
                 setTimeout(async () => {
                     _realtimePending = false;
-                    const isEcho = (Date.now() - _lastLocalSaveMs) < 3000;
                     // Own saves: skip full reload — the in-memory data is already patched
-                    if (isEcho) return;
+                    if (_isLocalEcho() && !_peekForeignPlanEdit()) return;
                     // If a date input is focused, skip to avoid losing the user's input
                     const activeDateInput = document.activeElement?.matches?.('.inline-date-input, .inline-end-input');
                     if (activeDateInput) return;
@@ -1846,7 +1915,7 @@ function startRealtimeSync() {
                             currentData[idx] = { ...currentData[idx], ...record };
                             const surgicalOk = updateF100TableRowInPlace(record.id);
                             if (surgicalOk) {
-                                showToast('Plan updated by another user.', 'info');
+                                _remotePlanChangeToast();
                                 return;
                             }
                         }
@@ -1855,8 +1924,8 @@ function startRealtimeSync() {
                     const pos = saveScrollPos();
                     await loadData();
                     restoreScrollPos(pos);
-                    showToast('Plan updated by another user.', 'info');
-                }, 800);
+                    _remotePlanChangeToast();
+                }, 1200);
             })
             .subscribe();
         return;
@@ -1871,20 +1940,24 @@ function startRealtimeSync() {
         // covering every table any of those screens read from.
         let pending = false;
         const onChange = () => {
+            // Echo of our own save — judged when it arrives, not after the
+            // debounce (a long multi-block save used to outlast the old 3 s
+            // window, so its own echoes triggered a full reload + a false
+            // "updated by another user" toast).
+            if (_isLocalEcho() && !_peekForeignPlanEdit()) return;
             if (pending) return;
             pending = true;
             setTimeout(async () => {
                 pending = false;
-                const isEcho = (Date.now() - _lastLocalSaveMs) < 3000;
-                if (isEcho) return;
+                if (_isLocalEcho() && !_peekForeignPlanEdit()) return;
                 const activeDateInput = document.activeElement?.matches?.('.inline-date-input, .inline-end-input');
                 if (activeDateInput) return;
                 const pos = saveScrollPos();
                 await loadFilters();
                 await loadData();
                 restoreScrollPos(pos);
-                showToast('Plan updated by another user.', 'info');
-            }, 800);
+                _remotePlanChangeToast();
+            }, 1200);
         };
         _realtimeChannel = db
             .channel('kd2_plan_realtime')
@@ -2434,16 +2507,40 @@ function restoreScrollPos(pos) {
  * from currentData without touching the DB.  Always preserves scroll.
  * Call this after any in-memory mutation of currentData.
  */
+/* Table, summary cards, charts and VPX. In Gantt edit mode those are
+   off-screen while the user works on the Gantt, so they're rebuilt after the
+   Gantt has painted — and a burst of edits (drag, drag, undo…) coalesces
+   into ONE rebuild instead of re-rendering thousands of table rows and every
+   chart after each save. Outside edit mode this renders immediately. */
+let _secondaryViewsTimer = null;
+let _secondaryViewsNeedTable = false;
+function _renderSecondaryViews({ includeTable = true } = {}) {
+    if (includeTable) _secondaryViewsNeedTable = true;
+    const run = () => {
+        _secondaryViewsTimer = null;
+        const displayData = applyActiveFilters(currentData);
+        if (_secondaryViewsNeedTable) {
+            _secondaryViewsNeedTable = false;
+            const pos = saveScrollPos();
+            renderTable(applyTableSearchFilters(displayData));
+            restoreScrollPos(pos);
+        }
+        updateSummary(displayData);
+        renderCharts(displayData);
+        renderVPX(displayData);
+    };
+    clearTimeout(_secondaryViewsTimer);
+    if (!_ganttEditMode) { run(); return; }
+    _secondaryViewsTimer = setTimeout(() => {
+        if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 1500 });
+        else run();
+    }, 700);
+}
+
 function refreshAllViews() {
     const displayData = applyActiveFilters(currentData);
 
-    const pos = saveScrollPos();
-    renderTable(applyTableSearchFilters(displayData));
-    restoreScrollPos(pos);
-
-    updateSummary(displayData);
-    renderCharts(displayData);
-    renderVPX(displayData);
+    _renderSecondaryViews();
     if (isKD2Module()) {
         // Ensure KD2 schedule uses the same filtered view as other components
         getModuleRuntime()?.renderSchedule?.(displayData);
@@ -2462,9 +2559,7 @@ function refreshAllViews() {
    and charts stale until a page reload. */
 function syncSiblingViews() {
     const displayData = applyActiveFilters(currentData);
-    updateSummary(displayData);
-    renderCharts(displayData);
-    renderVPX(displayData);
+    _renderSecondaryViews({ includeTable: false });
     if (isKD2Module()) getModuleRuntime()?.renderSchedule?.(displayData);
     const gsEl = document.getElementById('ganttStart');
     const geEl = document.getElementById('ganttEnd');
@@ -2789,10 +2884,8 @@ async function loadData() {
 
             const displayData = applyActiveFilters(currentData);
 
-            renderTable(applyTableSearchFilters(displayData));
-            updateSummary(displayData);
-            renderCharts(displayData);
-            renderVPX(displayData);
+            // Immediate outside edit mode; after the Gantt paints while editing
+            _renderSecondaryViews();
             await getModuleRuntime().loadPlanningSnapshot?.(db);
             await getModuleRuntime().refreshWorkspace?.();
             await getModuleRuntime().renderSchedule?.(currentData);
@@ -17442,6 +17535,7 @@ function startAuditNotifSync() {
     _auditNotifChannel = db.channel('ppms-audit-notif')
         .on('broadcast', { event: 'audit:new' }, ({ payload }) => {
             if (!payload || payload.user_email === u.email) return;
+            _noteForeignPlanEdit(payload); // lets the realtime reload name the real editor
             if (AUDIT_NOTIF_EXCLUDED_ACTIONS.has(payload.action)) return;
             _storeAuditNotification(payload);
             _auditNotifMarkSeen(payload.created_at);
@@ -18250,6 +18344,7 @@ async function savePlanChanges(changes) {
 
     try {
         await _applyDateChanges(changes);
+        markLocalSave(); // echoes keep arriving after a long multi-block save
 
         await auditLog('UPDATE', getModulePlanTable(), 'batch-move',
             { count: changes.length, ids: changes.map(c => c.id) },
@@ -18310,7 +18405,9 @@ async function undoGantt() {
 
     showToast(`Undoing ${inverse.length} block move${inverse.length > 1 ? 's' : ''}…`, 'info');
     try {
+        markLocalSave();
         await _applyDateChanges(inverse);
+        markLocalSave();
         await auditLog('UPDATE', getModulePlanTable(), 'undo',
             { count: inverse.length }, { count: inverse.length, sample: { id: inverse[0].id, newStart: inverse[0].newStart } });
 
@@ -18349,7 +18446,9 @@ async function redoGantt() {
 
     showToast(`Redoing ${changes.length} block move${changes.length > 1 ? 's' : ''}…`, 'info');
     try {
+        markLocalSave();
         await _applyDateChanges(changes);
+        markLocalSave();
         await auditLog('UPDATE', getModulePlanTable(), 'redo',
             { count: changes.length }, { count: changes.length, sample: { id: changes[0].id, newStart: changes[0].newStart } });
 

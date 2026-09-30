@@ -1,7 +1,7 @@
 {
- "version": "8ff7198-20260930082423",
- "deployedAt": "2026-09-30T08:24:23.823Z",
- "notes": "Update notice: PPMS now tells you when a new version is available",
+ "version": "41bca83-20260930082450",
+ "deployedAt": "2026-09-30T08:24:50.949Z",
+ "notes": "Faster plan editing; change notices now show who really edited the plan",
  "files": [
   "index.html",
   "login.html",
