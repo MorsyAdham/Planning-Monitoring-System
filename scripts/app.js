@@ -12522,6 +12522,14 @@ const MM_PER_PT = 25.4 / 72;
 const PT_PER_MM = 72 / 25.4;
 
 const _execHex = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+/** Print-friendly: a colour mixed toward white (amt 0..1), as #rrggbb. */
+const _execTint = (hex, amt = 0.84) => '#' + _execHex(hex).map(v => Math.round(v + (255 - v) * amt).toString(16).padStart(2, '0')).join('');
+/** Station-group colour for print: pale tint fill, full colour for text and rule. */
+function _execGroupColors(label) {
+    const c = VPX_REPORT_GRP_COLOR[label] || { bg: 'FF334155' };
+    const base = '#' + c.bg.slice(2);
+    return { base, tint: _execTint(base, 0.86) };
+}
 
 /** Colours + text for one VPX cell, shared by PDF and Word. */
 function _execCellSpec(c, planRow) {
@@ -12657,19 +12665,18 @@ function _execWordSegmentHtml(model, L) {
     const grpPt = (L.rowH * PT_PER_MM).toFixed(2) + 'pt';
     const stPt = ((L.headH - L.rowH) * PT_PER_MM).toFixed(2) + 'pt';
     const trH = h => `height:${h};mso-height-rule:exactly;page-break-inside:avoid`;
-    const grp = label => {
-        const c = VPX_REPORT_GRP_COLOR[label] || { bg: 'FF334155', fg: 'FFffffff' };
-        return `background:#${c.bg.slice(2)};color:#${c.fg.slice(2)}`;
-    };
+    // Print-friendly: pale tints + coloured text/rules instead of solid fills
+    const grp = label => { const g = _execGroupColors(label); return `background:${g.tint};color:${g.base};border-top:1.5pt solid ${g.base}`; };
+    const HEAD = 'background:#e2e8f0;color:#0f172a';
     const nameF = +(F * 0.85).toFixed(2);
     const s = model.stats;
 
     let h = `<table style="width:100%;border-collapse:collapse;margin:0 0 4pt;mso-table-lspace:0;mso-table-rspace:0"><tr>
-        <td style="background:#1e3a8a;padding:6pt 10pt;border:none">
-            <p style="margin:0;font-family:Calibri,Arial;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#bfdbfe">VPX STATION REPORT</p>
-            <p style="margin:0;font-family:Calibri,Arial;font-size:15pt;font-weight:bold;color:#ffffff">${esc(model.vtype)} · ${esc(model.cat)}</p></td>
-        <td style="background:#1e3a8a;padding:6pt 10pt;border:none;text-align:right;vertical-align:bottom">
-            <p style="margin:0;font-family:Calibri,Arial;font-size:7.5pt;color:#dbeafe">${esc(L.meta)}</p></td></tr></table>`;
+        <td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a">
+            <p style="margin:0;font-family:Calibri,Arial;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#1e3a8a">VPX STATION REPORT</p>
+            <p style="margin:0;font-family:Calibri,Arial;font-size:15pt;font-weight:bold;color:#0f172a">${esc(model.vtype)} · ${esc(model.cat)}</p></td>
+        <td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a;text-align:right;vertical-align:bottom">
+            <p style="margin:0;font-family:Calibri,Arial;font-size:7.5pt;color:#64748b">${esc(L.meta)}</p></td></tr></table>`;
     const chip = (label, value, color = '#0f172a') =>
         `<td style="padding:2pt 8pt 2pt 0;border:none;font-family:Calibri,Arial;font-size:7.5pt;color:#64748b;white-space:nowrap">${label} <b style="font-size:9pt;color:${color}">${value}</b></td>`;
     h += `<table style="width:${pt(L.W)};border-collapse:collapse;margin:0 0 4pt"><tr>
@@ -12681,14 +12688,14 @@ function _execWordSegmentHtml(model, L) {
 
     h += `<table style="width:${pt(L.W)};table-layout:fixed;border-collapse:collapse">`;
     h += `<col style="width:${pt(L.w.unit)}"><col style="width:${pt(L.w.tag)}">${model.cols.map(() => `<col style="width:${pt(L.colW)}">`).join('')}<col style="width:${pt(L.w.delay)}"><col style="width:${pt(L.w.reason)}">`;
-    h += `<tr style="${trH(grpPt)}"><td rowspan="2" style="${TH};width:${cw.unit};background:#0f172a;color:#fff">Unit</td><td rowspan="2" style="${TH};width:${cw.tag};background:#0f172a;color:#fff"></td>`
+    h += `<tr style="${trH(grpPt)}"><td rowspan="2" style="${TH};width:${cw.unit};${HEAD}">Unit</td><td rowspan="2" style="${TH};width:${cw.tag};${HEAD}"></td>`
         + model.groups.map(g => `<td colspan="${g.span}" style="${TH};${grp(g.label)}">${esc(_execClip(g.label, L.colW * g.span, F))}</td>`).join('')
-        + `<td rowspan="2" style="${TH};width:${cw.delay};background:#0f172a;color:#fff">Delay</td><td rowspan="2" style="${TH};width:${cw.reason};background:#0f172a;color:#fff">Delay reason (${esc(model.cat)})</td></tr>`;
-    h += `<tr style="${trH(stPt)}">${model.cols.map(c => `<td style="${TH};width:${cw.st};background:#f1f5f9;color:#0f172a">${esc(c.code)}${c.name && c.name !== c.code ? `<br><span style="font-size:${nameF}pt;font-weight:normal;color:#475569">${esc(_execClip(c.name, L.colW, nameF, 2))}</span>` : ''}</td>`).join('')}</tr>`;
+        + `<td rowspan="2" style="${TH};width:${cw.delay};${HEAD}">Delay</td><td rowspan="2" style="${TH};width:${cw.reason};${HEAD}">Delay reason (${esc(model.cat)})</td></tr>`;
+    h += `<tr style="${trH(stPt)}">${model.cols.map(c => `<td style="${TH};width:${cw.st};background:#f8fafc;color:#0f172a">${esc(c.code)}${c.name && c.name !== c.code ? `<br><span style="font-size:${nameF}pt;font-weight:normal;color:#475569">${esc(_execClip(c.name, L.colW, nameF, 2))}</span>` : ''}</td>`).join('')}</tr>`;
 
     model.units.forEach((u, i) => {
         const zebra = i % 2 ? '#f8fafc' : '#ffffff';
-        h += `<tr style="${trH(rowPt)}"><td rowspan="2" style="${TH};width:${cw.unit};background:#334155;color:#fff;white-space:nowrap">${esc(u.line1)}${u.line2 ? `<br><span style="font-weight:normal;color:#cbd5e1">${esc(u.line2)}</span>` : ''}</td>`
+        h += `<tr style="${trH(rowPt)}"><td rowspan="2" style="${TH};width:${cw.unit};background:#f1f5f9;color:#0f172a;white-space:nowrap">${esc(u.line1)}${u.line2 ? `<br><span style="font-weight:normal;color:#475569">${esc(u.line2)}</span>` : ''}</td>`
             + `<td style="${base};width:${cw.tag};color:#94a3b8;font-style:italic;background:${zebra}">Plan</td>`
             + u.cells.map(c => { const x = _execCellSpec(c, true); return `<td style="${base};width:${cw.st};white-space:nowrap;background:${x.bg};color:${x.color}">${esc(x.text)}</td>`; }).join('')
             + `<td rowspan="2" style="${TH};width:${cw.delay};color:${u.finalDelay > 0 ? '#b91c1c' : '#15803d'};background:${zebra}">${u.finalDelay > 0 ? '+' + u.finalDelay + 'd' : '0d'}</td>`
@@ -12807,15 +12814,16 @@ async function exportExecutiveReportPDF(preview) {
     const hasOutline = !!doc.outline?.add;
     const M = EXEC_MARGIN;
 
+    // Print-friendly title: coloured text + a thin rule, no solid band
     const band = (pageW, label, heading, right) => {
-        doc.setFillColor(30, 58, 138);
-        doc.rect(0, 0, pageW, 20, 'F');
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(191, 219, 254);
-        doc.text(label.toUpperCase(), M, 7.5, { charSpace: 0.4 });
-        doc.setFontSize(15); doc.setTextColor(255, 255, 255);
-        doc.text(heading, M, 15);
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(219, 234, 254);
-        doc.text(right, pageW - M, 15, { align: 'right' });
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(30, 58, 138);
+        doc.text(label.toUpperCase(), M, 8.5, { charSpace: 0.4 });
+        doc.setFontSize(15); doc.setTextColor(15, 23, 42);
+        doc.text(heading, M, 15.5);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(100, 116, 139);
+        doc.text(right, pageW - M, 15.5, { align: 'right' });
+        doc.setDrawColor(30, 58, 138); doc.setLineWidth(0.6);
+        doc.line(M, 18.5, pageW - M, 18.5);
     };
     const chip = (x, y, label, value, rgb = [15, 23, 42]) => {
         doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
@@ -12823,8 +12831,8 @@ async function exportExecutiveReportPDF(preview) {
         doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
         const vw = doc.getTextWidth(String(value));
         const w = lw + vw + 5;
-        doc.setFillColor(241, 245, 249); doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.2);
-        doc.roundedRect(x, y - 4, w, 6, 1.2, 1.2, 'FD');
+        doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.25);
+        doc.roundedRect(x, y - 4, w, 6, 1.2, 1.2, 'S');
         doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 116, 139);
         doc.text(label, x + 2.5, y);
         doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...rgb);
@@ -12848,18 +12856,19 @@ async function exportExecutiveReportPDF(preview) {
     // ── Cover ──
     {
         const W = 297, H = 210;
-        doc.setFillColor(30, 58, 138); doc.rect(0, 0, 105, H, 'F');
-        doc.setFillColor(37, 99, 235); doc.rect(105, 0, 2, H, 'F');
-        doc.setTextColor(191, 219, 254); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+        // Print-friendly cover: white page, one slim brand bar + a divider line
+        doc.setFillColor(30, 58, 138); doc.rect(0, 0, 3, H, 'F');
+        doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.4); doc.line(108, 18, 108, H - 18);
+        doc.setTextColor(30, 58, 138); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
         doc.text('PPMS', 14, 30, { charSpace: 1.5 });
-        doc.setTextColor(255, 255, 255); doc.setFontSize(28);
+        doc.setTextColor(15, 23, 42); doc.setFontSize(28);
         doc.text(['Executive', 'Report'], 14, 50);
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(219, 234, 254);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(71, 85, 105);
         doc.text(doc.splitTextToSize('Production Planning & Monitoring System — VPX station status for every vehicle and component, plus the Production Issues status report.', 78), 14, 74);
         doc.setFontSize(8.5);
         [['Module', cover.module], ['Plan version', cover.version || '—'], ['Generated', cover.generated]].forEach(([k, v], i) => {
-            doc.setTextColor(147, 197, 253); doc.text(k.toUpperCase(), 14, 150 + i * 14, { charSpace: 0.3 });
-            doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.text(String(v), 14, 155.5 + i * 14);
+            doc.setTextColor(100, 116, 139); doc.text(k.toUpperCase(), 14, 150 + i * 14, { charSpace: 0.3 });
+            doc.setTextColor(15, 23, 42); doc.setFont('helvetica', 'bold'); doc.text(String(v), 14, 155.5 + i * 14);
             doc.setFont('helvetica', 'normal');
         });
 
@@ -12877,8 +12886,8 @@ async function exportExecutiveReportPDF(preview) {
         doc.text('At a glance', tx, 26);
         tiles.forEach(([label, value, rgb], i) => {
             const x = tx + (i % 3) * (tw + 6), y = 32 + Math.floor(i / 3) * (th + 6);
-            doc.setFillColor(248, 250, 252); doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.3);
-            doc.roundedRect(x, y, tw, th, 2, 2, 'FD');
+            doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.3);
+            doc.roundedRect(x, y, tw, th, 2, 2, 'S');
             doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 116, 139);
             doc.text(label.toUpperCase(), x + 4, y + 7, { charSpace: 0.2 });
             doc.setFont('helvetica', 'bold'); doc.setFontSize(String(value).length > 8 ? 12 : 17); doc.setTextColor(...rgb);
@@ -12919,23 +12928,21 @@ async function exportExecutiveReportPDF(preview) {
         legend(L.page.w - M, 27);
 
         const F = L.font, nameF = +(F * 0.85).toFixed(2);
-        const grp = label => {
-            const c = VPX_REPORT_GRP_COLOR[label] || { bg: 'FF334155', fg: 'FFffffff' };
-            return { fillColor: _execHex('#' + c.bg.slice(2)), textColor: _execHex('#' + c.fg.slice(2)) };
-        };
-        const dark = { fillColor: [15, 23, 42], textColor: [255, 255, 255] };
+        // Print-friendly: pale group tints with coloured text; light grey header cells
+        const grp = label => { const g = _execGroupColors(label); return { fillColor: _execHex(g.tint), textColor: _execHex(g.base) }; };
+        const dark = { fillColor: [226, 232, 240], textColor: [15, 23, 42] };
         const head = [
             [{ content: 'Unit', rowSpan: 2, styles: dark }, { content: '', rowSpan: 2, styles: dark },
              ...m.groups.map(g => ({ content: _execClip(g.label, L.colW * g.span, F), colSpan: g.span, styles: grp(g.label) })),
              { content: 'Delay', rowSpan: 2, styles: dark }, { content: `Delay reason (${m.cat})`, rowSpan: 2, styles: dark }],
             m.cols.map(c => ({ content: c.name && c.name !== c.code ? `${c.code}\n${_execClip(c.name, L.colW, nameF, 2)}` : c.code,
-                styles: { fillColor: [241, 245, 249], textColor: [15, 23, 42] } })),
+                styles: { fillColor: [248, 250, 252], textColor: [15, 23, 42] } })),
         ];
         const body = [];
         m.units.forEach((u, ui) => {
             const zebra = ui % 2 ? [248, 250, 252] : [255, 255, 255];
             body.push([
-                { content: u.line2 ? `${u.line1}\n${u.line2}` : u.line1, rowSpan: 2, styles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontStyle: 'bold' } },
+                { content: u.line2 ? `${u.line1}\n${u.line2}` : u.line1, rowSpan: 2, styles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold' } },
                 { content: 'Plan', styles: { textColor: [148, 163, 184], fontStyle: 'italic', fillColor: zebra } },
                 ...u.cells.map(c => { const x = _execCellSpec(c, true); return { content: x.text, styles: { fillColor: _execHex(x.bg), textColor: _execHex(x.color) } }; }),
                 { content: u.finalDelay > 0 ? `+${u.finalDelay}d` : '0d', rowSpan: 2, styles: { fontStyle: 'bold', textColor: u.finalDelay > 0 ? [185, 28, 28] : [21, 128, 61], fillColor: zebra } },
@@ -13007,7 +13014,7 @@ async function exportExecutiveReportPDF(preview) {
             ]),
             theme: 'grid', rowPageBreak: 'avoid',
             styles: { font: 'helvetica', fontSize: 7, cellPadding: 1.6, lineColor: [226, 232, 240], lineWidth: 0.15, textColor: [30, 41, 59], valign: 'top' },
-            headStyles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontStyle: 'bold' },
+            headStyles: { fillColor: [226, 232, 240], textColor: [15, 23, 42], fontStyle: 'bold', lineColor: [148, 163, 184] },
             alternateRowStyles: { fillColor: [248, 250, 252] },
             columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 34, fontStyle: 'bold' }, 2: { cellWidth: 17 }, 6: { cellWidth: 21 }, 7: { cellWidth: 21 }, 8: { cellWidth: 20 } },
             didDrawPage: data => { if (data.pageNumber > 1) band(297, 'Production Issues', 'Status Report — All Time (continued)', meta); },
@@ -13071,17 +13078,17 @@ function _execWordDocument(cover, models, layouts, issueRows, meta) {
     const divFor = page => page.key === 'a3' ? 'ExecA3' : 'ExecA4';
 
     // Cover
-    const tile = (label, value, color = '#0f172a') => `<td style="width:33%;padding:8pt 10pt;border:0.75pt solid #e2e8f0;background:#f8fafc;vertical-align:top">
+    const tile = (label, value, color = '#0f172a') => `<td style="width:33%;padding:8pt 10pt;border:0.75pt solid #cbd5e1;background:#ffffff;vertical-align:top">
         <p style="margin:0;font-size:7pt;color:#64748b;letter-spacing:0.5pt">${label.toUpperCase()}</p>
         <p style="margin:2pt 0 0;font-size:17pt;font-weight:bold;color:${color}">${esc(String(value))}</p></td>`;
     let body = `<div class="ExecA4">
         <table style="width:100%;border-collapse:collapse"><tr style="height:470pt">
-        <td style="width:34%;background:#1e3a8a;padding:24pt 18pt;vertical-align:top;border:none">
-            <p style="margin:0;font-size:9pt;font-weight:bold;letter-spacing:2pt;color:#bfdbfe">PPMS</p>
-            <p style="margin:10pt 0 0;font-size:30pt;font-weight:bold;line-height:32pt;color:#ffffff">Executive<br>Report</p>
-            <p style="margin:12pt 0 60pt;font-size:9.5pt;color:#dbeafe">Production Planning &amp; Monitoring System — VPX station status for every vehicle and component, plus the Production Issues status report.</p>
+        <td style="width:34%;padding:24pt 18pt;vertical-align:top;border:none;border-left:6pt solid #1e3a8a;border-right:0.75pt solid #e2e8f0">
+            <p style="margin:0;font-size:9pt;font-weight:bold;letter-spacing:2pt;color:#1e3a8a">PPMS</p>
+            <p style="margin:10pt 0 0;font-size:30pt;font-weight:bold;line-height:32pt;color:#0f172a">Executive<br>Report</p>
+            <p style="margin:12pt 0 60pt;font-size:9.5pt;color:#475569">Production Planning &amp; Monitoring System — VPX station status for every vehicle and component, plus the Production Issues status report.</p>
             ${[['Module', cover.module], ['Plan version', cover.version || '—'], ['Generated', cover.generated]].map(([k, v]) =>
-                `<p style="margin:10pt 0 0;font-size:7.5pt;letter-spacing:0.5pt;color:#93c5fd">${k.toUpperCase()}</p><p style="margin:0;font-size:10pt;font-weight:bold;color:#ffffff">${esc(v)}</p>`).join('')}
+                `<p style="margin:10pt 0 0;font-size:7.5pt;letter-spacing:0.5pt;color:#64748b">${k.toUpperCase()}</p><p style="margin:0;font-size:10pt;font-weight:bold;color:#0f172a">${esc(v)}</p>`).join('')}
         </td>
         <td style="padding:18pt 0 0 20pt;vertical-align:top;border:none">
             <p style="margin:0 0 6pt;font-size:12pt;font-weight:bold;color:#0f172a">At a glance</p>
@@ -13108,14 +13115,14 @@ function _execWordDocument(cover, models, layouts, issueRows, meta) {
     const statusLabel = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Closed' };
     const td = 'padding:2pt 3pt;border:0.5pt solid #e2e8f0;font-size:7.5pt;vertical-align:top';
     body += sectionBreak + `<div class="ExecA4">
-        <table style="width:100%;border-collapse:collapse;margin:0 0 6pt"><tr><td style="background:#1e3a8a;padding:6pt 10pt;border:none">
-            <p style="margin:0;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#bfdbfe">PRODUCTION ISSUES</p>
-            <p style="margin:0;font-size:15pt;font-weight:bold;color:#ffffff">Status Report — All Time</p></td>
-            <td style="background:#1e3a8a;padding:6pt 10pt;border:none;text-align:right;vertical-align:bottom"><p style="margin:0;font-size:7.5pt;color:#dbeafe">${esc(meta)}</p></td></tr></table>
+        <table style="width:100%;border-collapse:collapse;margin:0 0 6pt"><tr><td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a">
+            <p style="margin:0;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#1e3a8a">PRODUCTION ISSUES</p>
+            <p style="margin:0;font-size:15pt;font-weight:bold;color:#0f172a">Status Report — All Time</p></td>
+            <td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a;text-align:right;vertical-align:bottom"><p style="margin:0;font-size:7.5pt;color:#64748b">${esc(meta)}</p></td></tr></table>
         <p style="margin:0 0 6pt;font-size:8pt;color:#475569"><b>${issueRows.length}</b> issues &nbsp;·&nbsp; ${_categoryCounts(issueRows).map(([l, c]) => `${esc(l)} <b>${c}</b>`).join(' &nbsp;·&nbsp; ')}</p>
         <table style="width:100%;border-collapse:collapse">
             <thead style="display:table-header-group"><tr style="mso-yfti-firstrow:yes">${['Category', 'Title', 'Status', 'Issue / Problem', 'Proposed Solution', 'Action Taken', 'Reported', 'Resolved', 'PIC']
-                .map(hd => `<td style="${td};background:#1e3a8a;color:#ffffff;font-weight:bold">${hd}</td>`).join('')}</tr></thead>
+                .map(hd => `<td style="${td};background:#e2e8f0;color:#0f172a;font-weight:bold;border-bottom:1pt solid #64748b">${hd}</td>`).join('')}</tr></thead>
             ${issueRows.map((r, i) => `<tr style="page-break-inside:avoid;background:${i % 2 ? '#f8fafc' : '#ffffff'}">
                 <td style="${td}">${esc(ISSUE_CATEGORY_LABELS[r.category] || r.category || '—')}</td>
                 <td style="${td};font-weight:bold">${esc(r.title || '')}</td>
