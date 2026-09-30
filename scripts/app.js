@@ -8333,7 +8333,9 @@ function renderGantt(plans, startDate, endDate) {
             // source of truth for seeding means a station with an unresolved
             // category still gets a row (just without the category tag on
             // it) instead of no row at all.
-            const stationNames = getModuleRuntime()?.getActiveStationNames?.(vehicle);
+            // Reorder route mode also lists processes hidden or deleted in this
+            // plan version (greyed) so they can be shown / restored.
+            const stationNames = getModuleRuntime()?.getActiveStationNames?.(vehicle, { includeHidden: _ganttEditMode && _ganttReorderMode });
             if (!stationNames) return;
             stationNames.forEach(stationName => {
                 ensureGroupLane(vehicle, stationName);
@@ -8620,6 +8622,7 @@ function renderGantt(plans, startDate, endDate) {
             }
             const tasks = groups[groupKey][unit] || [];
             const _kd2ReorderRow = isKd2ProcessView && _ganttEditMode && _ganttReorderMode;
+            const _rowVis = _kd2ReorderRow ? (getModuleRuntime()?.getRowVisibility?.(groupKey, unit) || 'visible') : 'visible';
             const _rowLine = (isKd2ProcessView && _laneOrder) ? (_laneOrder.get(unit)?.line || '') : '';
             const laneVehicle = isF100ProcessView ? groupKey : isKd2ProcessView ? groupKey : ((isKD2Module() || isF100KD2Module()) ? unit.split('||')[0] : groupKey);
             const laneUnit    = isF100ProcessView ? unit    : isKd2ProcessView ? unit    : ((isKD2Module() || isF100KD2Module()) ? unit.split('||').slice(1).join('||') : unit);
@@ -8762,11 +8765,12 @@ function renderGantt(plans, startDate, endDate) {
                 ? `<div class="gr-unit-pct-row"><div class="gr-unit-pct-bar-wrap"><div class="gr-unit-pct-bar-fill" style="width:${_kd2PctComp.pct}%"></div></div><span class="gr-unit-pct-text">${_kd2PctComp.done}/${_kd2PctComp.total} (${_kd2PctComp.pct}%)</span></div>`
                 : '';
             bodyHtml += `
-        <div class="gr${rowMenuOpen ? ' gc-row-menu-open' : ''}" style="height:${rowH}px">
+        <div class="gr${rowMenuOpen ? ' gc-row-menu-open' : ''}${_rowVis !== 'visible' ? ` gr-lane-${_rowVis}` : ''}" style="height:${rowH}px">
           <div class="gr-label gr-unit-label" style="width:${GANTT_LABEL_W}px">
             <div class="gr-unit-info">
               ${isKD2Module() && !isKd2ProcessView && groupKey ? `<span class="gr-unit-ctx">${esc(laneVehicle)} · ${esc(groupKey)}</span>` : ''}
               ${isKd2ProcessView && _stationWC ? `<span class="gr-unit-ctx">${esc(_stationWC)}</span>` : ''}
+              ${_rowVis !== 'visible' ? `<span class="gr-lane-state-badge">${_rowVis === 'hidden' ? 'Hidden' : 'Deleted from plan'}</span>` : ''}
               <span class="gr-unit-name">${esc(isF100ProcessView ? laneUnit : isF100KD2Module() ? (() => { const t0 = tasks[0]; const uCode = t0?.unit_code || ''; const uName = t0?.unit_name || ''; return uCode && uName ? `${uCode} · ${uName}` : uCode || uName || `${laneVehicle} #${laneUnit}`; })() : isKd2ProcessView ? laneUnit : isKD2Module() ? unitLabel(laneVehicle, laneUnit, groupKey) : unitLabel(laneVehicle, laneUnit))}</span>
               ${(!isKd2ProcessView && _stationWC) ? `<span class="gr-unit-wc">${esc(_stationWC)}</span>` : ''}
               ${_f100PctHtml}
@@ -8787,10 +8791,21 @@ function renderGantt(plans, startDate, endDate) {
                     <span class="gc-bar-menu-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M7 2v10M2 7h10"/></svg></span>
                     <span class="gc-bar-menu-copy"><span class="gc-bar-menu-label">Add process</span></span>
                   </button>
+                  ${_rowVis === 'removed' ? `
+                  <button type="button" class="gc-bar-menu-item" data-kd2-reorder="restore" role="menuitem">
+                    <span class="gc-bar-menu-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7a4.5 4.5 0 1 0 1.3-3.2"/><path d="M2.5 2v2.5H5"/></svg></span>
+                    <span class="gc-bar-menu-copy"><span class="gc-bar-menu-label">Restore to plan</span><span class="gc-bar-menu-hint">Bring the (empty) process back</span></span>
+                  </button>` : `
+                  <button type="button" class="gc-bar-menu-item" data-kd2-reorder="${_rowVis === 'hidden' ? 'show' : 'hide'}" role="menuitem">
+                    <span class="gc-bar-menu-icon">${_rowVis === 'hidden'
+                        ? '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1 7s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4z"/><circle cx="7" cy="7" r="1.8"/></svg>'
+                        : '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2l10 10"/><path d="M5.6 3.2A6.4 6.4 0 0 1 7 3c3.8 0 6 4 6 4a10.6 10.6 0 0 1-1.7 2.1M3.4 4.6A10.6 10.6 0 0 0 1 7s2.2 4 6 4a6.2 6.2 0 0 0 2.4-.5"/></svg>'}</span>
+                    <span class="gc-bar-menu-copy"><span class="gc-bar-menu-label">${_rowVis === 'hidden' ? 'Show in plan' : 'Hide from plan'}</span><span class="gc-bar-menu-hint">${_rowVis === 'hidden' ? 'Back in Gantt, VPX, table and charts' : 'Keeps its blocks; hidden everywhere'}</span></span>
+                  </button>
                   <button type="button" class="gc-bar-menu-item gc-bar-menu-danger" data-kd2-reorder="remove" role="menuitem">
                     <span class="gc-bar-menu-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h9"/><path d="M5.5 4V3h3v1"/><path d="M4.5 5.5v5a.75.75 0 0 0 .75.75h3.5A.75.75 0 0 0 9.5 10.5v-5"/></svg></span>
-                    <span class="gc-bar-menu-copy"><span class="gc-bar-menu-label">Remove</span></span>
-                  </button>
+                    <span class="gc-bar-menu-copy"><span class="gc-bar-menu-label">Delete from plan</span><span class="gc-bar-menu-hint">Deletes its blocks in this plan version</span></span>
+                  </button>`}
                 </div>
               </div>
             </div>` : ''}
@@ -19099,22 +19114,47 @@ async function handleKd2ReorderClick(btn) {
         rt.openProcessModal?.(vehicle);
         return;
     }
-    if (action === 'remove') {
+    // Per-plan-version visibility (migration 59): Hide keeps the blocks but
+    // leaves the process out of every view; Delete removes its blocks and the
+    // process from this version; the catalog and other versions never change.
+    if (action === 'hide' || action === 'show' || action === 'remove' || action === 'restore') {
         _closeAllBarMenus();
         const codes = (box.dataset.stationCodes || '').split(',').filter(Boolean);
         if (!codes.length) { showToast('No station is bound to this row.', 'error'); return; }
+        if (!rt.setStationsVisibility) { showToast('Please reload the page to use this option.', 'error'); return; }
         try {
-            for (const code of codes) {
-                // In a plan version, remove only from this version; otherwise
-                // retire the catalog station.
-                const handled = await rt.removeStationFromVersion?.(vehicle, code);
-                if (!handled) await rt.deleteProcessStation?.(vehicle, code);
+            let ok = false;
+            if (action === 'remove') {
+                ok = await rt.deleteStationsFromVersion(vehicle, codes, rowKey);
+                if (ok) {
+                    const drop = new Set(codes);
+                    currentData = currentData.filter(r => !((r.vehicle || r.vehicle_type) === vehicle && drop.has(r.station_code)));
+                    showToast(`"${rowKey}" deleted from this plan version.`, 'success');
+                    _broadcastEditActivity(`deleted ${rowKey} from the ${vehicle} plan`);
+                }
+            } else {
+                const vis = action === 'hide' ? 'hidden' : 'visible';
+                ok = await rt.setStationsVisibility(vehicle, codes, vis);
+                if (ok && action === 'hide') {
+                    const drop = new Set(codes);
+                    currentData = currentData.filter(r => !((r.vehicle || r.vehicle_type) === vehicle && drop.has(r.station_code)));
+                }
+                if (ok && action === 'show') {
+                    // Its blocks were left out of the loaded plan — fetch them back
+                    await loadData();
+                }
+                if (ok) {
+                    const msg = { hide: `"${rowKey}" hidden from this plan version.`, show: `"${rowKey}" is shown again.`, restore: `"${rowKey}" restored to this plan version.` }[action];
+                    showToast(msg, 'success');
+                    _broadcastEditActivity({ hide: `hid ${rowKey}`, show: `showed ${rowKey}`, restore: `restored ${rowKey}` }[action] + ` in the ${vehicle} plan`);
+                }
             }
-            resetKd2LaneOrderCache();
-            refreshAllViews();
-            _broadcastEditActivity(`removed ${rowKey} from the ${vehicle} route`);
+            if (ok) {
+                resetKd2LaneOrderCache();
+                refreshAllViews();
+            }
         } catch (err) {
-            showToast('Remove failed: ' + (err.message || err), 'error');
+            showToast('Update failed: ' + (err.message || err), 'error');
         }
         return;
     }

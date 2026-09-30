@@ -1121,6 +1121,10 @@ window.PPMSModuleRuntime = (() => {
         }
         query = applyTimeFrame(query, filters);
         let rows = await queryAll(query);
+        // Processes hidden / deleted in this plan version (Reorder route ⋯ menu)
+        if (state.stationVisibility?.size) {
+            rows = rows.filter(row => stationVisibility(row.vehicle || row.vehicle_type, row.station_code) === 'visible');
+        }
 
         // Apply K9 component filter using component_group from station definitions
         if (filters.k9Component && filters.k9Component.length) {
@@ -1298,6 +1302,7 @@ window.PPMSModuleRuntime = (() => {
         if (!force && Date.now() - _versionRouteLoadedAt < 2000) return;
         _versionRouteLoadedAt = Date.now();
         state.versionRoute = new Map();
+        state.stationVisibility = new Map();
         if (!dbRef || !PlanVersions?.getActiveId) return;
         // Only meaningful once a specific version is active — otherwise the
         // query has no version filter and would blend every version's rows.
@@ -1311,11 +1316,17 @@ window.PPMSModuleRuntime = (() => {
                         'kd2'
                     )
                 ),
+                // visibility (hidden / removed) needs migration 59 — fall back
+                // to the route columns alone until it has run.
                 queryAll(
+                    dbRef.from('kd2_plan_route_order')
+                        .select('station_code, vehicle_type, route_sequence, parallel_with_previous, category_code, visibility')
+                        .eq('plan_version_id', activeId)
+                ).catch(() => queryAll(
                     dbRef.from('kd2_plan_route_order')
                         .select('station_code, vehicle_type, route_sequence, parallel_with_previous, category_code')
                         .eq('plan_version_id', activeId)
-                ).catch(() => []), // table missing until migration 54 runs
+                )).catch(() => []), // table missing until migration 54 runs
             ]);
             rows.forEach(r => {
                 if (!r.vehicle_type || !r.station_code) return;
@@ -1337,6 +1348,10 @@ window.PPMSModuleRuntime = (() => {
                     parallel_with_previous: !!r.parallel_with_previous,
                     category_code: r.category_code || null,
                 });
+                if (r.visibility && r.visibility !== 'visible') {
+                    if (!state.stationVisibility.has(r.vehicle_type)) state.stationVisibility.set(r.vehicle_type, new Map());
+                    state.stationVisibility.get(r.vehicle_type).set(r.station_code, r.visibility);
+                }
             });
         } catch (error) {
             // parallel_with_previous column missing until migration 51 runs — keep
@@ -1350,6 +1365,89 @@ window.PPMSModuleRuntime = (() => {
      *  version, or null to fall back to the global catalog. */
     function versionRouteFor(vehicle, stationCode) {
         return state.versionRoute?.get(vehicle)?.get(stationCode) || null;
+    }
+
+    /** 'visible' | 'hidden' | 'removed' for a station in the active plan
+     *  version (migration 59). Hidden and removed stations are left out of
+     *  the loaded plan, so every view (Gantt, VPX, Plan Table, summary,
+     *  charts, exports) drops them without its own check. */
+    function stationVisibility(vehicle, stationCode) {
+        return state.stationVisibility?.get(vehicle)?.get(stationCode) || 'visible';
+    }
+
+    /** Writes a station's visibility for the active plan version into its
+     *  kd2_plan_route_order override row (created with the station's current
+     *  route position if it has none yet, so the order doesn't change). */
+    async function setStationsVisibility(vehicle, codes, visibility) {
+        const activeId = PlanVersions?.getActiveId?.('kd2');
+        if (!dbRef || !activeId || !codes.length) return false;
+        if (!canManageKD2()) { toast('Only planners and operators can edit KD2 processes.', 'error'); return false; }
+        const rows = codes.map(code => {
+            const st = state.stations.find(s => s.vehicle_type === vehicle && s.station_code === code) || {};
+            const vr = versionRouteFor(vehicle, code);
+            return {
+                plan_version_id: activeId, vehicle_type: vehicle, station_code: code,
+                route_sequence: vr ? vr.route_sequence : (parseInt(st.route_sequence, 10) || 9999),
+                parallel_with_previous: vr ? !!vr.parallel_with_previous : !!st.parallel_with_previous,
+                category_code: vr ? (vr.category_code ?? st.category_code ?? null) : (st.category_code ?? null),
+                visibility,
+            };
+        });
+        const before = codes.map(code => ({ station_code: code, visibility: stationVisibility(vehicle, code) }));
+        const { error } = await dbRef.from('kd2_plan_route_order')
+            .upsert(rows, { onConflict: 'plan_version_id,vehicle_type,station_code' });
+        if (error) {
+            const msg = String(error.message || error);
+            toast(/visibility/i.test(msg)
+                ? "Hiding or deleting a process needs database/migrations/59_kd2_route_order_visibility.sql — run it in Supabase, then reload."
+                : 'Could not update the process: ' + msg, 'error');
+            return false;
+        }
+        await writeAudit('UPDATE', 'kd2_plan_route_order', `${vehicle}:${codes.join(',')}:visibility`, before,
+            codes.map(code => ({ station_code: code, visibility })));
+        if (!state.versionRoute.has(vehicle)) state.versionRoute.set(vehicle, new Map());
+        if (!state.stationVisibility.has(vehicle)) state.stationVisibility.set(vehicle, new Map());
+        rows.forEach(r => {
+            state.versionRoute.get(vehicle).set(r.station_code, {
+                route_sequence: r.route_sequence, parallel_with_previous: r.parallel_with_previous, category_code: r.category_code,
+            });
+            if (visibility === 'visible') state.stationVisibility.get(vehicle).delete(r.station_code);
+            else state.stationVisibility.get(vehicle).set(r.station_code, visibility);
+        });
+        return true;
+    }
+
+    /** "Delete from plan": deletes the stations' blocks in the active plan
+     *  version (their progress rows cascade) and marks them removed so their
+     *  lanes no longer appear in this version. Catalog and other versions are
+     *  untouched. Returns true when done. */
+    async function deleteStationsFromVersion(vehicle, codes, label) {
+        if (!dbRef || !codes.length) return false;
+        if (!canManageKD2()) { toast('Only planners and operators can edit KD2 processes.', 'error'); return false; }
+        const versionName = (PlanVersions?.getVersions?.('kd2') || [])
+            .find(v => String(v.id) === String(PlanVersions?.getActiveId?.('kd2')))?.name || 'this plan version';
+        let count = 0;
+        try {
+            const { count: n } = await PlanVersions.scoped(
+                dbRef.from('kd2_plan').select('id', { count: 'exact', head: true }), 'kd2')
+                .eq('vehicle_type', vehicle).in('station_code', codes);
+            count = n || 0;
+        } catch { /* count is only for the confirmation text */ }
+        if (!window.confirm(
+            `Delete "${label}" (${vehicle}) from "${versionName}"?\n\n`
+            + `${count ? `${count} planned block${count === 1 ? '' : 's'} and their progress will be permanently deleted, and ` : ''}`
+            + `the process will no longer appear in this plan version.\n`
+            + `The process stays in the catalog and in other plan versions.`)) return false;
+        const { error } = await PlanVersions.scoped(dbRef.from('kd2_plan').delete(), 'kd2')
+            .eq('vehicle_type', vehicle).in('station_code', codes);
+        if (error) { toast('Delete failed: ' + (error.message || error), 'error'); return false; }
+        await writeAudit('DELETE', 'kd2_plan', `${vehicle}:${codes.join(',')}:version-delete`, { station_codes: codes, blocks: count }, null);
+        const ok = await setStationsVisibility(vehicle, codes, 'removed');
+        if (!ok) {
+            // Blocks are gone but the lane can't be marked removed (migration 59 not run)
+            toast(`"${label}" blocks deleted — run migration 59 so the process itself is removed too.`, 'info');
+        }
+        return true;
     }
 
     function inputFor(battalionId, vehicleType) {
@@ -6320,7 +6418,9 @@ window.PPMSModuleRuntime = (() => {
                 .filter(s => s.vehicle_type === vehicle)
                 .map(s => [s.station_code, s])
         );
-        const routeItems = templateRowsForVehicle(vehicle); // sorted by route_sequence, then station_code
+        // Processes deleted from the active plan version are not re-generated
+        const routeItems = templateRowsForVehicle(vehicle) // sorted by route_sequence, then station_code
+            .filter(item => stationVisibility(vehicle, item.route.station_code) !== 'removed');
         const segments = [];
         let currentGroup = null;
 
@@ -8289,9 +8389,39 @@ window.PPMSModuleRuntime = (() => {
             // still needs to exist as a row in the Gantt so its first block
             // can be placed — losing the category label for it is a much
             // smaller problem than the row not existing at all.
-            getActiveStationNames(vehicle) {
-                return [...new Set(buildStationRowKeyMap(vehicle).values())];
+            getActiveStationNames(vehicle, { includeHidden = false } = {}) {
+                // A row (rowKey) is kept while any of its station codes is
+                // visible; includeHidden (Reorder route mode) also keeps
+                // hidden and deleted rows so they can be shown / restored.
+                const keep = new Set();
+                buildStationRowKeyMap(vehicle).forEach((rowKey, code) => {
+                    if (includeHidden || stationVisibility(vehicle, code) === 'visible') keep.add(rowKey);
+                });
+                return [...keep];
             },
+            // 'visible' | 'hidden' | 'removed' for a Gantt process row — the
+            // row is only hidden/removed when ALL its station codes are.
+            getRowVisibility(vehicle, rowKey) {
+                const codes = [];
+                buildStationRowKeyMap(vehicle).forEach((rk, code) => { if (rk === rowKey) codes.push(code); });
+                if (!codes.length) return 'visible';
+                const vis = codes.map(c => stationVisibility(vehicle, c));
+                if (vis.some(v => v === 'visible')) return 'visible';
+                return vis.every(v => v === 'removed') ? 'removed' : 'hidden';
+            },
+            // [{ rowKey, codes }] deleted from the active version — for Restore.
+            getRemovedStationRows(vehicle) {
+                const byKey = new Map();
+                buildStationRowKeyMap(vehicle).forEach((rowKey, code) => {
+                    if (!byKey.has(rowKey)) byKey.set(rowKey, []);
+                    byKey.get(rowKey).push(code);
+                });
+                return [...byKey.entries()]
+                    .filter(([, codes]) => codes.every(c => stationVisibility(vehicle, c) === 'removed'))
+                    .map(([rowKey, codes]) => ({ rowKey, codes }));
+            },
+            setStationsVisibility,
+            deleteStationsFromVersion,
             // Map<station_code, rowKey> — see buildStationRowKeyMap above.
             // Exposed so app.js can resolve the same row identity for an
             // actual plan row (which carries station_code, not

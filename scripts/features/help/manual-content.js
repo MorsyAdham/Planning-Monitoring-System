@@ -224,12 +224,13 @@ export const MANUAL_SECTIONS = [
             'Reschedule — drag a bar to move it, or drag its end to change its duration.',
             'Choose what a drag moves: This block, Whole lane, This + everything after, or This + others at this station. Select lane picks a whole lane first.',
             'Add work — place new plan blocks (see "Adding work to the plan"). Reorder route — change the station order.',
+            'In Reorder route (Process view), each process has a ⋯ menu: Hide from plan keeps its blocks but removes it from the Gantt, VPX, Plan Table, summary and charts; Show in plan brings it back. Delete from plan permanently deletes its blocks in this plan version and removes the process from it; Restore to plan brings the empty process back.',
             'Use Undo / Redo (arrows on the right) to reverse a change.',
             'The gear icon opens Options — Saturdays and No-work Days.',
             'Press Done to leave edit mode.',
         ],
-        tips: ['Edits apply only to the plan version you are viewing.', 'Moves skip no-work days.'],
-        keywords: ['move', 'drag', 'resize', 'reschedule', 'edit gantt', 'undo', 'reorder route'],
+        tips: ['Edits apply only to the plan version you are viewing.', 'Moves skip no-work days.', 'Hidden and deleted processes appear greyed only in Reorder route mode. Hiding or deleting never changes the process catalog or other plan versions.'],
+        keywords: ['move', 'drag', 'resize', 'reschedule', 'edit gantt', 'undo', 'reorder route', 'hide process', 'delete process', 'restore process'],
     },
 
     /* ───────────────────────── Plan Table ───────────────────────── */

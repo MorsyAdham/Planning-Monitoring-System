@@ -1,7 +1,7 @@
 {
- "version": "41bca83-20260930082450",
- "deployedAt": "2026-09-30T08:24:50.949Z",
- "notes": "Faster plan editing; change notices now show who really edited the plan",
+ "version": "5ccbbf5-20260930104140",
+ "deployedAt": "2026-09-30T10:41:40.298Z",
+ "notes": "Hide or delete a process from the plan (Gantt → Edit → Reorder route → ⋯ menu)",
  "files": [
   "index.html",
   "login.html",

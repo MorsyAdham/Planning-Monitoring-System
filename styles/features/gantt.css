@@ -1,1 +1,26 @@
 /* Gantt ownership. */
+
+/* ─── KD2 process view: processes hidden / deleted in this plan version
+   (shown only in Edit → Reorder route, so they can be shown / restored) ── */
+.gr-reorder-more-menu { width: 220px; }
+.gr.gr-lane-hidden > .gr-label,
+.gr.gr-lane-removed > .gr-label { opacity: .62; }
+.gr.gr-lane-hidden > .gr-track {
+    background-image: repeating-linear-gradient(135deg, rgba(127, 127, 127, .09) 0 6px, transparent 6px 12px);
+}
+.gr.gr-lane-removed > .gr-track {
+    background-image: repeating-linear-gradient(135deg, rgba(239, 68, 68, .08) 0 6px, transparent 6px 12px);
+}
+.gr.gr-lane-removed .gr-unit-name { text-decoration: line-through; text-decoration-color: var(--clr-overdue); }
+.gr-lane-state-badge {
+    align-self: flex-start;
+    padding: 1px 6px;
+    border: 1px dashed var(--clr-border);
+    border-radius: 999px;
+    font-size: .58rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--clr-text-muted);
+}
+.gr-lane-removed .gr-lane-state-badge { border-color: var(--clr-overdue); color: var(--clr-overdue); }
