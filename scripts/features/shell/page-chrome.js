@@ -1,3 +1,5 @@
+import { renderUpdateNotice } from '../update-notice/index.js';
+
 export function renderPageChrome() {
     return `
     <!-- ══════════════════════════ SCROLL-TO-TOP (fixed, bottom-right) -->
@@ -61,6 +63,7 @@ export function renderPageChrome() {
                 <!-- Icon rail: notifications, active users, theme, more — flush,
                      no per-icon borders, so it reads as one strip -->
                 <div class="icon-rail">
+                    ${renderUpdateNotice()}
                     <div class="f100-notif-wrap" id="f100NotifWrap" style="display:none">
                         <button class="btn-nav-icon f100-notif-bell" id="f100NotifBell" title="Notifications">
                             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">

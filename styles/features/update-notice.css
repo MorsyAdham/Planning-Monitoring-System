@@ -1,0 +1,133 @@
+/* ─── "Update available" notice (next to the notification bell) ─── */
+.update-notice-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+.update-notice-wrap[hidden] { display: none; }
+
+.update-notice-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 11px 0 10px;
+    border: 1px solid rgba(var(--clr-accent-rgb, 79, 142, 247), .55);
+    border-radius: 999px;
+    background: var(--clr-accent-dim);
+    color: var(--clr-accent);
+    font: 700 .74rem/1 Inter, sans-serif;
+    letter-spacing: .02em;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background .15s, box-shadow .15s;
+}
+.update-notice-btn svg { width: 14px; height: 14px; }
+.update-notice-btn:hover,
+.update-notice-btn[aria-expanded="true"] {
+    background: var(--clr-accent);
+    color: #fff;
+}
+.update-notice-btn:focus-visible { outline: 2px solid var(--clr-accent); outline-offset: 2px; }
+
+/* Steady status dot — stays after the pulse settles */
+.update-notice-dot {
+    position: absolute;
+    top: -3px;
+    right: -3px;
+    width: 9px;
+    height: 9px;
+    border: 2px solid var(--clr-surface);
+    border-radius: 50%;
+    background: var(--clr-late, #f97316);
+}
+
+/* Attention pulse for ~10 s when the update is first seen (and on "remind me") */
+.update-notice-btn.is-pulsing {
+    animation: update-notice-pulse 1.25s ease-out 8;
+}
+.update-notice-btn.is-pulsing .update-notice-dot {
+    animation: update-notice-blink 1.25s ease-in-out 8;
+}
+@keyframes update-notice-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(var(--clr-accent-rgb, 79, 142, 247), .55); }
+    70%  { box-shadow: 0 0 0 9px rgba(var(--clr-accent-rgb, 79, 142, 247), 0); }
+    100% { box-shadow: 0 0 0 0 rgba(var(--clr-accent-rgb, 79, 142, 247), 0); }
+}
+@keyframes update-notice-blink {
+    50% { transform: scale(1.35); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .update-notice-btn.is-pulsing,
+    .update-notice-btn.is-pulsing .update-notice-dot { animation: none; }
+}
+
+/* Popover */
+.update-notice-pop {
+    position: absolute;
+    top: calc(100% + 10px);
+    right: 0;
+    z-index: 1200;
+    width: 320px;
+    max-width: calc(100vw - 24px);
+    padding: 14px 16px;
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-lg, 12px);
+    background: var(--clr-surface);
+    box-shadow: var(--shadow-modal, 0 20px 60px rgba(0, 0, 0, .45));
+    color: var(--clr-text);
+    font-size: .8rem;
+    line-height: 1.45;
+    white-space: normal;
+}
+.update-notice-pop[hidden] { display: none; }
+.unp-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+.unp-head strong { display: block; font-size: .9rem; }
+.unp-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--clr-accent-dim);
+    color: var(--clr-accent);
+}
+.unp-badge svg { width: 16px; height: 16px; }
+.unp-when { display: block; font-size: .7rem; color: var(--clr-text-dim); }
+.unp-notes {
+    margin: 0 0 8px;
+    padding: 7px 10px;
+    border-left: 3px solid var(--clr-accent);
+    border-radius: 6px;
+    background: rgba(127, 127, 127, .07);
+}
+.unp-notes[hidden] { display: none; }
+.unp-hint { margin: 0 0 10px; color: var(--clr-text-muted); }
+.unp-warn {
+    margin: 0 0 10px;
+    padding: 7px 10px;
+    border-radius: 6px;
+    background: rgba(249, 115, 22, .12);
+    color: var(--clr-late, #f97316);
+    font-weight: 600;
+}
+.unp-warn[hidden] { display: none; }
+.unp-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.unp-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
+.unp-actions .btn svg { width: 14px; height: 14px; }
+
+[data-theme="crimson"] .update-notice-btn:hover,
+[data-theme="crimson"] .update-notice-btn[aria-expanded="true"] { background: var(--clr-crimson); color: #f5f2ed; }
+
+@media (max-width: 720px) {
+    .update-notice-label { display: none; }
+    .update-notice-btn { padding: 0 8px; }
+}

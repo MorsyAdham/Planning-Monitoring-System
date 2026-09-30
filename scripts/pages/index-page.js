@@ -18,6 +18,7 @@ import { renderModalRegistry } from '../templates/modal-registry.js';
 import { renderHelp, wireHelp } from '../features/help/index.js';
 import { renderAssistant, wireAssistant } from '../features/assistant/index.js';
 import { wireFilterUI } from '../features/filters/behavior.js';
+import { wireUpdateNotice } from '../features/update-notice/index.js';
 
 function renderIndexPage() {
     return [
@@ -126,6 +127,7 @@ async function initPage() {
     wireFilterUI();
     wireHelp();
     wireAssistant();
+    wireUpdateNotice();
 }
 
 initPage().catch(error => {
