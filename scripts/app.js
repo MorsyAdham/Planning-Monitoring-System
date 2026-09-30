@@ -5577,7 +5577,39 @@ function renderVPX(data) {
     html += '</tbody></table>';
     container.innerHTML = html;
 }
+/* Charts are the most expensive view to redraw (~1–3 s for the analytics
+   set) and during editing they're usually off-screen — so they're only
+   drawn while the Analytics section is on (or near) the screen. An update
+   while they're off-screen just remembers the latest data, and they draw
+   once when scrolled into view. */
+let _chartsPendingData = null;
+let _chartsObserver = null;
+const _chartsOnScreen = new Set();
 function renderCharts(data) {
+    const sections = ['chartsSection', 'f100ChartsSection'].map(id => document.getElementById(id)).filter(Boolean);
+    if (sections.length && typeof IntersectionObserver !== 'undefined') {
+        if (!_chartsObserver) {
+            _chartsObserver = new IntersectionObserver(entries => {
+                entries.forEach(e => { if (e.isIntersecting) _chartsOnScreen.add(e.target); else _chartsOnScreen.delete(e.target); });
+                if (_chartsOnScreen.size && _chartsPendingData) {
+                    const pending = _chartsPendingData;
+                    _chartsPendingData = null;
+                    _renderChartsNow(pending);
+                }
+            }, { rootMargin: '800px 0px' });
+            sections.forEach(el => _chartsObserver.observe(el));
+        }
+        // An expanded (full-screen) chart is always on screen
+        if (!_chartsOnScreen.size && !document.querySelector('.chart-card.chart-fullscreen')) {
+            _chartsPendingData = data;
+            return;
+        }
+    }
+    _chartsPendingData = null;
+    _renderChartsNow(data);
+}
+
+function _renderChartsNow(data) {
     renderBarChart(data);
     renderLineChart(data);
     renderF100ExtraCharts(data);
@@ -7720,17 +7752,33 @@ function todayStr() {
     return localDateStr(new Date());
 }
 
+/* Date labels are formatted thousands of times per redraw (Gantt tooltips,
+   VPX cells, table) and toLocaleDateString rebuilds a formatter on every
+   call — reuse one formatter and remember each date's label. */
+function _cachedDateFormat(key, options) {
+    const store = _cachedDateFormat[key] || (_cachedDateFormat[key] = {
+        fmt: new Intl.DateTimeFormat('en-GB', options), memo: new Map(),
+    });
+    return isoStr => {
+        let label = store.memo.get(isoStr);
+        if (label === undefined) {
+            label = store.fmt.format(new Date(isoStr + 'T00:00:00'));
+            if (store.memo.size > 5000) store.memo.clear();
+            store.memo.set(isoStr, label);
+        }
+        return label;
+    };
+}
+
 function formatDate(isoStr) {
     if (!isoStr || isoStr === '—') return '—';
-    const d = new Date(isoStr + 'T00:00:00');
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    return _cachedDateFormat('long', { day: '2-digit', month: 'short', year: 'numeric' })(isoStr);
 }
 
 /** Short date — "01 Jan" (no year), used in VPX cells */
 function formatDateShort(isoStr) {
     if (!isoStr || isoStr === '—') return '—';
-    const d = new Date(isoStr + 'T00:00:00');
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+    return _cachedDateFormat('short', { day: '2-digit', month: 'short' })(isoStr);
 }
 
 /** Inline-editable "Actual Start" / "Completed On" date cell. A native
@@ -8288,6 +8336,29 @@ function syncDataViewsAfterGanttEdit() {
    MAIN RENDER FUNCTION
    Call:  renderGantt(plansArray, 'YYYY-MM-DD', 'YYYY-MM-DD')
    ────────────────────────────────────────────────────────────────── */
+/* A block's ⋯ menu — built only for the block whose menu is open (and
+   injected on click), not rendered hidden inside all ~1,000 blocks. */
+function _ganttBlockMenuHtml(taskId) {
+    const id = esc(String(taskId));
+    return `
+          <div class="gc-bar-menu gc-bar-menu-compact" role="menu" aria-label="Block options">
+            <div class="gc-bmc-grid">
+              <button type="button" class="gc-bmc-btn gc-bmc-up gc-bar-lane-up" data-plan-id="${id}" title="Move up" role="menuitem">
+                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11V3"/><path d="M3.5 6.5 7 3l3.5 3.5"/></svg>
+              </button>
+              <button type="button" class="gc-bmc-btn gc-bmc-dn gc-bar-lane-dn" data-plan-id="${id}" title="Move down" role="menuitem">
+                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v8"/><path d="m3.5 7.5 3.5 3.5 3.5-3.5"/></svg>
+              </button>
+              <button type="button" class="gc-bmc-btn gc-bmc-edit gc-bar-menu-edit" data-plan-id="${id}" title="Edit" role="menuitem">
+                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 11h1.8L10 5.3l-1.8-1.8L2.5 9.2V11Z"/><path d="m8.2 3.5 1.8 1.8"/></svg>
+              </button>
+              <button type="button" class="gc-bmc-btn gc-bmc-del gc-bar-menu-delete" data-plan-id="${id}" title="Delete" role="menuitem">
+                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h9"/><path d="M5.5 4V3h3v1"/><path d="M4.5 5.5v5a.75.75 0 0 0 .75.75h3.5A.75.75 0 0 0 9.5 10.5v-5"/></svg>
+              </button>
+            </div>
+          </div>`;
+}
+
 function renderGantt(plans, startDate, endDate) {
     const inner = document.getElementById('ganttInner');
     if (!inner) return;
@@ -8626,10 +8697,20 @@ function renderGantt(plans, startDate, endDate) {
     mHtml += `<div class="gh-month" style="width:${runMonthSpan * GANTT_DAY_W}px">${runMonth}</div>`;
     wHtml += `<div class="gh-week"  style="width:${runWeekSpan * GANTT_DAY_W}px">FW${runWeek}</div>`;
 
-    // ── 4. Background day cells (shared template per row) ─────────
-    const bgCells = dayMeta.map(dm =>
+    // ── 4. Background day grid ─────────────────────────────────────
+    // Drawn by CSS (.gantt-grid-css: day lines + Saturday shading + hover
+    // column as background layers of each row) instead of one <div> per day
+    // per row — that was ~44,000 empty elements on a year-long plan, the
+    // bulk of every redraw and of the memory that crashed co-editors' tabs.
+    // Works because Fridays are hidden, so Saturdays repeat every 6 columns;
+    // any other pattern falls back to the per-day cells.
+    const _satIdx = dayMeta.findIndex(dm => dm.isSat);
+    const _gridCss = dayMeta.every((dm, i) => dm.isSat === (_satIdx >= 0 && i >= _satIdx ? (i - _satIdx) % 6 === 0 : false))
+        && (_satIdx < 0 || _satIdx < 6);
+    const bgCells = _gridCss ? '' : dayMeta.map(dm =>
         `<div class="gc-cell${dm.isSat ? ' gc-cell-sat' : ''}" data-gantt-date="${dm.date}" style="width:${GANTT_DAY_W}px"></div>`
     ).join('');
+    _ganttDaysList = days;
 
     // ── 5. Special zone bands ──────────────────────────────────────
     // Zones are injected into every row's track div (left relative to track start,
@@ -8839,22 +8920,7 @@ function renderGantt(plans, startDate, endDate) {
               <span class="gc-bar-menu-trigger-dot"></span>
             </span>
           </button>
-          <div class="gc-bar-menu gc-bar-menu-compact" role="menu" aria-label="Block options">
-            <div class="gc-bmc-grid">
-              <button type="button" class="gc-bmc-btn gc-bmc-up gc-bar-lane-up" data-plan-id="${task.id}" title="Move up" role="menuitem">
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11V3"/><path d="M3.5 6.5 7 3l3.5 3.5"/></svg>
-              </button>
-              <button type="button" class="gc-bmc-btn gc-bmc-dn gc-bar-lane-dn" data-plan-id="${task.id}" title="Move down" role="menuitem">
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v8"/><path d="m3.5 7.5 3.5 3.5 3.5-3.5"/></svg>
-              </button>
-              <button type="button" class="gc-bmc-btn gc-bmc-edit gc-bar-menu-edit" data-plan-id="${task.id}" title="Edit" role="menuitem">
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 11h1.8L10 5.3l-1.8-1.8L2.5 9.2V11Z"/><path d="m8.2 3.5 1.8 1.8"/></svg>
-              </button>
-              <button type="button" class="gc-bmc-btn gc-bmc-del gc-bar-menu-delete" data-plan-id="${task.id}" title="Delete" role="menuitem">
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h9"/><path d="M5.5 4V3h3v1"/><path d="M4.5 5.5v5a.75.75 0 0 0 .75.75h3.5A.75.75 0 0 0 9.5 10.5v-5"/></svg>
-              </button>
-            </div>
-          </div>` : '';
+          ${menuIsOpen ? _ganttBlockMenuHtml(task.id) : ''}` : '';
                 return `<div class="gc-bar${extraCls}${menuIsOpen ? ' gc-bar-menu-open' : ''}${isSelected ? ' gc-bar-selected' : ''}"
           data-plan-id="${task.id}"
           style="left:${left}px;width:${width}px;height:${BAR_H}px;top:${topPx}px;transform:none;background:${color}"
@@ -8874,7 +8940,11 @@ function renderGantt(plans, startDate, endDate) {
 
             const rowMenuOpen = _ganttEditMode && positioned.some(item => String(item.task.id) === _openGanttBlockMenuPlanId);
             const anchorTask = positioned[0]?.task || null;
-            const laneSelected = anchorTask
+            // Only needed for the "Select lane / Clear lane" button (edit mode,
+            // Select lane on, something selected). It scans the whole plan per
+            // row, so running it on every redraw (143 rows x ~1,000 blocks)
+            // was most of the Gantt's redraw time.
+            const laneSelected = anchorTask && _ganttEditMode && _ganttSelectLaneMode && _selectedGanttPlanIds.size
                 ? currentData.filter(row => sameGanttRowLane(row, anchorTask)).every(row => _selectedGanttPlanIds.has(String(row.id)))
                 : false;
             const _f100UnitComp = (isF100KD2Module() && !isF100ProcessView)
@@ -8945,7 +9015,7 @@ function renderGantt(plans, startDate, endDate) {
             data-vehicle-type="${esc(laneMeta.vehicle_type || laneVehicle || '')}"
             data-unit-serial="${esc(laneMeta.unit_serial ?? '')}"
             data-unit-label="${esc(laneMeta.unit_label || laneUnit || '')}"
-            data-gantt-days="${esc(days.join(','))}">
+            data-gantt-days="1">
             ${trackZonesHtml}
             ${bgCells}
             ${bars}
@@ -8966,6 +9036,9 @@ function renderGantt(plans, startDate, endDate) {
       </div>
       <div class="gantt-body">${bodyHtml}</div>
     </div>`;
+    inner.classList.toggle('gantt-grid-css', _gridCss);
+    inner.style.setProperty('--gd-w', GANTT_DAY_W + 'px');
+    inner.style.setProperty('--gd-sat-x', _satIdx >= 0 ? (_satIdx * GANTT_DAY_W) + 'px' : '-99999px');
     wireGanttHoverGuide();
 
     // ── 8. Legend ──────────────────────────────────────────────────
@@ -17703,6 +17776,7 @@ function startAuditNotifPoll() {
 
 let _ganttEditMode = false;
 let _ganttDragActive = 0; // when the current bar drag started (0 = none)
+let _ganttDaysList = [];    // the Gantt's visible day columns (set by renderGantt)
 let _ganttSatAllowed = false;
 let _ganttSatAsked = false;
 let _ganttMoveMode = 'single';
@@ -17957,6 +18031,7 @@ function clearGanttHoverGuide() {
         });
         _ganttHoverDate = '';
     }
+    document.getElementById('ganttInner')?.classList.remove('has-hover-col');
 }
 
 function syncGanttHoverGuide(rowEl, dateStr) {
@@ -17973,15 +18048,23 @@ function syncGanttHoverGuide(rowEl, dateStr) {
         }
         _ganttHoverDate = dateStr || '';
         if (_ganttHoverDate) {
+            // Header day (+ per-day cells in the fallback layout)
             document.querySelectorAll(`[data-gantt-date="${_ganttHoverDate}"]`).forEach(node => {
                 node.classList.add('gantt-hover-col');
             });
+        }
+        // Body column highlight for the CSS grid — a single variable
+        const inner = document.getElementById('ganttInner');
+        const idx = _ganttHoverDate ? _ganttDaysList.indexOf(_ganttHoverDate) : -1;
+        if (inner) {
+            inner.classList.toggle('has-hover-col', idx >= 0);
+            if (idx >= 0) inner.style.setProperty('--gh-x', (idx * GANTT_DAY_W) + 'px');
         }
     }
 }
 
 function resolveGanttHoverDate(track, clientX) {
-    const days = String(track?.dataset?.ganttDays || '').split(',').filter(Boolean);
+    const days = _ganttDaysList;
     if (!days.length) return '';
     const rect = track.getBoundingClientRect();
     if (!rect.width) return '';
@@ -19378,7 +19461,7 @@ function _ganttBarClickHandler(e) {
     const placementTrack = e.target.closest('.gr-track[data-kd2-track="true"]');
     const clickedBar = e.target.closest('.gc-bar');
     if (placementTrack && !clickedBar && !_ganttReorderMode) {
-        const days = String(placementTrack.dataset.ganttDays || '').split(',').filter(Boolean);
+        const days = _ganttDaysList;
         if (days.length) {
             const rect = placementTrack.getBoundingClientRect();
             const offset = Math.max(0, Math.min(rect.width - 1, e.clientX - rect.left));
@@ -19440,6 +19523,7 @@ function _ganttBarClickHandler(e) {
         document.querySelectorAll('.gc-bar-menu-open').forEach(bar => bar.classList.remove('gc-bar-menu-open', 'gc-bar-menu-below'));
         document.querySelectorAll('.gc-row-menu-open').forEach(row => row.classList.remove('gc-row-menu-open'));
         const bar = menuTrigger.closest('.gc-bar');
+        if (bar && !bar.querySelector('.gc-bar-menu')) bar.insertAdjacentHTML('beforeend', _ganttBlockMenuHtml(menuTrigger.dataset.planId));
         if (bar) bar.classList.add('gc-bar-menu-open');
         const row = menuTrigger.closest('.gr');
         if (row) row.classList.add('gc-row-menu-open');

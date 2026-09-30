@@ -1,8 +1,8 @@
 {
- "version": "v135-afe693b",
- "label": "v135",
- "deployedAt": "2026-09-30T12:38:05.871Z",
- "notes": "Smoother co-editing: live changes load only the edited blocks (fixes tabs crashing)",
+ "version": "v136-22d920a",
+ "label": "v136",
+ "deployedAt": "2026-09-30T13:39:05.435Z",
+ "notes": "Much lighter Gantt - fixes tabs crashing while co-editing",
  "files": [
   "index.html",
   "login.html",

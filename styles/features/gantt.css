@@ -24,3 +24,30 @@
     color: var(--clr-text-muted);
 }
 .gr-lane-removed .gr-lane-state-badge { border-color: var(--clr-overdue); color: var(--clr-overdue); }
+
+/* ─── Day grid drawn by CSS (replaces one .gc-cell per day per row) ───
+   Three background layers on each row, behind its blocks:
+     1. hover column  (--gh-x, colour --gh-c set on hover)
+     2. day lines     (every --gd-w)
+     3. Saturdays     (every 6 columns from --gd-sat-x; Fridays are hidden) */
+#ganttInner.gantt-grid-css .gr-track::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+        linear-gradient(var(--gh-c, transparent), var(--gh-c, transparent)),
+        linear-gradient(to right, transparent calc(var(--gd-w) - 1px), var(--gantt-grid-line, var(--clr-border-soft)) calc(var(--gd-w) - 1px)),
+        linear-gradient(to right, var(--gantt-sat-bg, rgba(59, 130, 246, .06)) var(--gd-w), transparent var(--gd-w));
+    background-size: var(--gd-w) 100%, var(--gd-w) 100%, calc(var(--gd-w) * 6) 100%;
+    background-position: var(--gh-x, -99999px) 0, 0 0, var(--gd-sat-x, -99999px) 0;
+    background-repeat: no-repeat, repeat-x, repeat-x;
+}
+#ganttInner.gantt-grid-css.has-hover-col { --gh-c: rgba(79, 142, 247, .09); }
+#ganttInner.gantt-grid-css.has-hover-col .gr.gantt-hover-row { --gh-c: rgba(79, 142, 247, .13); }
+
+[data-theme="light"] #ganttInner.gantt-grid-css { --gantt-grid-line: #e2e8f0; --gantt-sat-bg: rgba(59, 130, 246, .07); }
+[data-theme="light"] #ganttInner.gantt-grid-css.has-hover-col { --gh-c: rgba(37, 99, 235, .07); }
+[data-theme="light"] #ganttInner.gantt-grid-css.has-hover-col .gr.gantt-hover-row { --gh-c: rgba(37, 99, 235, .1); }
+[data-theme="crimson"] #ganttInner.gantt-grid-css.has-hover-col,
+[data-theme="crimson"] #ganttInner.gantt-grid-css.has-hover-col .gr.gantt-hover-row { --gh-c: rgba(139, 13, 26, .12); }
