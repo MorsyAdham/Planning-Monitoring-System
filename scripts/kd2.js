@@ -1106,6 +1106,24 @@ window.PPMSModuleRuntime = (() => {
         // Route order is per plan version and can change from another user's
         // reorder without touching the config tables — refresh it every load.
         await loadVersionRoute();
+        const rows = await queryAll(buildPlanQuery(db, filters));
+        return shapePlanRows(db, rows, filters);
+    }
+
+    /** Only the given plan ids, with the SAME filters and row shape as
+     *  loadData — for applying another user's change (or a block just
+     *  placed) without reloading the whole plan. Ids that no longer exist or
+     *  no longer match the filters are simply absent from the result. */
+    async function loadRowsByIds(db, filters, ids) {
+        const unique = [...new Set((ids || []).filter(id => id != null))];
+        if (!unique.length) return [];
+        if (!state.stations.length) await loadWorkspaceData();
+        const batches = await Promise.all(chunk(unique, 150).map(batch =>
+            queryAll(buildPlanQuery(db, filters).in('id', batch))));
+        return shapePlanRows(db, batches.flat(), filters);
+    }
+
+    function buildPlanQuery(db, filters) {
         let query = PlanVersions.scoped(db.from('kd2_plan_live').select('*'), 'kd2');
         // battalion/vehicle/unit/k9Component/weekRanges are arrays (possibly empty,
         // meaning "all") — the filter bar supports multi-select on these fields.
@@ -1119,8 +1137,10 @@ window.PPMSModuleRuntime = (() => {
                 .map(r => `and(start_date.lte.${r.weekEnd},end_date.gte.${r.weekStart})`)
                 .join(','));
         }
-        query = applyTimeFrame(query, filters);
-        let rows = await queryAll(query);
+        return applyTimeFrame(query, filters);
+    }
+
+    async function shapePlanRows(db, rows, filters) {
         // Processes hidden / deleted in this plan version (Reorder route ⋯ menu)
         if (state.stationVisibility?.size) {
             rows = rows.filter(row => stationVisibility(row.vehicle || row.vehicle_type, row.station_code) === 'visible');
@@ -3519,7 +3539,7 @@ window.PPMSModuleRuntime = (() => {
             try {
                 const duration = defaultDurationForStation(station.vehicle_type, station.category_code, station.station_code);
                 if (!duration) throw new Error(`Missing default duration for ${station.station_name}.`);
-                await createPlanBlock({
+                const created = await createPlanBlock({
                     battalionId: unit.battalion_id,
                     vehicle: station.vehicle_type,
                     unitSerial: unit.unit_serial,
@@ -3533,7 +3553,9 @@ window.PPMSModuleRuntime = (() => {
                 const hasReload = typeof helpers.reloadAll === 'function';
                 cancelTimelinePlacement({ skipRender: hasReload, keepMenuOpen: true });
                 toast(`KD2 block placed for ${unit.unit_label} at ${station.station_name}.`, 'success');
-                if (hasReload) await helpers.reloadAll();
+                // Just the new block — not a full plan reload
+                if (created?.id && helpers.patchRows) await helpers.patchRows([created.id], { filtersChanged: true });
+                else if (hasReload) await helpers.reloadAll();
                 else renderSchedule();
                 return true;
             } catch (error) {
@@ -3560,7 +3582,7 @@ window.PPMSModuleRuntime = (() => {
         try {
             const duration = defaultDurationForStation(station.vehicle_type, station.category_code, station.station_code);
             if (!duration) throw new Error(`Missing default duration for ${station.station_name}.`);
-            await createPlanBlock({
+            const created = await createPlanBlock({
                 battalionId: lane.battalion_id,
                 vehicle: lane.vehicle_type,
                 unitSerial: lane.unit_serial,
@@ -3574,7 +3596,9 @@ window.PPMSModuleRuntime = (() => {
             const hasReload = typeof helpers.reloadAll === 'function';
             cancelTimelinePlacement({ skipRender: hasReload, keepMenuOpen: true });
             toast(`KD2 block placed on ${lane.battalion_code} / ${lane.unit_label}.`, 'success');
-            if (hasReload) await helpers.reloadAll();
+            // Just the new block — not a full plan reload
+            if (created?.id && helpers.patchRows) await helpers.patchRows([created.id], { filtersChanged: true });
+            else if (hasReload) await helpers.reloadAll();
             else renderSchedule();
             return true;
         } catch (error) {
@@ -8354,6 +8378,7 @@ window.PPMSModuleRuntime = (() => {
         initialize,
         loadFilters,
         loadData,
+        loadRowsByIds,
         loadPlanningSnapshot,
         refreshWorkspace,
         renderSchedule,

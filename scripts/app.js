@@ -1785,6 +1785,11 @@ async function initializeApp() {
             await loadData();
             markLocalSave(); // late echoes of the write that preceded this reload
         },
+        // Just-written blocks only (e.g. a block placed on the Gantt)
+        patchRows: async (ids, opts) => {
+            markLocalSave();
+            await _patchKd2Rows(ids, opts);
+        },
     });
 
     applyUserTheme();          // restore this user's personal theme before first render
@@ -1938,26 +1943,68 @@ function startRealtimeSync() {
         // categories/routes), and either kind can reshape what the Gantt,
         // VPX, table and charts need to show. Debounce to one full reload
         // covering every table any of those screens read from.
-        let pending = false;
-        const onChange = () => {
+        // A co-editor's drag fires dozens of change events. Collect the ids of
+        // the changed blocks until the events stop (1.2 s quiet, at most 5 s),
+        // then fetch ONLY those blocks and patch them in (_patchKd2Rows) —
+        // no full plan reload. Process-definition changes (Manage Processes,
+        // route reorder) still do a full reload, as they reshape every view.
+        let timer = null, firstAt = 0;
+        let ids = new Set(), needFull = false, filtersChanged = false, progressDeleteUnknown = false;
+        const reloadNow = async () => {
+            // Don't redraw the Gantt under a bar the user is dragging
+            if (_ganttDragActive && Date.now() - _ganttDragActive < 30000) { timer = setTimeout(reloadNow, 800); return; }
+            timer = null;
+            firstAt = 0;
+            const batch = [...ids];
+            const full = needFull || (progressDeleteUnknown && !batch.length);
+            const withFilters = filtersChanged;
+            ids = new Set(); needFull = false; filtersChanged = false; progressDeleteUnknown = false;
+            if (_isLocalEcho() && !_peekForeignPlanEdit()) return;
+            const activeDateInput = document.activeElement?.matches?.('.inline-date-input, .inline-end-input');
+            if (activeDateInput) return;
+            try {
+                if (full) {
+                    const pos = saveScrollPos();
+                    await loadFilters();
+                    await loadData();
+                    restoreScrollPos(pos);
+                } else if (batch.length) {
+                    await _patchKd2Rows(batch, { filtersChanged: withFilters });
+                } else {
+                    return;
+                }
+                _remotePlanChangeToast();
+            } catch (err) {
+                console.warn('Live update failed — reloading the plan:', err);
+                await loadData();
+            }
+        };
+        const onChange = (payload) => {
             // Echo of our own save — judged when it arrives, not after the
             // debounce (a long multi-block save used to outlast the old 3 s
             // window, so its own echoes triggered a full reload + a false
             // "updated by another user" toast).
             if (_isLocalEcho() && !_peekForeignPlanEdit()) return;
-            if (pending) return;
-            pending = true;
-            setTimeout(async () => {
-                pending = false;
-                if (_isLocalEcho() && !_peekForeignPlanEdit()) return;
-                const activeDateInput = document.activeElement?.matches?.('.inline-date-input, .inline-end-input');
-                if (activeDateInput) return;
-                const pos = saveScrollPos();
-                await loadFilters();
-                await loadData();
-                restoreScrollPos(pos);
-                _remotePlanChangeToast();
-            }, 1200);
+            const table = payload?.table;
+            const type = payload?.eventType;
+            if (table === 'kd2_plan') {
+                const id = payload.new?.id ?? payload.old?.id;
+                if (id != null) ids.add(id); else needFull = true;
+                if (type !== 'UPDATE') filtersChanged = true;
+            } else if (table === 'kd2_progress') {
+                const planId = payload.new?.plan_id ?? payload.old?.plan_id;
+                if (planId != null) ids.add(planId);
+                // A delete only carries the progress row's own id — it comes
+                // with its plan block's delete (cascade) in the same burst
+                else if (type === 'DELETE') progressDeleteUnknown = true;
+                else needFull = true;
+            } else {
+                needFull = true; // process definitions
+            }
+            const now = Date.now();
+            if (!firstAt) firstAt = now;
+            clearTimeout(timer);
+            timer = setTimeout(reloadNow, Math.max(0, Math.min(1200, firstAt + 5000 - now)));
         };
         _realtimeChannel = db
             .channel('kd2_plan_realtime')
@@ -2272,7 +2319,37 @@ function wireActiveUsersBtn() {
 /* ──────────────────────────────────────────────────────────────────
    4. FILTERS
    ────────────────────────────────────────────────────────────────── */
-async function loadFilters() {
+/* Never run two full loads at once. Each load fetches the whole plan and
+   rebuilds every view; overlapping ones (a co-editor's changes arriving
+   while an earlier reload is still running, or a local reload colliding with
+   a remote one) each held their own copy of the data and DOM and could run
+   the tab out of memory ("This page is having a problem"). A call made while
+   one is running is merged into ONE follow-up run, and every caller's await
+   resolves when the latest data is on screen. */
+function _serialized(fn) {
+    let running = null;
+    let again = false;
+    const run = function () {
+        if (running) { again = true; return running; }
+        running = (async () => {
+            try {
+                do { again = false; await fn(); } while (again);
+            } finally {
+                running = null;
+            }
+        })();
+        return running;
+    };
+    /** Resolves once no load is running (never rejects). */
+    run.idle = () => (running ? running.catch(() => {}) : Promise.resolve());
+    return run;
+}
+const loadFilters = _serialized(_loadFiltersOnce);
+const loadData = _serialized(_loadDataOnce);
+window.loadData = loadData;       // used by the assistant's actions
+window.loadFilters = loadFilters;
+
+async function _loadFiltersOnce() {
     try {
         if (isKD2Module() && getModuleRuntime()?.loadFilters) {
             const kd2Filters = await getModuleRuntime().loadFilters(db);
@@ -2514,7 +2591,7 @@ function restoreScrollPos(pos) {
    chart after each save. Outside edit mode this renders immediately. */
 let _secondaryViewsTimer = null;
 let _secondaryViewsNeedTable = false;
-function _renderSecondaryViews({ includeTable = true } = {}) {
+function _renderSecondaryViews({ includeTable = true, defer = false } = {}) {
     if (includeTable) _secondaryViewsNeedTable = true;
     const run = () => {
         _secondaryViewsTimer = null;
@@ -2530,7 +2607,7 @@ function _renderSecondaryViews({ includeTable = true } = {}) {
         renderVPX(displayData);
     };
     clearTimeout(_secondaryViewsTimer);
-    if (!_ganttEditMode) { run(); return; }
+    if (!_ganttEditMode && !defer) { run(); return; }
     _secondaryViewsTimer = setTimeout(() => {
         if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 1500 });
         else run();
@@ -2803,7 +2880,119 @@ function loadDataDebounced(delay = 350) {
     _loadDataDebounceTimer = setTimeout(() => { loadData(); }, delay);
 }
 
-async function loadData() {
+/* ── KD2 loading helpers (shared by the full load and the row patch) ── */
+
+/** The filter-bar state as the KD2 runtime's query filters. */
+function _kd2QueryFilters() {
+    const weekList = filterState.week.has('all') ? [] : [...filterState.week];
+    const weekRanges = weekList.map(w => isoWeekDateRange(w)).filter(Boolean);
+    const impliedVehicles = impliedVehiclesFromUnits();
+    const vehicleList = !filterState.vehicle.has('all')
+        ? [...filterState.vehicle]
+        : (impliedVehicles ? [...impliedVehicles] : []);
+    return {
+        vehicle: vehicleList,
+        battalion: filterState.battalion.has('all') ? selectedUnitBattalions(filterState.unit) : [...filterState.battalion],
+        unit: selectedUnitNames(filterState.unit),
+        weekRanges,
+        timeFrame: getVal('filterTimeFrame'),
+        today: todayStr(),
+        ...currentWeekRange(),
+        ...currentMonthRange(),
+        startDate: getVal('filterStartDate'),
+        endDate: getVal('filterEndDate'),
+        k9Component: filterState.k9Component.has('all') ? [] : [...filterState.k9Component],
+    };
+}
+
+/** kd2_plan_live doesn't expose the X-ray/repair columns — fetch them for
+ *  every X-ray-eligible row that already has a progress record (cycles can
+ *  be logged before the welding station itself is marked complete) and
+ *  stitch them in. */
+async function _stitchKd2Xray(rows) {
+    const xrayProgressIds = rows
+        .filter(row => row.progress?.id && isXrayEligible(row))
+        .map(row => row.progress.id);
+    if (!xrayProgressIds.length) return;
+    try {
+        // Chunked — hundreds of ids in one .in() list can exceed the URL length limit
+        const xrayRows = [];
+        for (let i = 0; i < xrayProgressIds.length; i += 150) {
+            const { data: chunk, error: xrayErr } = await db.from('kd2_progress')
+                .select('id, xray_cycles, final_qa_date')
+                .in('id', xrayProgressIds.slice(i, i + 150));
+            if (xrayErr) throw xrayErr;
+            xrayRows.push(...(chunk || []));
+        }
+        const xrayMap = new Map(xrayRows.map(r => [r.id, r]));
+        rows.forEach(row => {
+            const x = row.progress?.id ? xrayMap.get(row.progress.id) : null;
+            if (x) {
+                row.progress.xray_cycles = x.xray_cycles || [];
+                row.progress.final_qa_date = x.final_qa_date || null;
+            }
+        });
+    } catch (e) {
+        // Migration 42 not applied yet — X-ray markers just won't show until it is.
+        console.warn('X-ray/repair columns unavailable:', e.message);
+    }
+}
+
+function _kd2RowCompare(a, b) {
+    const vCmp = vehicleSort(a.vehicle, b.vehicle); if (vCmp !== 0) return vCmp;
+    const uCmp = naturalSort(a.vehicle_no, b.vehicle_no); if (uCmp !== 0) return uCmp;
+    if (getModuleRuntime()?.getStationOrderByCode) return kd2StationCompare(a, b);
+    const kd2Compare = getModuleRuntime()?.comparePlanRowsByLaneOrder;
+    if (typeof kd2Compare === 'function') return kd2Compare(a, b);
+    const rA = parseInt(a.route_sequence, 10) || 9999;
+    const rB = parseInt(b.route_sequence, 10) || 9999;
+    if (rA !== rB) return rA - rB;
+    const wA = parseInt((a.week || '').replace(/\D/g, ''), 10) || 9999;
+    const wB = parseInt((b.week || '').replace(/\D/g, ''), 10) || 9999;
+    if (wA !== wB) return wA - wB;
+    return (a.start_date || '').localeCompare(b.start_date || '');
+}
+
+/* Apply changed plan blocks WITHOUT reloading the whole plan — used for
+   another user's live edits and for a block just placed. Fetches only those
+   ids (same filters and row shape as a full load), swaps them into
+   currentData (replaced / added / dropped when deleted or no longer in the
+   filter), redraws the Gantt once and refreshes the table, VPX, charts and
+   summary in the background. A drag by a co-editor costs a handful of rows
+   instead of the entire plan twice. */
+async function _patchKd2Rows(ids, { filtersChanged = false } = {}) {
+    const rt = getModuleRuntime();
+    if (!isKD2Module() || !rt?.loadRowsByIds) { await loadData(); return; }
+    await loadData.idle(); // never interleave with a full load
+    const idSet = new Set(ids.map(String));
+    const rows = await rt.loadRowsByIds(db, _kd2QueryFilters(), ids);
+    await _stitchKd2Xray(rows);
+    const fresh = new Map(rows.map(r => [String(r.id), r]));
+    const next = [];
+    currentData.forEach(r => {
+        const key = String(r.id);
+        if (!idSet.has(key)) next.push(r);
+        else if (fresh.has(key)) { next.push(fresh.get(key)); fresh.delete(key); }
+        // else: deleted, or moved outside the current filter → dropped
+    });
+    fresh.forEach(r => next.push(r)); // new blocks
+    currentData = next;
+    resetKd2LaneOrderCache();
+    currentData.sort(_kd2RowCompare);
+
+    const displayData = applyActiveFilters(currentData);
+    await rt.renderSchedule?.(currentData);
+    const gsEl = document.getElementById('ganttStart');
+    const geEl = document.getElementById('ganttEnd');
+    renderGantt(displayData, gsEl?.value, geEl?.value);
+    _renderSecondaryViews({ defer: true });
+    saveNotifSnapshot();
+    updateNotifBadge();
+    // New/removed blocks can add a battalion or week to the filter lists
+    if (filtersChanged) loadFilters().catch(() => {});
+}
+
+async function _loadDataOnce() {
     clearTimeout(_loadDataDebounceTimer);
     try {
         setTableLoading(true);
@@ -2814,73 +3003,11 @@ async function loadData() {
         }
 
         if (isKD2Module() && getModuleRuntime()?.loadData) {
-            const weekList = filterState.week.has('all') ? [] : [...filterState.week];
-            const weekRanges = weekList.map(w => isoWeekDateRange(w)).filter(Boolean);
-            const impliedVehicles = impliedVehiclesFromUnits();
-            const vehicleList = !filterState.vehicle.has('all')
-                ? [...filterState.vehicle]
-                : (impliedVehicles ? [...impliedVehicles] : []);
-            currentData = await getModuleRuntime().loadData(db, {
-                vehicle: vehicleList,
-                battalion: filterState.battalion.has('all') ? selectedUnitBattalions(filterState.unit) : [...filterState.battalion],
-                unit: selectedUnitNames(filterState.unit),
-                weekRanges,
-                timeFrame: getVal('filterTimeFrame'),
-                today: todayStr(),
-                ...currentWeekRange(),
-                ...currentMonthRange(),
-                startDate: getVal('filterStartDate'),
-                endDate: getVal('filterEndDate'),
-                k9Component: filterState.k9Component.has('all') ? [] : [...filterState.k9Component],
-            });
+            currentData = await getModuleRuntime().loadData(db, _kd2QueryFilters());
 
-            // kd2_plan_live (the view loadData() above queries) doesn't expose the
-            // X-ray/repair columns — fetch them separately for every X-ray-eligible
-            // row that already has a progress record (cycles can be logged before
-            // the welding station itself is marked complete) and stitch them in.
-            const xrayProgressIds = currentData
-                .filter(row => row.progress?.id && isXrayEligible(row))
-                .map(row => row.progress.id);
-            if (xrayProgressIds.length) {
-                try {
-                    // Chunked — hundreds of ids in one .in() list can exceed the URL length limit
-                    const xrayRows = [];
-                    for (let i = 0; i < xrayProgressIds.length; i += 150) {
-                        const { data: chunk, error: xrayErr } = await db.from('kd2_progress')
-                            .select('id, xray_cycles, final_qa_date')
-                            .in('id', xrayProgressIds.slice(i, i + 150));
-                        if (xrayErr) throw xrayErr;
-                        xrayRows.push(...(chunk || []));
-                    }
-                    const xrayMap = new Map((xrayRows || []).map(r => [r.id, r]));
-                    currentData.forEach(row => {
-                        const x = row.progress?.id ? xrayMap.get(row.progress.id) : null;
-                        if (x) {
-                            row.progress.xray_cycles = x.xray_cycles || [];
-                            row.progress.final_qa_date = x.final_qa_date || null;
-                        }
-                    });
-                } catch (e) {
-                    // Migration 42 not applied yet — X-ray markers just won't show until it is.
-                    console.warn('X-ray/repair columns unavailable:', e.message);
-                }
-            }
-
+            await _stitchKd2Xray(currentData);
             resetKd2LaneOrderCache();
-            currentData.sort((a, b) => {
-                const vCmp = vehicleSort(a.vehicle, b.vehicle); if (vCmp !== 0) return vCmp;
-                const uCmp = naturalSort(a.vehicle_no, b.vehicle_no); if (uCmp !== 0) return uCmp;
-                if (getModuleRuntime()?.getStationOrderByCode) return kd2StationCompare(a, b);
-                const kd2Compare = getModuleRuntime()?.comparePlanRowsByLaneOrder;
-                if (typeof kd2Compare === 'function') return kd2Compare(a, b);
-                const rA = parseInt(a.route_sequence, 10) || 9999;
-                const rB = parseInt(b.route_sequence, 10) || 9999;
-                if (rA !== rB) return rA - rB;
-                const wA = parseInt((a.week || '').replace(/\D/g, ''), 10) || 9999;
-                const wB = parseInt((b.week || '').replace(/\D/g, ''), 10) || 9999;
-                if (wA !== wB) return wA - wB;
-                return (a.start_date || '').localeCompare(b.start_date || '');
-            });
+            currentData.sort(_kd2RowCompare);
 
             const displayData = applyActiveFilters(currentData);
 
@@ -17575,6 +17702,7 @@ function startAuditNotifPoll() {
    ================================================================ */
 
 let _ganttEditMode = false;
+let _ganttDragActive = 0; // when the current bar drag started (0 = none)
 let _ganttSatAllowed = false;
 let _ganttSatAsked = false;
 let _ganttMoveMode = 'single';
@@ -18531,6 +18659,7 @@ function wireGanttDragEdit(dayIndex, days) {
         const startX = e.clientX;
         let deltaPx = 0;
         let deltaDays = 0;
+        _ganttDragActive = Date.now(); // live updates from co-editors wait until the drop
 
         function onMove(ev) {
             deltaPx = ev.clientX - startX;
@@ -18542,6 +18671,7 @@ function wireGanttDragEdit(dayIndex, days) {
         }
 
         async function onUp() {
+            _ganttDragActive = 0;
             bar.releasePointerCapture(e.pointerId);
             bar.removeEventListener('pointermove', onMove);
             bar.removeEventListener('pointerup', onUp);
