@@ -51,3 +51,22 @@
 [data-theme="light"] #ganttInner.gantt-grid-css.has-hover-col .gr.gantt-hover-row { --gh-c: rgba(37, 99, 235, .1); }
 [data-theme="crimson"] #ganttInner.gantt-grid-css.has-hover-col,
 [data-theme="crimson"] #ganttInner.gantt-grid-css.has-hover-col .gr.gantt-hover-row { --gh-c: rgba(139, 13, 26, .12); }
+
+/* Edit-mode block controls show while the pointer is over the block (they
+   are also built on first hover). A selected block keeps its ticked checkbox
+   and the block whose ⋯ menu is open keeps its trigger. */
+#ganttInner .gc-bar > .gc-bar-select,
+#ganttInner .gc-bar > .gc-bar-menu-trigger {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .12s ease;
+}
+#ganttInner .gc-bar:hover > .gc-bar-select,
+#ganttInner .gc-bar:hover > .gc-bar-menu-trigger,
+#ganttInner .gc-bar:has(:focus-visible) > .gc-bar-select,
+#ganttInner .gc-bar:has(:focus-visible) > .gc-bar-menu-trigger,
+#ganttInner .gc-bar.gc-bar-selected > .gc-bar-select,
+#ganttInner .gc-bar.gc-bar-menu-open > .gc-bar-menu-trigger {
+    opacity: 1;
+    pointer-events: auto;
+}

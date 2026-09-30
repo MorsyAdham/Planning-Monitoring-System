@@ -1,1 +1,22 @@
 /* Shared table ownership starts here. Legacy table styles remain in styles.css during the transition. */
+
+/* Plan Table drawn in batches — the row at the end of what's drawn so far */
+.data-table tr.tbl-more-row td {
+    padding: 10px 14px;
+    text-align: center;
+    font-size: .76rem;
+    color: var(--clr-text-muted);
+    background: var(--clr-surface-2, var(--clr-surface));
+    border-top: 1px dashed var(--clr-border);
+}
+.tbl-more-btn {
+    padding: 2px 8px;
+    border: 1px solid var(--clr-border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--clr-accent);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+.tbl-more-btn:hover { border-color: var(--clr-accent); }

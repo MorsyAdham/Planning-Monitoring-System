@@ -2589,6 +2589,47 @@ function restoreScrollPos(pos) {
    Gantt has painted — and a burst of edits (drag, drag, undo…) coalesces
    into ONE rebuild instead of re-rendering thousands of table rows and every
    chart after each save. Outside edit mode this renders immediately. */
+/* Off-screen views redraw only when they're on (or about to scroll onto)
+   the screen. The DATA is always current — every change is applied to
+   currentData the moment it arrives, and exports/reports/search read that —
+   this only skips redrawing a Plan Table or VPX nobody is looking at (e.g.
+   while editing on the Gantt, or with the Gantt in full screen). The latest
+   redraw is remembered and runs once when the section comes into view. */
+const _viewOnScreen = new Set();
+const _viewPending = new Map(); // section id -> redraw
+let _viewObserver = null;
+function _isViewOnScreen(id) {
+    if (typeof isGanttFullscreen === 'function' && isGanttFullscreen()) return false;
+    return !_viewObserver || _viewOnScreen.has(id);
+}
+function _flushVisibleViews() {
+    _viewPending.forEach((redraw, id) => {
+        if (!_isViewOnScreen(id)) return;
+        _viewPending.delete(id);
+        try { redraw(); } catch (err) { console.error(err); }
+    });
+}
+function _renderViewWhenVisible(id, redraw) {
+    const el = document.getElementById(id);
+    if (!el || typeof IntersectionObserver === 'undefined') { redraw(); return; }
+    if (!_viewObserver) {
+        _viewObserver = new IntersectionObserver(entries => {
+            entries.forEach(e => (e.isIntersecting ? _viewOnScreen.add(e.target.id) : _viewOnScreen.delete(e.target.id)));
+            _flushVisibleViews();
+        }, { rootMargin: '800px 0px' });
+        document.addEventListener('fullscreenchange', () => setTimeout(_flushVisibleViews, 60));
+    }
+    if (!el.dataset.viewObserved) {
+        // First time: the observer reports visibility on its next callback
+        el.dataset.viewObserved = '1';
+        _viewObserver.observe(el);
+        _viewPending.set(id, redraw);
+        return;
+    }
+    if (_isViewOnScreen(id)) { _viewPending.delete(id); redraw(); }
+    else _viewPending.set(id, redraw);
+}
+
 let _secondaryViewsTimer = null;
 let _secondaryViewsNeedTable = false;
 function _renderSecondaryViews({ includeTable = true, defer = false } = {}) {
@@ -2598,13 +2639,16 @@ function _renderSecondaryViews({ includeTable = true, defer = false } = {}) {
         const displayData = applyActiveFilters(currentData);
         if (_secondaryViewsNeedTable) {
             _secondaryViewsNeedTable = false;
-            const pos = saveScrollPos();
-            renderTable(applyTableSearchFilters(displayData));
-            restoreScrollPos(pos);
+            // Redraws read currentData when they actually run, never a stale copy
+            _renderViewWhenVisible('tableSection', () => {
+                const pos = saveScrollPos();
+                renderTable(applyTableSearchFilters(applyActiveFilters(currentData)));
+                restoreScrollPos(pos);
+            });
         }
         updateSummary(displayData);
         renderCharts(displayData);
-        renderVPX(displayData);
+        _renderViewWhenVisible('vpxSection', () => renderVPX(applyActiveFilters(currentData)));
     };
     clearTimeout(_secondaryViewsTimer);
     if (!_ganttEditMode && !defer) { run(); return; }
@@ -3429,7 +3473,8 @@ function updateTableRowInPlace(planId) {
     const row = currentData.find(t => String(t.id) === String(planId));
     if (!row) return false;
     const tr = document.querySelector(`#mainTable tbody tr[data-plan-id="${planId}"]`);
-    if (!tr) return false;
+    // Not drawn yet (further down the table) — it will show current data when drawn
+    if (!tr) return !!_tableProg?.pending.has(String(planId));
 
     const cells = tr.querySelectorAll('td');
     // Column order: Vehicle(0), Unit(1), Station(2), Code(3), Week(4),
@@ -4102,6 +4147,7 @@ function renderTable(data) {
           </div>
         </td>
       </tr>`;
+        _tableProg = null;
         return;
     }
 
@@ -4154,6 +4200,8 @@ function renderTable(data) {
     }
 
     let html = '';
+    const rowItems = []; // one entry per record: its separator rows + its own row
+    const rowIds = [];
     let prevGroupKey = null;
     let prevLineLabel = null; // K9 Hull/Turret/… line separator within a group
 
@@ -4273,9 +4321,24 @@ function renderTable(data) {
         <td>${delayHtml}</td>
         <td class="f100-comment-cell">${commentBtn}</td>
       </tr>`;
+        rowItems.push(html);
+        rowIds.push(String(row.id));
+        html = '';
     });
 
-    tbody.innerHTML = html;
+    // Draw the first rows now and the rest in batches as the table is
+    // scrolled (_appendTableBatch) — the full table was ~30,000 elements,
+    // 70% of the page. Never fewer rows than were showing, so a live update
+    // doesn't cut the table short under the user's scroll position.
+    const prevShown = _tableProg && _tableProg.tbody === tbody ? _tableProg.next : 0;
+    tbody.innerHTML = '';
+    _tableProg = {
+        tbody, items: rowItems, ids: rowIds, next: 0, wire: wireTableRows,
+        pending: new Set(rowIds), sentinel: null,
+    };
+    _appendTableBatch(Math.max(TABLE_BATCH, prevShown));
+
+    function wireTableRows(tbody) {
 
     // ── Viewer mode: disable date inputs ─────────────────────────
     if (!canWrite()) {
@@ -4435,6 +4498,68 @@ function renderTable(data) {
             }), 0);
         });
     });
+    } // wireTableRows
+}
+
+/* ── Plan Table: rows drawn in batches as the table scrolls ─────── */
+const TABLE_BATCH = 150;
+let _tableProg = null;      // { tbody, items, ids, next, wire, pending, sentinel }
+let _tableMoreObserver = null;
+
+function _tableScrollRoot(el) {
+    for (let p = el?.parentElement; p && p !== document.body; p = p.parentElement) {
+        const oy = getComputedStyle(p).overflowY;
+        if (oy === 'auto' || oy === 'scroll') return p;
+    }
+    return null;
+}
+
+/** Draws the next `count` records of the Plan Table (wiring only those). */
+function _appendTableBatch(count = TABLE_BATCH) {
+    const st = _tableProg;
+    if (!st || !st.tbody.isConnected && st.next > 0) return false;
+    if (st.next >= st.items.length) return false;
+    const end = Math.min(st.items.length, st.next + count);
+    const tmp = document.createElement('tbody');
+    tmp.innerHTML = st.items.slice(st.next, end).join('');
+    st.wire(tmp);
+    st.sentinel?.remove();
+    st.sentinel = null;
+    const frag = document.createDocumentFragment();
+    while (tmp.firstChild) frag.appendChild(tmp.firstChild);
+    st.tbody.appendChild(frag);
+    for (let i = st.next; i < end; i++) st.pending.delete(st.ids[i]);
+    st.next = end;
+    if (st.next < st.items.length) {
+        const more = document.createElement('tr');
+        more.className = 'tbl-more-row';
+        more.innerHTML = `<td colspan="12">Showing ${st.next.toLocaleString('en-GB')} of ${st.items.length.toLocaleString('en-GB')} records — <button type="button" class="tbl-more-btn">show more</button> or keep scrolling</td>`;
+        more.querySelector('.tbl-more-btn').addEventListener('click', () => _appendTableBatch());
+        st.tbody.appendChild(more);
+        st.sentinel = more;
+        if (typeof IntersectionObserver !== 'undefined') {
+            _tableMoreObserver?.disconnect();
+            _tableMoreObserver = new IntersectionObserver(entries => {
+                if (entries.some(e => e.isIntersecting)) _appendTableBatch();
+            }, { root: _tableScrollRoot(st.tbody), rootMargin: '400px 0px' });
+            _tableMoreObserver.observe(more);
+        }
+    } else {
+        _tableMoreObserver?.disconnect();
+    }
+    return true;
+}
+
+/** Make sure a record's row is drawn (e.g. before jumping to it). */
+function _ensureTableRowRendered(planId) {
+    if (typeof _viewPending !== 'undefined' && _viewPending.has('tableSection')) {
+        const redraw = _viewPending.get('tableSection');
+        _viewPending.delete('tableSection');
+        redraw();
+    }
+    const st = _tableProg;
+    const idx = st ? st.ids.indexOf(String(planId)) : -1;
+    if (idx >= st?.next) _appendTableBatch(idx - st.next + 1);
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -6999,6 +7124,7 @@ function openNotifDropdown() {
             const tableSection = document.getElementById('tableSection');
             if (tableSection) tableSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
             setTimeout(() => {
+                _ensureTableRowRendered(planId);
                 const tr = document.querySelector(`tr[data-plan-id="${planId}"]`);
                 if (tr) {
                     tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -7060,6 +7186,7 @@ function checkNotifJump() {
         const tableSection = document.getElementById('tableSection');
         if (tableSection) tableSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
         setTimeout(() => {
+            _ensureTableRowRendered(planId);
             const tr = document.querySelector(`tr[data-plan-id="${planId}"]`);
             if (tr) {
                 tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -8359,6 +8486,47 @@ function _ganttBlockMenuHtml(taskId) {
           </div>`;
 }
 
+/* A block's edit-mode controls: resize handles, selection checkbox and the
+   ⋯ trigger (the ⋯ menu itself is built on click — _ganttBlockMenuHtml). */
+function _ganttBarControlsHtml(taskId, { isSelected = false, menuIsOpen = false } = {}) {
+    const task = { id: esc(String(taskId)) };
+    return `
+          <span class="gc-bar-resize gc-bar-resize-left" data-plan-id="${task.id}" data-resize-edge="start" title="Drag to change the start date">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 3 4.5 7l4 4"/></svg>
+          </span>
+          <span class="gc-bar-resize gc-bar-resize-right" data-plan-id="${task.id}" data-resize-edge="end" title="Drag to change the end date">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 3l4 4-4 4"/></svg>
+          </span>
+          <button type="button" class="gc-bar-select${isSelected ? ' gc-bar-select-active' : ''}" data-plan-id="${task.id}" title="Select block" aria-label="Select block" aria-pressed="${isSelected ? 'true' : 'false'}"></button>
+          <button type="button" class="gc-bar-menu-trigger" data-plan-id="${task.id}" title="Block options" aria-label="Block options" aria-expanded="${menuIsOpen ? 'true' : 'false'}">
+            <span class="gc-bar-menu-trigger-dots" aria-hidden="true">
+              <span class="gc-bar-menu-trigger-dot"></span>
+              <span class="gc-bar-menu-trigger-dot"></span>
+              <span class="gc-bar-menu-trigger-dot"></span>
+            </span>
+          </button>
+          ${menuIsOpen ? _ganttBlockMenuHtml(task.id) : ''}`;
+}
+
+/* Build a block's edit controls the first time it's hovered (or selected). */
+let _ganttOnResizePointerDown = null; // set by wireGanttDragEdit
+function _ensureGanttBarControls(bar) {
+    if (!bar || !bar.dataset.lazyControls || !_ganttEditMode) return;
+    delete bar.dataset.lazyControls;
+    const id = bar.dataset.planId;
+    bar.insertAdjacentHTML('beforeend', _ganttBarControlsHtml(id, {
+        isSelected: _selectedGanttPlanIds.has(String(id)),
+        menuIsOpen: String(_openGanttBlockMenuPlanId) === String(id),
+    }));
+    if (_ganttOnResizePointerDown) {
+        bar.querySelectorAll('.gc-bar-resize').forEach(h => h.addEventListener('pointerdown', _ganttOnResizePointerDown));
+    }
+}
+function _ganttLazyControlsHandler(e) {
+    const bar = e.target.closest?.('.gc-bar[data-lazy-controls]');
+    if (bar) _ensureGanttBarControls(bar);
+}
+
 function renderGantt(plans, startDate, endDate) {
     const inner = document.getElementById('ganttInner');
     if (!inner) return;
@@ -8911,29 +9079,19 @@ function renderGantt(plans, startDate, endDate) {
 
                 const menuIsOpen = _openGanttBlockMenuPlanId === task.id;
                 const isSelected = _selectedGanttPlanIds.has(String(task.id));
-                const blockMenu = _ganttEditMode ? `
-          <button type="button" class="gc-bar-select${isSelected ? ' gc-bar-select-active' : ''}" data-plan-id="${task.id}" title="Select block" aria-label="Select block" aria-pressed="${isSelected ? 'true' : 'false'}"></button>
-          <button type="button" class="gc-bar-menu-trigger" data-plan-id="${task.id}" title="Block options" aria-label="Block options" aria-expanded="${menuIsOpen ? 'true' : 'false'}">
-            <span class="gc-bar-menu-trigger-dots" aria-hidden="true">
-              <span class="gc-bar-menu-trigger-dot"></span>
-              <span class="gc-bar-menu-trigger-dot"></span>
-              <span class="gc-bar-menu-trigger-dot"></span>
-            </span>
-          </button>
-          ${menuIsOpen ? _ganttBlockMenuHtml(task.id) : ''}` : '';
+                // Edit controls (checkbox, ⋯, resize handles) are built only for
+                // selected blocks and the one whose menu is open; every other
+                // block gets them on first hover (_ensureGanttBarControls) —
+                // ~12 elements x ~1,000 blocks less on every edit-mode redraw.
+                const eagerControls = _ganttEditMode && (isSelected || menuIsOpen);
+                const blockMenu = eagerControls ? _ganttBarControlsHtml(task.id, { isSelected, menuIsOpen }) : '';
                 return `<div class="gc-bar${extraCls}${menuIsOpen ? ' gc-bar-menu-open' : ''}${isSelected ? ' gc-bar-selected' : ''}"
-          data-plan-id="${task.id}"
+          data-plan-id="${task.id}"${_ganttEditMode && !eagerControls ? ' data-lazy-controls="1"' : ''}
           style="left:${left}px;width:${width}px;height:${BAR_H}px;top:${topPx}px;transform:none;background:${color}"
           title="${esc(tip)}">
           ${actualStartMarker}
           <span class="gc-bar-text">${esc(isF100ProcessView ? `${task.vehicle_type || '—'} #${task.serial_number ?? task.vehicle_no}` : isF100KD2Module() ? `${task.part_name || ''} · ${task.process_station}` : isKd2ProcessView ? `${task.battalion_code || '—'} · ${task.vehicle_no}` : isKD2Module() ? `${getRowCode(task)} · ${task.process_station}` : task.process_station)}</span>
-          ${_ganttEditMode ? `
-          <span class="gc-bar-resize gc-bar-resize-left" data-plan-id="${task.id}" data-resize-edge="start" title="Drag to change the start date">
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 3 4.5 7l4 4"/></svg>
-          </span>
-          <span class="gc-bar-resize gc-bar-resize-right" data-plan-id="${task.id}" data-resize-edge="end" title="Drag to change the end date">
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 3l4 4-4 4"/></svg>
-          </span>` : ''}
+
           ${blockMenu}
         </div>`;
             }).join('');
@@ -18166,6 +18324,7 @@ function _syncSelectedBlockUi() {
         const id = bar.dataset.planId;
         const selected = _selectedGanttPlanIds.has(id);
         bar.classList.toggle('gc-bar-selected', selected);
+        if (selected) _ensureGanttBarControls(bar);
         const btn = bar.querySelector('.gc-bar-select');
         if (btn) {
             btn.classList.toggle('gc-bar-select-active', selected);
@@ -18696,6 +18855,7 @@ async function redoGantt() {
  * Finds all .gc-bar[data-plan-id] elements and attaches pointer-drag handlers.
  */
 function wireGanttDragEdit(dayIndex, days) {
+    _ganttOnResizePointerDown = null; // never reuse a handler from an older render
     if (!_ganttEditMode || _ganttReorderMode) return;
 
     const bars = document.querySelectorAll('.gc-bar[data-plan-id]');
@@ -18802,6 +18962,7 @@ function wireGanttDragEdit(dayIndex, days) {
     document.querySelectorAll('.gc-bar-resize').forEach(handle => {
         handle.addEventListener('pointerdown', onResizePointerDown);
     });
+    _ganttOnResizePointerDown = onResizePointerDown;
 
     function onResizePointerDown(e) {
         if (!_ganttEditMode) return;
@@ -19295,6 +19456,9 @@ function wireBarDeleteButtons() {
     // Remove any existing delegated listener before re-adding (avoids duplicates)
     inner.removeEventListener('click', _ganttBarClickHandler);
     inner.addEventListener('click', _ganttBarClickHandler);
+    // Edit controls are built on first hover (_ensureGanttBarControls)
+    inner.removeEventListener('pointerover', _ganttLazyControlsHandler);
+    inner.addEventListener('pointerover', _ganttLazyControlsHandler);
 
     // Click-outside: close any open bar menu when clicking anywhere outside a bar
     document.removeEventListener('click', _ganttClickOutsideHandler);
