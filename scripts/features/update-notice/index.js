@@ -1,61 +1,74 @@
 /* ================================================================
-   UPDATE NOTICE — tells users with PPMS already open that a newer
-   version has been deployed, and loads it on request.
+   VERSION CHIP — always-visible "v134" in the navbar that compares the
+   version this page is RUNNING with the LATEST deployed version.
 
-   tools/deploy.sh writes version.json next to index.html on every
-   deploy: { version, deployedAt, notes, files[] }. This module reads it
-   at start-up (the version this page is running), re-checks every few
-   minutes and whenever the tab regains focus, and shows a pulsing
-   "Update" pill next to the notification bell when it changes.
+   • Running version: window.PPMS_BUILD, from scripts/core/build-info.js —
+     stamped by tools/deploy.sh and loaded with the rest of the app code,
+     so it is the version of the code the browser actually executed (even
+     if it came from an old cached copy).
+   • Latest version: version.json, written by the same deploy and fetched
+     with cache: 'no-store' at start-up, every 3 minutes and whenever the
+     tab regains focus.
 
-   "Reload now" re-downloads every file listed in the manifest with
-   cache: 'reload' before reloading. GitHub Pages lets browsers keep
-   files for ~10 minutes, so a plain reload right after a deploy could
-   bring back the old scripts — this makes one click enough.
+   Same version → a calm chip with a green tick.
+   Older version → the chip turns orange, shows "v133 → v134" and blinks
+   until clicked. The popover's "Load latest version" re-downloads every
+   app file listed in version.json (cache: 'reload') and then reloads,
+   so browser caching can't bring the old code back.
 
-   Local development has no version.json, so the feature stays idle.
+   Local development (build-info says "dev") shows a neutral "dev" chip.
    ================================================================ */
 
 const MANIFEST = 'version.json';
-const CHECK_EVERY_MS = 5 * 60 * 1000;
-const FOCUS_CHECK_GAP_MS = 60 * 1000;
-const REPULSE_AFTER_MS = 30 * 60 * 1000;
+const CHECK_EVERY_MS = 3 * 60 * 1000;
+const FOCUS_CHECK_GAP_MS = 30 * 1000;
+const REBLINK_AFTER_MS = 10 * 60 * 1000;
 
-let running = null;       // manifest of the version this page loaded with
-let available = null;     // newer manifest, once seen
+const running = window.PPMS_BUILD || { version: 'dev', label: 'dev' };
+let latest = null;
 let lastCheck = 0;
-let repulseTimer = null;
+let checking = false;
 
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const isDev = () => !running.version || running.version === 'dev';
+const isOutdated = () => !isDev() && latest && latest.version && latest.version !== running.version;
+const labelOf = b => b?.label || (b?.version ? String(b.version).slice(0, 7) : '—');
+
 const icon = p => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
-const REFRESH_ICON = icon('<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>');
+const ICON_OK = icon('<path d="M20 6 9 17l-5-5"/>');
+const ICON_UPDATE = icon('<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>');
+const ICON_DEV = icon('<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>');
 
 export function renderUpdateNotice() {
     return `
-        <div class="update-notice-wrap" id="updateNoticeWrap" hidden>
-            <button type="button" class="update-notice-btn" id="updateNoticeBtn" aria-haspopup="dialog" aria-expanded="false" title="A new version of PPMS is available">
-                <span class="update-notice-dot" aria-hidden="true"></span>
-                ${REFRESH_ICON}
-                <span class="update-notice-label">Update</span>
+        <div class="version-chip-wrap" id="updateNoticeWrap">
+            <button type="button" class="version-chip" id="updateNoticeBtn" aria-haspopup="dialog" aria-expanded="false" data-state="checking">
+                <span class="version-chip-icon" id="versionChipIcon">${ICON_OK}</span>
+                <span class="version-chip-text" id="versionChipText">${labelOf(running)}</span>
             </button>
-            <div class="update-notice-pop" id="updateNoticePop" role="dialog" aria-label="New version available" hidden>
-                <div class="unp-head">
-                    <span class="unp-badge">${REFRESH_ICON}</span>
-                    <div>
-                        <strong>New version available</strong>
-                        <span class="unp-when" id="updateNoticeWhen"></span>
-                    </div>
-                </div>
-                <p class="unp-notes" id="updateNoticeNotes"></p>
-                <p class="unp-hint">You are using an older version. Reload to get the latest fixes and features.</p>
-                <p class="unp-warn" id="updateNoticeWarn" hidden></p>
-                <div class="unp-actions">
-                    <button type="button" class="btn btn-ghost btn-sm" id="updateNoticeLater">Later</button>
-                    <button type="button" class="btn btn-primary btn-sm" id="updateNoticeReload">${REFRESH_ICON}<span>Reload now</span></button>
+            <div class="version-pop" id="updateNoticePop" role="dialog" aria-label="PPMS version" hidden>
+                <div class="version-pop-title" id="versionPopTitle">PPMS version</div>
+                <dl class="version-rows">
+                    <div class="version-row"><dt>Your version</dt><dd><strong id="versionRunning"></strong><span id="versionRunningWhen"></span></dd></div>
+                    <div class="version-row"><dt>Latest version</dt><dd><strong id="versionLatest"></strong><span id="versionLatestWhen"></span></dd></div>
+                </dl>
+                <p class="version-status" id="versionStatus"></p>
+                <p class="version-notes" id="updateNoticeNotes" hidden></p>
+                <p class="version-warn" id="updateNoticeWarn" hidden></p>
+                <div class="version-actions">
+                    <button type="button" class="btn btn-ghost btn-sm" id="versionCheckNow">Check again</button>
+                    <button type="button" class="btn btn-primary btn-sm" id="updateNoticeReload" hidden>${ICON_UPDATE}<span>Load latest version</span></button>
                 </div>
             </div>
         </div>`;
 }
+
+function fmtWhen(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+const setText = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
 
 async function fetchManifest() {
     try {
@@ -69,43 +82,15 @@ async function fetchManifest() {
 }
 
 async function check() {
+    if (checking) return;
+    checking = true;
     lastCheck = Date.now();
-    const m = await fetchManifest();
-    if (!m) return;
-    if (!running) { running = m; return; }
-    if (m.version === running.version || m.version === available?.version) return;
-    available = m;
-    show();
-}
-
-function fmtWhen(iso) {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return '';
-    return 'Released ' + d.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
-}
-
-function pulse() {
-    const btn = document.getElementById('updateNoticeBtn');
-    if (!btn) return;
-    btn.classList.remove('is-pulsing');
-    void btn.offsetWidth; // restart the animation
-    btn.classList.add('is-pulsing');
-}
-
-function show() {
-    const wrap = document.getElementById('updateNoticeWrap');
-    if (!wrap || !available) return;
-    wrap.hidden = false;
-    const notes = document.getElementById('updateNoticeNotes');
-    if (notes) {
-        notes.textContent = available.notes ? `What's new: ${available.notes}` : '';
-        notes.hidden = !available.notes;
-    }
-    const when = document.getElementById('updateNoticeWhen');
-    if (when) when.textContent = fmtWhen(available.deployedAt);
-    pulse();
-    if (typeof window.showToast === 'function') {
-        window.showToast('A new version of PPMS is available — click "Update" at the top to load it.', 'info');
+    try {
+        const m = await fetchManifest();
+        if (m) latest = m;
+    } finally {
+        checking = false;
+        render();
     }
 }
 
@@ -116,16 +101,66 @@ function unsavedWork() {
     const openModal = [...document.querySelectorAll('.modal-overlay')]
         .some(el => !el.hidden && getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden');
     if (openModal) items.push('a form or dialog is open');
-    const typing = document.activeElement?.matches?.('input:not([type="checkbox"]):not([type="radio"]), textarea, [contenteditable="true"]');
-    if (typing && document.activeElement.value) items.push('you are typing in a field');
     return items;
+}
+
+let _announced = null;
+function render() {
+    const btn = document.getElementById('updateNoticeBtn');
+    if (!btn) return;
+    const outdated = isOutdated();
+    const state = isDev() ? 'dev' : outdated ? 'outdated' : latest ? 'current' : 'checking';
+    btn.dataset.state = state;
+
+    const iconEl = document.getElementById('versionChipIcon');
+    if (iconEl) iconEl.innerHTML = state === 'outdated' ? ICON_UPDATE : state === 'dev' ? ICON_DEV : ICON_OK;
+    setText('versionChipText', outdated ? `${labelOf(running)} → ${labelOf(latest)}` : labelOf(running));
+    btn.title = {
+        outdated: `A newer version (${labelOf(latest)}) is available — click to update`,
+        current: `PPMS ${labelOf(running)} — you are on the latest version`,
+        checking: `PPMS ${labelOf(running)}`,
+        dev: 'Local development build',
+    }[state];
+
+    // Popover content
+    setText('versionPopTitle', outdated ? 'A newer version is available' : 'PPMS version');
+    setText('versionRunning', labelOf(running));
+    setText('versionRunningWhen', running.deployedAt ? ` · ${fmtWhen(running.deployedAt)}` : '');
+    setText('versionLatest', latest ? labelOf(latest) : (isDev() ? 'not checked in development' : 'checking…'));
+    setText('versionLatestWhen', latest?.deployedAt ? ` · ${fmtWhen(latest.deployedAt)}` : '');
+    const status = document.getElementById('versionStatus');
+    if (status) {
+        status.dataset.state = state;
+        status.textContent = {
+            outdated: 'You are using an older version. Load the latest version to get the newest fixes and features.',
+            current: 'You are on the latest version.',
+            checking: 'Checking for the latest version…',
+            dev: 'Local development build — version checks run on the live site.',
+        }[state];
+    }
+    const notes = document.getElementById('updateNoticeNotes');
+    if (notes) {
+        const text = outdated ? latest.notes : running.notes;
+        notes.hidden = !text;
+        notes.textContent = text ? `What's new: ${text}` : '';
+    }
+    const reloadBtn = document.getElementById('updateNoticeReload');
+    if (reloadBtn) reloadBtn.hidden = !outdated;
+
+    if (outdated && _announced !== latest.version) {
+        _announced = latest.version;
+        btn.classList.remove('is-acknowledged'); // a new version always blinks again
+        if (typeof window.showToast === 'function') {
+            window.showToast(`PPMS ${labelOf(latest)} is available — click the blinking version in the top bar to update.`, 'info');
+        }
+    }
 }
 
 function openPop() {
     const pop = document.getElementById('updateNoticePop');
     const btn = document.getElementById('updateNoticeBtn');
     if (!pop || !btn) return;
-    const work = unsavedWork();
+    const work = isOutdated() ? unsavedWork() : [];
     const warn = document.getElementById('updateNoticeWarn');
     if (warn) {
         warn.hidden = !work.length;
@@ -133,28 +168,33 @@ function openPop() {
     }
     pop.hidden = false;
     btn.setAttribute('aria-expanded', 'true');
-    btn.classList.remove('is-pulsing');
+    if (isOutdated()) btn.classList.add('is-acknowledged'); // stop blinking once the user has looked
+    if (Date.now() - lastCheck > 10000) check();
 }
 
+let _reblinkTimer = null;
 function closePop() {
     const pop = document.getElementById('updateNoticePop');
     const btn = document.getElementById('updateNoticeBtn');
-    if (pop) pop.hidden = true;
+    if (!pop || pop.hidden) return;
+    pop.hidden = true;
     if (btn) btn.setAttribute('aria-expanded', 'false');
+    // Still outdated after looking? Start blinking again in 10 minutes.
+    clearTimeout(_reblinkTimer);
+    if (isOutdated()) _reblinkTimer = setTimeout(() => btn?.classList.remove('is-acknowledged'), REBLINK_AFTER_MS);
 }
 
-async function reloadNow() {
+async function loadLatest() {
     const work = unsavedWork();
-    if (work.length && !window.confirm(`Reload now? Note: ${work.join(' and ')} — unsaved changes will be lost.`)) return;
+    if (work.length && !window.confirm(`Load the latest version now? Note: ${work.join(' and ')} — unsaved changes will be lost.`)) return;
     const btn = document.getElementById('updateNoticeReload');
     if (btn) { btn.disabled = true; btn.querySelector('span').textContent = 'Loading…'; }
     // Refresh the browser's copy of every app file, then reload onto them
-    const files = Array.isArray(available?.files) ? available.files : [];
-    const urls = ['index.html', ...files].filter((u, i, a) => a.indexOf(u) === i);
-    const timeout = new Promise(r => setTimeout(r, 8000));
+    const files = Array.isArray(latest?.files) ? latest.files : [];
+    const urls = ['index.html', 'scripts/core/build-info.js', ...files].filter((u, i, a) => a.indexOf(u) === i);
     await Promise.race([
         Promise.allSettled(urls.map(u => fetch(u, { cache: 'reload' }))),
-        timeout,
+        new Promise(r => setTimeout(r, 8000)),
     ]);
     window.location.reload();
 }
@@ -166,12 +206,8 @@ export function wireUpdateNotice() {
         const pop = document.getElementById('updateNoticePop');
         if (pop?.hidden) openPop(); else closePop();
     });
-    document.getElementById('updateNoticeLater')?.addEventListener('click', () => {
-        closePop();
-        clearTimeout(repulseTimer);
-        repulseTimer = setTimeout(pulse, REPULSE_AFTER_MS);
-    });
-    document.getElementById('updateNoticeReload')?.addEventListener('click', reloadNow);
+    document.getElementById('updateNoticeReload')?.addEventListener('click', loadLatest);
+    document.getElementById('versionCheckNow')?.addEventListener('click', () => check());
     document.addEventListener('pointerdown', e => {
         if (!e.target.closest?.('#updateNoticeWrap')) closePop();
     }, true);
@@ -183,14 +219,19 @@ export function wireUpdateNotice() {
     document.addEventListener('visibilitychange', maybeCheck);
     window.addEventListener('focus', maybeCheck);
     setInterval(() => { if (document.visibilityState === 'visible') check(); }, CHECK_EVERY_MS);
-    check();
+    render();
+    if (!isDev()) check();
 
-    // Test hook: PPMSUpdateNotice.simulate() shows the notice without a deploy
+    // Test hook: PPMSUpdateNotice.simulate() pretends a newer version is live
     window.PPMSUpdateNotice = {
         simulate(notes = 'Test update') {
-            available = { version: 'simulated', deployedAt: new Date().toISOString(), notes, files: [] };
-            show();
+            if (isDev()) running.version = 'dev-sim';
+            latest = { version: 'simulated', label: 'v' + ((parseInt(String(running.label).replace(/\D/g, ''), 10) || 0) + 1), deployedAt: new Date().toISOString(), notes, files: [] };
+            document.getElementById('updateNoticeBtn')?.classList.remove('is-acknowledged');
+            render();
         },
         check,
+        get running() { return running; },
+        get latest() { return latest; },
     };
 }
