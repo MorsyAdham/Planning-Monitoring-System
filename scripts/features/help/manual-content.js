@@ -181,13 +181,18 @@ export const MANUAL_SECTIONS = [
         group: 'Dashboard',
         title: 'Manufacturing Analytics (charts)',
         roles: 'all', modules: 'all',
-        summary: 'Charts that summarise the filtered plan: status breakdown, cumulative planned vs actual completion, completion by vehicle type, process step completion and the station bottleneck chart (average delay per station).',
+        summary: 'Charts that summarise the filtered plan, in three rows. Progress over time: Cumulative Progress, Weekly Throughput (planned vs completed per week with the overdue backlog) and Status Breakdown. Units & delivery: Unit Progress Ranking (% complete vs expected by today) and Planned vs Expected Finish per unit. Bottlenecks & issues: Station Bottleneck and Issues Trend (opened vs resolved, time to resolve). Each chart shows a one-line insight worked out from the data. F100-KD2 shows its own completion charts.',
         steps: [
             'Scroll to Analytics or click Analytics in the top bar.',
-            'Hover any chart for exact values.',
-            'Use the expand icon on a chart to view it larger.',
+            'Use the small buttons on each chart to change its range, grouping (unit, battalion, vehicle) or view — your choice is remembered.',
+            'Read the insight line under each chart title for the key takeaway; hover the chart for exact values.',
+            'Use the expand icon to open a chart full screen — the insight is shown in full there.',
         ],
-        keywords: ['charts', 'analytics', 'bottleneck', 's-curve', 'cumulative'],
+        tips: [
+            'All charts follow the filter bar except Issues Trend, which covers the whole module.',
+            'Expected finish = planned finish plus the worst delay in that unit, in working days (Fridays excluded) — the same rule as the Executive Summary delivery card.',
+        ],
+        keywords: ['charts', 'analytics', 'bottleneck', 's-curve', 'cumulative', 'throughput', 'ranking', 'expected finish', 'issues trend', 'insight'],
         action: 'scroll:chartsSection',
     },
 

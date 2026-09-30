@@ -120,6 +120,7 @@ async function initPage() {
         { src: 'scripts/gantt-module.js' },
         { src: 'scripts/kd2.js' },
         { src: 'scripts/app.js' },
+        { src: 'scripts/features/charts/analytics.js' },
     ]);
 
     wireFilterUI();

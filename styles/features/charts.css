@@ -1,1 +1,152 @@
 /* Chart-card ownership. */
+
+/* ─── Manufacturing Analytics dashboard (F200) ─────────────────────
+   12-column grid, grouped rows, compact cards with per-chart
+   selectors and a one-line insight. */
+.charts-grid.an-grid {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 14px;
+}
+.an-span-4 { grid-column: span 4; }
+.an-span-6 { grid-column: span 6; }
+.an-grid .an-span-12 { grid-column: 1 / -1; }
+
+.an-group-label {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 6px 0 -4px;
+    font-size: .64rem;
+    font-weight: 700;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--clr-text-dim);
+}
+.an-group-label:first-child { margin-top: 0; }
+.an-group-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--clr-border);
+    opacity: .7;
+}
+
+.an-grid .chart-card {
+    min-width: 0;
+    padding: 14px 16px 12px;
+    gap: 8px;
+}
+.an-grid .chart-canvas-wrap { height: 210px; }
+
+.an-head {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 6px 10px;
+    padding-right: 34px; /* room for the expand button */
+}
+.an-head-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1 1 150px;
+    min-width: 0;
+}
+.an-grid .chart-title { font-size: .95rem; line-height: 1.2; }
+.an-grid .chart-subtitle {
+    font-size: .62rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.an-grid .chart-expand-btn { top: 12px; right: 12px; }
+
+/* Segmented selectors */
+.an-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+}
+.an-controls:empty { display: none; }
+.an-seg {
+    display: inline-flex;
+    overflow: hidden;
+    border: 1px solid var(--clr-border);
+    border-radius: 7px;
+    background: var(--clr-bg);
+}
+.an-seg[hidden],
+.an-seg button[hidden] { display: none; }
+.an-seg button {
+    padding: 4px 8px;
+    border: 0;
+    background: transparent;
+    color: var(--clr-text-muted);
+    font: 600 .66rem/1.2 Inter, sans-serif;
+    letter-spacing: .02em;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background .12s, color .12s;
+}
+.an-seg button + button { border-left: 1px solid var(--clr-border); }
+.an-seg button:hover { color: var(--clr-text); background: var(--clr-surface-2, rgba(127, 127, 127, .08)); }
+.an-seg button[aria-pressed="true"] {
+    background: var(--clr-accent-dim);
+    color: var(--clr-accent);
+}
+.an-seg button:focus-visible { outline: 2px solid var(--clr-accent); outline-offset: -2px; }
+[data-theme="light"] .an-seg { background: #fff; }
+[data-theme="crimson"] .an-seg button[aria-pressed="true"] { background: var(--clr-crimson); color: #f5f2ed; }
+
+/* One-line insight — truncated on the card, wraps in full screen */
+.chart-insight {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    padding: 5px 9px;
+    border-left: 3px solid var(--clr-accent);
+    border-radius: 6px;
+    background: rgba(127, 127, 127, .07);
+    color: var(--clr-text-muted);
+    font-size: .73rem;
+    line-height: 1.35;
+}
+.chart-insight[hidden] { display: none; }
+.chart-insight svg { width: 13px; height: 13px; flex: none; color: var(--clr-accent); }
+.chart-insight-text {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.chart-insight[data-tone="good"] { border-left-color: var(--clr-completed); }
+.chart-insight[data-tone="good"] svg { color: var(--clr-completed); }
+.chart-insight[data-tone="warn"] { border-left-color: var(--clr-late); }
+.chart-insight[data-tone="warn"] svg { color: var(--clr-late); }
+.chart-insight[data-tone="bad"] { border-left-color: var(--clr-overdue); }
+.chart-insight[data-tone="bad"] svg { color: var(--clr-overdue); }
+
+.chart-card.chart-fullscreen .chart-insight {
+    padding: 9px 13px;
+    font-size: .9rem;
+    color: var(--clr-text);
+}
+.chart-card.chart-fullscreen .chart-insight svg { width: 16px; height: 16px; }
+.chart-card.chart-fullscreen .chart-insight-text { white-space: normal; }
+.chart-card.chart-fullscreen .chart-subtitle { white-space: normal; }
+.chart-card.chart-fullscreen .an-seg button { padding: 6px 11px; font-size: .74rem; }
+
+@media (max-width: 1320px) {
+    .an-span-4 { grid-column: span 6; }
+    .an-span-4.an-wrap-full { grid-column: 1 / -1; }
+}
+@media (max-width: 900px) {
+    .an-span-4,
+    .an-span-6 { grid-column: 1 / -1; }
+}
+.an-grid .chart-card.chart-fullscreen { padding: 20px 24px 18px; gap: 12px; }

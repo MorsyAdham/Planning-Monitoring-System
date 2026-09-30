@@ -5362,6 +5362,8 @@ function renderCharts(data) {
     renderLineChart(data);
     renderF100ExtraCharts(data);
     renderKD2BottleneckChart(data);
+    // Throughput, unit ranking, finish forecast, issues trend (features/charts/analytics.js)
+    if (typeof renderAnalyticsCharts === 'function') renderAnalyticsCharts(data);
     // Charts get created before the grid's layout has necessarily settled
     // (font swap, a section flipping from display:none in the same tick) —
     // resize once after this frame, then keep watching for further shifts.
@@ -5381,9 +5383,15 @@ function renderKD2BottleneckChart(data) {
     if (!isKD2Module() || !data.length) { card.style.display = 'none'; return; }
     card.style.display = '';
 
+    // Card selectors (features/charts/analytics.js): vehicle filter + metric
+    const opt = k => (typeof anOpt === 'function' ? anOpt(k) : null);
+    const vSel   = opt('bnVehicle') || 'all';
+    const metric = opt('bnMetric') || 'max';
+    const rows = vSel === 'all' ? data : data.filter(r => _getVehicleType(r.vehicle) === vSel);
+
     // Build per-(vehicle, station) delay stats — each vehicle's station is a separate entry
     const stationMap = new Map();
-    data.forEach(r => {
+    rows.forEach(r => {
         const vtype = _getVehicleType(r.vehicle) || 'Unknown';
         const name  = r.process_station || '(Unknown)';
         const key   = `${vtype}||${name}`;
@@ -5401,55 +5409,77 @@ function renderKD2BottleneckChart(data) {
     ['K9', 'K10', 'K11'].forEach(v => {
         vtypeRouteOrders[v] = _byName ? _byName.call(rt, v) : new Map();
     });
+    const routeCmp = (a, b) => {
+        if (a.vtype !== b.vtype) return a.vtype.localeCompare(b.vtype);
+        return ((vtypeRouteOrders[a.vtype]?.get(a.name)) ?? 9999) - ((vtypeRouteOrders[b.vtype]?.get(b.name)) ?? 9999);
+    };
+    const valueOf = s => metric === 'count' ? s.delayed
+        : metric === 'avg' ? (s.delayed ? Math.round(s.delaySum / s.delayed * 10) / 10 : 0)
+        : s.maxDelay;
 
-    const stations = [...stationMap.values()]
-        .map(s => {
-            const component = s.vtype === 'K9' ? (k9CatMap.get(s.name)?.component_group || null) : null;
-            return { ...s, component };
-        })
-        .sort((a, b) => {
-            // Sort by vehicle first, then by route order within vehicle
-            if (a.vtype !== b.vtype) return a.vtype.localeCompare(b.vtype);
-            const sa = (vtypeRouteOrders[a.vtype]?.get(a.name)) ?? 9999;
-            const sb = (vtypeRouteOrders[b.vtype]?.get(b.name)) ?? 9999;
-            return sa - sb;
-        })
-        .slice(0, 20);
+    const all = [...stationMap.values()].map(s => ({
+        ...s, component: s.vtype === 'K9' ? (k9CatMap.get(s.name)?.component_group || null) : null,
+    }));
+    const delayed = all.filter(s => s.delayed > 0);
+    // The worst 15 delayed stations; one vehicle is shown in process order, all vehicles worst-first
+    let stations = (delayed.length ? delayed : all)
+        .sort((a, b) => valueOf(b) - valueOf(a) || b.maxDelay - a.maxDelay)
+        .slice(0, 15);
+    if (vSel !== 'all') stations.sort(routeCmp);
 
-    const c      = themeChartColors();
-    // Label: "StationName  (Component)  [Vtype]" — component only for K9
+    const c   = themeChartColors();
+    const css = getComputedStyle(document.documentElement);
+    const tv  = (n, f) => css.getPropertyValue(n).trim() || f;
+    const hexA = (hex, a) => { const h = hex.replace('#', ''); const f = h.length === 3 ? h.split('').map(x => x + x).join('') : h; const n = parseInt(f, 16); return Number.isNaN(n) ? hex : `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; };
+    const cOver = tv('--clr-overdue', '#ef4444'), cLate = tv('--clr-late', '#f97316'), cPlan = tv('--clr-planned', '#3b82f6');
+    // Label: "StationName  (Component)  [Vtype]" — component only for K9, vehicle only when mixed
     const labels = stations.map(s => {
         let lbl = s.name;
         if (s.component) lbl += `  (${s.component})`;
-        lbl += `  [${s.vtype}]`;
+        if (vSel === 'all') lbl += `  [${s.vtype}]`;
         return lbl;
     });
-    const maxs   = stations.map(s => s.maxDelay);
-    const colors = maxs.map(v => v >= 14 ? 'rgba(239,68,68,.82)' : v >= 7 ? 'rgba(245,158,11,.82)' : v >= 1 ? 'rgba(59,130,246,.75)' : 'rgba(148,163,184,.38)');
+    const values = stations.map(valueOf);
+    const colors = stations.map(s => hexA(s.maxDelay >= 14 ? cOver : s.maxDelay >= 7 ? cLate : s.maxDelay >= 1 ? cPlan : '#94a3b8', s.maxDelay >= 1 ? 0.8 : 0.38));
 
+    const metricTxt = { max: 'Worst delay per station (working days)', avg: 'Average delay of delayed tasks (working days)', count: 'Delayed tasks per station' }[metric];
     const sub = document.getElementById('kd2BottleneckSubtitle');
-    const withDelays = stations.filter(s => s.delayed > 0).length;
-    if (sub) sub.textContent = `${withDelays} of ${stations.length} station${stations.length !== 1 ? 's' : ''} with delays · in process order`;
+    if (sub) sub.textContent = `${delayed.length} of ${all.length} station${all.length !== 1 ? 's' : ''} with delays · ${vSel === 'all' ? 'worst first' : 'process order'}`;
+
+    if (typeof anSetInsight === 'function') {
+        if (!delayed.length) {
+            anSetInsight('anBnInsight', `No station has delayed tasks${vSel === 'all' ? '' : ` for ${vSel}`} in the current filter.`, 'good');
+        } else {
+            const w = [...delayed].sort((a, b) => b.maxDelay - a.maxDelay || b.delayed - a.delayed)[0];
+            anSetInsight('anBnInsight',
+                `Main bottleneck: ${w.name} (${w.vtype}) — ${w.delayed} of ${w.total} tasks delayed, worst +${w.maxDelay} wd · ${delayed.length} of ${all.length} stations have delays.`,
+                w.maxDelay >= 14 ? 'bad' : 'warn');
+        }
+    }
 
     _kd2BottleneckChartInst = new Chart(canvas, {
         type: 'bar',
         data: {
             labels,
             datasets: [{
-                label: 'Max Delay (days)',
-                data: maxs,
+                label: metricTxt,
+                data: values,
                 backgroundColor: colors,
-                borderRadius: 4,
+                borderRadius: 3,
                 borderWidth: 0,
+                maxBarThickness: 16,
             }],
         },
         options: {
             indexAxis: 'y',
             responsive: true,
             maintainAspectRatio: false,
+            animation: { duration: 250 },
             plugins: {
                 legend: { display: false },
                 tooltip: {
+                    backgroundColor: c.tooltipBg, borderColor: c.tooltipBdr, borderWidth: 1,
+                    titleColor: c.tooltipTtl, bodyColor: c.tooltipBdy, padding: 9,
                     callbacks: {
                         title: ctx => ctx[0].label,
                         label: ctx => {
@@ -5458,7 +5488,8 @@ function renderKD2BottleneckChart(data) {
                             if (s.maxDelay === 0) {
                                 lines.push(`  No delays  ·  ${s.total} task${s.total !== 1 ? 's' : ''}`);
                             } else {
-                                lines.push(`  Max ${s.maxDelay}d delay  ·  ${s.delayed} delayed / ${s.total} total`);
+                                lines.push(`  Worst +${s.maxDelay} wd  ·  avg +${Math.round(s.delaySum / s.delayed * 10) / 10} wd`);
+                                lines.push(`  ${s.delayed} delayed of ${s.total} tasks`);
                             }
                             lines.push(`  Vehicle: ${s.vtype}`);
                             if (s.component) lines.push(`  Component: ${s.component}`);
@@ -5470,13 +5501,15 @@ function renderKD2BottleneckChart(data) {
             scales: {
                 x: {
                     beginAtZero: true,
-                    ticks: { color: c.text, font: { family: 'Inter', size: 10 }, callback: v => v + 'd' },
+                    ticks: { color: c.text, font: { family: 'Inter', size: 10 }, precision: 0, callback: v => metric === 'count' ? v : v + 'd' },
                     grid: { color: c.grid },
-                    title: { display: true, text: 'Max Delay (days, worst delayed task per station)', color: c.text, font: { family: 'Inter', size: 10 } },
+                    border: { display: false },
+                    title: { display: true, text: metricTxt, color: c.axisLabel, font: { family: 'Inter', size: 10 } },
                 },
                 y: {
-                    ticks: { color: c.text, font: { family: 'Inter', size: 10 } },
+                    ticks: { color: c.text, font: { family: 'Inter', size: 9 }, autoSkip: false },
                     grid: { display: false },
+                    border: { display: false },
                 },
             },
         },
@@ -5794,7 +5827,8 @@ function _resizeAllCharts() {
     if (_resizeAllChartsTimer) clearTimeout(_resizeAllChartsTimer);
     _resizeAllChartsTimer = setTimeout(() => {
         _resizeAllChartsTimer = null;
-        [barChartInst, lineChartInst, _f100ChartStatus, _f100ChartStep, _f100ChartVtype, _kd2BottleneckChartInst]
+        [barChartInst, lineChartInst, _f100ChartStatus, _f100ChartStep, _f100ChartVtype, _kd2BottleneckChartInst,
+            ...(typeof anChartInstances === 'function' ? anChartInstances() : [])]
             .forEach(c => { try { c?.resize(); } catch {} });
     }, 60);
 }
@@ -5858,7 +5892,7 @@ function updateChartHeadings(grouping) {
 
     if (barTitle) barTitle.textContent = 'Status Breakdown';
     if (barSubtitle) {
-        barSubtitle.textContent = `Planned · Completed · Late Completion · Overdue by ${groupingLabel}`;
+        barSubtitle.textContent = `Completed · Late · In progress · Planned · Overdue by ${groupingLabel}`;
     }
     if (lineTitle) lineTitle.textContent = 'Cumulative Progress';
     if (lineSubtitle) {
@@ -5869,97 +5903,126 @@ function updateChartHeadings(grouping) {
 }
 
 function renderBarChart(data) {
-    const grouping = getChartGrouping(data);
+    // "Group by" selector on the card overrides the automatic grouping
+    const grouping = (typeof anStatusGrouping === 'function' && anStatusGrouping(data)) || getChartGrouping(data);
     const labels = grouping.labels;
     updateChartHeadings(grouping.keyLabel);
 
-    const counts = labels.map(label => {
-        const rows = data.filter(row => grouping.valueFor(row) === label);
-        return {
-            planned: rows.filter(r => calculateStatus(r) === 'Planned').length,
-            completed: rows.filter(r => calculateStatus(r) === 'Completed').length,
-            late: rows.filter(r => calculateStatus(r) === 'Late Completion').length,
-            overdue: rows.filter(r => calculateStatus(r) === 'Overdue').length,
-        };
+    const STATUSES = [
+        ['Completed',       '--clr-completed', '#22c55e'],
+        ['Late Completion', '--clr-late',      '#f97316'],
+        ['In Progress',     null,              '#f59e0b'],
+        ['Planned',         '--clr-planned',   '#3b82f6'],
+        ['Overdue',         '--clr-overdue',   '#ef4444'],
+    ];
+    const index = new Map(labels.map((l, i) => [l, i]));
+    const counts = STATUSES.map(() => labels.map(() => 0));
+    data.forEach(r => {
+        const i = index.get(grouping.valueFor(r));
+        if (i == null) return;
+        const s = STATUSES.findIndex(([name]) => name === calculateStatus(r));
+        if (s >= 0) counts[s][i]++;
     });
 
+    const css = getComputedStyle(document.documentElement);
+    const hexA = (hex, a) => { const h = hex.replace('#', ''); const f = h.length === 3 ? h.split('').map(x => x + x).join('') : h; const n = parseInt(f, 16); return Number.isNaN(n) ? hex : `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; };
+    const base = chartOptions(isKD2Module() ? 'Plan Blocks' : 'Status Count');
     const cfg = {
         type: 'bar',
         data: {
             labels: labels.length ? labels : ['No Data'],
-            datasets: [
-                {
-                    label: 'Planned',
-                    data: counts.map(c => c.planned),
-                    backgroundColor: 'rgba(59,130,246,.75)',
-                    borderColor: '#3b82f6',
-                    borderWidth: 1,
-                    borderRadius: 4,
-                },
-                {
-                    label: 'Completed',
-                    data: counts.map(c => c.completed),
-                    backgroundColor: 'rgba(34,197,94,.75)',
-                    borderColor: '#22c55e',
-                    borderWidth: 1,
-                    borderRadius: 4,
-                },
-                {
-                    label: 'Late',
-                    data: counts.map(c => c.late),
-                    backgroundColor: 'rgba(59,130,246,.75)',
-                    borderColor: '#3b82f6',
-                    borderWidth: 1,
-                    borderRadius: 4,
-                },
-                {
-                    label: 'Overdue',
-                    data: counts.map(c => c.overdue),
-                    backgroundColor: 'rgba(239,68,68,.75)',
-                    borderColor: '#ef4444',
-                    borderWidth: 1,
-                    borderRadius: 4,
-                },
-            ],
+            datasets: STATUSES.map(([name, v, fallback], s) => {
+                const col = (v && css.getPropertyValue(v).trim()) || fallback;
+                return {
+                    label: name === 'Late Completion' ? 'Late' : name,
+                    data: counts[s],
+                    backgroundColor: hexA(col, 0.8),
+                    borderWidth: 0,
+                    borderRadius: 2,
+                    maxBarThickness: 34,
+                };
+            }),
         },
-        options: chartOptions(isKD2Module() ? 'Plan Blocks' : 'Status Count'),
+        options: {
+            ...base,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: { ...base.scales.x, stacked: true, grid: { display: false }, ticks: { ...base.scales.x.ticks, font: { family: 'Inter', size: labels.length > 20 ? 9 : 10 }, maxRotation: 55, autoSkip: labels.length > 30 } },
+                y: { ...base.scales.y, stacked: true, ticks: { ...base.scales.y.ticks, stepSize: undefined, precision: 0 } },
+            },
+        },
     };
 
     if (barChartInst) barChartInst.destroy();
     barChartInst = new Chart(document.getElementById('barChart'), cfg);
+
+    // Insight — where the overdue work sits
+    if (typeof anSetInsight === 'function') {
+        const noun = isKD2Module() ? 'blocks' : 'tasks';
+        const total = data.length;
+        const overdue = counts[4], totalOver = overdue.reduce((a, b) => a + b, 0);
+        const done = counts[0].reduce((a, b) => a + b, 0) + counts[1].reduce((a, b) => a + b, 0);
+        if (!total) anSetInsight('anStatusInsight', `No ${noun} in the current filter.`);
+        else if (!totalOver) anSetInsight('anStatusInsight', `No overdue ${noun} · ${Math.round(done / total * 100)}% of ${total.toLocaleString('en-GB')} ${noun} complete.`, 'good');
+        else {
+            const wi = overdue.indexOf(Math.max(...overdue));
+            const where = labels.length > 1 ? ` — most in ${labels[wi]} (${overdue[wi]}, ${Math.round(overdue[wi] / totalOver * 100)}%)` : '';
+            anSetInsight('anStatusInsight',
+                `${totalOver.toLocaleString('en-GB')} overdue ${noun} (${Math.round(totalOver / total * 100)}% of total)${where} · ${Math.round(done / total * 100)}% complete.`,
+                totalOver / total > 0.1 ? 'bad' : 'warn');
+        }
+    }
 }
 
 function renderLineChart(data) {
-    // Build daily timeline between min start_date and today
+    // Build daily timeline between the first and last planned end date
     if (!data.length) {
         if (lineChartInst) lineChartInst.destroy();
         lineChartInst = null;
         updateChartHeadings(getChartGrouping(data).keyLabel);
+        if (typeof anSetInsight === 'function') anSetInsight('anCumInsight', '');
         return;
     }
 
-    const dates = data.map(r => r.end_date).sort();
-    const minDate = dates[0];
-    const maxDate = dates[dates.length - 1];
+    const isF100Row = r => r.module === 'gun' || r.module === 'vehicle';
+    const ends = data.map(r => r.end_date).filter(Boolean).sort();
+    // F100 rows store completion date directly; F200 uses progress sub-object
+    const doneDates = data.map(r => {
+        const s = calculateStatus(r);
+        const cd = isF100Row(r) ? r.actual_end_date : r.progress?.completion_date;
+        return (s === 'Completed' || s === 'Late Completion') && cd ? cd : null;
+    }).filter(Boolean).sort();
+    if (!ends.length) {
+        if (lineChartInst) lineChartInst.destroy();
+        lineChartInst = null;
+        return;
+    }
 
-    const timeline = generateDateRange(minDate, maxDate);
+    let timeline = generateDateRange(ends[0], ends[ends.length - 1]);
+    // Range selector: last N weeks up to 4 weeks ahead
+    const range = typeof anOpt === 'function' ? anOpt('cumRange') : 'all';
+    const today = todayStr();
+    if (range !== 'all') {
+        const back = new Date(today + 'T00:00:00'); back.setDate(back.getDate() - 7 * Number(range));
+        const ahead = new Date(today + 'T00:00:00'); ahead.setDate(ahead.getDate() + 28);
+        const from = localDateStr(back), to = localDateStr(ahead);
+        const zoomed = timeline.filter(d => d >= from && d <= to);
+        if (zoomed.length > 1) timeline = zoomed;
+    }
 
-    // Cumulative planned (tasks whose end_date <= date)
-    const plannedCum = timeline.map(d =>
-        data.filter(r => r.end_date <= d).length
-    );
-
-    // Cumulative actual completed (tasks completed by that date)
-    const actualCum = timeline.map(d =>
-        data.filter(r => {
-            const s = calculateStatus(r);
-            // F100 rows store completion date directly; F200 uses progress sub-object
-            const cd = (r.module === 'gun' || r.module === 'vehicle') ? r.actual_end_date : r.progress?.completion_date;
-            return (s === 'Completed' || s === 'Late Completion') && cd && cd <= d;
-        }).length
-    );
-
+    // Cumulative counts with a moving pointer over the sorted dates (one pass)
+    const cumulative = sorted => { let i = 0; return timeline.map(d => { while (i < sorted.length && sorted[i] <= d) i++; return i; }); };
+    const plannedCum = cumulative(ends);
+    const actualCum = cumulative(doneDates);
     const labels = timeline.map(d => formatDate(d));
+    const todayIdx = timeline.indexOf(today);
+
+    const css = getComputedStyle(document.documentElement);
+    const cPlan = css.getPropertyValue('--clr-planned').trim() || '#3b82f6';
+    const cDone = css.getPropertyValue('--clr-completed').trim() || '#22c55e';
+    const hexA = (hex, a) => { const h = hex.replace('#', ''); const f = h.length === 3 ? h.split('').map(x => x + x).join('') : h; const n = parseInt(f, 16); return Number.isNaN(n) ? hex : `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; };
+    const c = themeChartColors();
+    const base = chartOptions(isKD2Module() ? 'Cumulative Plan Blocks' : 'Cumulative Tasks');
 
     const cfg = {
         type: 'line',
@@ -5969,8 +6032,8 @@ function renderLineChart(data) {
                 {
                     label: 'Planned (cumulative)',
                     data: plannedCum,
-                    borderColor: '#3b82f6',
-                    backgroundColor: 'rgba(59,130,246,.08)',
+                    borderColor: cPlan,
+                    backgroundColor: hexA(cPlan, 0.08),
                     borderWidth: 2,
                     fill: true,
                     tension: .35,
@@ -5978,44 +6041,62 @@ function renderLineChart(data) {
                 },
                 {
                     label: 'Actual (cumulative)',
-                    data: actualCum,
-                    borderColor: '#22c55e',
-                    backgroundColor: 'rgba(34,197,94,.08)',
+                    // Actual stops at today — no flat line into the future
+                    data: actualCum.map((v, i) => (timeline[i] > today ? null : v)),
+                    borderColor: cDone,
+                    backgroundColor: hexA(cDone, 0.1),
                     borderWidth: 2,
                     fill: true,
                     tension: .35,
                     pointRadius: timeline.length > 30 ? 0 : 3,
-                    borderDash: [],
                 },
             ],
         },
         options: {
-            ...chartOptions(isKD2Module() ? 'Cumulative Plan Blocks' : 'Cumulative Tasks'),
+            ...base,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                ...base.plugins,
+                anMarker: { value: todayIdx >= 0 ? todayIdx : null, label: 'Today' },
+            },
             scales: {
                 x: {
-                    ticks: {
-                        color: themeChartColors().text,
-                        font: { family: 'DM Mono', size: 10 },
-                        maxTicksLimit: 10,
-                        maxRotation: 45,
-                    },
-                    grid: { color: themeChartColors().grid },
+                    ticks: { color: c.text, font: { family: 'Inter', size: 10 }, maxTicksLimit: 7, maxRotation: 0 },
+                    grid: { display: false },
+                    border: { display: false },
                 },
                 y: {
-                    ticks: {
-                        color: themeChartColors().text,
-                        font: { family: 'DM Mono', size: 11 },
-                        stepSize: 1,
-                    },
-                    grid: { color: themeChartColors().grid },
+                    ticks: { color: c.text, font: { family: 'Inter', size: 10 }, precision: 0 },
+                    grid: { color: c.grid },
+                    border: { display: false },
                     beginAtZero: true,
+                    title: base.scales.y.title,
                 },
             },
         },
+        plugins: typeof _anMarkerPlugin !== 'undefined' ? [_anMarkerPlugin] : [],
     };
 
     if (lineChartInst) lineChartInst.destroy();
     lineChartInst = new Chart(document.getElementById('lineChart'), cfg);
+
+    // Insight — where actual stands against the plan today
+    if (typeof anSetInsight === 'function') {
+        const noun = isKD2Module() ? 'blocks' : 'tasks';
+        const count = (sorted, d) => { let n = 0; for (const x of sorted) { if (x > d) break; n++; } return n; };
+        const due = count(ends, today), done = count(doneDates, today);
+        const fmt = n => n.toLocaleString('en-GB');
+        if (!due) {
+            anSetInsight('anCumInsight', `No ${noun} are due yet — first planned finish ${formatDate(ends[0])}${done ? ` · ${fmt(done)} already done early` : ''}.`, 'neutral');
+        } else if (done >= due) {
+            anSetInsight('anCumInsight', `On plan: ${fmt(done)} ${noun} done vs ${fmt(due)} due by today (${Math.round(done / ends.length * 100)}% of the plan).`, 'good');
+        } else {
+            const gap = due - done;
+            anSetInsight('anCumInsight',
+                `${fmt(gap)} ${noun} behind plan: ${fmt(done)} done vs ${fmt(due)} due by today (${Math.round(done / due * 100)}% of due) · ${Math.round(done / ends.length * 100)}% of the whole plan done.`,
+                gap / due > 0.2 ? 'bad' : 'warn');
+        }
+    }
 }
 
 function chartOptions(yLabel) {
@@ -6023,13 +6104,17 @@ function chartOptions(yLabel) {
     return {
         responsive: true,
         maintainAspectRatio: false,
+        animation: { duration: 250 },
         plugins: {
             legend: {
+                position: 'bottom',
                 labels: {
                     color: c.text,
-                    font: { family: 'Inter', size: 11 },
-                    boxWidth: 12,
-                    padding: 14,
+                    font: { family: 'Inter', size: 10 },
+                    boxWidth: 8,
+                    boxHeight: 8,
+                    padding: 10,
+                    usePointStyle: true,
                 },
             },
             tooltip: {
@@ -6038,21 +6123,23 @@ function chartOptions(yLabel) {
                 borderWidth: 1,
                 titleColor: c.tooltipTtl,
                 bodyColor: c.tooltipBdy,
-                padding: 10,
+                padding: 9,
             },
         },
         scales: {
             x: {
-                ticks: { color: c.text, font: { family: 'DM Mono', size: 11 } },
+                ticks: { color: c.text, font: { family: 'Inter', size: 10 } },
                 grid: { color: c.grid },
+                border: { display: false },
             },
             y: {
                 ticks: {
                     color: c.text,
-                    font: { family: 'DM Mono', size: 11 },
+                    font: { family: 'Inter', size: 10 },
                     stepSize: 1,
                 },
                 grid: { color: c.grid },
+                border: { display: false },
                 beginAtZero: true,
                 title: {
                     display: true,
@@ -14393,7 +14480,7 @@ async function renderPlanVersionsTable() {
         <td>${v.created_at ? new Date(v.created_at).toLocaleDateString() : '—'}</td>
         <td>${esc(v.created_by || '—')}</td>
         <td>
-          ${v.id === activeId ? '' : `<button class="btn btn-xs btn-ghost" onclick="setActivePlanVersionFromDialog(${v.id})">Set Active</button>`}
+          ${v.id === activeId || v.status === 'archived' ? '' : `<button class="btn btn-xs btn-ghost" onclick="setActivePlanVersionFromDialog(${v.id})">Set Active</button>`}
           <button class="btn btn-xs btn-ghost" onclick="renamePlanVersionFromDialog(${v.id})">Rename</button>
           <button class="btn btn-xs ${v.status === 'archived' ? 'btn-ghost' : 'btn-danger'}" onclick="togglePlanVersionArchive(${v.id}, '${v.status}')">${v.status === 'archived' ? 'Restore' : 'Archive'}</button>
           ${!v.is_baseline && isMasterAdmin() ? `<button class="btn btn-xs btn-danger" onclick="deletePlanVersionFromDialog(${v.id}, '${esc(v.name).replace(/'/g, "\\'")}')">Delete</button>` : ''}
@@ -14464,7 +14551,7 @@ async function togglePlanVersionArchive(versionId, currentStatus) {
         await window.PlanVersions.setStatus(db, versionId, nextStatus, auditLog);
         showToast(nextStatus === 'archived' ? 'Plan version archived.' : 'Plan version restored.', 'success');
         if (nextStatus === 'archived' && wasActive) {
-            // Fall back to whichever active version is left (or the baseline).
+            // Fall back to whichever active version is left (PlanVersions picks it if none is stored).
             const left = window.PlanVersions.getVersions(moduleId).find(v => v.status === 'active' && v.id !== versionId);
             window.PlanVersions.setActiveId(moduleId, left ? left.id : null);
             window.location.reload();
@@ -15078,10 +15165,12 @@ async function loadIssuesOverview() {
     try {
         const { data, error } = await _selectAllPages(db
             .from('production_issues')
-            .select('status, priority')
+            .select('status, priority, category, created_at, resolved_at')
             .eq('module', getActiveModuleId())
             .order('id'));
         if (error) throw error;
+        // Same rows feed the Analytics "Issues Trend" chart
+        if (typeof anSetIssues === 'function') anSetIssues(data || []);
 
         let open = 0, inProgress = 0, resolved = 0, critical = 0;
         (data || []).forEach(r => {

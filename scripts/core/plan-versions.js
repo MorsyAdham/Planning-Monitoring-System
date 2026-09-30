@@ -20,7 +20,11 @@ window.PlanVersions = (() => {
         return KEY_PREFIX + moduleId;
     }
 
-    /** Currently-selected version id for a module, falling back to its baseline once known. */
+    /** Currently-selected version id for a module. Only ACTIVE versions are
+     *  ever used: a missing, deleted or archived selection (e.g. a user's
+     *  first login) falls back to the baseline if it is active, otherwise the
+     *  newest active revision. The baseline is used only if nothing is active,
+     *  so queries are never left without a version filter. */
     function getActiveId(moduleId) {
         let stored = null;
         try {
@@ -30,8 +34,14 @@ window.PlanVersions = (() => {
             stored = null;
         }
         const known = cache[moduleId];
-        if (stored && known && !known.some(v => v.id === stored)) stored = null; // stale/archived-away id
-        return stored || baselineCache[moduleId] || null;
+        if (stored && known) {
+            const v = known.find(x => x.id === stored);
+            if (!v || v.status === 'archived') stored = null;
+        }
+        if (stored) return stored;
+        // cache is ordered baseline first, then newest
+        const firstActive = known && known.find(v => v.status !== 'archived');
+        return (firstActive && firstActive.id) || baselineCache[moduleId] || null;
     }
 
     function setActiveId(moduleId, versionId) {
