@@ -7684,20 +7684,72 @@ function renderThemePickerMenu() {
     `).join('');
 }
 
+let _themeChartTimer = null;
 function setTheme(theme) {
     if (!THEME_ORDER.includes(theme)) theme = 'dark';
+    const root = document.documentElement;
+    // Thousands of cells carry CSS transitions (buttons use `transition: all`);
+    // left on, a theme change animates every one of them at once and the page
+    // stalls. Switch them off for the swap, back on after the new colours paint.
+    root.classList.add('theme-switching');
     _applyThemeAttr(theme);
     localStorage.setItem(_userThemeKey(), theme);
     localStorage.setItem(THEME_KEY_BASE + '_last', theme); // anti-flash fallback
     renderThemePickerIcon();
     renderThemePickerMenu();
-    // Charts bake colors into the canvas at creation time, so they need a
-    // repaint — everything else (table/VPX/Gantt/badges) is styled through
-    // CSS custom properties and already repaints for free from the
-    // data-theme attribute change above, so a full refreshAllViews() here
-    // (table + VPX + Gantt + charts rebuild) was pure wasted work.
-    if (currentData.length) renderCharts(applyActiveFilters(currentData));
+    requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('theme-switching')));
+    // Charts bake colours into the canvas, so they need a redraw — but only
+    // after the page has repainted, so the switch itself feels instant.
+    // (Everything else is styled through CSS variables and repaints for free.)
+    clearTimeout(_themeChartTimer);
+    _themeChartTimer = setTimeout(() => {
+        const redraw = () => { if (currentData.length) renderCharts(applyActiveFilters(currentData)); };
+        if ('requestIdleCallback' in window) requestIdleCallback(redraw, { timeout: 600 }); else redraw();
+    }, 120);
 }
+
+/* ── Close any open menu when you press outside it ─────────────────
+   Each menu also closes itself on 'click', but many buttons call
+   stopPropagation(), so those handlers never hear about clicks on them
+   and the menu stayed open. This listens in the capture phase (before
+   any stopPropagation) and on pointerdown, so a press anywhere else
+   always closes it. Escape closes every open menu. ── */
+const _OUTSIDE_CLOSE_MENUS = [
+    // [menu selector, what counts as "inside" (menu + its trigger), close]
+    ['#themePickerDropdown', '#themePickerWrap', m => { m.style.display = 'none'; document.getElementById('btnThemePicker')?.setAttribute('aria-expanded', 'false'); }],
+    ['#navMoreDropdown', '#navMoreWrap', m => { m.style.display = 'none'; document.getElementById('btnNavMore')?.setAttribute('aria-expanded', 'false'); }],
+    ['#navUserMenu', '.user-zone', m => { m.hidden = true; document.getElementById('navUserChip')?.setAttribute('aria-expanded', 'false'); }],
+    ['#ganttExportMenu', '#btnGanttExportSchedule', m => { m.style.display = 'none'; document.getElementById('btnGanttExportSchedule')?.setAttribute('aria-expanded', 'false'); }],
+    ['.context-select-menu', '.context-select', m => { m.style.display = 'none'; m.closest('.context-select')?.querySelector('[data-cs-trigger]')?.setAttribute('aria-expanded', 'false'); }],
+    ['.f100-notif-dropdown', m => document.getElementById(m.classList.contains('active-users-dropdown') ? 'activeUsersWrap' : 'f100NotifWrap'), m => m.remove()],
+    ['.ms-menu', '.ms-filter, .th-filterable', m => {
+        m.hidden = true;
+        if (m.classList.contains('th-filter-menu')) _thOpenFilterField = null; // don't re-open on the next table render
+    }],
+];
+
+function _isMenuOpen(m) {
+    return !m.hidden && m.style.display !== 'none' && getComputedStyle(m).display !== 'none';
+}
+
+function _closeMenusOutside(target) {
+    for (const [menuSel, insideSel, close] of _OUTSIDE_CLOSE_MENUS) {
+        document.querySelectorAll(menuSel).forEach(m => {
+            if (!_isMenuOpen(m) || (target && m.contains(target))) return;
+            const inside = typeof insideSel === 'function' ? insideSel(m) : (m.closest(insideSel) || document.querySelector(insideSel));
+            if (target && inside?.contains(target)) return;
+            close(m);
+        });
+    }
+    // Gantt bar / lane menus keep their own open-state
+    if (document.querySelector('.gc-bar-menu-open, .gr-reorder-menu-open')
+        && !(target && target.closest?.('.gc-bar-menu, .gc-bar-menu-trigger, .gr-reorder-more, .gr-reorder-menu'))) {
+        _closeAllBarMenus();
+    }
+}
+
+document.addEventListener('pointerdown', e => _closeMenusOutside(e.target), true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') _closeMenusOutside(null); });
 
 function toggleTheme() {
     const idx = THEME_ORDER.indexOf(getCurrentTheme());

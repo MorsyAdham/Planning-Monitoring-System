@@ -9,3 +9,11 @@ body {
 #pageRoot {
     min-height: inherit;
 }
+
+/* Theme switch: no transitions for the one frame the colours change,
+   otherwise every transitioned element animates at once and the page stalls. */
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+    transition: none !important;
+}
