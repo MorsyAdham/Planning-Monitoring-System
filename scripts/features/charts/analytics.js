@@ -227,21 +227,31 @@ function _anPlural(dim) {
     return { unit: 'units', battalion: 'battalions', vehicle: 'vehicle types' }[dim] || 'groups';
 }
 function _anGroupStats(g, today) {
-    let done = 0, due = 0, planned = null, worst = 0;
+    // Expected finish = the latest process-order forecast finish of the
+    // group's blocks (same engine as the delivery card — planForecast).
+    const fc = typeof getPlanForecast === 'function' ? getPlanForecast(_an.data) : null;
+    let done = 0, due = 0, planned = null, projected = null;
     g.rows.forEach(r => {
         const end = _anPlanEnd(r);
         if (_anIsDone(r)) done++;
         if (end && end <= today) due++;
         if (end && (!planned || end > planned)) planned = end;
-        worst = Math.max(worst, delayDays(r) || 0);
+        const step = fc?.byRowId.get(String(r.id));
+        if (step && (!projected || step.projEnd > projected)) projected = step.projEnd;
     });
+    let worst, expected;
+    if (projected && planned) {
+        const slip = _fcSlip(planned, projected);
+        worst = Math.max(0, slip);
+        expected = slip > 0 ? projected : planned;
+    } else {
+        worst = g.rows.reduce((m, r) => Math.max(m, delayDays(r) || 0), 0);
+        expected = planned ? _addWorkingDays(planned, worst) : null;
+    }
     const total = g.rows.length;
     const pct = total ? done / total * 100 : 0;
     const exp = total ? due / total * 100 : 0;
-    return {
-        ...g, total, done, due, pct, exp, gap: pct - exp, planned, worst,
-        expected: planned ? _addWorkingDays(planned, worst) : null,
-    };
+    return { ...g, total, done, due, pct, exp, gap: pct - exp, planned, worst, expected };
 }
 
 /** Status Breakdown "Group by" override (null = automatic). */
@@ -516,7 +526,7 @@ function _anRenderFinish(data) {
     else rows = [...all].sort((a, b) => a.planned.localeCompare(b.planned) || naturalSort(a.label, b.label));
     if (!rows.length) rows = [...all].sort((a, b) => a.planned.localeCompare(b.planned)).slice(0, AN_TOP_N);
 
-    _anText('anFinishSub', `Planned finish → expected finish (worst delay, working days) · ${rows.length < all.length ? `${rows.length} of ${all.length}` : `all ${all.length}`} ${plural}`);
+    _anText('anFinishSub', `Planned finish → forecast finish (process order, working days) · ${rows.length < all.length ? `${rows.length} of ${all.length}` : `all ${all.length}`} ${plural}`);
 
     const p = _anPalette();
     const days = rows.flatMap(s => [_anDay(s.planned), _anDay(s.expected)]).concat(_anDay(today));

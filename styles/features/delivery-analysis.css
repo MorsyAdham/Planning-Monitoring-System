@@ -110,3 +110,26 @@
 }
 
 [data-theme="crimson"] .dda-act:not(.dda-act--ghost) { background: var(--clr-crimson); color: #f5f2ed; }
+
+/* Units furthest behind (process-order forecast) */
+.dda-units {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 6px;
+}
+.dda-units li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border: 1px solid var(--clr-border);
+    border-radius: 8px;
+    background: var(--clr-surface-2, var(--clr-surface));
+    font-size: .8rem;
+}
+.dda-units li strong { min-width: 90px; }
+.dda-unit-dates { flex: 1; color: var(--clr-text-muted); font-size: .76rem; }
+.dda-unit-dates b { color: var(--clr-text); }
+.dda-unit-delay { font-weight: 700; color: var(--clr-overdue); white-space: nowrap; }

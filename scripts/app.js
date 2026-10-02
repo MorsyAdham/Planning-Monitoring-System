@@ -4618,6 +4618,179 @@ function _addWorkingDays(dateStr, n) {
     return localDateStr(d);
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   DELIVERY FORECAST — process order
+   The one engine behind every FORWARD-looking delay figure: the delivery
+   card, the Delivery Delay Analysis, the VPX Station Report (and the
+   Executive Report built on it) and the Analytics finish chart.
+
+   Each unit is walked through its stations in route order:
+     • KD2 lines — Hull and Turret (K9) / Structure (K10/K11) run in
+       parallel; the downstream line (Assembly & Processing & Testing)
+       starts after ALL of them. Stations sharing a route position
+       (parallel work centres) share the same predecessor.
+     • A completed station ends on its actual completion date.
+     • An unfinished station starts no earlier than its planned start, the
+       working day after the station(s) before it, and today — unless it
+       was actually started, then on its actual start. It takes its planned
+       working-day duration and can't finish before today.
+   A unit's delay is its forecast finish vs its planned finish, in working
+   days (Fridays excluded). A slip the plan's later slack absorbed no
+   longer counts — previously the single worst block delay ever recorded
+   (e.g. a station finished 62 wd late in May) was added to delivery for
+   good. Per-block lateness (Plan Table "Delay", Station Bottleneck) is a
+   separate, historical fact and still comes from delayDays().
+   ══════════════════════════════════════════════════════════════════ */
+const _FC_FEEDER_LINES = /^(Hull|Turret|Structure)$/i;
+const _fcIsWork = iso => new Date(iso + 'T00:00:00').getDay() !== 5;
+const _fcNextWork = iso => _addWorkingDays(iso, 1);
+const _fcOnOrAfterWork = iso => (_fcIsWork(iso) ? iso : _fcNextWork(iso));
+/** Working days from a to b inclusive (planned duration). */
+const _fcSpan = (a, b) => Math.max(1, daysBetween(a, b) + (_fcIsWork(a) ? 1 : 0));
+/** Signed working-day slip of `actual` vs `planned` (negative = early). */
+function _fcSlip(planned, actual) {
+    if (!planned || !actual) return 0;
+    return actual >= planned ? daysBetween(planned, actual) : -daysBetween(actual, planned);
+}
+function _fcUnitKey(r) {
+    const vt = _getVehicleType(r.vehicle || r.vehicle_type) || r.vehicle || '';
+    return `${r.battalion_code || ''}|${vt}|${r.vehicle_no || r.unit_label || ''}`;
+}
+
+/** Forecast every unit in `rows` (F200 plan rows). Returns
+ *  { units[], byRowId: Map(id → step), plannedDelivery, expectedDelivery, deliverySlip }.
+ *  step = { row, line, done, projStart, projEnd, slip, added, credit } —
+ *  `added` is the slip this station adds on top of what reached it, and
+ *  `credit` the part of that which still reaches the unit's finish. */
+function planForecast(rows, today = todayStr()) {
+    const kd2 = isKD2Module();
+    const rt = getModuleRuntime();
+    const orderCache = {};
+    const slotOf = (r, i) => {
+        if (!kd2) return 'i' + i;
+        const v = _getVehicleType(r.vehicle) || r.vehicle;
+        if (!(v in orderCache)) orderCache[v] = rt?.getStationOrderByCode?.(v) || new Map();
+        const info = orderCache[v].get(r.station_code);
+        return info ? info.sortKey : 'i' + i;
+    };
+    const groups = new Map();
+    rows.forEach(r => {
+        if (!r || !r.start_date || !r.end_date || r.module === 'gun' || r.module === 'vehicle') return;
+        const k = _fcUnitKey(r);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(r);
+    });
+
+    const byRowId = new Map();
+    const units = [];
+    groups.forEach((list, key) => {
+        list = list.slice().sort(kd2
+            ? kd2StationCompare
+            : (a, b) => a.start_date.localeCompare(b.start_date) || a.end_date.localeCompare(b.end_date));
+        const lines = new Map();
+        const steps = [];
+        list.forEach((r, i) => {
+            const lineName = kd2 ? (kd2LineLabel(r) || 'Other') : 'Main';
+            let L = lines.get(lineName);
+            if (!L) {
+                L = { name: lineName, prevEnd: null, prevSlip: 0, slot: undefined, slotEnd: null, slotSlip: null, end: null, endSlip: 0, steps: [] };
+                if (kd2 && !_FC_FEEDER_LINES.test(lineName)) {
+                    // Downstream starts after every feeder line has finished
+                    lines.forEach(F => {
+                        if (!_FC_FEEDER_LINES.test(F.name) || !F.end) return;
+                        if (!L.prevEnd || F.end > L.prevEnd) L.prevEnd = F.end;
+                        L.prevSlip = Math.max(L.prevSlip, F.endSlip);
+                    });
+                }
+                lines.set(lineName, L);
+            }
+            const slot = slotOf(r, i);
+            if (slot !== L.slot) { // next route position
+                if (L.slot !== undefined) { L.prevEnd = L.slotEnd; L.prevSlip = L.slotSlip ?? 0; }
+                L.slot = slot; L.slotEnd = null; L.slotSlip = null;
+            }
+            const pStart = r.start_date, pEnd = r.end_date;
+            const pr = r.progress || {};
+            const done = !!(pr.completed && pr.completion_date);
+            let projStart, projEnd;
+            if (done) {
+                projEnd = pr.completion_date;
+                projStart = pr.actual_start_date || null;
+            } else {
+                if (pr.actual_start_date) {
+                    projStart = pr.actual_start_date;
+                } else {
+                    projStart = pStart;
+                    if (L.prevEnd) { const after = _fcNextWork(L.prevEnd); if (after > projStart) projStart = after; }
+                    if (projStart < today) projStart = today;
+                }
+                projStart = _fcOnOrAfterWork(projStart);
+                projEnd = _addWorkingDays(projStart, _fcSpan(pStart, pEnd) - 1);
+                if (projEnd < today) projEnd = _fcOnOrAfterWork(today);
+            }
+            const slip = _fcSlip(pEnd, projEnd);
+            const inSlip = Math.max(0, L.prevSlip || 0);
+            const step = { row: r, line: lineName, done, projStart, projEnd, slip, added: slip - inSlip, credit: 0 };
+            steps.push(step);
+            L.steps.push(step);
+            byRowId.set(String(r.id), step);
+            if (!L.slotEnd || projEnd > L.slotEnd) L.slotEnd = projEnd;
+            if (L.slotSlip === null || slip > L.slotSlip) L.slotSlip = slip;
+            if (!L.end || projEnd >= L.end) { L.end = projEnd; }
+            L.endSlip = L.slotSlip;
+        });
+
+        const plannedFinish = list.reduce((m, r) => (r.end_date > m ? r.end_date : m), '');
+        const projFinish = steps.reduce((m, st) => (st.projEnd > m ? st.projEnd : m), '');
+        const finishSlip = _fcSlip(plannedFinish, projFinish);
+
+        // How much of each station's added slip still reaches the finish:
+        // capped by the smallest slip on its path to the end (its own line
+        // after it, then — for a feeder line — the downstream line).
+        const downstream = [...lines.values()].filter(L => kd2 && !_FC_FEEDER_LINES.test(L.name));
+        const downstreamMin = downstream.length
+            ? Math.min(...downstream.flatMap(L => L.steps.map(st => st.slip)))
+            : Infinity;
+        lines.forEach(L => {
+            let suffixMin = Infinity;
+            for (let i = L.steps.length - 1; i >= 0; i--) {
+                const st = L.steps[i];
+                const pathMin = Math.min(suffixMin, _FC_FEEDER_LINES.test(L.name) ? downstreamMin : Infinity);
+                const carry = Math.min(st.slip, pathMin, finishSlip);
+                st.credit = finishSlip > 0 ? Math.max(0, Math.min(st.added, carry)) : 0;
+                suffixMin = Math.min(suffixMin, st.slip);
+            }
+        });
+
+        const r0 = list[0];
+        units.push({
+            key, steps, plannedFinish, projFinish, finishSlip,
+            battalion: r0.battalion_code || '',
+            vehicle: _getVehicleType(r0.vehicle || r0.vehicle_type) || r0.vehicle || '',
+            unitNo: r0.vehicle_no || r0.unit_label || '',
+        });
+    });
+
+    const plannedDelivery = units.reduce((m, u) => (u.plannedFinish > m ? u.plannedFinish : m), '') || null;
+    const expectedDelivery = units.reduce((m, u) => (u.projFinish > m ? u.projFinish : m), '') || null;
+    return { units, byRowId, plannedDelivery, expectedDelivery, deliverySlip: _fcSlip(plannedDelivery, expectedDelivery) };
+}
+
+/* Forecast cache — recomputed only when the rows or their dates change. */
+let _fcCache = null;
+function getPlanForecast(rows = currentData) {
+    const today = todayStr();
+    let sig = today + '#' + rows.length;
+    for (const r of rows) {
+        const pr = r.progress || {};
+        sig += `|${r.id}:${r.start_date}:${r.end_date}:${pr.completion_date || ''}:${pr.actual_start_date || ''}:${pr.completed ? 1 : 0}`;
+    }
+    if (_fcCache && _fcCache.rows === rows && _fcCache.sig === sig) return _fcCache.result;
+    const result = planForecast(rows, today);
+    _fcCache = { rows, sig, result };
+    return result;
+}
+
 function _updateDeliveryCard(data) {
     const plannedEl  = document.getElementById('sumDeliveryPlanned');
     const expectedEl = document.getElementById('sumDeliveryExpected');
@@ -4649,11 +4822,19 @@ function _updateDeliveryCard(data) {
         return;
     }
 
-    // Delivery delay = worst single-task delay (that bottleneck cascades to delivery)
-    const totalDelay = data.reduce((max, r) => Math.max(max, delayDays(r)), 0);
-
-    // Expected delivery = planned end shifted by the worst delay in working days
-    const expectedDelivery = _addWorkingDays(plannedDelivery, totalDelay);
+    // F200: process-order forecast (see planForecast). F100 keeps its own rule.
+    const isF100 = data.some(r => r.module === 'gun' || r.module === 'vehicle');
+    const fc = isF100 ? null : getPlanForecast(data);
+    let totalDelay, expectedDelivery;
+    if (fc && fc.expectedDelivery) {
+        plannedDelivery = fc.plannedDelivery || plannedDelivery;
+        totalDelay = Math.max(0, fc.deliverySlip);
+        expectedDelivery = fc.expectedDelivery;
+    } else {
+        // Delivery delay = worst single-task delay
+        totalDelay = data.reduce((max, r) => Math.max(max, delayDays(r)), 0);
+        expectedDelivery = _addWorkingDays(plannedDelivery, totalDelay);
+    }
 
     plannedEl.textContent  = _fmtDeliveryDate(plannedDelivery);
     expectedEl.textContent = _fmtDeliveryDate(expectedDelivery);
@@ -4670,21 +4851,26 @@ function _updateDeliveryCard(data) {
     if (card) {
         card.style.cursor = 'pointer';
         card.title = 'Click to see delay breakdown';
-        card.onclick = () => _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, totalDelay);
+        card.onclick = () => _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, totalDelay, fc);
     }
 }
 
-function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, totalDelay) {
+function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, totalDelay, fc = null) {
     const stationOf = r => r.process_station || r.station_name || r.process_name || r.part_name || '(Unknown)';
     const unitOf = r => [r.battalion_code, r.vehicle_no || r.unit_label || (r.serial_number != null ? `#${r.serial_number}` : '')].filter(Boolean).join(' ');
 
-    // category → stations → delayed rows
+    // category → stations → delay. With the process-order forecast a cause is
+    // the delay a station is adding to a unit's finish RIGHT NOW (slip the
+    // plan's later slack already absorbed doesn't count).
     const catMap = new Map();
     const causeMap = new Map(); // vtype||station → cause
     const units = new Set();
     let delayedCount = 0;
-    data.forEach(r => {
-        const d = Math.max(0, delayDays(r));
+    const forecastRows = fc
+        ? fc.units.filter(u => u.finishSlip > 0).flatMap(u => u.steps.filter(st => st.credit > 0).map(st => ({ r: st.row, d: st.credit, open: !st.done })))
+        : data.map(r => ({ r, d: Math.max(0, delayDays(r)), open: calculateStatus(r) === 'Overdue' }));
+    const lateUnits = fc ? fc.units.filter(u => u.finishSlip > 0).sort((a, b) => b.finishSlip - a.finishSlip) : [];
+    forecastRows.forEach(({ r, d, open }) => {
         if (d === 0) return;
         delayedCount++;
         const cat = getModuleCategory(r.process_station, r) || 'Other';
@@ -4698,7 +4884,7 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
         c.count++;
         c.maxDelay = Math.max(c.maxDelay, d);
         if (unit) c.units.add(unit);
-        if (calculateStatus(r) === 'Overdue') c.overdue++;
+        if (open) c.overdue++;
         if (!catMap.has(cat)) catMap.set(cat, { maxDelay: 0, delayed: 0, causes: [] });
         const cm = catMap.get(cat);
         cm.delayed++;
@@ -4733,7 +4919,9 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
                     <span class="dda-chip">${esc(c.vtype)}</span>
                     <span class="dda-chip dda-chip--muted">${esc(c.cat)}</span>
                 </div>
-                <p class="dda-cause-line">${c.count} task${c.count === 1 ? '' : 's'} late${c.overdue ? ` · <b>${c.overdue} still open</b>` : ''}${unitList(c) ? ` · ${unitList(c)}` : ''}</p>
+                <p class="dda-cause-line">${fc
+                    ? `pushing back ${c.count} unit${c.count === 1 ? '' : 's'}${c.overdue ? ` · <b>${c.overdue} not finished yet</b>` : ''}`
+                    : `${c.count} task${c.count === 1 ? '' : 's'} late${c.overdue ? ` · <b>${c.overdue} still open</b>` : ''}`}${unitList(c) ? ` · ${unitList(c)}` : ''}</p>
                 <div class="dda-bar"><span style="width:${Math.max(6, Math.round(c.maxDelay / worst * 100))}%"></span></div>
                 ${actBtns(c)}
             </div>
@@ -4745,7 +4933,7 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
             <summary>
                 ${icon('<path d="M9 6l6 6-6 6"/>')}
                 <span class="dda-cat-name">${esc(cat)}</span>
-                <span class="dda-cat-meta">${cm.delayed} late task${cm.delayed === 1 ? '' : 's'}</span>
+                <span class="dda-cat-meta">${cm.delayed} ${fc ? 'unit delay' : 'late task'}${cm.delayed === 1 ? '' : 's'}</span>
                 <span class="dda-cat-delay">+${cm.maxDelay} wd</span>
             </summary>
             <ul class="dda-cat-list">
@@ -4753,7 +4941,7 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
                     <li>
                         <span class="dda-chip">${esc(c.vtype)}</span>
                         <span class="dda-cat-station">${esc(c.station)}</span>
-                        <span class="dda-cat-count">${c.count} late</span>
+                        <span class="dda-cat-count">${c.count} ${fc ? `unit${c.count === 1 ? '' : 's'}` : 'late'}</span>
                         <span class="dda-cat-worst">+${c.maxDelay} wd</span>
                         <button type="button" class="dda-link" data-dda="table" data-station="${esc(c.station)}">Show ${icon('<path d="M5 12h14M13 6l6 6-6 6"/>')}</button>
                     </li>`).join('')}
@@ -4789,14 +4977,27 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
 
                 ${late ? `
                 <div class="dda-stats">
-                    <div><strong>${delayedCount}</strong><span>delayed tasks</span></div>
+                    ${fc
+                        ? `<div><strong>${lateUnits.length}</strong><span>units forecast late</span></div>
+                    <div><strong>${causes.length}</strong><span>stations causing it</span></div>
+                    <div><strong>${lateUnits[0] ? '+' + lateUnits[0].finishSlip : '—'}</strong><span>worst unit (wd)</span></div>`
+                        : `<div><strong>${delayedCount}</strong><span>delayed tasks</span></div>
                     <div><strong>${causes.length}</strong><span>stations affected</span></div>
-                    <div><strong>${units.size || '—'}</strong><span>units affected</span></div>
+                    <div><strong>${units.size || '—'}</strong><span>units affected</span></div>`}
                 </div>
+
+                ${lateUnits.length ? `
+                <section>
+                    <h5 class="dda-h">${icon('<path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/>')} Units furthest behind</h5>
+                    <ul class="dda-units">${lateUnits.slice(0, 6).map(u => `
+                        <li><span class="dda-chip">${esc(u.vehicle)}</span><strong>${esc([u.battalion, u.unitNo].filter(Boolean).join(' '))}</strong>
+                            <span class="dda-unit-dates">${_fmtDeliveryDate(u.plannedFinish)} → <b>${_fmtDeliveryDate(u.projFinish)}</b></span>
+                            <span class="dda-unit-delay">+${u.finishSlip} wd</span></li>`).join('')}</ul>
+                </section>` : ''}
 
                 <section>
                     <h5 class="dda-h">${icon('<circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/>')} Where to act first</h5>
-                    <p class="dda-hint">Fix these first — the top one sets the delivery date. <b>Show in Plan Table</b> filters the table to that station so you can record actual dates or add a delay reason.</p>
+                    <p class="dda-hint">${fc ? 'The delay each station is adding to unit finishes right now (delays already absorbed by the plan are left out). ' : 'Fix these first — the top one sets the delivery date. '}<b>Show in Plan Table</b> filters the table to that station so you can record actual dates or add a delay reason.</p>
                     <div class="dda-causes">${causes.slice(0, 5).map(causeCard).join('')}</div>
                 </section>
 
@@ -4806,7 +5007,9 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
                 </section>` : ''}
 
                 <p class="dda-note">${icon('<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>')}
-                    Expected end = the latest planned end, pushed back by the single worst task delay (working days, Fridays excluded). It reflects the current filters.</p>
+                    ${fc
+                        ? 'Expected end = the latest forecast unit finish. Each unit follows its process order: finished stations use their actual dates; the rest start after the stations before them (Hull and Turret in parallel, then Assembly) and take their planned duration. Working days, Fridays excluded. Reflects the current filters.'
+                        : 'Expected end = the latest planned end, pushed back by the single worst task delay (working days, Fridays excluded). It reflects the current filters.'}</p>
             </div>
         </div>`;
 
@@ -5692,7 +5895,7 @@ function renderVPX(data) {
             var delayIcon = fd > 0
                 ? '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5v6M6 8.5L3.5 6M6 8.5 8.5 6"/></svg>'
                 : '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.5l2.5 2.5 4.5-6"/></svg>';
-            html += '<td class="vpx-td-delay"><span class="vpx-delay-pill ' + delayPillCls + '" title="Biggest single-station delay within this component\'s own stations">'
+            html += '<td class="vpx-td-delay"><span class="vpx-delay-pill ' + delayPillCls + '" title="Forecast delay at this component\'s last station, following the process order">'
                 + delayIcon + '<span>' + (fd > 0 ? fd + 'd late' : 'On time') + '</span></span></td>';
         }
 
@@ -12541,12 +12744,16 @@ function _showGenericPreview({ title, kind, src, html, sheets, onDownload }) {
  *  vehicle can (and usually will) show a different Delay on each of its
  *  component tabs. */
 function _vpxProjectRow(vehicleRow, orderedCols, displayCols = orderedCols) {
-    let carriedDelay = 0;
-    let maxDelay = 0;
+    // Dates and delay come from the process-order forecast (planForecast),
+    // computed on the full loaded plan so each unit's chain is complete.
+    // The Delay is this component's forecast slip at its LAST station — not
+    // the biggest slip ever seen, which kept long-absorbed delays forever.
+    const fc = getPlanForecast(currentData);
     const today = todayStr();
     const colId = c => `${c.code}||${c.name}||${c.group}`;
     const cellById = new Map();
     const blank = { planned: null, actual: null, projected: false, late: false, overdue: false };
+    let lastStep = null;
     orderedCols.forEach(col => {
         const cid = colId(col);
         const key = col.resolve(vehicleRow.vehicle);
@@ -12554,39 +12761,24 @@ function _vpxProjectRow(vehicleRow, orderedCols, displayCols = orderedCols) {
         if (!task) { cellById.set(cid, blank); return; }
 
         const plannedEnd = task.end_date || null;
+        const step = fc.byRowId.get(String(task.id)) || null;
+        if (step) lastStep = step;
         const actualEnd = task.progress?.completion_date || null;
 
         if (actualEnd) {
-            // Real data: this station's own actual-vs-planned slip becomes
-            // the carried delay for every station after it.
-            const delay = plannedEnd ? daysBetween(plannedEnd, actualEnd) : 0;
-            carriedDelay = delay;
-            if (delay > maxDelay) maxDelay = delay;
-            cellById.set(cid, { planned: plannedEnd, actual: actualEnd, projected: false, late: delay > 0, overdue: false });
+            const slip = step ? step.slip : (plannedEnd ? daysBetween(plannedEnd, actualEnd) : 0);
+            cellById.set(cid, { planned: plannedEnd, actual: actualEnd, projected: false, late: slip > 0, overdue: false });
         } else if (plannedEnd && today > plannedEnd) {
-            // Overdue and no actual data of its own. Two signals exist here:
-            // the delay carried in from upstream, and this station's own
-            // current lateness — it's unfinished and already past its own
-            // planned end, which is a real, present-tense fact (not a
-            // forecast the way re-deriving today-vs-planned at every future
-            // station was). Take whichever is bigger, e.g. so an earlier
-            // station finishing EARLY (a negative carried delay) can't mask
-            // this station genuinely sitting overdue right now. Using the
-            // max (never a fresh replace) also keeps the carry monotonic
-            // for whatever comes after.
-            const ownDelay = daysBetween(plannedEnd, today);
-            const effectiveDelay = Math.max(carriedDelay, ownDelay);
-            const expected = effectiveDelay > 0 ? _addWorkingDays(plannedEnd, effectiveDelay) : plannedEnd;
-            carriedDelay = effectiveDelay;
-            if (effectiveDelay > maxDelay) maxDelay = effectiveDelay;
-            cellById.set(cid, { planned: plannedEnd, actual: null, projected: false, late: effectiveDelay > 0, overdue: true, expected });
+            // Unfinished past its planned end — red, with its forecast finish
+            const expected = step ? step.projEnd : today;
+            cellById.set(cid, { planned: plannedEnd, actual: null, projected: false, late: true, overdue: true, expected });
         } else {
-            const projectedDate = (plannedEnd && carriedDelay > 0) ? _addWorkingDays(plannedEnd, carriedDelay) : plannedEnd;
+            const projectedDate = step ? step.projEnd : plannedEnd;
             cellById.set(cid, { planned: plannedEnd, actual: projectedDate, projected: !!plannedEnd, late: false, overdue: false });
         }
     });
     const cells = displayCols.map(col => cellById.get(colId(col)) || blank);
-    return { cells, finalDelay: maxDelay };
+    return { cells, finalDelay: lastStep ? Math.max(0, lastStep.slip) : 0 };
 }
 
 function _vpxStationReportData() {
@@ -13236,8 +13428,10 @@ function _execCoverSummary() {
     const total = data.length;
     let plannedDelivery = null;
     data.forEach(r => { const e = r.end_date || r.planned_end_date; if (e && (!plannedDelivery || e > plannedDelivery)) plannedDelivery = e; });
-    const worst = data.reduce((m, r) => Math.max(m, delayDays(r)), 0);
-    const expected = plannedDelivery ? _addWorkingDays(plannedDelivery, worst) : null;
+    // Same process-order forecast as the delivery card
+    const fc = getPlanForecast(data);
+    const worst = fc.expectedDelivery ? Math.max(0, fc.deliverySlip) : data.reduce((m, r) => Math.max(m, delayDays(r)), 0);
+    const expected = fc.expectedDelivery || (plannedDelivery ? _addWorkingDays(plannedDelivery, worst) : null);
     const version = _activeVersionInfo('kd2');
     return {
         total, completed, late, overdue, inProgress,
