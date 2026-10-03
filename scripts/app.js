@@ -925,11 +925,16 @@ function compareGanttLanePriority(a, b) {
     return (a.task.id ?? 0) - (b.task.id ?? 0);
 }
 
+// Same range for every row of one Gantt draw — build the day index once
+let _ganttLaneDaysCache = { key: '', numDays: 0, dayIndex: null };
 function buildPositionedGanttLaneTasks(tasks, startDate, endDate) {
-    const days = buildVisibleGanttDays(startDate, endDate);
-    const numDays = days.length;
+    const rangeKey = `${startDate}|${endDate}`;
+    if (_ganttLaneDaysCache.key !== rangeKey) {
+        const days = buildVisibleGanttDays(startDate, endDate);
+        _ganttLaneDaysCache = { key: rangeKey, numDays: days.length, dayIndex: Object.fromEntries(days.map((d, i) => [d, i])) };
+    }
+    const { numDays, dayIndex } = _ganttLaneDaysCache;
     if (!numDays) return [];
-    const dayIndex = Object.fromEntries(days.map((d, i) => [d, i]));
     const positioned = tasks
         .map(task => {
             const rawSi = task.start_date < startDate ? 0 : resolveVisibleGanttColumn(dayIndex, task.start_date, null);
@@ -1891,6 +1896,23 @@ function _remotePlanChangeToast() {
     showToast(foreign ? `Plan updated by ${_planEditorLabel(foreign.email)}.` : 'Plan refreshed with the latest changes.', 'info');
 }
 
+/* ── Background tabs ────────────────────────────────────────────
+   A hidden PPMS tab (another tab in front, window minimised) does not
+   redraw or poll: live changes are collected and applied ONCE when the
+   tab is shown again, so ten open tabs cost about as much as one. */
+const _visibleQueue = new Set();
+function _whenVisible(fn) {
+    if (!document.hidden) { fn(); return; }
+    _visibleQueue.add(fn); // a Set — the same catch-up never runs twice
+}
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden || !_visibleQueue.size) return;
+    const fns = [..._visibleQueue];
+    _visibleQueue.clear();
+    fns.forEach(fn => { try { fn(); } catch (err) { console.warn('Catch-up failed:', err); } });
+});
+const _reloadIssuesQuietly = () => { loadIssues(true).catch(() => {}); };
+
 function startRealtimeSync() {
     if (_realtimeChannel) {
         try { db.removeChannel(_realtimeChannel); } catch {}
@@ -1898,15 +1920,21 @@ function startRealtimeSync() {
     }
 
     if (isF100KD2Module()) {
-        _realtimeChannel = db
-            .channel('f100_plans_realtime')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'f100_plans' }, (payload) => {
+        // Hidden tab: one full refresh when shown again (see _whenVisible)
+        const catchUp = async () => {
+            const pos = saveScrollPos();
+            await loadData();
+            restoreScrollPos(pos);
+        };
+        const onF100Change = (payload) => {
                 // Echo of our own save (judged on arrival, not after the debounce)
                 if (_isLocalEcho() && !_peekForeignPlanEdit()) return;
+                if (document.hidden) { _whenVisible(catchUp); return; }
                 if (_realtimePending) return;
                 _realtimePending = true;
                 setTimeout(async () => {
                     _realtimePending = false;
+                    if (document.hidden) { _whenVisible(catchUp); return; }
                     // Own saves: skip full reload — the in-memory data is already patched
                     if (_isLocalEcho() && !_peekForeignPlanEdit()) return;
                     // If a date input is focused, skip to avoid losing the user's input
@@ -1926,11 +1954,21 @@ function startRealtimeSync() {
                         }
                     }
                     // Fallback: full reload with scroll preservation
-                    const pos = saveScrollPos();
-                    await loadData();
-                    restoreScrollPos(pos);
+                    await catchUp();
                     _remotePlanChangeToast();
                 }, 1200);
+        };
+        // Only this plan version's rows (deletes carry no version — unfiltered)
+        const f100Version = window.PlanVersions?.getActiveId?.('f100kd2');
+        const f100Scope = f100Version ? { filter: `plan_version_id=eq.${f100Version}` } : {};
+        _realtimeChannel = db
+            .channel('f100_plans_realtime')
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'f100_plans', ...f100Scope }, onF100Change)
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'f100_plans', ...f100Scope }, onF100Change)
+            .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'f100_plans' }, (payload) => {
+                const id = payload?.old?.id;
+                if (id != null && !currentData.some(r => String(r.id) === String(id))) return; // another version's row
+                onF100Change(payload);
             })
             .subscribe();
         return;
@@ -1955,6 +1993,8 @@ function startRealtimeSync() {
             if (_ganttDragActive && Date.now() - _ganttDragActive < 30000) { timer = setTimeout(reloadNow, 800); return; }
             timer = null;
             firstAt = 0;
+            // Hidden tab: keep the collected ids and apply them once when shown
+            if (document.hidden) { _whenVisible(reloadNow); return; }
             const batch = [...ids];
             const full = needFull || (progressDeleteUnknown && !batch.length);
             const withFilters = filtersChanged;
@@ -1989,6 +2029,8 @@ function startRealtimeSync() {
             const type = payload?.eventType;
             if (table === 'kd2_plan') {
                 const id = payload.new?.id ?? payload.old?.id;
+                // Deletes arrive for every plan version — ignore rows we don't hold
+                if (type === 'DELETE' && id != null && !currentData.some(r => String(r.id) === String(id))) return;
                 if (id != null) ids.add(id); else needFull = true;
                 if (type !== 'UPDATE') filtersChanged = true;
             } else if (table === 'kd2_progress') {
@@ -2001,14 +2043,23 @@ function startRealtimeSync() {
             } else {
                 needFull = true; // process definitions
             }
+            // A long absence piles up ids — past a point one full reload is cheaper
+            if (ids.size > 400) { needFull = true; ids = new Set(); }
             const now = Date.now();
             if (!firstAt) firstAt = now;
             clearTimeout(timer);
             timer = setTimeout(reloadNow, Math.max(0, Math.min(1200, firstAt + 5000 - now)));
         };
+        // Only this plan version's blocks reach this browser (a version switch
+        // reloads the page, so the filter is fixed for the session). Deletes
+        // carry no version, so they stay unfiltered and are checked above.
+        const kd2Version = window.PlanVersions?.getActiveId?.('kd2');
+        const kd2Scope = kd2Version ? { filter: `plan_version_id=eq.${kd2Version}` } : {};
         _realtimeChannel = db
             .channel('kd2_plan_realtime')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'kd2_plan' }, onChange)
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'kd2_plan', ...kd2Scope }, onChange)
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kd2_plan', ...kd2Scope }, onChange)
+            .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'kd2_plan' }, onChange)
             // kd2_progress holds actual start / completion / X-ray cycles — an
             // edit there reshapes status, delay and the Gantt markers for every
             // viewer, so it must trigger the same reload as a kd2_plan change.
@@ -3028,7 +3079,7 @@ async function _patchKd2Rows(ids, { filtersChanged = false } = {}) {
     await rt.renderSchedule?.(currentData);
     const gsEl = document.getElementById('ganttStart');
     const geEl = document.getElementById('ganttEnd');
-    renderGantt(displayData, gsEl?.value, geEl?.value);
+    renderGantt(displayData, gsEl?.value, geEl?.value, { patch: true });
     _renderSecondaryViews({ defer: true });
     saveNotifSnapshot();
     updateNotifBadge();
@@ -8713,6 +8764,13 @@ function _ganttBarControlsHtml(taskId, { isSelected = false, menuIsOpen = false 
 
 /* Build a block's edit controls the first time it's hovered (or selected). */
 let _ganttOnResizePointerDown = null; // set by wireGanttDragEdit
+/** One pointerdown handler per element — re-wiring replaces, never stacks
+ *  (a patched Gantt keeps most of its bars between renders). */
+function _wirePointerDown(el, fn) {
+    if (el._ppmsPointerDown) el.removeEventListener('pointerdown', el._ppmsPointerDown);
+    el._ppmsPointerDown = fn;
+    el.addEventListener('pointerdown', fn);
+}
 function _ensureGanttBarControls(bar) {
     if (!bar || !bar.dataset.lazyControls || !_ganttEditMode) return;
     delete bar.dataset.lazyControls;
@@ -8722,7 +8780,7 @@ function _ensureGanttBarControls(bar) {
         menuIsOpen: String(_openGanttBlockMenuPlanId) === String(id),
     }));
     if (_ganttOnResizePointerDown) {
-        bar.querySelectorAll('.gc-bar-resize').forEach(h => h.addEventListener('pointerdown', _ganttOnResizePointerDown));
+        bar.querySelectorAll('.gc-bar-resize').forEach(h => _wirePointerDown(h, _ganttOnResizePointerDown));
     }
 }
 function _ganttLazyControlsHandler(e) {
@@ -8730,10 +8788,22 @@ function _ganttLazyControlsHandler(e) {
     if (bar) _ensureGanttBarControls(bar);
 }
 
-function renderGantt(plans, startDate, endDate) {
+/* What the Gantt last painted, row by row. A live update from a co-editor
+   (renderGantt(..., { patch: true })) rebuilds the row HTML as usual but
+   only swaps the rows whose HTML changed; the header, the other rows and
+   the scroll position stay as they are. Anything that changes the layout
+   (rows added/removed, date range, view, day width) falls back to a full
+   redraw automatically. */
+let _ganttLastPaint = null;
+let _ganttPatchStats = null; // last paint: rows / rows replaced (for checking)
+const GANTT_ROW_MARK = '\u0001';
+
+function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
     const inner = document.getElementById('ganttInner');
     if (!inner) return;
     const previousGanttScroll = saveGanttScrollPos();
+    const prevPaint = _ganttLastPaint;
+    _ganttLastPaint = null; // set again only after a full body paint
 
     if (!startDate || !endDate || startDate > endDate) {
         inner.innerHTML = `
@@ -9112,6 +9182,7 @@ function renderGantt(plans, startDate, endDate) {
 
     // ── 6. Body rows ───────────────────────────────────────────────
     let bodyHtml = '';
+    const ROW = GANTT_ROW_MARK; // marks where each body row starts
 
     groupKeys.forEach(groupKey => {
         // Line-grouped station order (Hull → Turret → downstream categories) for
@@ -9138,7 +9209,7 @@ function renderGantt(plans, startDate, endDate) {
         });
 
         // Vehicle group header row
-        bodyHtml += `
+        bodyHtml += ROW + `
       <div class="gr gr-group" style="height:${GANTT_GRP_H}px">
         <div class="gr-label gr-group-label" style="width:${GANTT_LABEL_W}px">
           <svg class="gr-label-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -9166,7 +9237,7 @@ function renderGantt(plans, startDate, endDate) {
 
         vehicleSections.forEach(section => {
             if (!isKd2ProcessView && !isF100ProcessView && (isKD2Module() || isF100KD2Module()) && section.units.length) {
-                bodyHtml += `
+                bodyHtml += ROW + `
       <div class="gr gr-subgroup" style="height:${Math.max(30, GANTT_GRP_H - 8)}px">
         <div class="gr-label gr-subgroup-label" style="width:${GANTT_LABEL_W}px">
           <span class="gr-subgroup-badge">${esc(section.vehicle)}</span>
@@ -9186,7 +9257,7 @@ function renderGantt(plans, startDate, endDate) {
                 if (lineLabel) {
                     if (lineLabel !== _prevLineLabel) {
                         _prevLineLabel = lineLabel;
-                        bodyHtml += `
+                        bodyHtml += ROW + `
       <div class="gr gr-process-cat-sep" style="min-height:34px">
         <div class="gr-label gr-process-cat-label" style="width:${GANTT_LABEL_W}px;align-items:center;flex-wrap:wrap;line-height:1.3">
           <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" style="width:10px;height:10px;flex-shrink:0;opacity:.7">
@@ -9322,7 +9393,7 @@ function renderGantt(plans, startDate, endDate) {
             const _kd2PctHtml = _kd2PctComp
                 ? `<div class="gr-unit-pct-row"><div class="gr-unit-pct-bar-wrap"><div class="gr-unit-pct-bar-fill" style="width:${_kd2PctComp.pct}%"></div></div><span class="gr-unit-pct-text">${_kd2PctComp.done}/${_kd2PctComp.total} (${_kd2PctComp.pct}%)</span></div>`
                 : '';
-            bodyHtml += `
+            bodyHtml += ROW + `
         <div class="gr${rowMenuOpen ? ' gc-row-menu-open' : ''}${_rowVis !== 'visible' ? ` gr-lane-${_rowVis}` : ''}" style="height:${rowH}px">
           <div class="gr-label gr-unit-label" style="width:${GANTT_LABEL_W}px">
             <div class="gr-unit-info">
@@ -9387,16 +9458,43 @@ function renderGantt(plans, startDate, endDate) {
     });
 
     // ── 7. Assemble ────────────────────────────────────────────────
-    clearGanttHoverGuide();
-    inner.innerHTML = `
-    <div class="gantt-wrap" style="min-width:${innerW}px">
-      <div class="gantt-head">
+    const bodyRows = bodyHtml.split(ROW).slice(1);
+    const headHtml = `
         <div class="gh-row gh-row-month">${mHtml}</div>
         <div class="gh-row gh-row-week">${wHtml}</div>
-        <div class="gh-row gh-row-day">${dHtml}</div>
+        <div class="gh-row gh-row-day">${dHtml}</div>`;
+    const paintKey = `${innerW}|${_gridCss}|${_ganttEditMode}|${_ganttReorderMode}`;
+    let patched = false;
+    if (patch && prevPaint && prevPaint.inner === inner && prevPaint.key === paintKey
+        && prevPaint.head === headHtml && prevPaint.rows.length === bodyRows.length) {
+        const bodyEl = inner.querySelector('.gantt-wrap > .gantt-body');
+        const changed = [];
+        bodyRows.forEach((html, i) => { if (html !== prevPaint.rows[i]) changed.push(i); });
+        if (bodyEl && bodyEl.children.length === bodyRows.length
+            && changed.length <= Math.max(12, bodyRows.length * 0.4)) {
+            const tpl = document.createElement('template');
+            const oldEls = [...bodyEl.children];
+            changed.forEach(i => {
+                tpl.innerHTML = bodyRows[i];
+                const el = tpl.content.firstElementChild;
+                if (el) oldEls[i].replaceWith(el);
+            });
+            if (_ganttHoverRowEl && !_ganttHoverRowEl.isConnected) _ganttHoverRowEl = null;
+            patched = true;
+            _ganttPatchStats = { rows: bodyRows.length, replaced: changed.length };
+        }
+    }
+    if (!patched) {
+        clearGanttHoverGuide();
+        inner.innerHTML = `
+    <div class="gantt-wrap" style="min-width:${innerW}px">
+      <div class="gantt-head">${headHtml}
       </div>
-      <div class="gantt-body">${bodyHtml}</div>
+      <div class="gantt-body">${bodyRows.join('')}</div>
     </div>`;
+        _ganttPatchStats = { rows: bodyRows.length, replaced: 'all' };
+    }
+    _ganttLastPaint = { inner, key: paintKey, head: headHtml, rows: bodyRows };
     inner.classList.toggle('gantt-grid-css', _gridCss);
     inner.style.setProperty('--gd-w', GANTT_DAY_W + 'px');
     inner.style.setProperty('--gd-sat-x', _satIdx >= 0 ? (_satIdx * GANTT_DAY_W) + 'px' : '-99999px');
@@ -9428,7 +9526,9 @@ function renderGantt(plans, startDate, endDate) {
     if (zoneKeyEl) zoneKeyEl.style.display = specialZones.length ? 'flex' : 'none';
 
     // ── 10. Preserve viewport after edits/reloads ──────────────────
-    if (_ganttHasRenderedOnce && previousGanttScroll) {
+    if (patched) {
+        // Header and other rows untouched — the scroll position never moved
+    } else if (_ganttHasRenderedOnce && previousGanttScroll) {
         restoreGanttScrollPos(previousGanttScroll);
     } else if (dayIndex[today] !== undefined) {
         const scrollRoot = document.getElementById('ganttScrollRoot');
@@ -13550,6 +13650,490 @@ function _buildIssueStatusReportRowsAllTime() {
     return buildIssueReportRows('status_report', { period: 'all_time', moduleScope: 'current', statuses: [], categories: [] });
 }
 
+/* ─── Executive Report — Production Insights ─────────────────────
+   One page (PDF / Word) or sheet (Excel) between the station report and
+   the issues report. Every figure comes from the same data and the same
+   process-order forecast (planForecast) as the dashboard, at the moment
+   the report is generated; the "Key observations" are written from them.
+   Switched off with the menu's "Include production insights" toggle. */
+function _execIncludeInsights() {
+    const el = document.getElementById('execIncludeInsights');
+    return !el || el.checked;
+}
+
+/** Saturday that starts the work week containing `iso` (Fridays are off). */
+function _execWeekStart(iso) {
+    const d = new Date(iso + 'T00:00:00');
+    d.setDate(d.getDate() - ((d.getDay() + 1) % 7));
+    return localDateStr(d);
+}
+function _execShiftDays(iso, n) {
+    const d = new Date(iso + 'T00:00:00');
+    d.setDate(d.getDate() + n);
+    return localDateStr(d);
+}
+
+function _execInsightsModel(issueRows) {
+    const data = applyActiveFilters(currentData);
+    const today = todayStr();
+    const fc = getPlanForecast(data);
+    const cover = _execCoverSummary();
+    const fmt = n => Number(n).toLocaleString('en-GB');
+    const short = iso => (iso ? formatDateShort(iso) : '—');
+    const unitName = u => [u.vehicle, u.battalion, u.unitNo].filter(Boolean).join(' ');
+
+    // ── Status counts ──
+    const status = { Completed: 0, 'Late Completion': 0, 'In Progress': 0, Overdue: 0, Planned: 0 };
+    data.forEach(r => { const s = calculateStatus(r); status[s] = (status[s] || 0) + 1; });
+    const total = data.length;
+    const done = status.Completed + status['Late Completion'];
+    const onTimeRate = done ? Math.round(status.Completed / done * 100) : 0;
+
+    // ── Units and causes (forecast) ──
+    const units = fc.units;
+    const lateUnits = units.filter(u => u.finishSlip > 0).sort((a, b) => b.finishSlip - a.finishSlip);
+    const mainCause = u => {
+        const st = u.steps.reduce((best, s) => (s.credit > (best?.credit || 0) ? s : best), null);
+        return st ? (st.row.process_station || st.row.station_code || '') : '';
+    };
+    const topUnits = lateUnits.slice(0, 5).map(u => ({
+        name: unitName(u), planned: u.plannedFinish, forecast: u.projFinish, slip: u.finishSlip, cause: mainCause(u),
+    }));
+
+    const causeMap = new Map();
+    lateUnits.forEach(u => u.steps.forEach(s => {
+        if (!(s.credit > 0)) return;
+        const vtype = u.vehicle || '—';
+        const station = s.row.process_station || s.row.station_code || '(Unknown)';
+        const key = `${vtype}||${station}`;
+        if (!causeMap.has(key)) {
+            causeMap.set(key, { station, vtype, cat: getModuleCategory(s.row.process_station, s.row) || 'Other', units: new Set(), open: 0, adds: 0, total: 0 });
+            causeMap.get(key).unitKeys = causeMap.get(key).units;
+        }
+        const c = causeMap.get(key);
+        c.units.add(u.key);
+        if (!s.done) c.open++;
+        c.adds = Math.max(c.adds, s.credit);
+        c.total += s.credit;
+    }));
+    const causes = [...causeMap.values()]
+        .map(c => ({ ...c, units: c.units.size, unitKeys: c.unitKeys }))
+        .sort((a, b) => b.adds - a.adds || b.units - a.units);
+
+    // ── Progress by vehicle type ──
+    const byVehicle = ['K9', 'K10', 'K11'].map(vt => {
+        const rows = data.filter(r => (_getVehicleType(r.vehicle || r.vehicle_type) || r.vehicle) === vt);
+        if (!rows.length) return null;
+        const vUnits = units.filter(u => u.vehicle === vt);
+        const vDone = rows.filter(r => { const s = calculateStatus(r); return s === 'Completed' || s === 'Late Completion'; }).length;
+        const due = rows.filter(r => r.end_date && r.end_date <= today).length;
+        const worst = vUnits.reduce((m, u) => Math.max(m, u.finishSlip), 0);
+        const finish = vUnits.reduce((m, u) => (u.projFinish > m ? u.projFinish : m), '');
+        return {
+            vtype: vt, units: vUnits.length, total: rows.length,
+            donePct: Math.round(vDone / rows.length * 100), expectedPct: Math.round(due / rows.length * 100),
+            worst, finish, late: vUnits.filter(u => u.finishSlip > 0).length,
+        };
+    }).filter(Boolean);
+
+    // ── Weekly pace (last 8 complete work weeks) ──
+    const items = data.map(r => {
+        const s = calculateStatus(r);
+        const isDone = s === 'Completed' || s === 'Late Completion';
+        return { end: r.end_date, done: isDone ? (r.progress?.completion_date || r.end_date) : null };
+    }).filter(x => x.end);
+    const thisWeek = _execWeekStart(today);
+    const weeks = Array.from({ length: 8 }, (_, i) => _execShiftDays(thisWeek, -7 * (8 - i)));
+    const inWeek = (iso, w) => iso && iso >= w && iso <= _execShiftDays(w, 6);
+    const pace = weeks.map(w => ({
+        week: w, label: 'FW' + String(getISOWeek(w)).padStart(2, '0'),
+        planned: items.filter(x => inWeek(x.end, w)).length,
+        completed: items.filter(x => inWeek(x.done, w)).length,
+    }));
+    const last4 = pace.slice(-4);
+    const p4 = last4.reduce((s, w) => s + w.planned, 0);
+    const d4 = last4.reduce((s, w) => s + w.completed, 0);
+    const backlogAt = iso => items.filter(x => x.end < iso && !(x.done && x.done <= iso)).length;
+    const backlogNow = backlogAt(today);
+    const backlogThen = backlogAt(_execShiftDays(thisWeek, -28));
+
+    // ── Production issues (all time, this module) ──
+    const doneSt = ['resolved', 'closed'];
+    const isOpen = r => !doneSt.includes(r.status);
+    const catLabel = r => ISSUE_CATEGORY_LABELS[r.category] || r.category || 'Other';
+    const since12 = _execShiftDays(today, -84);
+    const dayOf = ts => (ts ? localDateStr(new Date(ts)) : null);
+    const resolvedRows = issueRows.filter(r => doneSt.includes(r.status) && r.resolved_at && r.created_at);
+    const avgResolve = resolvedRows.length
+        ? Math.round(resolvedRows.reduce((s, r) => s + (new Date(r.resolved_at) - new Date(r.created_at)) / 864e5, 0) / resolvedRows.length * 10) / 10
+        : null;
+    const openRows = issueRows.filter(isOpen);
+    const openByCat = {};
+    openRows.forEach(r => { openByCat[catLabel(r)] = (openByCat[catLabel(r)] || 0) + 1; });
+    const topOpenCat = Object.entries(openByCat).sort((a, b) => b[1] - a[1])[0] || null;
+    const critical = openRows.filter(r => r.priority === 'critical' || r.priority === 'high');
+    const oldestCritical = critical.reduce((m, r) => {
+        const age = r.created_at ? Math.floor((Date.now() - new Date(r.created_at)) / 864e5) : 0;
+        return Math.max(m, age);
+    }, 0);
+    const issues = {
+        open: issueRows.filter(r => r.status === 'open').length,
+        inProgress: issueRows.filter(r => r.status === 'in_progress').length,
+        resolved: issueRows.filter(r => doneSt.includes(r.status)).length,
+        critical: critical.length,
+        opened12: issueRows.filter(r => (dayOf(r.created_at) || '') >= since12).length,
+        resolved12: resolvedRows.filter(r => (dayOf(r.resolved_at) || '') >= since12).length,
+        avgResolve, topOpenCat, oldestCritical, total: issueRows.length,
+    };
+
+    // ── Verdict ──
+    const slip = Math.max(0, fc.deliverySlip || 0);
+    const top = causes[0];
+    const verdict = fc.expectedDelivery
+        ? (slip > 0
+            ? `Delivery is forecast for ${formatDate(fc.expectedDelivery)} — ${slip} working day${slip === 1 ? '' : 's'} after the planned ${formatDate(fc.plannedDelivery)}. ${lateUnits.length} of ${units.length} unit${units.length === 1 ? ' is' : 's are'} forecast to finish late${top ? `; the biggest cause is ${top.station} on ${top.vtype}` : ''}.`
+            : `Delivery is on track for ${formatDate(fc.plannedDelivery)}; no unit is forecast to finish late.`)
+        : 'Not enough plan data in the current filters to forecast delivery.';
+
+    // ── Key observations (written from the figures above) ──
+    const obs = [];
+    if (slip > 0) {
+        obs.push(`Delivery is forecast ${slip} working days late. The delay comes from work still ahead on the late units, not from stations already finished.`);
+    } else if (fc.expectedDelivery) {
+        obs.push(`Delivery is on track: every unit is forecast to finish on or before its planned date.`);
+    }
+    const vWorst = byVehicle.filter(v => v.late > 0).sort((a, b) => b.late - a.late || b.worst - a.worst)[0];
+    if (vWorst && lateUnits.length) {
+        obs.push(`${vWorst.vtype} accounts for ${vWorst.late} of the ${lateUnits.length} late units (worst +${vWorst.worst} wd); it is ${vWorst.donePct}% complete against ${vWorst.expectedPct}% expected by today.`);
+    }
+    if (causes.length) {
+        // Area adding the most delay = largest total delay credited to its stations;
+        // units are counted once each, however many of its stations they pass
+        const cats = {};
+        causes.forEach(c => {
+            const k = cats[c.cat] || (cats[c.cat] = { delay: 0, units: new Set(), stations: [] });
+            k.delay += c.total;
+            c.unitKeys.forEach(u => k.units.add(u));
+            k.stations.push(c);
+        });
+        const [catName, cat] = Object.entries(cats).sort((a, b) => b[1].delay - a[1].delay)[0];
+        const names = cat.stations.sort((a, b) => b.adds - a.adds).slice(0, 3).map(c => c.station);
+        obs.push(`${catName} stations add the most delay — ${names.join(', ')} — affecting ${cat.units.size} of the ${lateUnits.length} late units.`);
+    }
+    if (p4 || d4) {
+        const rate = p4 ? Math.round(d4 / p4 * 100) : 100;
+        const diff = backlogNow - backlogThen;
+        obs.push(`In the last 4 weeks ${fmt(d4)} blocks were completed against ${fmt(p4)} planned (${rate}%); unfinished past-due blocks ${diff === 0 ? `held at ${fmt(backlogNow)}` : `${diff > 0 ? 'grew' : 'fell'} by ${fmt(Math.abs(diff))} to ${fmt(backlogNow)}`}.`);
+    }
+    if (issues.total) {
+        obs.push(issues.opened12 > issues.resolved12
+            ? `Issues are opening faster than they are resolved (${issues.opened12} vs ${issues.resolved12} in 12 weeks), with ${issues.critical} critical / high still open.`
+            : `Issues are being resolved at least as fast as they are opened (${issues.resolved12} resolved vs ${issues.opened12} opened in 12 weeks).`);
+        if (topOpenCat) {
+            const linked = top && (top.cat.toLowerCase().split(/\s+/).some(w => w.length > 3 && topOpenCat[0].toLowerCase().includes(w)));
+            obs.push(linked
+                ? `${topOpenCat[0]} has the most open issues (${topOpenCat[1]}) — the same area as the top delay cause.`
+                : `${topOpenCat[0]} has the most open issues (${topOpenCat[1]}).`);
+        }
+        if (oldestCritical > 14) obs.push(`The oldest open critical / high issue has been open for ${oldestCritical} days.`);
+    }
+
+    return {
+        cover, verdict, late: slip > 0, slip,
+        plannedDelivery: fc.plannedDelivery, expectedDelivery: fc.expectedDelivery,
+        kpis: [
+            { label: 'Completion', value: `${total ? Math.round(done / total * 100) : 0}%`, sub: `${fmt(done)} of ${fmt(total)} blocks`, tone: 'warn' },
+            { label: 'On-time rate', value: `${onTimeRate}%`, sub: `${fmt(status.Completed)} of ${fmt(done)} done on time`, tone: onTimeRate >= 80 ? 'ok' : 'warn' },
+            { label: 'Overdue', value: fmt(status.Overdue), sub: 'blocks past planned end', tone: status.Overdue ? 'bad' : 'ok' },
+            { label: 'In progress', value: fmt(status['In Progress']), sub: 'blocks started', tone: 'info' },
+            { label: 'Units late', value: `${lateUnits.length} / ${units.length}`, sub: lateUnits[0] ? `worst +${lateUnits[0].finishSlip} wd (${unitName(lateUnits[0])})` : 'none forecast late', tone: lateUnits.length ? 'bad' : 'ok' },
+            { label: 'Open issues', value: fmt(issues.open + issues.inProgress), sub: `${issues.critical} critical / high`, tone: issues.critical ? 'bad' : 'ok' },
+        ],
+        topUnits, causes: causes.slice(0, 5), byVehicle, pace,
+        paceLine: (p4 || d4) ? `Last 4 weeks: ${fmt(Math.round(d4 / 4))} blocks/week completed vs ${fmt(Math.round(p4 / 4))} planned (${p4 ? Math.round(d4 / p4 * 100) : 100}%) · unfinished past-due blocks ${backlogNow - backlogThen >= 0 ? '+' : ''}${backlogNow - backlogThen} (now ${fmt(backlogNow)}).` : 'No blocks planned or completed in the last 4 weeks.',
+        issues, observations: obs.slice(0, 6), short,
+    };
+}
+
+const EXEC_TONE = { bad: [185, 28, 28], warn: [180, 83, 9], ok: [21, 128, 61], info: [37, 99, 235] };
+const EXEC_TONE_HEX = { bad: '#b91c1c', warn: '#b45309', ok: '#15803d', info: '#2563eb' };
+
+/** PDF: the Production Insights page (A4 landscape), drawn on a new page. */
+function _execDrawInsightsPdf(doc, ins, band, meta) {
+    const M = EXEC_MARGIN, W = 297;
+    doc.addPage('a4', 'landscape');
+    band(W, 'Production Insights', 'Key figures, delivery forecast and issues', meta);
+
+    // Verdict
+    const vTone = ins.late ? [185, 28, 28] : [21, 128, 61];
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.6);
+    const vLines = doc.splitTextToSize(ins.verdict, W - 2 * M - 8);
+    const vH = 4 + vLines.length * 3.9;
+    doc.setFillColor(...(ins.late ? [255, 245, 245] : [240, 253, 244]));
+    doc.setDrawColor(...(ins.late ? [252, 165, 165] : [134, 239, 172])); doc.setLineWidth(0.25);
+    doc.rect(M, 21.5, W - 2 * M, vH, 'FD');
+    doc.setFillColor(...vTone); doc.rect(M, 21.5, 1.4, vH, 'F');
+    doc.setTextColor(15, 23, 42);
+    doc.text(vLines, M + 4.5, 25.4);
+    let y = 21.5 + vH + 3.5;
+
+    // KPI tiles
+    const tw = (W - 2 * M - 5 * 4) / 6, th = 16.5;
+    ins.kpis.forEach((k, i) => {
+        const x = M + i * (tw + 4);
+        doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.25); doc.rect(x, y, tw, th, 'S');
+        doc.setFillColor(...(EXEC_TONE[k.tone] || EXEC_TONE.info)); doc.rect(x, y, tw, 0.9, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(6); doc.setTextColor(100, 116, 139);
+        doc.text(k.label.toUpperCase(), x + 2.5, y + 4.6, { charSpace: 0.2 });
+        doc.setFontSize(String(k.value).length > 7 ? 12 : 14); doc.setTextColor(15, 23, 42);
+        doc.text(String(k.value), x + 2.5, y + 10.6);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6.2); doc.setTextColor(71, 85, 105);
+        doc.text(doc.splitTextToSize(k.sub, tw - 4)[0], x + 2.5, y + 14.3);
+    });
+    y += th + 5;
+
+    const gap = 4, c3w = 81, cw = (W - 2 * M - c3w - 2 * gap) / 2;
+    const cols = [M, M + cw + gap, M + 2 * (cw + gap)];
+    const heading = (x, yy, title, sub) => {
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(7.2); doc.setTextColor(30, 58, 138);
+        doc.text(title.toUpperCase(), x, yy, { charSpace: 0.25 });
+        if (sub) {
+            const tw2 = doc.getTextWidth(title.toUpperCase()) + title.length * 0.25 + 2;
+            doc.setFont('helvetica', 'normal'); doc.setFontSize(6.3); doc.setTextColor(100, 116, 139);
+            doc.text(sub, x + tw2, yy);
+        }
+    };
+    const table = (x, w, startY, head, body, colStyles, extra = {}) => {
+        doc.autoTable({
+            startY, margin: { left: x, right: W - x - w, bottom: EXEC_FOOTER_H }, tableWidth: w,
+            head: [head], body, theme: 'plain', pageBreak: 'avoid', rowPageBreak: 'avoid',
+            styles: { font: 'helvetica', fontSize: 6.8, cellPadding: { top: 1.1, bottom: 1.1, left: 1.2, right: 1.2 }, textColor: [15, 23, 42], lineColor: [226, 232, 240], lineWidth: { bottom: 0.15 } },
+            headStyles: { fontStyle: 'bold', textColor: [100, 116, 139], fontSize: 6.3, lineWidth: { bottom: 0.3 }, lineColor: [203, 213, 225] },
+            columnStyles: colStyles,
+            ...extra,
+        });
+        return doc.lastAutoTable.finalY;
+    };
+    const toneText = (slip) => ({ textColor: slip >= 20 ? EXEC_TONE.bad : EXEC_TONE.warn, fontStyle: 'bold' });
+
+    // ── Column 1: units behind + where to act ──
+    let y1 = y;
+    heading(cols[0], y1, 'Units furthest behind', 'forecast finish vs plan');
+    y1 = table(cols[0], cw, y1 + 1.5, ['Unit', 'Planned', 'Forecast', 'Delay', 'Main cause'],
+        ins.topUnits.length
+            ? ins.topUnits.map(u => [u.name, ins.short(u.planned), ins.short(u.forecast), { content: `+${u.slip} wd`, styles: toneText(u.slip) }, u.cause || '—'])
+            : [[{ content: 'No unit is forecast to finish late.', colSpan: 5, styles: { textColor: EXEC_TONE.ok } }]],
+        { 0: { cellWidth: 26 }, 1: { cellWidth: 13 }, 2: { cellWidth: 13 }, 3: { cellWidth: 14, halign: 'right' } });
+    y1 += 6;
+    heading(cols[0], y1, 'Where to act first', 'delay added to unit finishes now');
+    table(cols[0], cw, y1 + 1.5, ['Station', 'Veh.', 'Units', 'Open', 'Adds'],
+        ins.causes.length
+            ? ins.causes.map(c => [c.station, c.vtype, String(c.units), c.open ? String(c.open) : '—', { content: `+${c.adds} wd`, styles: toneText(c.adds) }])
+            : [[{ content: 'Nothing is adding delay right now.', colSpan: 5, styles: { textColor: EXEC_TONE.ok } }]],
+        { 1: { cellWidth: 10 }, 2: { cellWidth: 11, halign: 'right' }, 3: { cellWidth: 11, halign: 'right' }, 4: { cellWidth: 15, halign: 'right' } });
+
+    // ── Column 2: progress by vehicle + weekly pace ──
+    let y2 = y;
+    heading(cols[1], y2, 'Progress by vehicle', 'done vs expected by today');
+    const barCol = 2;
+    y2 = table(cols[1], cw, y2 + 1.5, ['Vehicle', 'Units', 'Progress', 'Done', 'Finish'],
+        ins.byVehicle.map(v => [v.vtype, String(v.units), '', `${v.donePct}%`, v.worst > 0 ? { content: `+${v.worst} wd`, styles: toneText(v.worst) } : { content: 'on time', styles: { textColor: EXEC_TONE.ok } }]),
+        { 0: { cellWidth: 14, fontStyle: 'bold' }, 1: { cellWidth: 11, halign: 'right' }, 3: { cellWidth: 12, halign: 'right' }, 4: { cellWidth: 17, halign: 'right' } },
+        {
+            didDrawCell: d => {
+                if (d.section !== 'body' || d.column.index !== barCol) return;
+                const v = ins.byVehicle[d.row.index];
+                if (!v) return;
+                const bx = d.cell.x + 1.5, bw = d.cell.width - 3, by = d.cell.y + d.cell.height / 2 - 1.1;
+                doc.setFillColor(226, 232, 240); doc.rect(bx, by, bw, 2.2, 'F');
+                doc.setFillColor(37, 99, 235); doc.rect(bx, by, bw * Math.min(1, v.donePct / 100), 2.2, 'F');
+                doc.setDrawColor(15, 23, 42); doc.setLineWidth(0.5);
+                const ex = bx + bw * Math.min(1, v.expectedPct / 100);
+                doc.line(ex, by - 0.8, ex, by + 3);
+            },
+        });
+    doc.setFontSize(6); doc.setTextColor(71, 85, 105);
+    doc.setFillColor(37, 99, 235); doc.rect(cols[1], y2 + 2, 2.4, 2.4, 'F'); doc.text('done', cols[1] + 3.4, y2 + 4.1);
+    doc.setDrawColor(15, 23, 42); doc.setLineWidth(0.5); doc.line(cols[1] + 13, y2 + 1.8, cols[1] + 13, y2 + 4.8); doc.text('expected by today', cols[1] + 14.5, y2 + 4.1);
+    y2 += 11;
+    heading(cols[1], y2, 'Weekly pace', 'planned vs completed, last 8 weeks');
+    const chT = y2 + 3, chH = 26, chB = chT + chH;
+    const maxV = Math.max(1, ...ins.pace.map(p => Math.max(p.planned, p.completed)));
+    const slot = cw / ins.pace.length;
+    doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.15); doc.line(cols[1], chB, cols[1] + cw, chB);
+    ins.pace.forEach((p, i) => {
+        const x = cols[1] + i * slot + slot * 0.14, bw = slot * 0.34;
+        const hp = chH * p.planned / maxV, hc = chH * p.completed / maxV;
+        doc.setFillColor(191, 219, 254); doc.rect(x, chB - hp, bw, hp, 'F');
+        doc.setFillColor(34, 197, 94); doc.rect(x + bw + 0.4, chB - hc, bw, hc, 'F');
+        doc.setFontSize(5.6); doc.setTextColor(100, 116, 139);
+        doc.text(p.label, cols[1] + i * slot + slot / 2, chB + 3, { align: 'center' });
+        doc.setFontSize(5.4); doc.setTextColor(71, 85, 105);
+        if (p.completed) doc.text(String(p.completed), x + bw * 1.5 + 0.4, chB - hc - 0.8, { align: 'center' });
+    });
+    let ly = chB + 7.5;
+    doc.setFontSize(6); doc.setTextColor(71, 85, 105);
+    doc.setFillColor(191, 219, 254); doc.rect(cols[1], ly - 2.2, 2.4, 2.4, 'F'); doc.text('planned', cols[1] + 3.4, ly);
+    doc.setFillColor(34, 197, 94); doc.rect(cols[1] + 16, ly - 2.2, 2.4, 2.4, 'F'); doc.text('completed', cols[1] + 19.4, ly);
+    doc.setFontSize(6.8); doc.setTextColor(15, 23, 42);
+    doc.text(doc.splitTextToSize(ins.paceLine, cw), cols[1], ly + 5);
+
+    // ── Column 3: issues + observations ──
+    const x3 = cols[2];
+    let y3 = y;
+    heading(x3, y3, 'Production issues', 'all time');
+    const bw3 = (c3w - 2 * 2.5) / 3;
+    [['open', ins.issues.open], ['in progress', ins.issues.inProgress], ['resolved', ins.issues.resolved]].forEach(([label, val], i) => {
+        const bx = x3 + i * (bw3 + 2.5);
+        doc.setFillColor(239, 246, 255); doc.rect(bx, y3 + 2, bw3, 11.5, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(15, 23, 42); doc.text(String(val), bx + 2.5, y3 + 8.6);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6); doc.setTextColor(71, 85, 105); doc.text(label, bx + 2.5, y3 + 12);
+    });
+    y3 = table(x3, c3w, y3 + 15.5, ['', ''], [
+        ['Critical / high still open', { content: String(ins.issues.critical), styles: { textColor: ins.issues.critical ? EXEC_TONE.bad : EXEC_TONE.ok, fontStyle: 'bold' } }],
+        ['Opened vs resolved (12 weeks)', `${ins.issues.opened12} vs ${ins.issues.resolved12}`],
+        ['Average time to resolve', ins.issues.avgResolve == null ? '—' : `${ins.issues.avgResolve} days`],
+        ['Most open category', ins.issues.topOpenCat ? `${ins.issues.topOpenCat[0]} (${ins.issues.topOpenCat[1]})` : '—'],
+    ], { 1: { halign: 'right', cellWidth: 30 } }, { showHead: 'never' });
+    y3 += 6;
+    heading(x3, y3, 'Key observations');
+    y3 += 4;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.9);
+    ins.observations.forEach((o, i) => {
+        const lines = doc.splitTextToSize(o, c3w - 5);
+        doc.setTextColor(30, 58, 138); doc.setFont('helvetica', 'bold'); doc.text(`${i + 1}.`, x3, y3);
+        doc.setTextColor(15, 23, 42); doc.setFont('helvetica', 'normal'); doc.text(lines, x3 + 4, y3);
+        y3 += lines.length * 3.05 + 1.6;
+    });
+
+    // Note at the bottom of the page
+    doc.setFontSize(6.2); doc.setTextColor(148, 163, 184);
+    doc.text('Figures follow the process-order forecast used across PPMS · working days exclude Fridays · as of ' + formatDate(todayStr()), M, 210 - 9.5);
+    return doc.internal.getCurrentPageInfo().pageNumber;
+}
+
+/** Word: the Production Insights page as one A4 landscape section. */
+function _execInsightsWordHtml(ins, meta) {
+    const H = s => `<p style="margin:6pt 0 3pt;font-size:8pt;font-weight:bold;letter-spacing:0.5pt;color:#1e3a8a">${s.toUpperCase()}</p>`;
+    const td = 'padding:2pt 3pt;border-bottom:0.5pt solid #e2e8f0;font-size:7.5pt';
+    const th = 'padding:2pt 3pt;border-bottom:0.75pt solid #cbd5e1;font-size:7pt;color:#64748b;font-weight:bold';
+    const tone = slip => `color:${slip >= 20 ? '#b91c1c' : '#b45309'};font-weight:bold`;
+    const tbl = (head, rows) => `<table style="width:100%;border-collapse:collapse"><tr>${head.map(h => `<td style="${th}">${h}</td>`).join('')}</tr>${rows}</table>`;
+
+    const kpis = ins.kpis.map(k => `<td style="width:16.6%;padding:4pt 6pt;border:0.75pt solid #cbd5e1;border-top:2.25pt solid ${EXEC_TONE_HEX[k.tone] || EXEC_TONE_HEX.info};vertical-align:top">
+        <p style="margin:0;font-size:6.5pt;color:#64748b;font-weight:bold;letter-spacing:0.4pt">${esc(k.label.toUpperCase())}</p>
+        <p style="margin:1pt 0;font-size:14pt;font-weight:bold;color:#0f172a">${esc(String(k.value))}</p>
+        <p style="margin:0;font-size:6.5pt;color:#475569">${esc(k.sub)}</p></td>`).join('');
+
+    const unitsRows = ins.topUnits.length ? ins.topUnits.map(u => `<tr><td style="${td}">${esc(u.name)}</td><td style="${td}">${esc(ins.short(u.planned))}</td><td style="${td}">${esc(ins.short(u.forecast))}</td><td style="${td};text-align:right;${tone(u.slip)}">+${u.slip} wd</td><td style="${td}">${esc(u.cause || '—')}</td></tr>`).join('')
+        : `<tr><td colspan="5" style="${td};color:#15803d">No unit is forecast to finish late.</td></tr>`;
+    const causeRows = ins.causes.length ? ins.causes.map(c => `<tr><td style="${td}">${esc(c.station)}</td><td style="${td}">${esc(c.vtype)}</td><td style="${td};text-align:right">${c.units}</td><td style="${td};text-align:right">${c.open || '—'}</td><td style="${td};text-align:right;${tone(c.adds)}">+${c.adds} wd</td></tr>`).join('')
+        : `<tr><td colspan="5" style="${td};color:#15803d">Nothing is adding delay right now.</td></tr>`;
+    const vehRows = ins.byVehicle.map(v => `<tr><td style="${td};font-weight:bold">${v.vtype}</td><td style="${td};text-align:right">${v.units}</td><td style="${td};text-align:right">${v.donePct}%</td><td style="${td};text-align:right">${v.expectedPct}%</td><td style="${td};text-align:right;${v.worst > 0 ? tone(v.worst) : 'color:#15803d'}">${v.worst > 0 ? `+${v.worst} wd` : 'on time'}</td></tr>`).join('');
+    const paceRows = ins.pace.map(p => `<tr><td style="${td}">${p.label}</td><td style="${td};text-align:right">${p.planned}</td><td style="${td};text-align:right">${p.completed}</td></tr>`).join('');
+    const iss = ins.issues;
+
+    return `
+        <table style="width:100%;border-collapse:collapse;margin:0 0 5pt"><tr><td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a">
+            <p style="margin:0;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#1e3a8a">PRODUCTION INSIGHTS</p>
+            <p style="margin:0;font-size:15pt;font-weight:bold;color:#0f172a">Key figures, delivery forecast and issues</p></td>
+            <td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a;text-align:right;vertical-align:bottom"><p style="margin:0;font-size:7.5pt;color:#64748b">${esc(meta)}</p></td></tr></table>
+        <table style="width:100%;border-collapse:collapse;margin:0 0 5pt"><tr><td style="padding:4pt 8pt;border:0.75pt solid ${ins.late ? '#fca5a5' : '#86efac'};border-left:4pt solid ${ins.late ? '#b91c1c' : '#15803d'};background:${ins.late ? '#fff5f5' : '#f0fdf4'};font-size:9pt;color:#0f172a">${esc(ins.verdict)}</td></tr></table>
+        <table style="width:100%;border-collapse:separate;border-spacing:3pt 0;margin:0 0 4pt"><tr>${kpis}</tr></table>
+        <table style="width:100%;border-collapse:collapse"><tr>
+            <td style="width:35%;vertical-align:top;padding-right:8pt;border:none">
+                ${H('Units furthest behind')}${tbl(['Unit', 'Planned', 'Forecast', 'Delay', 'Main cause'], unitsRows)}
+                ${H('Where to act first')}${tbl(['Station', 'Veh.', 'Units', 'Open', 'Adds'], causeRows)}
+            </td>
+            <td style="width:33%;vertical-align:top;padding-right:8pt;border:none">
+                ${H('Progress by vehicle')}${tbl(['Vehicle', 'Units', 'Done', 'Expected', 'Finish'], vehRows)}
+                ${H('Weekly pace (last 8 weeks)')}${tbl(['Week', 'Planned', 'Completed'], paceRows)}
+                <p style="margin:3pt 0 0;font-size:7.5pt;color:#0f172a">${esc(ins.paceLine)}</p>
+            </td>
+            <td style="width:32%;vertical-align:top;border:none">
+                ${H('Production issues (all time)')}
+                <table style="width:100%;border-collapse:separate;border-spacing:2pt"><tr>
+                    ${[['open', iss.open], ['in progress', iss.inProgress], ['resolved', iss.resolved]].map(([l, v]) => `<td style="background:#eff6ff;padding:3pt 5pt"><p style="margin:0;font-size:12pt;font-weight:bold">${v}</p><p style="margin:0;font-size:6.5pt;color:#475569">${l}</p></td>`).join('')}
+                </tr></table>
+                <table style="width:100%;border-collapse:collapse">
+                    <tr><td style="${td}">Critical / high still open</td><td style="${td};text-align:right;font-weight:bold;color:${iss.critical ? '#b91c1c' : '#15803d'}">${iss.critical}</td></tr>
+                    <tr><td style="${td}">Opened vs resolved (12 weeks)</td><td style="${td};text-align:right">${iss.opened12} vs ${iss.resolved12}</td></tr>
+                    <tr><td style="${td}">Average time to resolve</td><td style="${td};text-align:right">${iss.avgResolve == null ? '—' : iss.avgResolve + ' days'}</td></tr>
+                    <tr><td style="${td}">Most open category</td><td style="${td};text-align:right">${iss.topOpenCat ? `${esc(iss.topOpenCat[0])} (${iss.topOpenCat[1]})` : '—'}</td></tr>
+                </table>
+                ${H('Key observations')}
+                ${ins.observations.map((o, i) => `<p style="margin:0 0 3pt;font-size:7.8pt;color:#0f172a"><b style="color:#1e3a8a">${i + 1}.</b> ${esc(o)}</p>`).join('')}
+            </td>
+        </tr></table>
+        <p style="margin:6pt 0 0;font-size:6.5pt;color:#94a3b8">Figures follow the process-order forecast used across PPMS · working days exclude Fridays · as of ${esc(formatDate(todayStr()))}</p>`;
+}
+
+/** Excel: an "Insights" sheet with the same sections, one under the other. */
+function _addExecInsightsSheet(wb, ins) {
+    const ws = wb.addWorksheet('Insights', { views: [{ showGridLines: false }] });
+    ws.columns = [{ width: 34 }, { width: 16 }, { width: 16 }, { width: 14 }, { width: 26 }, { width: 14 }];
+    const navy = 'FF1E3A8A', grey = 'FF64748B';
+    const title = (text, size = 13) => { const r = ws.addRow([text]); r.font = { bold: true, size, color: { argb: navy } }; return r; };
+    const head = cells => { const r = ws.addRow(cells); r.font = { bold: true, color: { argb: grey } }; r.eachCell(c => { c.border = { bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } } }; }); return r; };
+    const blank = () => ws.addRow([]);
+
+    title('Production Insights', 16);
+    ws.addRow([`As of ${formatDate(todayStr())}`]).font = { color: { argb: grey } };
+    blank();
+    const v = ws.addRow([ins.verdict]);
+    ws.mergeCells(`A${v.number}:F${v.number}`);
+    v.getCell(1).alignment = { wrapText: true, vertical: 'middle' };
+    v.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ins.late ? 'FFFFF5F5' : 'FFF0FDF4' } };
+    v.height = 34;
+    blank();
+
+    title('Key figures');
+    head(['Measure', 'Value', 'Detail']);
+    ins.kpis.forEach(k => ws.addRow([k.label, k.value, k.sub]));
+    blank();
+
+    title('Units furthest behind');
+    head(['Unit', 'Planned finish', 'Forecast finish', 'Delay (wd)', 'Main cause']);
+    ins.topUnits.forEach(u => ws.addRow([u.name, formatDate(u.planned), formatDate(u.forecast), u.slip, u.cause || '—']));
+    if (!ins.topUnits.length) ws.addRow(['No unit is forecast to finish late.']);
+    blank();
+
+    title('Where to act first');
+    head(['Station', 'Vehicle', 'Units pushed back', 'Not finished', 'Delay added (wd)']);
+    ins.causes.forEach(c => ws.addRow([c.station, c.vtype, c.units, c.open, c.adds]));
+    if (!ins.causes.length) ws.addRow(['Nothing is adding delay right now.']);
+    blank();
+
+    title('Progress by vehicle');
+    head(['Vehicle', 'Units', 'Done %', 'Expected by today %', 'Worst unit delay (wd)', 'Forecast finish']);
+    ins.byVehicle.forEach(x => ws.addRow([x.vtype, x.units, x.donePct, x.expectedPct, x.worst, x.finish ? formatDate(x.finish) : '—']));
+    blank();
+
+    title('Weekly pace (last 8 weeks)');
+    head(['Week', 'Planned', 'Completed']);
+    ins.pace.forEach(p => ws.addRow([`${p.label} (from ${formatDate(p.week)})`, p.planned, p.completed]));
+    ws.addRow([ins.paceLine]).font = { italic: true };
+    blank();
+
+    title('Production issues (all time)');
+    head(['Measure', 'Value']);
+    const iss = ins.issues;
+    [['Open', iss.open], ['In progress', iss.inProgress], ['Resolved / closed', iss.resolved], ['Critical / high still open', iss.critical],
+     ['Opened in the last 12 weeks', iss.opened12], ['Resolved in the last 12 weeks', iss.resolved12],
+     ['Average time to resolve (days)', iss.avgResolve ?? '—'], ['Most open category', iss.topOpenCat ? `${iss.topOpenCat[0]} (${iss.topOpenCat[1]})` : '—']]
+        .forEach(r => ws.addRow(r));
+    blank();
+
+    title('Key observations');
+    ins.observations.forEach((o, i) => {
+        const r = ws.addRow([`${i + 1}. ${o}`]);
+        ws.mergeCells(`A${r.number}:F${r.number}`);
+        r.getCell(1).alignment = { wrapText: true };
+        r.height = 30;
+    });
+    return ws;
+}
+
 async function exportExecutiveReportExcel(preview) {
     if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (!isKD2Module()) { showToast('Executive Report is only available for the F200-KD2 module.', 'error'); return; }
@@ -13572,6 +14156,7 @@ async function exportExecutiveReportExcel(preview) {
         usedNames.add(name);
         _addVpxStationReportSheet(wb, seg, name, seg.cat);
     });
+    if (_execIncludeInsights()) _addExecInsightsSheet(wb, _execInsightsModel(issueRows));
     _addIssueStatusReportSheet(wb, issueRows, 'Issues Status Report', 'Production Issues Status Report — All Time');
     _addStationReportKeySheet(wb, title);
 
@@ -13607,6 +14192,7 @@ async function exportExecutiveReportPDF(preview) {
     const meta = [cover.module, cover.version, `Generated ${cover.generated}`].filter(Boolean).join('  ·  ');
     const models = segments.map(_execSegmentModel);
     const layouts = models.map(_execSegmentLayout);
+    const insights = _execIncludeInsights() ? _execInsightsModel(issueRows) : null;
 
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
@@ -13698,7 +14284,8 @@ async function exportExecutiveReportPDF(preview) {
         doc.setTextColor(15, 23, 42); doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
         doc.text('Contents', tx, y); y += 7;
         const entries = models.map((m, i) => [`VPX Station Report — ${m.vtype} · ${m.cat}`, `${m.stats.units} units · ${m.stats.stations} stations`, i + 2]);
-        entries.push(['Production Issues Status Report', `${issueRows.length} issues · all time`, models.length + 2]);
+        if (insights) entries.push(['Production Insights', 'Key figures, delivery forecast, where to act, issues', models.length + 2]);
+        entries.push(['Production Issues Status Report', `${issueRows.length} issues · all time`, models.length + (insights ? 3 : 2)]);
         doc.setFontSize(8.5);
         entries.forEach(([name, sub, page]) => {
             doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 23, 42); doc.text(name, tx, y);
@@ -13792,6 +14379,12 @@ async function exportExecutiveReportPDF(preview) {
         }
     });
 
+    // ── Production Insights (one page, between progress and issues) ──
+    if (insights) {
+        const insightsPage = _execDrawInsightsPdf(doc, insights, band, meta);
+        if (hasOutline) { try { doc.outline.add(null, 'Production Insights', { pageNumber: insightsPage }); } catch {} }
+    }
+
     // ── Production Issues Status Report (list — may run over several pages) ──
     doc.addPage('a4', 'landscape');
     const issuesStart = doc.internal.getCurrentPageInfo().pageNumber;
@@ -13854,7 +14447,8 @@ async function exportExecutiveReportWord(preview) {
     const meta = [cover.module, cover.version, `Generated ${cover.generated}`].filter(Boolean).join('  ·  ');
     const models = segments.map(_execSegmentModel);
     const layouts = models.map(m => ({ ..._execSegmentLayout(m, { word: true }), meta }));
-    const { body, style } = _execWordDocument(cover, models, layouts, issueRows, meta);
+    const insights = _execIncludeInsights() ? _execInsightsModel(issueRows) : null;
+    const { body, style } = _execWordDocument(cover, models, layouts, issueRows, meta, insights);
 
     const now = localDateStr(new Date());
     exportHtmlAsWord(`executive_report_${now}.doc`, 'Executive Report', body, preview, { style });
@@ -13862,7 +14456,7 @@ async function exportExecutiveReportWord(preview) {
 
 /** Word document body + page-setup styles. Each page is its own Word
  *  section, so every VPX page can have its own paper size (A4 or A3). */
-function _execWordDocument(cover, models, layouts, issueRows, meta) {
+function _execWordDocument(cover, models, layouts, issueRows, meta, insights = null) {
     const mPt = (EXEC_MARGIN * PT_PER_MM).toFixed(1) + 'pt';
     const pageCss = (name, page) => `@page ${name} { size: ${(page.w * PT_PER_MM).toFixed(1)}pt ${(page.h * PT_PER_MM).toFixed(1)}pt; mso-page-orientation: landscape; margin: ${mPt}; }
         div.${name} { page: ${name}; }`;
@@ -13899,6 +14493,8 @@ function _execWordDocument(cover, models, layouts, issueRows, meta) {
             <table style="width:100%;border-collapse:collapse">
                 ${models.map(m => `<tr><td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:9pt;font-weight:bold;color:#0f172a">VPX Station Report — ${esc(m.vtype)} · ${esc(m.cat)}</td>
                     <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">${m.stats.units} units · ${m.stats.stations} stations</td></tr>`).join('')}
+                ${insights ? `<tr><td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:9pt;font-weight:bold;color:#0f172a">Production Insights</td>
+                    <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">Key figures, delivery forecast, where to act, issues</td></tr>` : ''}
                 <tr><td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:9pt;font-weight:bold;color:#0f172a">Production Issues Status Report</td>
                     <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">${issueRows.length} issues · all time</td></tr>
             </table>
@@ -13909,6 +14505,9 @@ function _execWordDocument(cover, models, layouts, issueRows, meta) {
     models.forEach((m, i) => {
         body += sectionBreak + `<div class="${divFor(layouts[i].page)}">${_execWordSegmentHtml(m, layouts[i])}</div>`;
     });
+
+    // Production Insights (between progress and issues)
+    if (insights) body += sectionBreak + `<div class="ExecA4">${_execInsightsWordHtml(insights, meta)}</div>`;
 
     // Issues
     const statusLabel = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Closed' };
@@ -13975,16 +14574,50 @@ function wireVpxReportModal() {
 /* ─── Executive Report modal — combined VPX Station Report (every
    vehicle/component segment) + all-time Issues Status Report. Always
    previews before download, per how this report is meant to be used. ── */
+/** Scope line + live snapshot in the Executive Report menu. */
+function _fillExecReportMenu() {
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    const cover = _execCoverSummary();
+    set('execScopeModule', cover.module);
+    set('execScopeVersion', cover.version || '—');
+    const tf = document.querySelector('#fxTimeSeg [aria-pressed="true"], #fxTimeSeg .is-active')?.textContent?.trim();
+    const activeFilters = document.querySelectorAll('#fxChips .fx-chip').length;
+    set('execScopeFilters', `${tf || 'All time'}${activeFilters ? ` · ${activeFilters} filter${activeFilters === 1 ? '' : 's'}` : ' · All units'}`);
+    set('execSnapDelivery', cover.expectedDelivery);
+    const delta = document.getElementById('execSnapDeliveryDelta');
+    if (delta) {
+        delta.textContent = cover.worst > 0 ? `+${cover.worst} wd vs ${cover.plannedDelivery}` : `on time · planned ${cover.plannedDelivery}`;
+        delta.className = cover.worst > 0 ? 'xr-bad' : 'xr-ok';
+    }
+    set('execSnapPct', `${cover.pct}%`);
+    set('execSnapPctSub', `${(cover.completed + cover.late).toLocaleString('en-GB')} of ${cover.total.toLocaleString('en-GB')} blocks`);
+    const ov = document.getElementById('issueOvOpen')?.textContent, ip = document.getElementById('issueOvInProgress')?.textContent;
+    const crit = document.getElementById('issueOvCritical')?.textContent;
+    const openN = (parseInt(ov, 10) || 0) + (parseInt(ip, 10) || 0);
+    set('execSnapIssues', ov != null ? String(openN) : '—');
+    const issSub = document.getElementById('execSnapIssuesSub');
+    if (issSub) { issSub.textContent = crit != null ? `${crit} critical / high` : 'open issues'; issSub.className = parseInt(crit, 10) ? 'xr-bad' : 'xr-ok'; }
+}
+
 function wireExecReportModal() {
     const overlay = document.getElementById('execReportModalOverlay');
     if (!overlay) return;
     const close = () => { overlay.style.display = 'none'; };
 
     document.getElementById('btnExecReport')?.addEventListener('click', () => {
+        _fillExecReportMenu();
         overlay.style.display = 'flex';
     });
     document.getElementById('execReportModalClose')?.addEventListener('click', close);
     document.getElementById('execReportModalCancel')?.addEventListener('click', close);
+    // "Include production insights" — keep "What's inside" in step with it
+    document.getElementById('execIncludeInsights')?.addEventListener('change', e => {
+        const on = e.target.checked;
+        const row = document.getElementById('execInsidesInsights');
+        if (row) row.hidden = !on;
+        const no = document.getElementById('execInsideIssuesNo');
+        if (no) no.textContent = on ? '4' : '3';
+    });
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
     // Always previews (never a silent direct download) — the modal stays
@@ -17807,8 +18440,8 @@ function startIssueNotifSync() {
         .on('broadcast', { event: 'issue:new' }, ({ payload }) => {
             const sameModule = !payload?.module || payload.module === getActiveModuleId();
             if (!sameModule) return;
-            // Always reload the table
-            loadIssues(true).catch(() => {});
+            // Always reload the table (once the tab is shown)
+            _whenVisible(_reloadIssuesQuietly);
             // Only store notification for changes by others
             if (payload?.by === u.email) return;
             const reporter = payload?.reporter || 'Someone';
@@ -17822,7 +18455,7 @@ function startIssueNotifSync() {
         .on('broadcast', { event: 'issue:updated' }, ({ payload }) => {
             const sameModule = !payload?.module || payload.module === getActiveModuleId();
             if (!sameModule) return;
-            loadIssues(true).catch(() => {});
+            _whenVisible(_reloadIssuesQuietly);
             if (payload?.by !== u.email && payload?.issueId) {
                 _storeIssueNotification(payload.issueId, payload.module || getActiveModuleId(),
                     payload.title || '', payload.category || '', payload.reporter || 'Someone',
@@ -17834,7 +18467,7 @@ function startIssueNotifSync() {
             const sameModule = !payload?.module || payload.module === getActiveModuleId();
             if (!sameModule) return;
             // Silent table refresh — no notification stored
-            loadIssues(true).catch(() => {});
+            _whenVisible(_reloadIssuesQuietly);
         })
         .subscribe();
 }
@@ -17896,6 +18529,7 @@ let _issuesPollLastCheck  = null;   // ISO string — updated each poll cycle
 
 async function _issuesPollCheck() {
     if (!db) return;
+    if (document.hidden) { _whenVisible(_issuesPollCheck); return; } // catch up when shown
     const u = getCurrentUser();
     if (!u) return;
 
@@ -17913,7 +18547,7 @@ async function _issuesPollCheck() {
         if (error || !data?.length) return;
 
         // Reload the table for the current user no matter what changed
-        loadIssues(true).catch(() => {});
+        _reloadIssuesQuietly();
 
         // Notify only for changes by others
         const byOthers = data.filter(r => r.reporter_email !== u.email);
@@ -18064,6 +18698,7 @@ async function _broadcastAuditEvent(action, table, recId, user, createdAt, versi
 async function _auditNotifCatchup() {
     const u = getCurrentUser();
     if (!u || !db) return;
+    if (document.hidden) { _whenVisible(_auditNotifCatchup); return; } // broadcasts still land; poll when shown
     try {
         const since = _auditNotifGetSeen();
         let { data, error } = await db.from('planning_audit_log')
@@ -19055,7 +19690,7 @@ function wireGanttDragEdit(dayIndex, days) {
     const bars = document.querySelectorAll('.gc-bar[data-plan-id]');
     bars.forEach(bar => {
         bar.style.cursor = 'grab';
-        bar.addEventListener('pointerdown', onBarPointerDown);
+        _wirePointerDown(bar, onBarPointerDown);
     });
 
     function onBarPointerDown(e) {
@@ -19154,7 +19789,7 @@ function wireGanttDragEdit(dayIndex, days) {
     // ── Edge resize — drag a bar's left/right edge to change only its start
     // or only its end date, directly, without opening the Edit modal. ──
     document.querySelectorAll('.gc-bar-resize').forEach(handle => {
-        handle.addEventListener('pointerdown', onResizePointerDown);
+        _wirePointerDown(handle, onResizePointerDown);
     });
     _ganttOnResizePointerDown = onResizePointerDown;
 
@@ -19345,8 +19980,8 @@ wireGanttControls = function () {
 /* ── Patch renderGantt to pass data-plan-id on bars and wire drag ── */
 /* ── Extend renderGantt: wire drag handles + re-apply edit class ── */
 const _origRenderGantt = renderGantt;
-renderGantt = function (plans, startDate, endDate) {
-    _origRenderGantt(plans, startDate, endDate);
+renderGantt = function (plans, startDate, endDate, opts) {
+    _origRenderGantt(plans, startDate, endDate, opts);
 
     // data-plan-id is now baked directly into each bar's HTML, so no
     // post-render tagging is needed.  We only need to attach drag handlers.

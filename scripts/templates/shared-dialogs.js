@@ -1824,44 +1824,52 @@ export function renderSharedDialogs() {
         <!-- ═══════════════════════════════════ EXECUTIVE REPORT MODAL -->
         <div class="modal-overlay" id="execReportModalOverlay" style="display:none;" role="dialog" aria-modal="true"
             aria-labelledby="execReportModalTitle">
-            <div class="modal report-modal">
-                <div class="modal-header">
-                    <h4 class="modal-title" id="execReportModalTitle">Executive Report</h4>
+            <div class="modal report-modal xr-modal">
+                <div class="xr-head">
+                    <span class="xr-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z"/><path d="M14 3v6h6M8 17v-3M12 17v-6M16 17v-4"/></svg></span>
+                    <div class="xr-head-text">
+                        <h4 class="modal-title" id="execReportModalTitle">Executive Report</h4>
+                        <p>One document for management — progress, insights and issues</p>
+                    </div>
                     <button class="modal-close" id="execReportModalClose" aria-label="Close">&#x2715;</button>
                 </div>
-                <div class="modal-body">
-                    <p class="exec-report-desc">
-                        Combines the VPX Station Report for every vehicle and component — K9 (Hull, Turret,
-                        Assembly), then K10 (Structure, Assembly), then K11 (Structure, Assembly) — followed by
-                        the Production Issues Status Report (all time, every status and category), in one document.
-                        You'll see a preview before anything downloads.
-                    </p>
+                <div class="modal-body xr-body">
+                    <div class="xr-scope">
+                        <span>Module <b id="execScopeModule">—</b></span>
+                        <span>Plan <b id="execScopeVersion">—</b></span>
+                        <span>Filters <b id="execScopeFilters">All time</b></span>
+                    </div>
+                    <div class="xr-snap">
+                        <div><small>Forecast delivery</small><strong id="execSnapDelivery">—</strong><em id="execSnapDeliveryDelta"></em></div>
+                        <div><small>Completion</small><strong id="execSnapPct">—</strong><em id="execSnapPctSub"></em></div>
+                        <div><small>Open issues</small><strong id="execSnapIssues">—</strong><em id="execSnapIssuesSub"></em></div>
+                    </div>
+                    <div class="xr-inside">
+                        <h5>What's inside</h5>
+                        <ol>
+                            <li><span class="xr-num">1</span><span><strong>Cover summary</strong><span>Progress, status split and delivery forecast</span></span></li>
+                            <li><span class="xr-num">2</span><span><strong>Station report</strong><span>K9 Hull · Turret · Assembly, then K10 and K11 Structure · Assembly — one page per table</span></span></li>
+                            <li class="xr-new" id="execInsidesInsights"><span class="xr-num">3</span><span><strong>Production insights</strong><span>Key figures, units behind, where to act, weekly pace and issue trends</span></span><span class="xr-badge">NEW</span></li>
+                            <li><span class="xr-num" id="execInsideIssuesNo">4</span><span><strong>Production issues status report</strong><span>All time, every status and category</span></span></li>
+                        </ol>
+                    </div>
+                    <label class="xr-toggle">
+                        <input type="checkbox" id="execIncludeInsights" checked />
+                        <span class="xr-switch" aria-hidden="true"></span>
+                        Include production insights
+                    </label>
+                    <div class="xr-formats">
+                        <h5>Choose a format</h5>
+                        <div class="xr-fmt">
+                            <button type="button" class="xr-fmt-btn xr-pdf" id="btnExecReportPDF"><span class="xr-fmt-t"><i>PDF</i>PDF</span><small>Best for printing and email</small><span class="xr-go">Preview →</span></button>
+                            <button type="button" class="xr-fmt-btn xr-doc" id="btnExecReportWord"><span class="xr-fmt-t"><i>DOC</i>Word</span><small>Editable document</small><span class="xr-go">Preview →</span></button>
+                            <button type="button" class="xr-fmt-btn xr-xls" id="btnExecReportExcel"><span class="xr-fmt-t"><i>XLS</i>Excel</span><small>Tables, one sheet per section</small><span class="xr-go">Preview →</span></button>
+                        </div>
+                    </div>
                 </div>
-                <div class="modal-footer">
-                    <button class="btn btn-report-pdf" id="btnExecReportPDF">
-                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M4 4h8l4 4v10H4V4z" />
-                            <path d="M12 4v4h4" />
-                            <path d="M7 13h6M7 10h3" />
-                        </svg>
-                        Preview PDF
-                    </button>
-                    <button class="btn btn-report-excel" id="btnExecReportExcel">
-                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="2" y="3" width="16" height="14" rx="2" />
-                            <path d="M6 7l3 3-3 3M11 13h4" />
-                        </svg>
-                        Preview Excel
-                    </button>
-                    <button class="btn btn-ghost" id="btnExecReportWord">
-                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M4 3h9l3 3v11H4z" />
-                            <path d="M13 3v3h3" />
-                            <path d="M6.5 10l1 5 1.5-4 1.5 4 1-5" />
-                        </svg>
-                        Preview Word
-                    </button>
-                    <button class="btn btn-ghost" id="execReportModalCancel">Cancel</button>
+                <div class="modal-footer xr-foot">
+                    <span>You'll see a preview before anything downloads.</span>
+                    <button class="btn btn-ghost" id="execReportModalCancel">Close</button>
                 </div>
             </div>
         </div>
