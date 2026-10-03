@@ -1,24 +1,29 @@
 /* ================================================================
    PPMS USER MANUAL — single source of truth
    Used by: the in-app Help page (features/help/index.js), the chat
-   assistant (features/assistant/index.js) for answers and suggested
-   actions, and tools/build_manual_docx.py for the Word manual.
+   assistant (features/assistant/local-brain.js) for answers and
+   suggested actions, and tools/build_manual_docx.py for the Word manual.
 
    Section fields
-     id        stable id (also the screenshot file name: assets/help/<id>.png)
-     group     chapter the section is listed under
-     title     heading
-     roles     who can use it: all | operator | planner | master_admin
-     modules   where it applies: all | kd1 | kd2 | f100kd2
-     summary   one or two sentences
-     steps     numbered how-to steps
-     tips      extra notes
-     keywords  extra words people may search for
-     action    optional assistant action id that opens / shows this feature
+     id           stable id (also the screenshot file name: assets/help/<id>.jpg)
+     group        chapter the section is listed under
+     title        heading
+     roles        who can use it: all | operator | planner | master_admin
+     modules      where it applies: all | kd1 | kd2 | f100kd2
+     summary      one or two sentences — what it is and why it matters
+     details      optional longer explanation, one paragraph per entry
+     steps        numbered step-by-step instructions
+     tips         handy extra notes
+     recommended  good practice — how we recommend using it
+     cautions     things to watch out for (data that can't be undone, etc.)
+     related      ids of related topics
+     keywords     extra words people may search for
+     action       optional assistant action id that opens / shows this feature
    ================================================================ */
 
 export const MANUAL_GROUPS = [
     'Getting Started',
+    'Daily Workflows',
     'Dashboard',
     'Schedule (Gantt)',
     'Plan Table',
@@ -28,6 +33,7 @@ export const MANUAL_GROUPS = [
     'F100-KD2',
     'Administration',
     'Personal Settings',
+    'Troubleshooting & FAQ',
 ];
 
 export const ROLE_LABELS = {
@@ -37,8 +43,89 @@ export const ROLE_LABELS = {
     master_admin: 'Master Admin only',
 };
 
+/** Short chapter introductions (Help page and Word manual). */
+export const GROUP_INTROS = {
+    'Getting Started': 'Sign in, find your way around the screen and learn what your role allows. New users should start here — or take the guided tour from the menu (☰).',
+    'Daily Workflows': 'Ready-made routines for each kind of user: what to do at the start of a shift, how a planner keeps the plan current, and how management reviews progress.',
+    'Dashboard': 'The top of the page answers "where are we?": the Executive Summary, the delivery forecast and why it may be late, the station-by-station matrix and the analytics charts.',
+    'Schedule (Gantt)': 'The plan on a calendar. Everyone can read it; planners change it directly on the chart.',
+    'Plan Table': 'Every planned task as a row. This is where the shop floor records what actually happened — start and completion dates, comments, delay reasons and X-ray results.',
+    'Production Issues': 'Report production problems, follow them up to resolution and produce issue reports.',
+    'Reports & Exports': 'Every printable or shareable output: plan exports, the VPX Station Report and the Executive Report for management.',
+    'KD2 Planning': 'How the F200-KD2 plan is built and maintained: adding work, processes and routes, lead times, no-work days, plan versions and unit codes.',
+    'F100-KD2': 'The F100 module for gun and vehicle parts.',
+    'Administration': 'For Master Admins: accounts and permissions, the audit trail and who is online.',
+    'Personal Settings': 'Make PPMS yours — themes, notifications, password, updates, the manual and the assistant.',
+    'Troubleshooting & FAQ': 'Answers to the questions users ask most, and what to do when something doesn\'t look right.',
+};
+
+/** Glossary (Help page and Word manual). */
+export const GLOSSARY = [
+    ['Actual start / Completion date', 'The dates work really started and finished at a station, recorded in the Plan Table.'],
+    ['Battalion (BTL-01 …)', 'A delivery batch of vehicles. Unit labels (M1, M2 …) repeat in every battalion.'],
+    ['Block', 'One unit at one station on the Gantt — a planned start and end date.'],
+    ['Category', 'A group of stations, e.g. Welding, Machining, Assembly.'],
+    ['Delay (Plan Table)', 'How late that one block is or was: completion after the planned end, or still unfinished past it. A historical fact about the block.'],
+    ['Delivery forecast', 'The expected delivery date worked out by following each unit\'s process order from where it stands today (see "How the delivery forecast works").'],
+    ['Feeder lines', 'Hull and Turret (K9) or Structure (K10/K11) — built in parallel before the downstream Assembly & Processing & Testing line.'],
+    ['FW', 'Factory week number, shown in the Gantt header and the Week column.'],
+    ['Late Completion', 'Finished, but after the planned end date.'],
+    ['Lead time', 'A station\'s default duration in working days, used when blocks are placed or a plan is generated.'],
+    ['No-work day', 'A holiday or shutdown day; scheduling and moves skip it. Fridays are never working days.'],
+    ['Overdue', 'Not finished (and not started) and already past the planned end date.'],
+    ['Plan version', 'A copy of the plan, e.g. a baseline and later revisions. Only active versions can be opened.'],
+    ['Process view / Unit view', 'Gantt layouts: one lane per station, or one lane per unit.'],
+    ['Station / Process', 'One manufacturing step, e.g. LOWER HULL or QUALIFYING (Turret).'],
+    ['Unit code / Serial', 'The vehicle\'s registered identity, e.g. BTL-01 K9 M2 = EGY N26029.'],
+    ['VPX', 'Vehicle Production Progress — the station-by-station matrix of every unit.'],
+    ['wd', 'Working days — calendar days excluding Fridays (and no-work days where they apply).'],
+];
+
 export const MANUAL_SECTIONS = [
     /* ───────────────────────── Getting Started ───────────────────────── */
+    {
+        id: 'quick-start',
+        group: 'Getting Started',
+        title: 'Your first 10 minutes',
+        roles: 'all', modules: 'all',
+        summary: 'A short checklist that gets a new user productive straight away.',
+        steps: [
+            'Sign in with the email and password the administrator gave you, then change the password from your name (top right) → Change password.',
+            'Open the menu (☰) → Guided tour. It walks you around every part of the screen in about two minutes.',
+            'Check the module and plan version at the top (for example F200 – KD2 · KD2 Battalion 1). Everything on the page belongs to that plan.',
+            'Use the Filters panel to narrow the page to the battalion, vehicle or units you are responsible for.',
+            'Read the Executive Summary and the Delivery card — they tell you where production stands and when delivery is expected.',
+            'Scroll to the part of the page you work in: the Schedule (planners), the Plan Table (recording actual dates) or Production Issues.',
+            'Bookmark the PPMS link and keep this manual one click away: ☰ → Help & User Manual.',
+        ],
+        recommended: [
+            'Pick a colour theme that is comfortable for long sessions — Light is best for printing screenshots, Dark for the shop floor.',
+            'Ask the PPMS Assistant (chat bubble, bottom left) whenever you are unsure — it knows this manual.',
+        ],
+        related: ['tour', 'roles', 'filters', 'overview'],
+        keywords: ['new user', 'start', 'onboarding', 'first time', 'checklist'],
+        action: 'open:tour',
+    },
+    {
+        id: 'tour',
+        group: 'Getting Started',
+        title: 'The guided tour',
+        roles: 'all', modules: 'all',
+        summary: 'An interactive walk-through that highlights each part of the screen and explains what it does. Start it any time from the menu (☰) → Guided tour.',
+        details: [
+            'The tour moves the page for you and spotlights one area at a time — the top bar, filters, summary, schedule, progress matrix, analytics, plan table, issues and the assistant. It only shows the parts that exist for your role and module.',
+        ],
+        steps: [
+            'Open the menu (☰) at the top right and choose Guided tour.',
+            'Read the card next to the highlighted area and press Next (or the → key) to continue.',
+            'Press Back (←) to go back a step, or Skip tour (Esc) to stop at any time.',
+            'Start it again whenever you like — nothing on the page is changed by the tour.',
+        ],
+        tips: ['New users are offered the tour once, the first time they open PPMS.'],
+        related: ['quick-start', 'help-manual'],
+        keywords: ['tour', 'walkthrough', 'tutorial', 'guide', 'introduction', 'onboarding'],
+        action: 'open:tour',
+    },
     {
         id: 'sign-in',
         group: 'Getting Started',
@@ -46,7 +133,7 @@ export const MANUAL_SECTIONS = [
         roles: 'all', modules: 'all',
         summary: 'PPMS (Production Planning & Monitoring System) opens on the sign-in page. Use the email and password given to you by the system administrator.',
         steps: [
-            'Open the PPMS link in your browser.',
+            'Open the PPMS link in your browser (Chrome or Edge recommended).',
             'Enter your email and password, then press Sign In.',
             'If your account has access to more than one module, PPMS opens the module you used last.',
         ],
@@ -54,6 +141,8 @@ export const MANUAL_SECTIONS = [
             'If you see "Your account has been deactivated", contact the administrator.',
             'You can pick a colour theme on the sign-in page with the theme button.',
         ],
+        cautions: ['Never share your password. Every change you make is recorded in the Audit Log under your name.'],
+        related: ['change-password', 'roles'],
         keywords: ['login', 'log in', 'password', 'account'],
     },
     {
@@ -61,17 +150,18 @@ export const MANUAL_SECTIONS = [
         group: 'Getting Started',
         title: 'User roles and what they can do',
         roles: 'all', modules: 'all',
-        summary: 'Every account has one role. The role decides which buttons you see.',
+        summary: 'Every account has one role. The role decides which buttons you see — buttons you can\'t use are simply hidden.',
         steps: [
             'Viewer — can see every screen, filter, and (if allowed) export reports. Cannot change data.',
             'Operator — everything a Viewer can do, plus record actual start and completion dates, comments, delay reasons, X-ray results and production issues.',
-            'Planner — everything an Operator can do, plus edit the plan itself: move and resize Gantt blocks, add plan blocks, manage processes, lead times and plan versions.',
+            'Planner — everything an Operator can do, plus edit the plan itself: move and resize Gantt blocks, add plan blocks, hide or delete processes, manage processes, lead times and plan versions.',
             'Master Admin — everything, plus User Management, the Audit Log and Active Users.',
         ],
         tips: [
             'Exporting reports is a separate permission ("Can export") set per user in User Management.',
-            'Your role is shown under your name at the top right.',
+            'Your role is shown under your name at the top right. If an admin changes it, PPMS updates while you are signed in.',
         ],
+        related: ['user-management'],
         keywords: ['permission', 'access', 'viewer', 'operator', 'planner', 'admin'],
     },
     {
@@ -79,17 +169,19 @@ export const MANUAL_SECTIONS = [
         group: 'Getting Started',
         title: 'The top bar',
         roles: 'all', modules: 'all',
-        summary: 'The top bar is always visible. It holds the section links, the module and plan version switch, notifications, theme, the menu and your account.',
+        summary: 'The top bar is always visible. It holds the section links, the module and plan version switch, the version number, notifications, theme, the menu and your account.',
         steps: [
-            'Section links — Summary (filters and Executive Summary), Schedule, Progress, Analytics, Plan Table and Issues — scroll the page to that section.',
+            'Section links — Summary, Schedule, Progress, Analytics, Plan Table and Issues — scroll the page to that section; the current one is underlined.',
             'Module switch — choose F200 – KD1, F200 – KD2 or F100 – KD2. The page reloads for that module.',
-            'Plan version switch — choose which version of the plan you are looking at (for example the active plan or an archived baseline).',
+            'Plan version switch — choose which active version of the plan you are looking at.',
+            'Version number (e.g. ✓ v138) — the PPMS version you are running. It blinks orange when a newer version is available.',
             'Bell — notifications about new comments, new or updated issues, and plan changes.',
             'People icon (Master Admin) — who is online now.',
             'Sun / moon icon — choose a colour theme.',
-            'Menu (☰) — Help & User Manual, Audit Log, Unit Codes, User Management, Manage Processes and Manage Plan Versions, depending on your role.',
+            'Menu (☰) — Help & User Manual, Guided tour, and — depending on your role — Audit Log, Unit Codes, User Management, Manage Processes and Manage Plan Versions.',
             'Your name — change your password or sign out. The green dot next to the clock shows the live connection.',
         ],
+        related: ['modules', 'version-updates', 'notifications', 'themes'],
         keywords: ['navigation', 'menu', 'module', 'version', 'bell', 'connection', 'summary'],
         action: 'scroll:summarySection',
     },
@@ -105,6 +197,7 @@ export const MANUAL_SECTIONS = [
             'F100-KD2 — gun and vehicle parts per battalion, with manufacturers (HAS, DOOWON).',
             'Switch module from the module switch in the top bar. Your access to each module is set by the administrator.',
         ],
+        tips: ['Notifications from other modules still reach you; clicking one switches module automatically.'],
         keywords: ['kd1', 'kd2', 'f100', 'f200', 'switch module'],
     },
     {
@@ -124,8 +217,95 @@ export const MANUAL_SECTIONS = [
             'KD2 unit labels (M1, M2 …) repeat in every battalion. When several battalions are shown, the Unit list includes the battalion.',
             'The Plan Table and the Issues table also have their own filter icon in each column header.',
         ],
+        recommended: [
+            'Use "All time" when you look at the delivery date — a short time frame only sees part of each unit\'s route, so the forecast covers that part only.',
+            'Filter by your battalion or units first thing in the morning; the choice stays while you work.',
+        ],
+        related: ['overview', 'plan-table'],
         keywords: ['filter', 'search', 'battalion', 'unit', 'week', 'time frame', 'reset', 'chip'],
         action: 'scroll:filters',
+    },
+
+    /* ───────────────────────── Daily Workflows ───────────────────────── */
+    {
+        id: 'workflow-operator',
+        group: 'Daily Workflows',
+        title: 'Operator: a typical shift',
+        roles: 'operator', modules: 'all',
+        summary: 'The routine that keeps PPMS accurate: record what happened on the floor the same day, and raise problems early.',
+        steps: [
+            'Start of shift — filter to your battalion and units, then check the Overdue tile and the bell for new comments or issues.',
+            'Open the Plan Table and record Actual Start for every station that began today.',
+            'When a station finishes, record its Completion date (click the Completed On cell).',
+            'Anything blocking work? Press Report Issue in Production Issues — title, category, priority and a short description is enough to start.',
+            'Late vehicle? Add a delay reason in Vehicle Production Progress so management sees why.',
+            'For X-ray stations, record each X-ray and repair cycle on the row\'s X-ray marker.',
+            'End of shift — check nothing you worked on is left without dates, and reply to comments addressed to you.',
+        ],
+        recommended: [
+            'Record dates the same day. The delivery forecast, the VPX and every report are only as good as the actual dates entered.',
+            'Use comments for short notes on a task and Production Issues for real problems that need an owner and follow-up.',
+        ],
+        related: ['actual-dates', 'report-issue', 'delay-reason', 'xray'],
+        keywords: ['routine', 'daily', 'shift', 'operator', 'checklist'],
+    },
+    {
+        id: 'workflow-planner',
+        group: 'Daily Workflows',
+        title: 'Planner: keeping the plan current',
+        roles: 'planner', modules: 'kd2',
+        summary: 'A weekly routine for planners to keep the plan realistic and the delivery forecast trustworthy.',
+        steps: [
+            'Open the Delivery card → Delivery Delay Analysis. Note the units furthest behind and the stations in "Where to act first".',
+            'Review the Station Bottleneck and Planned vs Expected Finish charts in Analytics for trends.',
+            'In the Schedule press Edit Gantt and reschedule what has really moved (use "This + everything after" to shift a unit\'s remaining route).',
+            'Add any missing work with Add work; hide processes that don\'t apply to this plan version.',
+            'Keep No-work days up to date for holidays and shutdowns.',
+            'Before a big re-plan, create a new plan version so the previous one is kept for comparison.',
+        ],
+        recommended: [
+            'Agree a weekly re-plan slot so operators know when dates may move.',
+            'Give each new plan version a clear name that says why and when, e.g. "Revision 3 — after machining backlog, Oct 2026".',
+            'When several planners edit at once, watch the "is editing this plan" badge and the Live edits panel.',
+        ],
+        cautions: ['Edits change the plan version you are viewing for everyone immediately. Use Undo straight away if you move the wrong blocks.'],
+        related: ['gantt-edit', 'delivery-analysis', 'plan-versions', 'co-editing'],
+        keywords: ['planner', 'weekly', 'replan', 'routine'],
+    },
+    {
+        id: 'workflow-management',
+        group: 'Daily Workflows',
+        title: 'Management: reviewing progress',
+        roles: 'all', modules: 'all',
+        summary: 'Five minutes is enough to know where production stands and what needs a decision.',
+        steps: [
+            'Look at the Executive Summary ring and tiles for overall progress.',
+            'Check the Delivery card: planned vs expected delivery and the delay in working days.',
+            'Click it to see which units are furthest behind and which stations are causing it.',
+            'Scan the open Critical / High issues counter in Production Issues.',
+            'Generate the Executive Report (PDF or Word) for meetings and email.',
+        ],
+        recommended: ['Use the same filters each week so figures are comparable from one review to the next.'],
+        related: ['overview', 'delivery-analysis', 'executive-report'],
+        keywords: ['management', 'review', 'meeting', 'status'],
+    },
+    {
+        id: 'co-editing',
+        group: 'Daily Workflows',
+        title: 'Working together on the same plan',
+        roles: 'all', modules: 'all',
+        summary: 'Several people can use and edit PPMS at the same time. Changes appear for everyone within a second or two, without reloading.',
+        details: [
+            'When another user changes the plan, PPMS fetches only the blocks that changed and updates your screen, with a message such as "Plan updated by Omar". Your own changes never show that message.',
+            'Planners see who else is editing ("Omar is editing this plan") and, while editing, the Live edits panel lists recent changes from everyone.',
+        ],
+        tips: [
+            'A redraw waits until you finish dragging a bar, so a colleague\'s change never moves a block out from under your mouse.',
+            'Parts of the page you are not looking at (for example the Plan Table while you work on the Gantt) catch up the moment you scroll to them.',
+        ],
+        recommended: ['Agree who edits which battalion or station when two planners re-plan at the same time.'],
+        related: ['gantt-edit', 'notifications'],
+        keywords: ['live', 'real time', 'realtime', 'together', 'co-edit', 'concurrent', 'updated by'],
     },
 
     /* ───────────────────────── Dashboard ───────────────────────── */
@@ -139,8 +319,10 @@ export const MANUAL_SECTIONS = [
             'The ring shows the % of planned tasks that are done, with "X of Y planned tasks are done" beside it.',
             'The coloured bar splits every task into On time, Late, In progress, Overdue and Not started, with the count of each.',
             'The tiles show Total planned, Completed on time, In progress, Late completion and Overdue. Overdue turns red whenever something is past its planned end.',
-            'The Delivery card shows the planned and expected delivery dates and the delay in working days (wd). Click it for the Delivery Delay Analysis.',
+            'The Delivery card shows the planned and forecast delivery dates and the delay in working days (wd). Click it for the Delivery Delay Analysis.',
         ],
+        tips: ['Status rules: done on or before the planned end = Completed; done after it = Late Completion; started but not done = In Progress; not started and past the planned end = Overdue.'],
+        related: ['delivery-analysis', 'delivery-forecast'],
         keywords: ['summary', 'executive summary', 'kpi', 'progress', 'overdue', 'delivery', 'overview'],
         action: 'scroll:summarySection',
     },
@@ -149,17 +331,44 @@ export const MANUAL_SECTIONS = [
         group: 'Dashboard',
         title: 'Delivery Delay Analysis',
         roles: 'all', modules: 'all',
-        summary: 'Opened from the Delivery card, it explains why delivery may be late and where to act first.',
+        summary: 'Opened from the Delivery card, it explains why delivery may be late, which units are furthest behind and where to act first.',
         steps: [
-            'Read the verdict at the top — for example "Delivery is expected 35 working days late … The biggest cause is RT (Hull) on K9."',
-            'The timeline shows planned end against expected end, and the counts show how many tasks, stations and units are delayed.',
-            '"Where to act first" ranks the stations causing the most delay. Each card shows the vehicle, how many tasks are late or still open, and which units.',
+            'Read the verdict at the top — for example "Delivery is expected 27 working days late — 19 Dec 2026 instead of 17 Nov 2026. The biggest cause is MACHINING 1ST/2ND on K9."',
+            'The timeline shows planned end against expected end; the counters show how many units are forecast late, how many stations are causing it, and the worst unit.',
+            '"Units furthest behind" lists each late unit with its planned and forecast finish.',
+            '"Where to act first" ranks the stations adding the most delay to unit finishes right now. Each card shows how many units it is pushing back and how many of those blocks are not finished yet.',
             'Press Show in Plan Table to filter the table to that station — record actual dates or add delay reasons there. Press View on Schedule to see it on the Gantt.',
-            '"All delays by category" lists every delayed station, grouped by category, each with a Show link.',
+            '"All delays by category" lists every contributing station, grouped by category.',
             'To see everything again afterwards, remove the Search chip in the Filters panel.',
         ],
-        tips: ['Expected end = the latest planned end, pushed back by the single worst task delay (working days, Fridays excluded).'],
-        keywords: ['delivery', 'delay', 'late', 'bottleneck', 'where to act', 'expected date'],
+        tips: ['A station that was late long ago but whose delay the plan has since absorbed is not listed — only delay that still reaches a unit\'s finish counts.'],
+        recommended: ['Work the "Where to act first" list from the top: unfinished blocks at the top station recover the most days.'],
+        related: ['delivery-forecast', 'overview', 'delay-reason'],
+        keywords: ['delivery', 'delay', 'late', 'bottleneck', 'where to act', 'expected date', 'units behind'],
+    },
+    {
+        id: 'delivery-forecast',
+        group: 'Dashboard',
+        title: 'How the delivery forecast and delays are calculated',
+        roles: 'all', modules: 'kd2',
+        summary: 'PPMS forecasts each unit\'s finish by following its process order from where it stands today. The same forecast drives the Delivery card, the Delivery Delay Analysis, the VPX Station Report, the Executive Report and the Analytics finish chart.',
+        details: [
+            'Each unit is walked through its stations in route order. Hull and Turret (K9) or Structure (K10/K11) are built in parallel; Assembly & Processing & Testing starts after all of them.',
+            'A finished station uses its actual completion date. An unfinished station starts no earlier than its planned start, the day after the station(s) before it finish, and today (or on its actual start if it has started), and takes its planned number of working days.',
+            'A unit\'s delay is its forecast finish compared with its planned finish. Expected delivery is the latest forecast unit finish. If a station was late but the plan had slack afterwards, that delay is absorbed and no longer counts.',
+        ],
+        steps: [
+            'Look at the Delivery card for the forecast delivery date and delay.',
+            'Click it to see which units and stations drive it.',
+            'Use the Plan Table "Delay" column for how late each individual block was — that is a separate, historical figure.',
+        ],
+        tips: [
+            'Working days exclude Fridays.',
+            'The forecast follows the filters. With "All time" and no category filter it sees each unit\'s whole route.',
+        ],
+        cautions: ['An unfinished station whose planned dates have passed is forecast to start today with its full duration — record actual start dates so the forecast stays realistic.'],
+        related: ['delivery-analysis', 'actual-dates', 'vpx-report'],
+        keywords: ['forecast', 'expected delivery', 'delay calculation', 'working days', 'wd', 'how is delay calculated', 'process order'],
     },
     {
         id: 'progress-matrix',
@@ -168,11 +377,14 @@ export const MANUAL_SECTIONS = [
         roles: 'all', modules: 'kd2',
         summary: 'A station-by-station matrix of every unit: planned against actual for each station, coloured by status.',
         steps: [
-            'Choose the vehicle type tab (K9, K10, K11) at the top of the section.',
+            'Choose the vehicle type tab (K9, K10, K11) and the category tab (for example Hull, Turret, Assembly).',
+            'Switch between Matrix and Station Report views. Station Report adds forecast dates and a Delay column for that component.',
             'Hover a cell to see planned and actual dates.',
             'Use Full Screen to see the whole matrix.',
-            'Use Generate Report to export the VPX Station Report (see Reports & Exports).',
+            'Use Generate Report to export the VPX Station Report.',
         ],
+        tips: ['In the Station Report, red cells are unfinished and past their planned end; they show the forecast finish date. Grey dates are forecasts.'],
+        related: ['vpx-report', 'delay-reason', 'delivery-forecast'],
         keywords: ['vpx', 'matrix', 'station report', 'progress'],
         action: 'scroll:vpxSection',
     },
@@ -181,7 +393,7 @@ export const MANUAL_SECTIONS = [
         group: 'Dashboard',
         title: 'Manufacturing Analytics (charts)',
         roles: 'all', modules: 'all',
-        summary: 'Charts that summarise the filtered plan, in three rows. Progress over time: Cumulative Progress, Weekly Throughput (planned vs completed per week with the overdue backlog) and Status Breakdown. Units & delivery: Unit Progress Ranking (% complete vs expected by today) and Planned vs Expected Finish per unit. Bottlenecks & issues: Station Bottleneck and Issues Trend (opened vs resolved, time to resolve). Each chart shows a one-line insight worked out from the data. F100-KD2 shows its own completion charts.',
+        summary: 'Charts that summarise the filtered plan, in three rows. Progress over time: Cumulative Progress, Weekly Throughput and Status Breakdown. Units & delivery: Unit Progress Ranking and Planned vs Expected Finish. Bottlenecks & issues: Station Bottleneck and Issues Trend. Each chart shows a one-line insight worked out from the data.',
         steps: [
             'Scroll to Analytics or click Analytics in the top bar.',
             'Use the small buttons on each chart to change its range, grouping (unit, battalion, vehicle) or view — your choice is remembered.',
@@ -190,8 +402,10 @@ export const MANUAL_SECTIONS = [
         ],
         tips: [
             'All charts follow the filter bar except Issues Trend, which covers the whole module.',
-            'Expected finish = planned finish plus the worst delay in that unit, in working days (Fridays excluded) — the same rule as the Executive Summary delivery card.',
+            'Planned vs Expected Finish uses the delivery forecast; Station Bottleneck shows each station\'s own block lateness.',
+            'Charts draw when you scroll to them, so the rest of the page stays fast.',
         ],
+        related: ['delivery-forecast', 'overview'],
         keywords: ['charts', 'analytics', 'bottleneck', 's-curve', 'cumulative', 'throughput', 'ranking', 'expected finish', 'issues trend', 'insight'],
         action: 'scroll:chartsSection',
     },
@@ -206,10 +420,12 @@ export const MANUAL_SECTIONS = [
         steps: [
             'Choose the date window with From and To, then press Refresh.',
             'Switch between Process view (one lane per station) and Unit view (one lane per unit) with the UNIT / PROCESS switch.',
-            'Scroll sideways to move through time; the header shows weeks (FW) and days, and TODAY is marked.',
-            'Hover a bar for its planned and actual dates. Show Legend explains the colours.',
+            'Scroll sideways to move through time; the header shows weeks (FW) and days, Saturdays are shaded and TODAY is marked.',
+            'Hover a bar for its planned and actual dates and status. Show Legend explains the colours.',
             'Use Full Screen for a larger view and Export Schedule to download it.',
         ],
+        tips: ['Each process lane shows how many of its blocks are done, e.g. 13/18 (72%).'],
+        related: ['gantt-edit', 'filters'],
         keywords: ['gantt', 'timeline', 'schedule', 'lanes', 'unit view', 'process view'],
         action: 'scroll:ganttNavAnchor',
     },
@@ -218,19 +434,47 @@ export const MANUAL_SECTIONS = [
         group: 'Schedule (Gantt)',
         title: 'Editing the schedule',
         roles: 'planner', modules: 'kd2',
-        summary: 'Planners change the plan directly on the Gantt chart. Every change is recorded in the Audit Log, and other users see "You\'re editing this plan".',
+        summary: 'Planners change the plan directly on the Gantt chart. Every change is recorded in the Audit Log, and other users see "… is editing this plan".',
         steps: [
             'Press Edit Gantt. An Editing bar appears above the chart.',
-            'Reschedule — drag a bar to move it, or drag its end to change its duration.',
+            'Reschedule — drag a bar to move it, or drag its left or right edge to change only its start or end date.',
             'Choose what a drag moves: This block, Whole lane, This + everything after, or This + others at this station. Select lane picks a whole lane first.',
-            'Add work — place new plan blocks (see "Adding work to the plan"). Reorder route — change the station order.',
-            'In Reorder route (Process view), each process has a ⋯ menu: Hide from plan keeps its blocks but removes it from the Gantt, VPX, Plan Table, summary and charts; Show in plan brings it back. Delete from plan permanently deletes its blocks in this plan version and removes the process from it; Restore to plan brings the empty process back.',
+            'Hover a block to show its checkbox (select it for group actions) and its ⋯ menu (Move up / down, Edit, Delete).',
+            'Add work — place new plan blocks (see "Adding work to the plan"). Reorder route — change the station order or hide / delete processes.',
             'Use Undo / Redo (arrows on the right) to reverse a change.',
             'The gear icon opens Options — Saturdays and No-work Days.',
             'Press Done to leave edit mode.',
         ],
-        tips: ['Edits apply only to the plan version you are viewing.', 'Moves skip no-work days.', 'Hidden and deleted processes appear greyed only in Reorder route mode. Hiding or deleting never changes the process catalog or other plan versions.'],
-        keywords: ['move', 'drag', 'resize', 'reschedule', 'edit gantt', 'undo', 'reorder route', 'hide process', 'delete process', 'restore process'],
+        tips: [
+            'Edits apply only to the plan version you are viewing.',
+            'Moves skip no-work days and Fridays.',
+            'Selected blocks keep their tick when the mouse moves away; press Delete selected in the selection strip to remove several at once.',
+        ],
+        recommended: ['Prefer "This + everything after" when a unit slips — it moves its remaining route together and keeps the sequence intact.'],
+        cautions: ['Deleting blocks removes their recorded progress too. Use Undo immediately if you delete by mistake.'],
+        related: ['reorder-route', 'kd2-workspace', 'no-work-days', 'co-editing'],
+        keywords: ['move', 'drag', 'resize', 'reschedule', 'edit gantt', 'undo', 'select', 'delete block'],
+    },
+    {
+        id: 'reorder-route',
+        group: 'Schedule (Gantt)',
+        title: 'Reordering the route and hiding or deleting processes',
+        roles: 'planner', modules: 'kd2',
+        summary: 'In Process view, Reorder route changes the order of stations for this plan version and lets you hide or delete a process from it.',
+        steps: [
+            'Press Edit Gantt, switch to Process view, and choose Reorder route.',
+            'Use the ↑ ↓ arrows on a process to move it earlier or later within its track.',
+            'Open the process\'s ⋯ menu for: Add process, Hide from plan / Show in plan, Delete from plan / Restore to plan.',
+            'Hide from plan keeps the process and its blocks but removes them from the Gantt, VPX, Plan Table, summary, charts and exports. Show in plan brings them back.',
+            'Delete from plan permanently deletes its blocks in this plan version (you are asked to confirm and told how many) and removes the process from the version. Restore to plan brings the empty process back.',
+        ],
+        tips: ['Hidden and deleted processes appear greyed (with a "Hidden" / "Deleted from plan" label) only in Reorder route mode.'],
+        cautions: [
+            'Delete from plan cannot be undone with Undo — the blocks and their progress are gone. Hide first if you are unsure.',
+            'Hiding or deleting never changes the process catalog or other plan versions.',
+        ],
+        related: ['gantt-edit', 'manage-processes', 'plan-versions'],
+        keywords: ['reorder route', 'hide process', 'delete process', 'restore process', 'show process', 'route order'],
     },
 
     /* ───────────────────────── Plan Table ───────────────────────── */
@@ -241,11 +485,17 @@ export const MANUAL_SECTIONS = [
         roles: 'all', modules: 'all',
         summary: 'Every planned task as a row: vehicle, unit, station, code, week, planned start and end, actual start, completion date, status, delay and comments.',
         steps: [
-            'Use the filter icon in any column header to tick the values you want.',
-            'Click "Clear column filters" to remove them.',
-            'Use Full Screen for a larger table.',
+            'Choose how rows are grouped: Battalion, Vehicle, Unit or Station (KD2).',
+            'Use the filter icon in any column header to tick the values you want; "Clear column filters" removes them.',
+            'Scroll inside the table — rows load 150 at a time as you scroll, or press "show more" on the last row.',
+            'Use Full Screen for a larger table and Export Report to download it.',
         ],
-        keywords: ['table', 'rows', 'plan details', 'columns'],
+        tips: [
+            'The header shows the total number of records even while only part of them is drawn.',
+            'Delay shows how late that block is or was, in days; "+5d start" means it started 5 days late.',
+        ],
+        related: ['actual-dates', 'comments', 'export-report'],
+        keywords: ['table', 'rows', 'plan details', 'columns', 'group by', 'show more'],
         action: 'scroll:tableSection',
     },
     {
@@ -253,16 +503,19 @@ export const MANUAL_SECTIONS = [
         group: 'Plan Table',
         title: 'Recording actual start and completion',
         roles: 'operator', modules: 'all',
-        summary: 'Record when work on a station actually started and finished. Status and delay update automatically.',
+        summary: 'Record when work on a station actually started and finished. Status, delay, the summary, the VPX and the delivery forecast all update automatically.',
         steps: [
-            'Find the row in the Plan Table.',
+            'Find the row in the Plan Table (use Search or the column filters).',
             'Click the Actual Start cell and pick the date.',
-            'To finish a task, click Mark as Complete, choose the Completion Date, add notes if needed, and press Confirm Complete.',
-            'To correct a date, click it again and change or clear it.',
+            'When the station is finished, click the Completed On cell and pick the completion date.',
+            'To correct a date, click it again and change it, or use × to clear it.',
         ],
         tips: [
-            'Status rules: completed on or before the planned end = Completed; after = Late Completion; not finished after the planned end = Overdue.',
+            'Status rules: completed on or before the planned end = Completed; after = Late Completion; started but not done = In Progress; not started after the planned end = Overdue.',
         ],
+        recommended: ['Enter dates the same day. Missing actual start dates make the forecast assume work begins today.'],
+        cautions: ['Double-check the year when picking dates — a wrong year can make a unit look months early or late.'],
+        related: ['delivery-forecast', 'workflow-operator'],
         keywords: ['actual start', 'complete', 'completion', 'finish', 'status', 'mark as complete'],
         action: 'scroll:tableSection',
     },
@@ -273,9 +526,12 @@ export const MANUAL_SECTIONS = [
         roles: 'operator', modules: 'all',
         summary: 'Anyone with write access can add comments to a task. Each comment shows who wrote it and when, and other users get a notification.',
         steps: [
-            'Click the comment icon in the Comments column.',
+            'Click the comment icon in the Comments column (the number shows how many there are).',
             'Type your comment and press Add.',
+            'Edit or delete your own comments with the pencil and bin icons.',
         ],
+        recommended: ['Keep comments short and factual; raise a Production Issue for anything that needs an owner and a resolution.'],
+        related: ['report-issue', 'notifications'],
         keywords: ['comment', 'note', 'remark'],
     },
     {
@@ -290,6 +546,8 @@ export const MANUAL_SECTIONS = [
             'Describe the main reason (for example "Waiting on machining rework after a dimensional NCR") and press Save.',
         ],
         tips: ['A reason is kept per category tab.', 'The vehicle must be registered in Unit Codes first.'],
+        recommended: ['Write the cause and the next action, e.g. "Bore out of tolerance — re-machining, due 12 Oct".'],
+        related: ['progress-matrix', 'executive-report'],
         keywords: ['delay', 'reason', 'late', 'ncr'],
         action: 'scroll:vpxSection',
     },
@@ -307,6 +565,7 @@ export const MANUAL_SECTIONS = [
             'When it passes, the marker shows QA Passed.',
         ],
         tips: ['Marker stages: X-ray → In X-ray → Repair Needed → In Repair → QA Passed.'],
+        related: ['manage-processes'],
         keywords: ['xray', 'x-ray', 'repair', 'weld', 'qa', 'inspection'],
     },
     {
@@ -321,6 +580,8 @@ export const MANUAL_SECTIONS = [
             'Press Upload Plan, choose the file, then press Import File and check the result message.',
         ],
         tips: ['Excel uploads read the "Data" sheet of the template (otherwise the first sheet). Use YYYY-MM-DD dates where possible.'],
+        cautions: ['Rows go into the plan version you are viewing. Check the version switch before importing.'],
+        related: ['plan-versions', 'kd2-workspace'],
         keywords: ['import', 'upload', 'csv', 'excel', 'template'],
         action: 'scroll:tableSection',
     },
@@ -338,6 +599,7 @@ export const MANUAL_SECTIONS = [
             'Active filters show as chips next to the issue count; click a chip\'s × to clear it.',
             'Press Load more at the bottom to see older issues.',
         ],
+        related: ['report-issue', 'issue-report'],
         keywords: ['issues', 'problems', 'list', 'filter issues'],
         action: 'scroll:issuesSection',
     },
@@ -356,8 +618,13 @@ export const MANUAL_SECTIONS = [
         ],
         tips: [
             'To add a new category, press + next to Category, type the name and press Add.',
-            'Your form is saved as a draft while you type — see Drafts.',
+            'Your form is saved as a draft while you type — see Issue drafts.',
         ],
+        recommended: [
+            'Use a title that says what and where, e.g. "K9 BTL-01 M7 — turret ring bore out of tolerance".',
+            'Set Critical / High only for issues that stop production — they are counted separately on the dashboard.',
+        ],
+        related: ['issue-details', 'issue-drafts'],
         keywords: ['report issue', 'new issue', 'problem', 'category', 'priority'],
         action: 'open:reportIssue',
     },
@@ -373,6 +640,8 @@ export const MANUAL_SECTIONS = [
             'The reporter or a Master Admin can press Edit Issue to update it, for example to change the status to Resolved and record the Action Taken.',
         ],
         tips: ['The resolved date is set when an issue first becomes Resolved or Closed and is kept on later edits.'],
+        recommended: ['Always fill in Action Taken when resolving — it is what management reads in the Status Report.'],
+        related: ['report-issue', 'issue-report'],
         keywords: ['view issue', 'edit issue', 'resolve', 'close issue', 'status'],
     },
     {
@@ -385,6 +654,7 @@ export const MANUAL_SECTIONS = [
             'Press Drafts in the Issues toolbar (the badge shows how many you have).',
             'Press Resume to continue a draft, or Delete to discard it.',
         ],
+        related: ['report-issue'],
         keywords: ['draft', 'unsaved', 'resume'],
         action: 'open:issueDrafts',
     },
@@ -402,6 +672,7 @@ export const MANUAL_SECTIONS = [
             'Press PDF, Excel or Word. Tick "View before downloading" to preview first.',
         ],
         tips: ['Status Report periods: Today, Last 7 days, This month, All time, or Custom dates (From / To).'],
+        related: ['executive-report'],
         keywords: ['issues report', 'status report', 'export issues', 'pdf', 'excel', 'word', 'remove from report'],
         action: 'open:issueReport',
     },
@@ -414,11 +685,12 @@ export const MANUAL_SECTIONS = [
         roles: 'all', modules: 'all',
         summary: 'Export the plan as PDF, Excel or Word using its own copy of the filters, pre-filled from the filter bar.',
         steps: [
-            'Open Export Report.',
+            'Open Export Report in the Plan Table header.',
             'Adjust the report filters (vehicle, battalion, unit, category, week).',
             'Choose the format. Tick "View before exporting" to preview.',
         ],
-        tips: ['Exporting requires the "Can export" permission.'],
+        tips: ['Exporting requires the "Can export" permission.', 'Exports always include every matching record, not only the rows drawn on screen.'],
+        related: ['plan-table'],
         keywords: ['export', 'download', 'pdf', 'excel', 'report'],
     },
     {
@@ -426,11 +698,13 @@ export const MANUAL_SECTIONS = [
         group: 'Reports & Exports',
         title: 'VPX Station Report',
         roles: 'all', modules: 'kd2',
-        summary: 'A station-by-station report of each vehicle with planned and actual dates, delay and the delay reason.',
+        summary: 'A station-by-station report of each vehicle with planned, actual and forecast dates, the forecast delay and the delay reason.',
         steps: [
             'In Vehicle Production Progress, press Generate Report.',
             'Choose the vehicles/segments and the format, then export.',
         ],
+        tips: ['The Delay column is the component\'s forecast delay at its last station, following the process order.'],
+        related: ['progress-matrix', 'delivery-forecast', 'delay-reason'],
         keywords: ['vpx report', 'station report'],
         action: 'open:vpxReport',
     },
@@ -439,11 +713,14 @@ export const MANUAL_SECTIONS = [
         group: 'Reports & Exports',
         title: 'Executive Report',
         roles: 'all', modules: 'kd2',
-        summary: 'One document combining the VPX Station Report and the all-time Production Issues Status Report, for management.',
+        summary: 'One print-friendly document combining a cover summary (progress and delivery forecast), the VPX Station Report and the all-time Production Issues Status Report, for management.',
         steps: [
             'Press Executive Report in the filter bar.',
             'Choose PDF, Excel or Word.',
         ],
+        tips: ['Each VPX table fits on one page; the colours are light so the report prints well.'],
+        recommended: ['Generate it with "All time" and no category filter so the delivery forecast covers every unit\'s full route.'],
+        related: ['vpx-report', 'issue-report', 'workflow-management'],
         keywords: ['executive', 'management report', 'combined report'],
         action: 'open:execReport',
     },
@@ -461,6 +738,8 @@ export const MANUAL_SECTIONS = [
             'Fill in a form — choose Battalion, Vehicle, Unit, Planned start, Process / Station and Duration (working days), then press Add to KD2 Plan.',
             'The Template tab of the form edits the reusable route template instead of the live plan.',
         ],
+        tips: ['A placed block appears for other users within a second or two.'],
+        related: ['gantt-edit', 'lead-times'],
         keywords: ['add work', 'plan block', 'add block', 'place', 'template'],
     },
     {
@@ -474,6 +753,8 @@ export const MANUAL_SECTIONS = [
             'Add or edit a station, its category, sequence and whether it requires X-ray.',
             'Save. The Route / Process Flow view shows the resulting order.',
         ],
+        cautions: ['The process catalog is shared by every plan version. To leave a process out of one version only, use Hide or Delete in Reorder route instead.'],
+        related: ['reorder-route', 'lead-times', 'xray'],
         keywords: ['process', 'station', 'route', 'category', 'flow'],
         action: 'open:manageProcesses',
     },
@@ -488,6 +769,8 @@ export const MANUAL_SECTIONS = [
             'Find the station; its Lead Time column shows the duration and where it came from (Lead Source).',
             'Press the pencil on that row to change it, then save.',
         ],
+        tips: ['Changing a lead time does not move blocks already in the plan.'],
+        related: ['manage-processes', 'kd2-workspace'],
         keywords: ['lead time', 'duration'],
         action: 'open:manageProcesses',
     },
@@ -502,6 +785,8 @@ export const MANUAL_SECTIONS = [
             'Enter the Start and End dates and an optional label (for example "Eid"), keep Active ticked, and press Add Range.',
             'Existing ranges are listed below — Activate / deactivate, Edit or Delete them.',
         ],
+        recommended: ['Enter the year\'s official holidays at the start of the year.'],
+        related: ['gantt-edit'],
         keywords: ['holiday', 'calendar', 'non working', 'no-work', 'eid', 'shutdown'],
     },
     {
@@ -509,13 +794,18 @@ export const MANUAL_SECTIONS = [
         group: 'KD2 Planning',
         title: 'Plan versions',
         roles: 'operator', modules: 'all',
-        summary: 'Keep several versions of a plan (for example a baseline and a revision). Only the active version is edited; others are kept for comparison.',
+        summary: 'Keep several versions of a plan (for example a baseline and revisions). Every user opens an active version; archived versions are kept but cannot be opened until restored.',
         steps: [
             'Open the menu (☰) → Manage Plan Versions.',
-            'Create a revision, rename a version, set which one is active, or archive/delete one.',
-            'Use the plan version switch in the top bar to view any version.',
+            'Create a revision (a copy of the current plan, or empty), rename a version, or Set Active to make it the one you view.',
+            'Archive a version you no longer use; Restore brings it back. Master Admins can delete revisions (never the baseline).',
+            'Use the plan version switch in the top bar to move between active versions.',
         ],
-        keywords: ['version', 'revision', 'baseline', 'archive'],
+        tips: ['If the version you are viewing is archived by someone else, PPMS reloads onto an active one.'],
+        recommended: ['Create a new revision before any large re-plan, and give it a name that says why and when.'],
+        cautions: ['Deleting a version permanently deletes every plan row in it.'],
+        related: ['workflow-planner', 'reorder-route'],
+        keywords: ['version', 'revision', 'baseline', 'archive', 'restore'],
         action: 'open:planVersions',
     },
     {
@@ -529,6 +819,7 @@ export const MANUAL_SECTIONS = [
             'Add a unit with battalion, vehicle, unit label and serial, or edit an existing one.',
         ],
         tips: ['Adding a unit that already exists shows a warning instead of overwriting it.'],
+        related: ['delay-reason'],
         keywords: ['unit', 'serial', 'battalion', 'register'],
         action: 'open:unitCodes',
     },
@@ -561,6 +852,9 @@ export const MANUAL_SECTIONS = [
             'Add a user or edit an existing one: name, email, role, modules and "Can export".',
             'Deactivate an account to stop that person signing in.',
         ],
+        tips: ['Changes take effect for that user immediately, even while they are signed in.'],
+        recommended: ['Give each person the lowest role that lets them do their job, and deactivate accounts of people who leave.'],
+        related: ['roles', 'audit-log'],
         keywords: ['users', 'accounts', 'add user', 'role', 'deactivate'],
         action: 'open:userManagement',
     },
@@ -574,6 +868,7 @@ export const MANUAL_SECTIONS = [
             'Open the menu (☰) → Audit Log.',
             'Filter by user, action or date, and export to Excel or PDF if needed.',
         ],
+        related: ['user-management'],
         keywords: ['audit', 'history', 'who changed', 'log'],
         action: 'open:auditLog',
     },
@@ -582,12 +877,31 @@ export const MANUAL_SECTIONS = [
         group: 'Administration',
         title: 'Active Users',
         roles: 'master_admin', modules: 'all',
-        summary: 'The people icon in the top bar shows who is using PPMS right now.',
+        summary: 'The people icon in the top bar shows who is using PPMS right now, and who is editing the plan.',
         steps: ['Click the Active Users icon to see the list.'],
+        related: ['co-editing'],
         keywords: ['online', 'who is online', 'presence'],
     },
 
     /* ───────────────────────── Personal Settings ───────────────────────── */
+    {
+        id: 'version-updates',
+        group: 'Personal Settings',
+        title: 'Keeping PPMS up to date',
+        roles: 'all', modules: 'all',
+        summary: 'The version number in the top bar (for example ✓ v138) shows which PPMS version you are running. When a newer version is released it turns orange and blinks, e.g. v137 → v138.',
+        steps: [
+            'Click the blinking version number.',
+            'Read "What\'s new" to see what changed.',
+            'Save any work in progress, then press Load latest version. The page reloads on the new version.',
+        ],
+        tips: [
+            'PPMS checks for a new version every few minutes and whenever you return to the tab.',
+            'If you have unsaved work (the Gantt in edit mode, an open form), PPMS warns you before reloading.',
+        ],
+        recommended: ['Update as soon as you see the blinking number so everyone works on the same version.'],
+        keywords: ['update', 'new version', 'version', 'reload', 'blinking', 'release'],
+    },
     {
         id: 'themes',
         group: 'Personal Settings',
@@ -608,6 +922,7 @@ export const MANUAL_SECTIONS = [
             'Click the bell to open the list.',
             'Click a notification to jump to the task or issue; PPMS switches module if needed.',
         ],
+        related: ['comments', 'co-editing'],
         keywords: ['bell', 'alerts', 'notification'],
     },
     {
@@ -620,6 +935,7 @@ export const MANUAL_SECTIONS = [
             'Click your name at the top right → Change password.',
             'Enter your current password, then the new one twice, and press Update password.',
         ],
+        recommended: ['Use at least 10 characters and don\'t reuse a password from another system.'],
         keywords: ['password', 'change password', 'security'],
     },
     {
@@ -635,6 +951,7 @@ export const MANUAL_SECTIONS = [
             'Press a topic\'s "Show me" button to go straight to that feature.',
             'Press Word to download the manual as a Word document for printing or email.',
         ],
+        related: ['tour', 'assistant'],
         keywords: ['help', 'manual', 'guide', 'documentation', 'how to'],
         action: 'open:help',
     },
@@ -649,6 +966,80 @@ export const MANUAL_SECTIONS = [
             'Type a question ("How many tasks are overdue for BTL-01 K9?", "How do I record an X-ray result?") or a request ("open the issues report").',
             'Use the suggested buttons, or confirm a proposed change.',
         ],
+        related: ['help-manual'],
         keywords: ['chat', 'assistant', 'help bot', 'ask'],
+    },
+
+    /* ───────────────────────── Troubleshooting & FAQ ───────────────────────── */
+    {
+        id: 'faq-delay-differs',
+        group: 'Troubleshooting & FAQ',
+        title: 'Why does the Plan Table show a bigger delay than the Delivery card?',
+        roles: 'all', modules: 'kd2',
+        summary: 'They measure different things. The Plan Table "Delay" is how late one block was. The Delivery card is how late the units are forecast to finish today.',
+        details: ['Example: a station planned for February finished 62 working days late in May. The Plan Table keeps showing +62 for that block. But the stations after it were planned later, so the unit caught up — it no longer delays delivery, and the Delivery card doesn\'t count it.'],
+        related: ['delivery-forecast'],
+        keywords: ['delay different', 'wrong delay', '62', 'delay mismatch'],
+    },
+    {
+        id: 'faq-not-updating',
+        group: 'Troubleshooting & FAQ',
+        title: 'The page doesn\'t show my colleague\'s change',
+        roles: 'all', modules: 'all',
+        summary: 'Live changes normally appear within a second or two.',
+        steps: [
+            'Check the connection dot next to the clock is green ("Connected").',
+            'Check you are on the same module and plan version as your colleague.',
+            'Check your filters — the change may be outside them.',
+            'If the version number is blinking, load the latest version.',
+            'Still nothing? Reload the page (F5).',
+        ],
+        related: ['co-editing', 'version-updates'],
+        keywords: ['not updating', 'not showing', 'refresh', 'stale', 'sync'],
+    },
+    {
+        id: 'faq-cant-find-button',
+        group: 'Troubleshooting & FAQ',
+        title: 'I can\'t find a button described in this manual',
+        roles: 'all', modules: 'all',
+        summary: 'Buttons you are not allowed to use are hidden, and some features exist only in one module.',
+        steps: [
+            'Check the role label on the topic ("Planner and Master Admin", etc.) against your role under your name.',
+            'Check the module label (for example "F200-KD2") against the module switch in the top bar.',
+            'Edit-mode controls on Gantt blocks appear only when you hover the block.',
+            'Ask your administrator if you need more access.',
+        ],
+        related: ['roles', 'modules'],
+        keywords: ['missing button', 'cannot find', 'hidden', 'permission'],
+    },
+    {
+        id: 'faq-slow',
+        group: 'Troubleshooting & FAQ',
+        title: 'PPMS feels slow or the tab stops responding',
+        roles: 'all', modules: 'all',
+        summary: 'PPMS is built to stay light, but a very busy browser can still struggle.',
+        steps: [
+            'Make sure you are on the latest version (the version number isn\'t blinking).',
+            'Close other heavy tabs and applications.',
+            'Narrow the filters to what you need — fewer rows means faster pages.',
+            'If the browser shows "This page is having a problem", press Reload; nothing you had saved is lost.',
+        ],
+        recommended: ['Use Chrome or Edge on a PC with at least 8 GB of memory for planning work.'],
+        related: ['filters', 'version-updates'],
+        keywords: ['slow', 'crash', 'freeze', 'performance', 'page is having a problem'],
+    },
+    {
+        id: 'faq-wrong-date',
+        group: 'Troubleshooting & FAQ',
+        title: 'I entered a wrong date',
+        roles: 'operator', modules: 'all',
+        summary: 'Dates can be corrected at any time; every change is kept in the Audit Log.',
+        steps: [
+            'Find the row in the Plan Table.',
+            'Click the date and pick the correct one, or use × to clear it.',
+            'Status, delay and the forecast update immediately.',
+        ],
+        related: ['actual-dates'],
+        keywords: ['wrong date', 'mistake', 'correct date', 'undo date'],
     },
 ];

@@ -1,2 +1,2 @@
 /* Written by tools/deploy.sh - the version of PPMS this code is. */
-window.PPMS_BUILD = {"version":"v138-d6e83f2","label":"v138","deployedAt":"2026-10-02T20:46:58.880Z","notes":"Delivery delay now follows the process order (fixes the inflated 62 wd delay)"};
+window.PPMS_BUILD = {"version":"v139-5c68700","label":"v139","deployedAt":"2026-10-03T05:29:20.121Z","notes":"New guided tour (menu → Guided tour) and a much richer user manual"};

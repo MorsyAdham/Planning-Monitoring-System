@@ -32,6 +32,7 @@ const OPENERS = {
     notifications:     { button: 'f100NotifBell',          label: 'Notifications' },
     changePassword:    { button: 'btnChangePassword',      label: 'Change password' },
     help:              { fn: () => window.PPMSHelp?.open(),  label: 'Help & User Manual' },
+    tour:              { fn: () => window.PPMSTour?.start(), label: 'Guided tour' },
 };
 
 export const SECTION_LABELS = {

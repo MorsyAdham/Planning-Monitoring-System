@@ -1,8 +1,8 @@
 {
- "version": "v138-d6e83f2",
- "label": "v138",
- "deployedAt": "2026-10-02T20:46:58.880Z",
- "notes": "Delivery delay now follows the process order (fixes the inflated 62 wd delay)",
+ "version": "v139-5c68700",
+ "label": "v139",
+ "deployedAt": "2026-10-03T05:29:20.121Z",
+ "notes": "New guided tour (menu → Guided tour) and a much richer user manual",
  "files": [
   "index.html",
   "login.html",
@@ -48,6 +48,7 @@
   "scripts/features/shell/page-chrome.js",
   "scripts/features/shell/page-tail.js",
   "scripts/features/summary/index.js",
+  "scripts/features/tour/index.js",
   "scripts/features/update-notice/index.js",
   "scripts/features/vpx/index.js",
   "scripts/gantt-module.js",
@@ -75,6 +76,7 @@
   "styles/features/overview.css",
   "styles/features/shell.css",
   "styles/features/summary.css",
+  "styles/features/tour.css",
   "styles/features/update-notice.css",
   "styles/features/vpx.css",
   "styles/layout.css",

@@ -111,6 +111,14 @@ export function renderPageChrome() {
                                 </svg>
                                 <span>Help &amp; User Manual</span>
                             </button>
+                            <!-- Guided tour (everyone) -->
+                            <button class="nav-more-btn" id="btnTour" role="menuitem">
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="10" cy="10" r="8" />
+                                    <path d="M13 7l-1.8 4.2L7 13l1.8-4.2z" />
+                                </svg>
+                                <span>Guided tour</span>
+                            </button>
                             <!-- Audit Log (master_admin only) -->
                             <button class="nav-more-btn" id="btnAuditLog" role="menuitem" style="display:none">
                                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">

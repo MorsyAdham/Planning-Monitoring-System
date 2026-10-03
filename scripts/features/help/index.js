@@ -8,7 +8,7 @@
        until captured), numbered steps, tips, and a "Show me" button
        that runs the topic's action through the shared action runner.
    ================================================================ */
-import { MANUAL_GROUPS, MANUAL_SECTIONS, ROLE_LABELS } from './manual-content.js';
+import { MANUAL_GROUPS, MANUAL_SECTIONS, ROLE_LABELS, GROUP_INTROS, GLOSSARY } from './manual-content.js';
 import { actionLabel, isActionAvailable, runAction } from '../assistant/actions.js';
 import { getCurrentUser } from '../../core/guards.js';
 
@@ -19,6 +19,9 @@ const SECTION_MIN_RANK = { all: 0, operator: 1, planner: 2, master_admin: 3 };
 /** One line icon per chapter (24×24, stroke). */
 const GROUP_ICONS = {
     'Getting Started': '<path d="M5 12h14M13 6l6 6-6 6"/>',
+    'Daily Workflows': '<path d="M4 6h16M4 12h10M4 18h7"/><path d="M17 15l2 2 4-4"/>',
+    'Troubleshooting & FAQ': '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 015 .5c0 1.7-2.5 2.2-2.5 3.8M12 17h.01"/>',
+    'Glossary': '<path d="M4 4h12a4 4 0 014 4v12H8a4 4 0 01-4-4z"/><path d="M8 8h8M8 12h6"/>',
     'Dashboard': '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
     'Schedule (Gantt)': '<path d="M4 6h9M8 12h10M6 18h7"/><path d="M3 3v18"/>',
     'Plan Table': '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/>',
@@ -90,19 +93,43 @@ function sectionHtml(s) {
             </div>
         </header>
         <p class="help-summary">${esc(s.summary)}</p>
+        ${s.details?.length ? s.details.map(d => `<p class="help-detail">${esc(d)}</p>`).join('') : ''}
         <figure class="help-shot">
             <div class="help-shot-bar"><i></i><i></i><i></i></div>
             <img src="assets/help/${esc(s.id)}.jpg" alt="${esc(s.title)}" loading="lazy" onerror="this.closest('figure').remove()" />
         </figure>
-        ${s.steps?.length ? `<ol class="help-steps">${s.steps.map(t => `<li><span>${esc(t)}</span></li>`).join('')}</ol>` : ''}
-        ${s.tips?.length ? `<aside class="help-tips">${icon('<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>')}<ul>${s.tips.map(t => `<li>${esc(t)}</li>`).join('')}</ul></aside>` : ''}
+        ${s.steps?.length ? `<h4 class="help-subhead">Step by step</h4><ol class="help-steps">${s.steps.map(t => `<li><span>${esc(t)}</span></li>`).join('')}</ol>` : ''}
+        ${s.tips?.length ? `<aside class="help-tips">${icon('<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>')}<div><strong>Tips</strong><ul>${s.tips.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div></aside>` : ''}
+        ${s.recommended?.length ? `<aside class="help-callout help-callout--rec">${icon('<path d="M20 6L9 17l-5-5"/>')}<div><strong>Recommended</strong><ul>${s.recommended.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div></aside>` : ''}
+        ${s.cautions?.length ? `<aside class="help-callout help-callout--warn">${icon('<path d="M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/>')}<div><strong>Caution</strong><ul>${s.cautions.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div></aside>` : ''}
+        ${relatedHtml(s)}
         ${action ? `<footer class="help-card-foot">${action}</footer>` : ''}
     </article>`;
 }
 
+function relatedHtml(s) {
+    const items = (s.related || []).map(id => MANUAL_SECTIONS.find(x => x.id === id)).filter(Boolean);
+    if (!items.length) return '';
+    return `<p class="help-related"><span>Related:</span>${items.map(r => `<a href="#help-${esc(r.id)}" data-help-jump="help-${esc(r.id)}">${esc(r.title)}</a>`).join('')}</p>`;
+}
+
+function glossaryHtml(q) {
+    const rows = GLOSSARY.filter(([t, d]) => !q || q.toLowerCase().split(/\s+/).filter(Boolean).every(w => (t + ' ' + d).toLowerCase().includes(w)));
+    if (!rows.length) return '';
+    return `
+        <section class="help-chapter-block" id="help-ch-glossary">
+            <h2 class="help-chapter-title">
+                <span class="help-chapter-title-icon">${icon(GROUP_ICONS.Glossary)}</span>
+                <span class="help-chapter-title-no">A–Z</span>
+                Glossary
+            </h2>
+            <dl class="help-glossary">${rows.map(([t, d]) => `<div><dt>${esc(t)}</dt><dd>${esc(d)}</dd></div>`).join('')}</dl>
+        </section>`;
+}
+
 function matches(s, q) {
     if (!q) return true;
-    const hay = [s.title, s.summary, s.group, ...(s.steps || []), ...(s.tips || []), ...(s.keywords || [])].join(' ').toLowerCase();
+    const hay = [s.title, s.summary, s.group, ...(s.details || []), ...(s.steps || []), ...(s.tips || []), ...(s.recommended || []), ...(s.cautions || []), ...(s.keywords || [])].join(' ').toLowerCase();
     return q.toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.includes(w));
 }
 
@@ -131,7 +158,14 @@ function render() {
             <div class="help-toc-items">
                 ${items.map(s => `<a href="#help-${esc(s.id)}" class="help-toc-link" data-help-jump="help-${esc(s.id)}">${esc(s.title)}</a>`).join('')}
             </div>
-        </div>`).join('') || '<p class="help-empty">No matches.</p>';
+        </div>`).join('') + (q ? '' : `
+        <div class="help-toc-group">
+            <a class="help-toc-head" href="#help-ch-glossary" data-help-jump="help-ch-glossary">
+                <span class="help-toc-no">A–Z</span>
+                <span class="help-toc-name">Glossary</span>
+                <span class="help-toc-count">${GLOSSARY.length}</span>
+            </a>
+        </div>`) || '<p class="help-empty">No matches.</p>';
 
     if (!list.length) {
         content.innerHTML = `
@@ -148,6 +182,10 @@ function render() {
         <section class="help-hero">
             <h3>Welcome to PPMS</h3>
             <p>Pick a chapter, search above, or ask the assistant at the bottom left. Topics marked with a lock are not available for your role.</p>
+            <div class="help-hero-actions">
+                <button type="button" class="help-hero-tour" data-help-tour>${icon('<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>')}<span><strong>Take the guided tour</strong><small>A 2-minute walk around the screen</small></span></button>
+                <button type="button" class="help-hero-tour help-hero-tour--ghost" data-help-jump="help-quick-start">${icon('<path d="M5 12h14M13 6l6 6-6 6"/>')}<span><strong>Your first 10 minutes</strong><small>A quick-start checklist</small></span></button>
+            </div>
             <div class="help-chapters">
                 ${groups.map(({ g, items }) => `
                     <button type="button" class="help-chapter" data-help-jump="${groupId(g)}">
@@ -167,8 +205,9 @@ function render() {
                     <span class="help-chapter-title-no">${groupNo(g)}</span>
                     ${esc(g)}
                 </h2>
+                ${!q && GROUP_INTROS[g] ? `<p class="help-chapter-intro">${esc(GROUP_INTROS[g])}</p>` : ''}
                 ${items.map(sectionHtml).join('')}
-            </section>`).join('');
+            </section>`).join('') + glossaryHtml(q);
 
     content.scrollTop = 0;
     spy();
@@ -220,6 +259,7 @@ export function wireHelp() {
         if (e.target.id === 'helpOverlay') { close(); return; }
         const j = e.target.closest('[data-help-jump]');
         if (j) { e.preventDefault(); jump(j.dataset.helpJump); return; }
+        if (e.target.closest('[data-help-tour]')) { close(); window.PPMSTour?.start(); return; }
         const tryBtn = e.target.closest('[data-help-action]');
         if (tryBtn) {
             close();
