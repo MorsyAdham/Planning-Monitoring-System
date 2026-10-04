@@ -1038,6 +1038,53 @@ function getKd2UnitAndAfterRows(anchor, rows = []) {
     return same.filter(r => keep.has(r.unit_serial));
 }
 
+// "This + later vehicles · From this process on": the dragged process and
+// every process after it, on this vehicle and on every vehicle of the same
+// battalion and type that starts on or after it. Earlier processes of the
+// later vehicles (and earlier vehicles altogether) stay where they are.
+function getKd2FromProcessAfterRows(anchor, rows = []) {
+    return kd2RowsFromProcessOn(anchor, getKd2UnitAndAfterRows(anchor, rows));
+}
+
+// "From this process on", line-aware: the dragged process and the ones after
+// it on the SAME line (e.g. Hull), plus the whole downstream line (Assembly &
+// Processing & Testing), which follows every feeder line. The parallel feeder
+// line (Turret when you drag a Hull process) is left alone — route numbers
+// alone can't tell, because Hull and Turret are numbered independently.
+function kd2RowsFromProcessOn(anchor, rows = []) {
+    if (!anchor) return [];
+    const vt = anchor.vehicle_type || anchor.vehicle;
+    const order = getModuleRuntime()?.getStationOrderByCode?.(vt);
+    const a = order?.get(anchor.station_code);
+    if (!a) {
+        const helper = getModuleRuntime()?.getPlanMoveRowsFromAnchor;
+        return typeof helper === 'function' ? helper(anchor, rows) : [anchor];
+    }
+    const anchorIsFeeder = /^(Hull|Turret|Structure)$/i.test(a.line);
+    const picked = rows.filter(r => {
+        const o = order.get(r.station_code);
+        if (!o) return false;
+        if (o.line === a.line) return o.sortKey >= a.sortKey;
+        return anchorIsFeeder && !/^(Hull|Turret|Structure)$/i.test(o.line);
+    });
+    return picked.length ? picked : [anchor];
+}
+
+/** What each drag option moves, in one line (shown next to the options). */
+const GANTT_MOVE_HINTS = {
+    single: 'Moves only the block you drag (or every selected block, if several are selected).',
+    'from-block': 'Moves the process you drag and every process after it on this vehicle — the rest of its line (e.g. Hull), then Assembly. The parallel line (Turret) stays.',
+    lane: 'Moves every process of the vehicle you drag.',
+    'from-block-after': 'Moves the process you drag and every process after it (rest of its line, then Assembly) — on this vehicle and on every later vehicle of the same battalion and type.',
+    'unit-after': 'Moves every process of this vehicle and of every later vehicle of the same battalion and type.',
+    'from-block-lane': 'Moves this block and every block queued after it at the same station, across all vehicles.',
+    plan: 'Moves every block in the plan.',
+};
+function _syncGanttMoveHint() {
+    const hint = document.getElementById('gmtHint');
+    if (hint) hint.textContent = GANTT_MOVE_HINTS[_ganttMoveMode] || '';
+}
+
 // Every block of this battalion + vehicle type in the active version, straight
 // from the database — so vehicles outside the Gantt's date range move too.
 async function fetchKd2BattalionVehicleRowsForGantt(task) {
@@ -1130,13 +1177,15 @@ async function resolveGanttMoveSet(task) {
         }
         if (isKD2Module()) {
             const laneRows = await fetchKd2LaneRowsForGantt(task);
-            if (laneRows.length) return getKd2ForwardMoveRows(task, laneRows);
+            if (laneRows.length) return kd2RowsFromProcessOn(task, laneRows);
+            return kd2RowsFromProcessOn(task, currentData.filter(row => samePlanLane(row, task)));
         }
         return getKd2ForwardMoveRows(task, currentData);
     }
-    if (_ganttMoveMode === 'unit-after' && isKD2Module()) {
+    if ((_ganttMoveMode === 'unit-after' || _ganttMoveMode === 'from-block-after') && isKD2Module()) {
         const rows = await fetchKd2BattalionVehicleRowsForGantt(task);
-        const moveRows = getKd2UnitAndAfterRows(task, rows.length ? rows : currentData);
+        const pick = _ganttMoveMode === 'unit-after' ? getKd2UnitAndAfterRows : getKd2FromProcessAfterRows;
+        const moveRows = pick(task, rows.length ? rows : currentData);
         if (moveRows.length > 1) {
             const units = new Set(moveRows.map(r => r.unit_serial)).size;
             showToast(`Shifting ${units} vehicle${units === 1 ? '' : 's'} (${moveRows.length} blocks)…`, 'info');
@@ -19477,7 +19526,7 @@ function syncGanttModuleEditControls() {
     const planBtn = document.getElementById('gmtPlan');
     const fromBlockBtn = document.getElementById('gmtFromBlock');
     const fromBlockLaneBtn = document.getElementById('gmtFromBlockLane');
-    const unitAfterBtn = document.getElementById('gmtUnitAfter');
+    const laterGroup = document.getElementById('gmtGroupLater');
     const visualAddShell = document.getElementById('ganttVisualAddShell');
     const viewToggleWrap = document.getElementById('ganttViewToggleWrap');
     const templateBtn = document.getElementById('btnF100AddTemplate');
@@ -19518,7 +19567,7 @@ function syncGanttModuleEditControls() {
     if (planBtn) planBtn.style.display = isKd2 ? 'none' : '';
     if (fromBlockBtn) fromBlockBtn.style.display = isKd2 ? '' : 'none';
     if (fromBlockLaneBtn) fromBlockLaneBtn.style.display = isKd2ProcessView ? '' : 'none';
-    if (unitAfterBtn) unitAfterBtn.style.display = isKd2 ? '' : 'none';
+    if (laterGroup) laterGroup.style.display = isKd2 ? '' : 'none';
     if (viewToggleWrap) viewToggleWrap.style.display = isKd2 ? '' : 'none';
     // Saturdays / No-work Days live in the Options popover; No-work Days is KD2-only.
     if (satWrap) satWrap.style.display = isKd2 ? 'none' : '';
@@ -19526,7 +19575,7 @@ function syncGanttModuleEditControls() {
 
     if (isKd2 && _ganttMoveMode === 'plan') _ganttMoveMode = 'single';
     if (!isKd2 && _ganttMoveMode === 'from-block') _ganttMoveMode = 'single';
-    if (!isKd2 && _ganttMoveMode === 'unit-after') _ganttMoveMode = 'single';
+    if (!isKd2 && (_ganttMoveMode === 'unit-after' || _ganttMoveMode === 'from-block-after')) _ganttMoveMode = 'single';
     if (!isKd2ProcessView && _ganttMoveMode === 'from-block-lane') _ganttMoveMode = 'from-block';
     if (!isKd2) _ganttSelectLaneMode = false;
     const moveToggle = document.getElementById('ganttMoveToggle');
@@ -19535,6 +19584,7 @@ function syncGanttModuleEditControls() {
             btn.classList.toggle('gmt-active', btn.dataset.mode === _ganttMoveMode);
         });
     }
+    _syncGanttMoveHint();
     const laneBtn = document.getElementById('gmtSelectLane');
     if (laneBtn) {
         laneBtn.style.display = isKd2 ? '' : 'none';
@@ -19973,8 +20023,10 @@ function wireGanttDragEdit(dayIndex, days) {
                 ? getKd2ForwardMoveRowsByStation(task, currentData)
                 : _ganttMoveMode === 'unit-after'
                 ? getKd2UnitAndAfterRows(task, currentData)
+                : _ganttMoveMode === 'from-block-after'
+                ? getKd2FromProcessAfterRows(task, currentData)
                 : _ganttMoveMode === 'from-block'
-                    ? (isF100KD2Module() ? getF100ForwardMoveRows(task, currentData) : getKd2ForwardMoveRows(task, currentData))
+                    ? (isF100KD2Module() ? getF100ForwardMoveRows(task, currentData) : kd2RowsFromProcessOn(task, currentData.filter(row => samePlanLane(row, task))))
                     : _selectedGanttPlanIds.has(planId) && _selectedGanttPlanIds.size > 1 && _ganttMoveMode === 'single'
                         ? currentData.filter(row => _selectedGanttPlanIds.has(String(row.id)))
                         : [task];
@@ -20172,6 +20224,7 @@ wireGanttControls = function () {
         if (!btn) return;
         _ganttMoveMode = btn.dataset.mode;
         this.querySelectorAll('.gmt-btn').forEach(b => b.classList.toggle('gmt-active', b === btn));
+        _syncGanttMoveHint();
     });
     document.getElementById('gmtSelectLane')?.addEventListener('click', () => {
         setGanttLaneSelectMode(!_ganttSelectLaneMode);

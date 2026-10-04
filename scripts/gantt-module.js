@@ -159,15 +159,23 @@
 
                     <div class="gantt-ctx" id="ganttCtxReschedule">
                         <span class="gantt-ctx-label">Drag moves</span>
-                        <div class="gantt-move-toggle" id="ganttMoveToggle" title="Choose what gets moved when dragging">
-                            <button class="gmt-btn gmt-active" id="gmtSingle" data-mode="single">This block</button>
-                            <button class="gmt-btn" id="gmtLane" data-mode="lane">Whole lane</button>
-                            <button class="gmt-btn" id="gmtFromBlock" data-mode="from-block" style="display:none" title="Drag this block: also shifts this vehicle's remaining stations after it">This + everything after</button>
-                            <button class="gmt-btn" id="gmtUnitAfter" data-mode="unit-after" style="display:none" title="Drag any block: shifts this whole vehicle and every vehicle of the same battalion and type planned after it">This vehicle + all after</button>
-                            <button class="gmt-btn" id="gmtFromBlockLane" data-mode="from-block-lane" style="display:none" title="Drag this block: also shifts every other vehicle queued at this same station from this date on">This + others at this station</button>
+                        <div class="gantt-move-toggle gmt-grouped" id="ganttMoveToggle" title="Choose what moves when you drag a block">
+                            <button class="gmt-btn gmt-active" id="gmtSingle" data-mode="single">Only this block</button>
+                            <span class="gmt-group">
+                                <span class="gmt-group-label">This vehicle</span>
+                                <button class="gmt-btn" id="gmtFromBlock" data-mode="from-block" style="display:none">From this process on</button>
+                                <button class="gmt-btn" id="gmtLane" data-mode="lane">All processes</button>
+                            </span>
+                            <span class="gmt-group" id="gmtGroupLater" style="display:none">
+                                <span class="gmt-group-label">This + later vehicles</span>
+                                <button class="gmt-btn" id="gmtFromBlockAfter" data-mode="from-block-after">From this process on</button>
+                                <button class="gmt-btn" id="gmtUnitAfter" data-mode="unit-after">All processes</button>
+                            </span>
+                            <button class="gmt-btn" id="gmtFromBlockLane" data-mode="from-block-lane" style="display:none">This station's queue</button>
                             <button class="gmt-btn" id="gmtPlan" data-mode="plan">Whole plan</button>
                         </div>
                         <button class="gmt-btn gantt-ctx-standalone" id="gmtSelectLane" aria-pressed="false">Select lane</button>
+                        <span class="gmt-hint" id="gmtHint" aria-live="polite"></span>
                     </div>
 
                     <div class="gantt-ctx" id="ganttCtxAdd" hidden>

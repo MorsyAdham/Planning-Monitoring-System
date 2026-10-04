@@ -1,2 +1,2 @@
 /* Written by tools/deploy.sh - the version of PPMS this code is. */
-window.PPMS_BUILD = {"version":"v145-8b1d04e","label":"v145","deployedAt":"2026-10-04T13:54:17.108Z","notes":"Vehicle + all after move; summary battalion picker"};
+window.PPMS_BUILD = {"version":"v146-e1373d0","label":"v146","deployedAt":"2026-10-04T14:03:26.166Z","notes":"Clearer reschedule options; later vehicles from this process"};
