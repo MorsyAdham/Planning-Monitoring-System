@@ -164,6 +164,8 @@
 /* ══════════════════ EXECUTIVE SUMMARY ══════════════════ */
 .ex-summary { scroll-margin-top: 90px; }
 .ex-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.ex-head-right { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; flex-wrap: wrap; }
+.ex-head-right .ex-scope { max-width: 420px; }
 .ex-scope {
     font-size: .74rem; font-weight: 600;
     padding: 5px 12px; border-radius: 999px;

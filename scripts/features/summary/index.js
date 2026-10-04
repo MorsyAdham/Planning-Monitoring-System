@@ -20,7 +20,10 @@ export function initFeature() {
                     <h3 class="ppms-section-heading">Executive Summary</h3>
                     <span class="ppms-section-sub">Where production stands for the current filters</span>
                 </div>
-                <span class="ex-scope" id="exScope" title="What these numbers cover">All data</span>
+                <div class="ex-head-right">
+                    <div class="vpx-bat-picker ex-bat-picker" id="exBattalionTabs" hidden></div>
+                    <span class="ex-scope" id="exScope" title="What these numbers cover">All data</span>
+                </div>
             </div>
 
             <div class="ex-grid">

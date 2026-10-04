@@ -163,6 +163,7 @@
                             <button class="gmt-btn gmt-active" id="gmtSingle" data-mode="single">This block</button>
                             <button class="gmt-btn" id="gmtLane" data-mode="lane">Whole lane</button>
                             <button class="gmt-btn" id="gmtFromBlock" data-mode="from-block" style="display:none" title="Drag this block: also shifts this vehicle's remaining stations after it">This + everything after</button>
+                            <button class="gmt-btn" id="gmtUnitAfter" data-mode="unit-after" style="display:none" title="Drag any block: shifts this whole vehicle and every vehicle of the same battalion and type planned after it">This vehicle + all after</button>
                             <button class="gmt-btn" id="gmtFromBlockLane" data-mode="from-block-lane" style="display:none" title="Drag this block: also shifts every other vehicle queued at this same station from this date on">This + others at this station</button>
                             <button class="gmt-btn" id="gmtPlan" data-mode="plan">Whole plan</button>
                         </div>

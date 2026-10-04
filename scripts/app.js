@@ -1017,6 +1017,47 @@ function getKd2ForwardMoveRowsByStation(anchorTask, rows = []) {
     return moveRows?.length ? moveRows : (anchorTask ? [anchorTask] : []);
 }
 
+// "This vehicle + all after": every block of the dragged block's vehicle
+// (unit) plus every block of the vehicles in the same battalion and vehicle
+// type that start on or after it — e.g. move the first of the last three
+// vehicles and the other two shift with it. Vehicles that start earlier stay.
+function getKd2UnitAndAfterRows(anchor, rows = []) {
+    if (!anchor) return [];
+    const vt = anchor.vehicle_type || anchor.vehicle;
+    const same = rows.filter(r => String(r.battalion_id) === String(anchor.battalion_id) && (r.vehicle_type || r.vehicle) === vt);
+    const unitStart = new Map();
+    same.forEach(r => {
+        const s = r.start_date || r.planned_start_date;
+        if (s && (!unitStart.has(r.unit_serial) || s < unitStart.get(r.unit_serial))) unitStart.set(r.unit_serial, s);
+    });
+    const a = unitStart.get(anchor.unit_serial);
+    if (!a) return [anchor];
+    const keep = new Set([...unitStart].filter(([serial, s]) =>
+        serial === anchor.unit_serial || s > a || (s === a && Number(serial) >= Number(anchor.unit_serial))
+    ).map(([serial]) => serial));
+    return same.filter(r => keep.has(r.unit_serial));
+}
+
+// Every block of this battalion + vehicle type in the active version, straight
+// from the database — so vehicles outside the Gantt's date range move too.
+async function fetchKd2BattalionVehicleRowsForGantt(task) {
+    if (!db || !task?.battalion_id || !(task.vehicle_type || task.vehicle)) return [];
+    const rows = [];
+    for (let from = 0; ; from += 1000) {
+        const { data, error } = await window.PlanVersions.scoped(db
+            .from('kd2_plan')
+            .select('id, battalion_id, vehicle_type, unit_serial, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date'), 'kd2')
+            .eq('battalion_id', task.battalion_id)
+            .eq('vehicle_type', task.vehicle_type || task.vehicle)
+            .order('id')
+            .range(from, from + 999);
+        if (error) throw error;
+        rows.push(...(data || []));
+        if (!data || data.length < 1000) break;
+    }
+    return rows.map(normalizeKd2PlanRowForGantt);
+}
+
 function getF100ForwardMoveRows(anchor, rows) {
     const laneKey = r => [r.battalion_code || '', r.vehicle_type || '', r.serial_number ?? '', String(r.part_id || '')].join('||');
     const anchorKey = laneKey(anchor);
@@ -1092,6 +1133,15 @@ async function resolveGanttMoveSet(task) {
             if (laneRows.length) return getKd2ForwardMoveRows(task, laneRows);
         }
         return getKd2ForwardMoveRows(task, currentData);
+    }
+    if (_ganttMoveMode === 'unit-after' && isKD2Module()) {
+        const rows = await fetchKd2BattalionVehicleRowsForGantt(task);
+        const moveRows = getKd2UnitAndAfterRows(task, rows.length ? rows : currentData);
+        if (moveRows.length > 1) {
+            const units = new Set(moveRows.map(r => r.unit_serial)).size;
+            showToast(`Shifting ${units} vehicle${units === 1 ? '' : 's'} (${moveRows.length} blocks)…`, 'info');
+        }
+        return moveRows;
     }
     if (_ganttMoveMode === 'plan') return currentData;
     return _selectedGanttPlanIds.has(String(task.id)) && _selectedGanttPlanIds.size > 1
@@ -4616,7 +4666,38 @@ function _ensureTableRowRendered(planId) {
 /* ──────────────────────────────────────────────────────────────────
    8. SUMMARY CARDS
    ────────────────────────────────────────────────────────────────── */
+/* Executive Summary battalion picker — "All" or one battalion, like the
+   VPX picker. Scopes the ring, tiles and the delivery card (and its delay
+   breakdown). Remembered per browser. */
+const EX_BATTALION_KEY = 'ppms_ex_battalion';
+let _exBattalion = (() => { try { return localStorage.getItem(EX_BATTALION_KEY) || 'all'; } catch { return 'all'; } })();
+let _exSummaryData = [];
+
+function _exBattalionOf(r) { return r.battalion_code || '—'; }
+
+function _renderExBattalionTabs(data) {
+    const el = document.getElementById('exBattalionTabs');
+    if (!el) return;
+    const bats = (isKD2Module() || isF100KD2Module())
+        ? [...new Set(data.map(_exBattalionOf))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+        : [];
+    if (!bats.length) { el.hidden = true; el.innerHTML = ''; return; }
+    if (_exBattalion !== 'all' && !bats.includes(_exBattalion)) _exBattalion = 'all';
+    el.hidden = false;
+    const tab = (value, label) => `<button type="button" role="tab" aria-selected="${value === _exBattalion}" class="vpx-type-tab vpx-bat-tab${value === _exBattalion ? ' active' : ''}" data-exbat="${esc(value)}">${esc(label)}</button>`;
+    el.innerHTML = `<span class="vpx-bat-label">Battalion</span><span class="vpx-type-tabs vpx-bat-tabs" role="tablist" aria-label="Executive Summary battalion">${tab('all', 'All')}${bats.map(b => tab(b, b)).join('')}</span>`;
+    el.querySelectorAll('[data-exbat]').forEach(btn => btn.addEventListener('click', () => {
+        if (btn.dataset.exbat === _exBattalion) return;
+        _exBattalion = btn.dataset.exbat;
+        try { localStorage.setItem(EX_BATTALION_KEY, _exBattalion); } catch {}
+        updateSummary(_exSummaryData);
+    }));
+}
+
 function updateSummary(data) {
+    _exSummaryData = data || [];
+    _renderExBattalionTabs(_exSummaryData);
+    if (_exBattalion !== 'all') data = _exSummaryData.filter(r => _exBattalionOf(r) === _exBattalion);
     const total = data.length;
     const completed = data.filter(r => calculateStatus(r) === 'Completed').length;
     const late = data.filter(r => calculateStatus(r) === 'Late Completion').length;
@@ -4649,6 +4730,12 @@ function updateSummary(data) {
     setText('exLegOverdue', overdue); setText('exLegPlanned', notStarted);
     document.querySelector('.summary-card.card-overdue')?.classList.toggle('has-alert', overdue > 0);
     window.PPMSFilterUI?.refresh?.();
+    const scopeEl = document.getElementById('exScope');
+    if (scopeEl && _exBattalion !== 'all') {
+        scopeEl.textContent = scopeEl.textContent.endsWith('All data')
+            ? scopeEl.textContent.replace(/All data$/, _exBattalion)
+            : `${scopeEl.textContent} · ${_exBattalion}`;
+    }
     _updateDeliveryCard(data);
 }
 
@@ -19390,6 +19477,7 @@ function syncGanttModuleEditControls() {
     const planBtn = document.getElementById('gmtPlan');
     const fromBlockBtn = document.getElementById('gmtFromBlock');
     const fromBlockLaneBtn = document.getElementById('gmtFromBlockLane');
+    const unitAfterBtn = document.getElementById('gmtUnitAfter');
     const visualAddShell = document.getElementById('ganttVisualAddShell');
     const viewToggleWrap = document.getElementById('ganttViewToggleWrap');
     const templateBtn = document.getElementById('btnF100AddTemplate');
@@ -19430,6 +19518,7 @@ function syncGanttModuleEditControls() {
     if (planBtn) planBtn.style.display = isKd2 ? 'none' : '';
     if (fromBlockBtn) fromBlockBtn.style.display = isKd2 ? '' : 'none';
     if (fromBlockLaneBtn) fromBlockLaneBtn.style.display = isKd2ProcessView ? '' : 'none';
+    if (unitAfterBtn) unitAfterBtn.style.display = isKd2 ? '' : 'none';
     if (viewToggleWrap) viewToggleWrap.style.display = isKd2 ? '' : 'none';
     // Saturdays / No-work Days live in the Options popover; No-work Days is KD2-only.
     if (satWrap) satWrap.style.display = isKd2 ? 'none' : '';
@@ -19437,6 +19526,7 @@ function syncGanttModuleEditControls() {
 
     if (isKd2 && _ganttMoveMode === 'plan') _ganttMoveMode = 'single';
     if (!isKd2 && _ganttMoveMode === 'from-block') _ganttMoveMode = 'single';
+    if (!isKd2 && _ganttMoveMode === 'unit-after') _ganttMoveMode = 'single';
     if (!isKd2ProcessView && _ganttMoveMode === 'from-block-lane') _ganttMoveMode = 'from-block';
     if (!isKd2) _ganttSelectLaneMode = false;
     const moveToggle = document.getElementById('ganttMoveToggle');
@@ -19881,6 +19971,8 @@ function wireGanttDragEdit(dayIndex, days) {
             ? currentData.filter(row => samePlanLane(row, task))
             : _ganttMoveMode === 'from-block-lane'
                 ? getKd2ForwardMoveRowsByStation(task, currentData)
+                : _ganttMoveMode === 'unit-after'
+                ? getKd2UnitAndAfterRows(task, currentData)
                 : _ganttMoveMode === 'from-block'
                     ? (isF100KD2Module() ? getF100ForwardMoveRows(task, currentData) : getKd2ForwardMoveRows(task, currentData))
                     : _selectedGanttPlanIds.has(planId) && _selectedGanttPlanIds.size > 1 && _ganttMoveMode === 'single'
