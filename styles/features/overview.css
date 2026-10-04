@@ -316,6 +316,23 @@
 .xr-inside li.xr-new { border-color: var(--clr-accent); background: var(--clr-accent-dim); }
 .xr-new .xr-num { background: var(--clr-accent); border-color: var(--clr-accent); color: #fff; }
 .xr-badge { align-self: center; padding: 2px 7px; border-radius: 999px; background: var(--clr-accent); color: #fff; font-size: .62rem; font-weight: 700; letter-spacing: .06em; }
+.xr-inside h5 span { margin-left: 6px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--clr-text-muted); opacity: .8; }
+.xr-opts { display: grid; gap: 6px; }
+.xr-opt { display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: center; padding: 9px 12px; border: 1px solid var(--clr-accent); border-radius: 10px; background: var(--clr-accent-dim); cursor: pointer; transition: background .15s, border-color .15s, opacity .15s; }
+.xr-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.xr-opt-text { min-width: 0; }
+.xr-opt-text strong { display: block; font-size: .86rem; color: var(--clr-text); }
+.xr-opt-text > span { display: block; font-size: .76rem; color: var(--clr-text-muted); }
+.xr-opt .xr-num { background: var(--clr-accent); border-color: var(--clr-accent); color: #fff; }
+.xr-opt.is-off { border-color: var(--clr-border); background: transparent; }
+.xr-opt.is-off .xr-opt-text { opacity: .55; }
+.xr-opt.is-off .xr-num { background: var(--clr-surface-2, var(--clr-surface)); border-color: var(--clr-border); color: var(--clr-text-muted); }
+.xr-opt input:checked + .xr-switch { background: var(--clr-accent); }
+.xr-opt input:checked + .xr-switch::after { transform: translateX(14px); }
+.xr-opt input:focus-visible + .xr-switch { outline: 2px solid var(--clr-accent); outline-offset: 2px; }
+.xr-opt:hover { border-color: var(--clr-accent); }
+.xr-parts-hint { margin: 8px 0 0; font-size: .78rem; color: var(--clr-overdue); }
+.xr-fmt-btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; border-color: var(--clr-border); }
 .xr-toggle { display: inline-flex; align-items: center; gap: 10px; font-size: .84rem; color: var(--clr-text); cursor: pointer; width: fit-content; }
 .xr-toggle input { position: absolute; opacity: 0; pointer-events: none; }
 .xr-switch { position: relative; width: 34px; height: 20px; flex: none; border-radius: 999px; background: var(--clr-border); transition: background .15s; }

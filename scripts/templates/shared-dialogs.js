@@ -1845,19 +1845,15 @@ export function renderSharedDialogs() {
                         <div><small>Open issues</small><strong id="execSnapIssues">—</strong><em id="execSnapIssuesSub"></em></div>
                     </div>
                     <div class="xr-inside">
-                        <h5>What's inside</h5>
-                        <ol>
-                            <li><span class="xr-num">1</span><span><strong>Cover summary</strong><span>Progress, status split and delivery forecast</span></span></li>
-                            <li><span class="xr-num">2</span><span><strong>Station report</strong><span>K9 Hull · Turret · Assembly, then K10 and K11 Structure · Assembly — one page per table</span></span></li>
-                            <li class="xr-new" id="execInsidesInsights"><span class="xr-num">3</span><span><strong>Production insights</strong><span>Key figures, units behind, where to act, weekly pace and issue trends</span></span><span class="xr-badge">NEW</span></li>
-                            <li><span class="xr-num" id="execInsideIssuesNo">4</span><span><strong>Production issues status report</strong><span>All time, every status and category</span></span></li>
-                        </ol>
+                        <h5>What's inside <span>switch off any part you don't need</span></h5>
+                        <div class="xr-opts">
+                            <label class="xr-opt"><span class="xr-num">1</span><span class="xr-opt-text"><strong>Cover summary</strong><span>Progress, status split, delivery forecast and contents</span></span><input type="checkbox" id="execIncCover" checked /><span class="xr-switch" aria-hidden="true"></span></label>
+                            <label class="xr-opt"><span class="xr-num">2</span><span class="xr-opt-text"><strong>Station report</strong><span>K9 Hull · Turret · Assembly, then K10 and K11 Structure · Assembly — one page per table</span></span><input type="checkbox" id="execIncStations" checked /><span class="xr-switch" aria-hidden="true"></span></label>
+                            <label class="xr-opt"><span class="xr-num">3</span><span class="xr-opt-text"><strong>Production insights</strong><span>Two pages: where we stand, and where to act</span></span><input type="checkbox" id="execIncludeInsights" checked /><span class="xr-switch" aria-hidden="true"></span></label>
+                            <label class="xr-opt"><span class="xr-num">4</span><span class="xr-opt-text"><strong>Production issues status report</strong><span>All time, every status and category</span></span><input type="checkbox" id="execIncIssues" checked /><span class="xr-switch" aria-hidden="true"></span></label>
+                        </div>
+                        <p class="xr-parts-hint" id="execPartsHint" hidden>Switch on at least one part to create the report.</p>
                     </div>
-                    <label class="xr-toggle">
-                        <input type="checkbox" id="execIncludeInsights" checked />
-                        <span class="xr-switch" aria-hidden="true"></span>
-                        Include production insights
-                    </label>
                     <div class="xr-formats">
                         <h5>Choose a format</h5>
                         <div class="xr-fmt">

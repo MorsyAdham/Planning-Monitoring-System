@@ -13704,8 +13704,32 @@ function _buildIssueStatusReportRowsAllTime() {
    the report is generated; the "Key observations" are written from them.
    Switched off with the menu's "Include production insights" toggle. */
 function _execIncludeInsights() {
-    const el = document.getElementById('execIncludeInsights');
-    return !el || el.checked;
+    return _execParts().insights;
+}
+/** The four parts of the Executive Report, as ticked in its menu
+ *  (all on when the menu isn't there). */
+function _execParts() {
+    const on = id => { const el = document.getElementById(id); return !el || el.checked; };
+    return {
+        cover: on('execIncCover'),
+        stations: on('execIncStations'),
+        insights: on('execIncludeInsights'),
+        issues: on('execIncIssues'),
+    };
+}
+function _execNothingSelected(parts) {
+    if (parts.cover || parts.stations || parts.insights || parts.issues) return false;
+    showToast('Choose at least one part to include in the Executive Report.', 'error');
+    return true;
+}
+/** One line for the cover saying what this copy of the report holds. */
+function _execCoverBlurb(parts) {
+    const bits = [];
+    if (parts.stations) bits.push('VPX station status for every vehicle and component');
+    if (parts.insights) bits.push('production insights');
+    if (parts.issues) bits.push('the Production Issues status report');
+    const list = bits.length > 1 ? bits.slice(0, -1).join(', ') + ' and ' + bits[bits.length - 1] : (bits[0] || 'a summary of the plan');
+    return `Production Planning & Monitoring System — ${list}.`;
 }
 
 /** Saturday that starts the work week containing `iso` (Fridays are off). */
@@ -13905,214 +13929,258 @@ function _execInsightsModel(issueRows) {
 const EXEC_TONE = { bad: [185, 28, 28], warn: [180, 83, 9], ok: [21, 128, 61], info: [37, 99, 235] };
 const EXEC_TONE_HEX = { bad: '#b91c1c', warn: '#b45309', ok: '#15803d', info: '#2563eb' };
 
-/** PDF: the Production Insights page (A4 landscape), drawn on a new page. */
+/** PDF: Production Insights on two A4 landscape pages —
+ *  1 "Where we stand"  (verdict, key figures, observations, progress, pace)
+ *  2 "Where to act"    (units behind, stations adding delay, issues).
+ *  Returns the first page's number. */
 function _execDrawInsightsPdf(doc, ins, band, meta) {
-    const M = EXEC_MARGIN, W = 297;
-    doc.addPage('a4', 'landscape');
-    band(W, 'Production Insights', 'Key figures, delivery forecast and issues', meta);
+    const M = EXEC_MARGIN, W = 297, H = 210;
+    const CW = W - 2 * M;
+    const NAVY = [30, 58, 138], INK = [15, 23, 42], MUTED = [100, 116, 139], SOFT = [71, 85, 105], RULE = [226, 232, 240];
 
-    // Verdict
-    const vTone = ins.late ? [185, 28, 28] : [21, 128, 61];
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.6);
-    const vLines = doc.splitTextToSize(ins.verdict, W - 2 * M - 8);
-    const vH = 4 + vLines.length * 3.9;
-    doc.setFillColor(...(ins.late ? [255, 245, 245] : [240, 253, 244]));
-    doc.setDrawColor(...(ins.late ? [252, 165, 165] : [134, 239, 172])); doc.setLineWidth(0.25);
-    doc.rect(M, 21.5, W - 2 * M, vH, 'FD');
-    doc.setFillColor(...vTone); doc.rect(M, 21.5, 1.4, vH, 'F');
-    doc.setTextColor(15, 23, 42);
-    doc.text(vLines, M + 4.5, 25.4);
-    let y = 21.5 + vH + 3.5;
-
-    // KPI tiles
-    const tw = (W - 2 * M - 5 * 4) / 6, th = 16.5;
-    ins.kpis.forEach((k, i) => {
-        const x = M + i * (tw + 4);
-        doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.25); doc.rect(x, y, tw, th, 'S');
-        doc.setFillColor(...(EXEC_TONE[k.tone] || EXEC_TONE.info)); doc.rect(x, y, tw, 0.9, 'F');
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(6); doc.setTextColor(100, 116, 139);
-        doc.text(k.label.toUpperCase(), x + 2.5, y + 4.6, { charSpace: 0.2 });
-        doc.setFontSize(String(k.value).length > 7 ? 12 : 14); doc.setTextColor(15, 23, 42);
-        doc.text(String(k.value), x + 2.5, y + 10.6);
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(6.2); doc.setTextColor(71, 85, 105);
-        doc.text(doc.splitTextToSize(k.sub, tw - 4)[0], x + 2.5, y + 14.3);
-    });
-    y += th + 5;
-
-    const gap = 4, c3w = 81, cw = (W - 2 * M - c3w - 2 * gap) / 2;
-    const cols = [M, M + cw + gap, M + 2 * (cw + gap)];
-    const heading = (x, yy, title, sub) => {
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(7.2); doc.setTextColor(30, 58, 138);
-        doc.text(title.toUpperCase(), x, yy, { charSpace: 0.25 });
+    // Section title: navy caps, grey caption under it, thin rule across the column
+    const section = (x, y, w, title, sub) => {
+        doc.setFillColor(...NAVY); doc.rect(x, y - 3, 1.1, sub ? 7.6 : 3.8, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8.2); doc.setTextColor(...NAVY);
+        doc.text(title.toUpperCase(), x + 3, y, { charSpace: 0.3 });
         if (sub) {
-            const tw2 = doc.getTextWidth(title.toUpperCase()) + title.length * 0.25 + 2;
-            doc.setFont('helvetica', 'normal'); doc.setFontSize(6.3); doc.setTextColor(100, 116, 139);
-            doc.text(sub, x + tw2, yy);
+            doc.setFont('helvetica', 'normal'); doc.setFontSize(6.9); doc.setTextColor(...MUTED);
+            doc.text(sub, x + 3, y + 4);
         }
+        const ry = y + (sub ? 6.4 : 2.4);
+        doc.setDrawColor(...RULE); doc.setLineWidth(0.3); doc.line(x, ry, x + w, ry);
+        return ry + 2.2;
     };
     const table = (x, w, startY, head, body, colStyles, extra = {}) => {
         doc.autoTable({
             startY, margin: { left: x, right: W - x - w, bottom: EXEC_FOOTER_H }, tableWidth: w,
             head: [head], body, theme: 'plain', pageBreak: 'avoid', rowPageBreak: 'avoid',
-            styles: { font: 'helvetica', fontSize: 6.8, cellPadding: { top: 1.1, bottom: 1.1, left: 1.2, right: 1.2 }, textColor: [15, 23, 42], lineColor: [226, 232, 240], lineWidth: { bottom: 0.15 } },
-            headStyles: { fontStyle: 'bold', textColor: [100, 116, 139], fontSize: 6.3, lineWidth: { bottom: 0.3 }, lineColor: [203, 213, 225] },
+            styles: { font: 'helvetica', fontSize: 7.6, cellPadding: { top: 1.7, bottom: 1.7, left: 1.6, right: 1.6 }, textColor: INK, lineColor: RULE, lineWidth: { bottom: 0.2 }, valign: 'middle' },
+            headStyles: { fontStyle: 'bold', textColor: MUTED, fontSize: 6.8, fillColor: [248, 250, 252], lineWidth: { bottom: 0.35 }, lineColor: [203, 213, 225] },
             columnStyles: colStyles,
             ...extra,
         });
         return doc.lastAutoTable.finalY;
     };
-    const toneText = (slip) => ({ textColor: slip >= 20 ? EXEC_TONE.bad : EXEC_TONE.warn, fontStyle: 'bold' });
+    const toneText = slip => ({ textColor: slip >= 20 ? EXEC_TONE.bad : EXEC_TONE.warn, fontStyle: 'bold' });
+    const swatch = (x, y, rgb, label) => {
+        doc.setFillColor(...rgb); doc.rect(x, y - 2.3, 2.6, 2.6, 'F');
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6.6); doc.setTextColor(...SOFT);
+        doc.text(label, x + 3.6, y);
+        return x + 3.6 + doc.getTextWidth(label) + 5;
+    };
+    const asOf = () => {
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6.4); doc.setTextColor(148, 163, 184);
+        doc.text('Figures follow the process-order forecast used across PPMS · working days (wd) exclude Fridays · as of ' + formatDate(todayStr()), M, H - EXEC_FOOTER_H - 1.5);
+    };
 
-    // ── Column 1: units behind + where to act ──
-    let y1 = y;
-    heading(cols[0], y1, 'Units furthest behind', 'forecast finish vs plan');
-    y1 = table(cols[0], cw, y1 + 1.5, ['Unit', 'Planned', 'Forecast', 'Delay', 'Main cause'],
-        ins.topUnits.length
-            ? ins.topUnits.map(u => [u.name, ins.short(u.planned), ins.short(u.forecast), { content: `+${u.slip} wd`, styles: toneText(u.slip) }, u.cause || '—'])
-            : [[{ content: 'No unit is forecast to finish late.', colSpan: 5, styles: { textColor: EXEC_TONE.ok } }]],
-        { 0: { cellWidth: 26 }, 1: { cellWidth: 13 }, 2: { cellWidth: 13 }, 3: { cellWidth: 14, halign: 'right' } });
-    y1 += 6;
-    heading(cols[0], y1, 'Where to act first', 'delay added to unit finishes now');
-    table(cols[0], cw, y1 + 1.5, ['Station', 'Veh.', 'Units', 'Open', 'Adds'],
-        ins.causes.length
-            ? ins.causes.map(c => [c.station, c.vtype, String(c.units), c.open ? String(c.open) : '—', { content: `+${c.adds} wd`, styles: toneText(c.adds) }])
-            : [[{ content: 'Nothing is adding delay right now.', colSpan: 5, styles: { textColor: EXEC_TONE.ok } }]],
-        { 1: { cellWidth: 10 }, 2: { cellWidth: 11, halign: 'right' }, 3: { cellWidth: 11, halign: 'right' }, 4: { cellWidth: 15, halign: 'right' } });
+    // ════════ Page 1 — Where we stand ════════
+    doc.addPage('a4', 'landscape');
+    const firstPage = doc.internal.getCurrentPageInfo().pageNumber;
+    band(W, 'Production Insights · 1 of 2', 'Where we stand', meta);
 
-    // ── Column 2: progress by vehicle + weekly pace ──
-    let y2 = y;
-    heading(cols[1], y2, 'Progress by vehicle', 'done vs expected by today');
+    // Verdict
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.6);
+    const vLines = doc.splitTextToSize(ins.verdict, CW - 12);
+    const vH = 6 + vLines.length * 4.4;
+    doc.setFillColor(...(ins.late ? [255, 245, 245] : [240, 253, 244]));
+    doc.setDrawColor(...(ins.late ? [252, 165, 165] : [134, 239, 172])); doc.setLineWidth(0.3);
+    doc.rect(M, 23, CW, vH, 'FD');
+    doc.setFillColor(...(ins.late ? EXEC_TONE.bad : EXEC_TONE.ok)); doc.rect(M, 23, 1.8, vH, 'F');
+    doc.setTextColor(...INK);
+    doc.text(vLines, M + 6, 23 + 5.6);
+    let y = 23 + vH + 5;
+
+    // Key figures — six tiles
+    const gapT = 4, tw = (CW - 5 * gapT) / 6, th = 22;
+    ins.kpis.forEach((k, i) => {
+        const x = M + i * (tw + gapT);
+        doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.3); doc.roundedRect(x, y, tw, th, 1.5, 1.5, 'S');
+        doc.setFillColor(...(EXEC_TONE[k.tone] || EXEC_TONE.info)); doc.rect(x + 0.4, y + 0.3, tw - 0.8, 1.1, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(6.6); doc.setTextColor(...MUTED);
+        doc.text(k.label.toUpperCase(), x + 3.5, y + 6.4, { charSpace: 0.25 });
+        doc.setFontSize(String(k.value).length > 7 ? 14 : 17); doc.setTextColor(...INK);
+        doc.text(String(k.value), x + 3.5, y + 14);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6.6); doc.setTextColor(...SOFT);
+        doc.text(doc.splitTextToSize(k.sub, tw - 6)[0], x + 3.5, y + 18.8);
+    });
+    y += th + 8;
+
+    // Two columns: observations (left) · progress + pace (right)
+    const gap = 10, lw = Math.round(CW * 0.5), rw = CW - lw - gap;
+    const lx = M, rx = M + lw + gap;
+
+    // Left — key observations, numbered, with room between them
+    let yl = section(lx, y, lw, 'Key observations', 'What the figures on these two pages say');
+    yl += 2;
+    ins.observations.forEach((o, i) => {
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8.4);
+        const lines = doc.splitTextToSize(o, lw - 10);
+        doc.setFillColor(239, 246, 255); doc.circle(lx + 2.6, yl - 1.1, 2.6, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(7.2); doc.setTextColor(...NAVY);
+        doc.text(String(i + 1), lx + 2.6, yl + 0.1, { align: 'center' });
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8.4); doc.setTextColor(...INK);
+        doc.text(lines, lx + 8, yl);
+        yl += lines.length * 3.9 + 3.4;
+    });
+
+    // Right — progress by vehicle
+    let yr = section(rx, y, rw, 'Progress by vehicle', 'Blocks done vs expected by today · forecast finish');
     const barCol = 2;
-    y2 = table(cols[1], cw, y2 + 1.5, ['Vehicle', 'Units', 'Progress', 'Done', 'Finish'],
-        ins.byVehicle.map(v => [v.vtype, String(v.units), '', `${v.donePct}%`, v.worst > 0 ? { content: `+${v.worst} wd`, styles: toneText(v.worst) } : { content: 'on time', styles: { textColor: EXEC_TONE.ok } }]),
-        { 0: { cellWidth: 14, fontStyle: 'bold' }, 1: { cellWidth: 11, halign: 'right' }, 3: { cellWidth: 12, halign: 'right' }, 4: { cellWidth: 17, halign: 'right' } },
+    yr = table(rx, rw, yr, ['Vehicle', 'Units', 'Progress', 'Done', 'Late units', 'Finish'],
+        ins.byVehicle.map(v => [v.vtype, String(v.units), '', `${v.donePct}%`,
+            v.late ? { content: `${v.late} of ${v.units}`, styles: { textColor: EXEC_TONE.bad } } : { content: 'none', styles: { textColor: EXEC_TONE.ok } },
+            v.worst > 0 ? { content: `+${v.worst} wd`, styles: toneText(v.worst) } : { content: 'on time', styles: { textColor: EXEC_TONE.ok } }]),
+        { 0: { cellWidth: 15, fontStyle: 'bold' }, 1: { cellWidth: 11, halign: 'right' }, 3: { cellWidth: 12, halign: 'right' }, 4: { cellWidth: 18, halign: 'right' }, 5: { cellWidth: 17, halign: 'right' } },
         {
             didDrawCell: d => {
                 if (d.section !== 'body' || d.column.index !== barCol) return;
                 const v = ins.byVehicle[d.row.index];
                 if (!v) return;
-                const bx = d.cell.x + 1.5, bw = d.cell.width - 3, by = d.cell.y + d.cell.height / 2 - 1.1;
-                doc.setFillColor(226, 232, 240); doc.rect(bx, by, bw, 2.2, 'F');
-                doc.setFillColor(37, 99, 235); doc.rect(bx, by, bw * Math.min(1, v.donePct / 100), 2.2, 'F');
-                doc.setDrawColor(15, 23, 42); doc.setLineWidth(0.5);
+                const bx = d.cell.x + 2, bw = d.cell.width - 4, by = d.cell.y + d.cell.height / 2 - 1.3;
+                doc.setFillColor(226, 232, 240); doc.rect(bx, by, bw, 2.6, 'F');
+                doc.setFillColor(37, 99, 235); doc.rect(bx, by, bw * Math.min(1, v.donePct / 100), 2.6, 'F');
+                doc.setDrawColor(...INK); doc.setLineWidth(0.55);
                 const ex = bx + bw * Math.min(1, v.expectedPct / 100);
-                doc.line(ex, by - 0.8, ex, by + 3);
+                doc.line(ex, by - 1, ex, by + 3.6);
             },
         });
-    doc.setFontSize(6); doc.setTextColor(71, 85, 105);
-    doc.setFillColor(37, 99, 235); doc.rect(cols[1], y2 + 2, 2.4, 2.4, 'F'); doc.text('done', cols[1] + 3.4, y2 + 4.1);
-    doc.setDrawColor(15, 23, 42); doc.setLineWidth(0.5); doc.line(cols[1] + 13, y2 + 1.8, cols[1] + 13, y2 + 4.8); doc.text('expected by today', cols[1] + 14.5, y2 + 4.1);
-    y2 += 11;
-    heading(cols[1], y2, 'Weekly pace', 'planned vs completed, last 8 weeks');
-    const chT = y2 + 3, chH = 26, chB = chT + chH;
+    {
+        let lx2 = swatch(rx, yr + 4.6, [37, 99, 235], 'done');
+        doc.setDrawColor(...INK); doc.setLineWidth(0.55); doc.line(lx2, yr + 2, lx2, yr + 5.2);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6.6); doc.setTextColor(...SOFT);
+        doc.text('expected by today', lx2 + 1.8, yr + 4.6);
+    }
+    yr += 12;
+
+    // Right — weekly pace chart
+    yr = section(rx, yr, rw, 'Weekly pace', 'Blocks planned to finish vs blocks completed · last 8 weeks');
+    const chT = yr + 4, chH = 30, chB = chT + chH;
     const maxV = Math.max(1, ...ins.pace.map(p => Math.max(p.planned, p.completed)));
-    const slot = cw / ins.pace.length;
-    doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.15); doc.line(cols[1], chB, cols[1] + cw, chB);
+    const slot = rw / ins.pace.length;
+    doc.setDrawColor(...RULE); doc.setLineWidth(0.15);
+    [0.5, 1].forEach(f => doc.line(rx, chB - chH * f, rx + rw, chB - chH * f));
+    doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.3); doc.line(rx, chB, rx + rw, chB);
     ins.pace.forEach((p, i) => {
-        const x = cols[1] + i * slot + slot * 0.14, bw = slot * 0.34;
+        const x = rx + i * slot + slot * 0.16, bw = slot * 0.32;
         const hp = chH * p.planned / maxV, hc = chH * p.completed / maxV;
         doc.setFillColor(191, 219, 254); doc.rect(x, chB - hp, bw, hp, 'F');
-        doc.setFillColor(34, 197, 94); doc.rect(x + bw + 0.4, chB - hc, bw, hc, 'F');
-        doc.setFontSize(5.6); doc.setTextColor(100, 116, 139);
-        doc.text(p.label, cols[1] + i * slot + slot / 2, chB + 3, { align: 'center' });
-        doc.setFontSize(5.4); doc.setTextColor(71, 85, 105);
-        if (p.completed) doc.text(String(p.completed), x + bw * 1.5 + 0.4, chB - hc - 0.8, { align: 'center' });
+        doc.setFillColor(34, 197, 94); doc.rect(x + bw + 0.6, chB - hc, bw, hc, 'F');
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6.2); doc.setTextColor(...MUTED);
+        doc.text(p.label, rx + i * slot + slot / 2, chB + 3.6, { align: 'center' });
+        doc.setFontSize(5.8); doc.setTextColor(...SOFT);
+        if (p.planned) doc.text(String(p.planned), x + bw / 2, chB - hp - 0.9, { align: 'center' });
+        if (p.completed) doc.text(String(p.completed), x + bw * 1.5 + 0.6, chB - hc - 0.9, { align: 'center' });
     });
-    let ly = chB + 7.5;
-    doc.setFontSize(6); doc.setTextColor(71, 85, 105);
-    doc.setFillColor(191, 219, 254); doc.rect(cols[1], ly - 2.2, 2.4, 2.4, 'F'); doc.text('planned', cols[1] + 3.4, ly);
-    doc.setFillColor(34, 197, 94); doc.rect(cols[1] + 16, ly - 2.2, 2.4, 2.4, 'F'); doc.text('completed', cols[1] + 19.4, ly);
-    doc.setFontSize(6.8); doc.setTextColor(15, 23, 42);
-    doc.text(doc.splitTextToSize(ins.paceLine, cw), cols[1], ly + 5);
+    let ly = chB + 9;
+    let sx = swatch(rx, ly, [191, 219, 254], 'planned');
+    swatch(sx, ly, [34, 197, 94], 'completed');
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.4); doc.setTextColor(...INK);
+    doc.text(doc.splitTextToSize(ins.paceLine, rw), rx, ly + 5.5);
+    asOf();
 
-    // ── Column 3: issues + observations ──
-    const x3 = cols[2];
-    let y3 = y;
-    heading(x3, y3, 'Production issues', 'all time');
-    const bw3 = (c3w - 2 * 2.5) / 3;
-    [['open', ins.issues.open], ['in progress', ins.issues.inProgress], ['resolved', ins.issues.resolved]].forEach(([label, val], i) => {
-        const bx = x3 + i * (bw3 + 2.5);
-        doc.setFillColor(239, 246, 255); doc.rect(bx, y3 + 2, bw3, 11.5, 'F');
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(15, 23, 42); doc.text(String(val), bx + 2.5, y3 + 8.6);
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(6); doc.setTextColor(71, 85, 105); doc.text(label, bx + 2.5, y3 + 12);
-    });
-    y3 = table(x3, c3w, y3 + 15.5, ['', ''], [
-        ['Critical / high still open', { content: String(ins.issues.critical), styles: { textColor: ins.issues.critical ? EXEC_TONE.bad : EXEC_TONE.ok, fontStyle: 'bold' } }],
-        ['Opened vs resolved (12 weeks)', `${ins.issues.opened12} vs ${ins.issues.resolved12}`],
-        ['Average time to resolve', ins.issues.avgResolve == null ? '—' : `${ins.issues.avgResolve} days`],
-        ['Most open category', ins.issues.topOpenCat ? `${ins.issues.topOpenCat[0]} (${ins.issues.topOpenCat[1]})` : '—'],
-    ], { 1: { halign: 'right', cellWidth: 30 } }, { showHead: 'never' });
-    y3 += 6;
-    heading(x3, y3, 'Key observations');
-    y3 += 4;
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.9);
-    ins.observations.forEach((o, i) => {
-        const lines = doc.splitTextToSize(o, c3w - 5);
-        doc.setTextColor(30, 58, 138); doc.setFont('helvetica', 'bold'); doc.text(`${i + 1}.`, x3, y3);
-        doc.setTextColor(15, 23, 42); doc.setFont('helvetica', 'normal'); doc.text(lines, x3 + 4, y3);
-        y3 += lines.length * 3.05 + 1.6;
-    });
+    // ════════ Page 2 — Where to act ════════
+    doc.addPage('a4', 'landscape');
+    band(W, 'Production Insights · 2 of 2', 'Where to act', meta);
+    y = 27;
+    const lw2 = Math.round(CW * 0.6), rw2 = CW - lw2 - gap, rx2 = M + lw2 + gap;
 
-    // Note at the bottom of the page
-    doc.setFontSize(6.2); doc.setTextColor(148, 163, 184);
-    doc.text('Figures follow the process-order forecast used across PPMS · working days exclude Fridays · as of ' + formatDate(todayStr()), M, 210 - 9.5);
-    return doc.internal.getCurrentPageInfo().pageNumber;
+    // Left — units furthest behind, then stations adding delay
+    let y1 = section(M, y, lw2, 'Units furthest behind', 'Forecast finish against the plan · the station adding most of the delay');
+    y1 = table(M, lw2, y1, ['Unit', 'Planned finish', 'Forecast finish', 'Delay', 'Main cause'],
+        ins.topUnits.length
+            ? ins.topUnits.map(u => [{ content: u.name, styles: { fontStyle: 'bold' } }, ins.short(u.planned), ins.short(u.forecast), { content: `+${u.slip} wd`, styles: toneText(u.slip) }, u.cause || '—'])
+            : [[{ content: 'No unit is forecast to finish late.', colSpan: 5, styles: { textColor: EXEC_TONE.ok } }]],
+        { 0: { cellWidth: 38 }, 1: { cellWidth: 24 }, 2: { cellWidth: 24 }, 3: { cellWidth: 18, halign: 'right' } });
+    y1 += 10;
+    y1 = section(M, y1, lw2, 'Where to act first', 'Stations pushing unit finishes back right now, largest delay first');
+    table(M, lw2, y1, ['Station', 'Vehicle', 'Units pushed back', 'Not finished', 'Delay added'],
+        ins.causes.length
+            ? ins.causes.map(c => [{ content: c.station, styles: { fontStyle: 'bold' } }, c.vtype, String(c.units), c.open ? String(c.open) : '—', { content: `+${c.adds} wd`, styles: toneText(c.adds) }])
+            : [[{ content: 'Nothing is adding delay right now.', colSpan: 5, styles: { textColor: EXEC_TONE.ok } }]],
+        { 1: { cellWidth: 18 }, 2: { cellWidth: 28, halign: 'right' }, 3: { cellWidth: 24, halign: 'right' }, 4: { cellWidth: 22, halign: 'right' } });
+
+    // Right — production issues
+    let y3 = section(rx2, y, rw2, 'Production issues', 'All time, this module');
+    const iss = ins.issues;
+    const bw3 = (rw2 - 2 * 3) / 3;
+    [['Open', iss.open, [239, 246, 255], INK], ['In progress', iss.inProgress, [239, 246, 255], INK], ['Resolved', iss.resolved, [240, 253, 244], [21, 128, 61]]].forEach(([label, val, bg, fg], i) => {
+        const bx = rx2 + i * (bw3 + 3);
+        doc.setFillColor(...bg); doc.roundedRect(bx, y3, bw3, 15, 1.2, 1.2, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...fg); doc.text(String(val), bx + 3.5, y3 + 8.6);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6.8); doc.setTextColor(...SOFT); doc.text(label, bx + 3.5, y3 + 12.8);
+    });
+    y3 += 20;
+    table(rx2, rw2, y3, ['', ''], [
+        ['Critical / high still open', { content: String(iss.critical), styles: { textColor: iss.critical ? EXEC_TONE.bad : EXEC_TONE.ok, fontStyle: 'bold' } }],
+        ['Opened in the last 12 weeks', String(iss.opened12)],
+        ['Resolved in the last 12 weeks', { content: String(iss.resolved12), styles: { textColor: iss.resolved12 >= iss.opened12 ? EXEC_TONE.ok : EXEC_TONE.warn } }],
+        ['Average time to resolve', iss.avgResolve == null ? '—' : `${iss.avgResolve} days`],
+        ['Most open category', iss.topOpenCat ? `${iss.topOpenCat[0]} (${iss.topOpenCat[1]})` : '—'],
+        ['Oldest open critical / high', iss.critical ? `${iss.oldestCritical} days` : '—'],
+    ], { 1: { halign: 'right', cellWidth: 38 } }, { showHead: 'never' });
+    asOf();
+    return firstPage;
 }
 
-/** Word: the Production Insights page as one A4 landscape section. */
-function _execInsightsWordHtml(ins, meta) {
-    const H = s => `<p style="margin:6pt 0 3pt;font-size:8pt;font-weight:bold;letter-spacing:0.5pt;color:#1e3a8a">${s.toUpperCase()}</p>`;
-    const td = 'padding:2pt 3pt;border-bottom:0.5pt solid #e2e8f0;font-size:7.5pt';
-    const th = 'padding:2pt 3pt;border-bottom:0.75pt solid #cbd5e1;font-size:7pt;color:#64748b;font-weight:bold';
+/** Word: Production Insights as two A4 landscape sections, same layout as the PDF. */
+function _execInsightsWordHtml(ins, meta, sectionBreak = '') {
+    const H = (s, sub) => `<p style="margin:10pt 0 ${sub ? 0 : 3}pt;font-size:8.5pt;font-weight:bold;letter-spacing:0.5pt;color:#1e3a8a;border-left:2.5pt solid #1e3a8a;padding-left:4pt">${s.toUpperCase()}</p>${sub ? `<p style="margin:0 0 3pt;padding-left:6.5pt;font-size:7pt;color:#64748b">${sub}</p>` : ''}`;
+    const td = 'padding:3pt 4pt;border-bottom:0.5pt solid #e2e8f0;font-size:8pt';
+    const th = 'padding:3pt 4pt;border-bottom:0.75pt solid #cbd5e1;background:#f8fafc;font-size:7pt;color:#64748b;font-weight:bold';
     const tone = slip => `color:${slip >= 20 ? '#b91c1c' : '#b45309'};font-weight:bold`;
     const tbl = (head, rows) => `<table style="width:100%;border-collapse:collapse"><tr>${head.map(h => `<td style="${th}">${h}</td>`).join('')}</tr>${rows}</table>`;
-
-    const kpis = ins.kpis.map(k => `<td style="width:16.6%;padding:4pt 6pt;border:0.75pt solid #cbd5e1;border-top:2.25pt solid ${EXEC_TONE_HEX[k.tone] || EXEC_TONE_HEX.info};vertical-align:top">
-        <p style="margin:0;font-size:6.5pt;color:#64748b;font-weight:bold;letter-spacing:0.4pt">${esc(k.label.toUpperCase())}</p>
-        <p style="margin:1pt 0;font-size:14pt;font-weight:bold;color:#0f172a">${esc(String(k.value))}</p>
-        <p style="margin:0;font-size:6.5pt;color:#475569">${esc(k.sub)}</p></td>`).join('');
-
-    const unitsRows = ins.topUnits.length ? ins.topUnits.map(u => `<tr><td style="${td}">${esc(u.name)}</td><td style="${td}">${esc(ins.short(u.planned))}</td><td style="${td}">${esc(ins.short(u.forecast))}</td><td style="${td};text-align:right;${tone(u.slip)}">+${u.slip} wd</td><td style="${td}">${esc(u.cause || '—')}</td></tr>`).join('')
-        : `<tr><td colspan="5" style="${td};color:#15803d">No unit is forecast to finish late.</td></tr>`;
-    const causeRows = ins.causes.length ? ins.causes.map(c => `<tr><td style="${td}">${esc(c.station)}</td><td style="${td}">${esc(c.vtype)}</td><td style="${td};text-align:right">${c.units}</td><td style="${td};text-align:right">${c.open || '—'}</td><td style="${td};text-align:right;${tone(c.adds)}">+${c.adds} wd</td></tr>`).join('')
-        : `<tr><td colspan="5" style="${td};color:#15803d">Nothing is adding delay right now.</td></tr>`;
-    const vehRows = ins.byVehicle.map(v => `<tr><td style="${td};font-weight:bold">${v.vtype}</td><td style="${td};text-align:right">${v.units}</td><td style="${td};text-align:right">${v.donePct}%</td><td style="${td};text-align:right">${v.expectedPct}%</td><td style="${td};text-align:right;${v.worst > 0 ? tone(v.worst) : 'color:#15803d'}">${v.worst > 0 ? `+${v.worst} wd` : 'on time'}</td></tr>`).join('');
-    const paceRows = ins.pace.map(p => `<tr><td style="${td}">${p.label}</td><td style="${td};text-align:right">${p.planned}</td><td style="${td};text-align:right">${p.completed}</td></tr>`).join('');
+    const header = (part, title) => `<table style="width:100%;border-collapse:collapse;margin:0 0 6pt"><tr><td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a">
+            <p style="margin:0;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#1e3a8a">PRODUCTION INSIGHTS · ${part}</p>
+            <p style="margin:0;font-size:15pt;font-weight:bold;color:#0f172a">${title}</p></td>
+            <td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a;text-align:right;vertical-align:bottom"><p style="margin:0;font-size:7.5pt;color:#64748b">${esc(meta)}</p></td></tr></table>`;
+    const foot = `<p style="margin:8pt 0 0;font-size:6.5pt;color:#94a3b8">Figures follow the process-order forecast used across PPMS · working days (wd) exclude Fridays · as of ${esc(formatDate(todayStr()))}</p>`;
     const iss = ins.issues;
 
-    return `
-        <table style="width:100%;border-collapse:collapse;margin:0 0 5pt"><tr><td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a">
-            <p style="margin:0;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#1e3a8a">PRODUCTION INSIGHTS</p>
-            <p style="margin:0;font-size:15pt;font-weight:bold;color:#0f172a">Key figures, delivery forecast and issues</p></td>
-            <td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a;text-align:right;vertical-align:bottom"><p style="margin:0;font-size:7.5pt;color:#64748b">${esc(meta)}</p></td></tr></table>
-        <table style="width:100%;border-collapse:collapse;margin:0 0 5pt"><tr><td style="padding:4pt 8pt;border:0.75pt solid ${ins.late ? '#fca5a5' : '#86efac'};border-left:4pt solid ${ins.late ? '#b91c1c' : '#15803d'};background:${ins.late ? '#fff5f5' : '#f0fdf4'};font-size:9pt;color:#0f172a">${esc(ins.verdict)}</td></tr></table>
-        <table style="width:100%;border-collapse:separate;border-spacing:3pt 0;margin:0 0 4pt"><tr>${kpis}</tr></table>
+    const kpis = ins.kpis.map(k => `<td style="width:16.6%;padding:5pt 7pt;border:0.75pt solid #cbd5e1;border-top:2.5pt solid ${EXEC_TONE_HEX[k.tone] || EXEC_TONE_HEX.info};vertical-align:top">
+        <p style="margin:0;font-size:6.5pt;color:#64748b;font-weight:bold;letter-spacing:0.4pt">${esc(k.label.toUpperCase())}</p>
+        <p style="margin:2pt 0;font-size:16pt;font-weight:bold;color:#0f172a">${esc(String(k.value))}</p>
+        <p style="margin:0;font-size:6.5pt;color:#475569">${esc(k.sub)}</p></td>`).join('');
+    const obs = ins.observations.map((o, i) => `<p style="margin:0 0 6pt;font-size:8.6pt;color:#0f172a"><b style="color:#1e3a8a">${i + 1}.</b>&nbsp; ${esc(o)}</p>`).join('');
+    const vehRows = ins.byVehicle.map(v => `<tr><td style="${td};font-weight:bold">${v.vtype}</td><td style="${td};text-align:right">${v.units}</td><td style="${td};text-align:right">${v.donePct}%</td><td style="${td};text-align:right">${v.expectedPct}%</td><td style="${td};text-align:right;color:${v.late ? '#b91c1c' : '#15803d'}">${v.late ? `${v.late} of ${v.units}` : 'none'}</td><td style="${td};text-align:right;${v.worst > 0 ? tone(v.worst) : 'color:#15803d'}">${v.worst > 0 ? `+${v.worst} wd` : 'on time'}</td></tr>`).join('');
+    const paceRows = ins.pace.map(p => `<tr><td style="${td}">${p.label}</td><td style="${td};text-align:right">${p.planned}</td><td style="${td};text-align:right">${p.completed}</td></tr>`).join('');
+    const unitsRows = ins.topUnits.length ? ins.topUnits.map(u => `<tr><td style="${td};font-weight:bold">${esc(u.name)}</td><td style="${td}">${esc(ins.short(u.planned))}</td><td style="${td}">${esc(ins.short(u.forecast))}</td><td style="${td};text-align:right;${tone(u.slip)}">+${u.slip} wd</td><td style="${td}">${esc(u.cause || '—')}</td></tr>`).join('')
+        : `<tr><td colspan="5" style="${td};color:#15803d">No unit is forecast to finish late.</td></tr>`;
+    const causeRows = ins.causes.length ? ins.causes.map(c => `<tr><td style="${td};font-weight:bold">${esc(c.station)}</td><td style="${td}">${esc(c.vtype)}</td><td style="${td};text-align:right">${c.units}</td><td style="${td};text-align:right">${c.open || '—'}</td><td style="${td};text-align:right;${tone(c.adds)}">+${c.adds} wd</td></tr>`).join('')
+        : `<tr><td colspan="5" style="${td};color:#15803d">Nothing is adding delay right now.</td></tr>`;
+    const metric = (l, v, color) => `<tr><td style="${td}">${l}</td><td style="${td};text-align:right;font-weight:bold${color ? ';color:' + color : ''}">${v}</td></tr>`;
+
+    const page1 = `${header('1 OF 2', 'Where we stand')}
+        <table style="width:100%;border-collapse:collapse;margin:0 0 6pt"><tr><td style="padding:6pt 10pt;border:0.75pt solid ${ins.late ? '#fca5a5' : '#86efac'};border-left:4pt solid ${ins.late ? '#b91c1c' : '#15803d'};background:${ins.late ? '#fff5f5' : '#f0fdf4'};font-size:9.5pt;color:#0f172a">${esc(ins.verdict)}</td></tr></table>
+        <table style="width:100%;border-collapse:separate;border-spacing:4pt 0;margin:0 0 4pt"><tr>${kpis}</tr></table>
         <table style="width:100%;border-collapse:collapse"><tr>
-            <td style="width:35%;vertical-align:top;padding-right:8pt;border:none">
-                ${H('Units furthest behind')}${tbl(['Unit', 'Planned', 'Forecast', 'Delay', 'Main cause'], unitsRows)}
-                ${H('Where to act first')}${tbl(['Station', 'Veh.', 'Units', 'Open', 'Adds'], causeRows)}
+            <td style="width:50%;vertical-align:top;padding-right:14pt;border:none">${H('Key observations', 'What the figures on these two pages say')}${obs}</td>
+            <td style="width:50%;vertical-align:top;border:none">
+                ${H('Progress by vehicle', 'Blocks done vs expected by today · forecast finish')}${tbl(['Vehicle', 'Units', 'Done', 'Expected', 'Late units', 'Finish'], vehRows)}
+                ${H('Weekly pace', 'Planned to finish vs completed · last 8 weeks')}${tbl(['Week', 'Planned', 'Completed'], paceRows)}
+                <p style="margin:4pt 0 0;font-size:8pt;color:#0f172a">${esc(ins.paceLine)}</p>
+            </td></tr></table>${foot}`;
+    const page2 = `${header('2 OF 2', 'Where to act')}
+        <table style="width:100%;border-collapse:collapse"><tr>
+            <td style="width:60%;vertical-align:top;padding-right:14pt;border:none">
+                ${H('Units furthest behind', 'Forecast finish against the plan · the station adding most of the delay')}${tbl(['Unit', 'Planned finish', 'Forecast finish', 'Delay', 'Main cause'], unitsRows)}
+                ${H('Where to act first', 'Stations pushing unit finishes back right now, largest delay first')}${tbl(['Station', 'Vehicle', 'Units pushed back', 'Not finished', 'Delay added'], causeRows)}
             </td>
-            <td style="width:33%;vertical-align:top;padding-right:8pt;border:none">
-                ${H('Progress by vehicle')}${tbl(['Vehicle', 'Units', 'Done', 'Expected', 'Finish'], vehRows)}
-                ${H('Weekly pace (last 8 weeks)')}${tbl(['Week', 'Planned', 'Completed'], paceRows)}
-                <p style="margin:3pt 0 0;font-size:7.5pt;color:#0f172a">${esc(ins.paceLine)}</p>
-            </td>
-            <td style="width:32%;vertical-align:top;border:none">
-                ${H('Production issues (all time)')}
-                <table style="width:100%;border-collapse:separate;border-spacing:2pt"><tr>
-                    ${[['open', iss.open], ['in progress', iss.inProgress], ['resolved', iss.resolved]].map(([l, v]) => `<td style="background:#eff6ff;padding:3pt 5pt"><p style="margin:0;font-size:12pt;font-weight:bold">${v}</p><p style="margin:0;font-size:6.5pt;color:#475569">${l}</p></td>`).join('')}
+            <td style="width:40%;vertical-align:top;border:none">
+                ${H('Production issues', 'All time, this module')}
+                <table style="width:100%;border-collapse:separate;border-spacing:3pt"><tr>
+                    ${[['Open', iss.open, '#eff6ff', '#0f172a'], ['In progress', iss.inProgress, '#eff6ff', '#0f172a'], ['Resolved', iss.resolved, '#f0fdf4', '#15803d']].map(([l, v, bg, fg]) => `<td style="background:${bg};padding:5pt 7pt"><p style="margin:0;font-size:15pt;font-weight:bold;color:${fg}">${v}</p><p style="margin:0;font-size:7pt;color:#475569">${l}</p></td>`).join('')}
                 </tr></table>
                 <table style="width:100%;border-collapse:collapse">
-                    <tr><td style="${td}">Critical / high still open</td><td style="${td};text-align:right;font-weight:bold;color:${iss.critical ? '#b91c1c' : '#15803d'}">${iss.critical}</td></tr>
-                    <tr><td style="${td}">Opened vs resolved (12 weeks)</td><td style="${td};text-align:right">${iss.opened12} vs ${iss.resolved12}</td></tr>
-                    <tr><td style="${td}">Average time to resolve</td><td style="${td};text-align:right">${iss.avgResolve == null ? '—' : iss.avgResolve + ' days'}</td></tr>
-                    <tr><td style="${td}">Most open category</td><td style="${td};text-align:right">${iss.topOpenCat ? `${esc(iss.topOpenCat[0])} (${iss.topOpenCat[1]})` : '—'}</td></tr>
+                    ${metric('Critical / high still open', iss.critical, iss.critical ? '#b91c1c' : '#15803d')}
+                    ${metric('Opened in the last 12 weeks', iss.opened12)}
+                    ${metric('Resolved in the last 12 weeks', iss.resolved12, iss.resolved12 >= iss.opened12 ? '#15803d' : '#b45309')}
+                    ${metric('Average time to resolve', iss.avgResolve == null ? '—' : iss.avgResolve + ' days')}
+                    ${metric('Most open category', iss.topOpenCat ? `${esc(iss.topOpenCat[0])} (${iss.topOpenCat[1]})` : '—')}
+                    ${metric('Oldest open critical / high', iss.critical ? iss.oldestCritical + ' days' : '—')}
                 </table>
-                ${H('Key observations')}
-                ${ins.observations.map((o, i) => `<p style="margin:0 0 3pt;font-size:7.8pt;color:#0f172a"><b style="color:#1e3a8a">${i + 1}.</b> ${esc(o)}</p>`).join('')}
-            </td>
-        </tr></table>
-        <p style="margin:6pt 0 0;font-size:6.5pt;color:#94a3b8">Figures follow the process-order forecast used across PPMS · working days exclude Fridays · as of ${esc(formatDate(todayStr()))}</p>`;
+            </td></tr></table>${foot}`;
+    return `<div class="ExecA4">${page1}</div>${sectionBreak}<div class="ExecA4">${page2}</div>`;
 }
 
 /** Excel: an "Insights" sheet with the same sections, one under the other. */
@@ -14137,6 +14205,15 @@ function _addExecInsightsSheet(wb, ins) {
     title('Key figures');
     head(['Measure', 'Value', 'Detail']);
     ins.kpis.forEach(k => ws.addRow([k.label, k.value, k.sub]));
+    blank();
+
+    title('Key observations');
+    ins.observations.forEach((o, i) => {
+        const r = ws.addRow([`${i + 1}. ${o}`]);
+        ws.mergeCells(`A${r.number}:F${r.number}`);
+        r.getCell(1).alignment = { wrapText: true, vertical: 'top' };
+        r.height = 30;
+    });
     blank();
 
     title('Units furthest behind');
@@ -14169,15 +14246,35 @@ function _addExecInsightsSheet(wb, ins) {
      ['Opened in the last 12 weeks', iss.opened12], ['Resolved in the last 12 weeks', iss.resolved12],
      ['Average time to resolve (days)', iss.avgResolve ?? '—'], ['Most open category', iss.topOpenCat ? `${iss.topOpenCat[0]} (${iss.topOpenCat[1]})` : '—']]
         .forEach(r => ws.addRow(r));
-    blank();
+    return ws;
+}
 
-    title('Key observations');
-    ins.observations.forEach((o, i) => {
-        const r = ws.addRow([`${i + 1}. ${o}`]);
-        ws.mergeCells(`A${r.number}:F${r.number}`);
-        r.getCell(1).alignment = { wrapText: true };
-        r.height = 30;
+/** Excel: the cover as a "Summary" sheet — at a glance + contents. */
+function _addExecSummarySheet(wb, parts, segments, issueRows) {
+    const cover = _execCoverSummary();
+    const ws = wb.addWorksheet('Summary', { views: [{ showGridLines: false }] });
+    ws.columns = [{ width: 34 }, { width: 22 }, { width: 46 }];
+    const navy = 'FF1E3A8A', grey = 'FF64748B';
+    const t = ws.addRow(['Executive Report']); t.font = { bold: true, size: 18, color: { argb: 'FF0F172A' } };
+    const sub = ws.addRow([_execCoverBlurb(parts)]); sub.font = { color: { argb: grey } };
+    ws.mergeCells(`A${sub.number}:C${sub.number}`);
+    ws.addRow([]);
+    [['Module', cover.module], ['Plan version', cover.version || '—'], ['Generated', cover.generated]].forEach(([k, v]) => {
+        const r = ws.addRow([k, v]); r.getCell(1).font = { color: { argb: grey } }; r.getCell(2).font = { bold: true };
     });
+    ws.addRow([]);
+    ws.addRow(['At a glance']).font = { bold: true, size: 13, color: { argb: navy } };
+    [['Complete', `${cover.pct}%`], ['Planned tasks', cover.total], ['In progress', cover.inProgress], ['Overdue', cover.overdue],
+     ['Planned delivery', cover.plannedDelivery], ['Expected delivery', cover.expectedDelivery]].forEach(([k, v]) => {
+        const r = ws.addRow([k, v]); r.getCell(2).font = { bold: true };
+        r.getCell(2).alignment = { horizontal: 'left' };
+    });
+    ws.addRow([]);
+    ws.addRow(['Contents']).font = { bold: true, size: 13, color: { argb: navy } };
+    const line = (name, detail) => { const r = ws.addRow([name, '', detail]); r.getCell(1).font = { bold: true }; r.getCell(3).font = { color: { argb: grey } }; };
+    segments.forEach(seg => line(`VPX Station Report — ${seg.vtype} · ${seg.cat}`, `sheet "${`${seg.vtype} - ${seg.cat}`.slice(0, 31)}"`));
+    if (parts.insights) line('Production Insights', 'sheet "Insights"');
+    if (parts.issues) line('Production Issues Status Report', `${issueRows.length} issues · sheet "Issues Status Report"`);
     return ws;
 }
 
@@ -14187,14 +14284,17 @@ async function exportExecutiveReportExcel(preview) {
     if (typeof ExcelJS === 'undefined') { showToast('ExcelJS not loaded yet — please wait a moment and try again.', 'error'); return; }
     showToast('Preparing Executive Report…', 'info');
 
-    const segments = _collectVpxExecutiveSegments();
+    const parts = _execParts();
+    if (_execNothingSelected(parts)) return;
+    const segments = parts.stations ? _collectVpxExecutiveSegments() : [];
     const issueRows = await _buildIssueStatusReportRowsAllTime();
-    if (!segments.length && !issueRows.length) { showToast('No data available for the Executive Report.', 'error'); return; }
+    if (!parts.cover && !segments.length && !parts.insights && !parts.issues) { showToast('No data available for the Executive Report.', 'error'); return; }
     const title = 'Executive Report';
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'PPMS';
     wb.created = new Date();
+    if (parts.cover) _addExecSummarySheet(wb, parts, segments, issueRows);
     const usedNames = new Set();
     segments.forEach(seg => {
         let name = `${seg.vtype} - ${seg.cat}`.slice(0, 31);
@@ -14203,9 +14303,9 @@ async function exportExecutiveReportExcel(preview) {
         usedNames.add(name);
         _addVpxStationReportSheet(wb, seg, name, seg.cat);
     });
-    if (_execIncludeInsights()) _addExecInsightsSheet(wb, _execInsightsModel(issueRows));
-    _addIssueStatusReportSheet(wb, issueRows, 'Issues Status Report', 'Production Issues Status Report — All Time');
-    _addStationReportKeySheet(wb, title);
+    if (parts.insights) _addExecInsightsSheet(wb, _execInsightsModel(issueRows));
+    if (parts.issues) _addIssueStatusReportSheet(wb, issueRows, 'Issues Status Report', 'Production Issues Status Report — All Time');
+    if (segments.length) _addStationReportKeySheet(wb, title);
 
     const now = localDateStr(new Date());
     const doDownload = async () => {
@@ -14231,19 +14331,25 @@ async function exportExecutiveReportPDF(preview) {
     if (!window.jspdf) { showToast('PDF library not loaded — please refresh.', 'error'); return; }
     showToast('Preparing Executive Report…', 'info');
 
-    const segments = _collectVpxExecutiveSegments();
+    const parts = _execParts();
+    if (_execNothingSelected(parts)) return;
+    const segments = parts.stations ? _collectVpxExecutiveSegments() : [];
     const issueRows = await _buildIssueStatusReportRowsAllTime();
-    if (!segments.length && !issueRows.length) { showToast('No data available for the Executive Report.', 'error'); return; }
+    if (!parts.cover && !segments.length && !parts.insights && !parts.issues) { showToast('No data available for the Executive Report.', 'error'); return; }
     const title = 'Executive Report';
     const cover = _execCoverSummary();
     const meta = [cover.module, cover.version, `Generated ${cover.generated}`].filter(Boolean).join('  ·  ');
     const models = segments.map(_execSegmentModel);
     const layouts = models.map(_execSegmentLayout);
-    const insights = _execIncludeInsights() ? _execInsightsModel(issueRows) : null;
+    const insights = parts.insights ? _execInsightsModel(issueRows) : null;
+    const INSIGHT_PAGES = 2;
 
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    const hasOutline = !!doc.outline?.add;
+    // Bookmarks are added at the end, once we know whether page 1 (the
+    // cover) stays — without a cover it is dropped and every page moves up.
+    const outline = [];
+    const hasOutline = { add: (t, n) => outline.push([t, n]) };
     const M = EXEC_MARGIN;
 
     // Print-friendly title: coloured text + a thin rule, no solid band
@@ -14285,8 +14391,8 @@ async function exportExecutiveReportPDF(preview) {
         });
     };
 
-    // ── Cover ──
-    {
+    // ── Cover ── (always drawn on page 1; removed at the end when not wanted)
+    if (parts.cover) {
         const W = 297, H = 210;
         // Print-friendly cover: white page, one slim brand bar + a divider line
         doc.setFillColor(30, 58, 138); doc.rect(0, 0, 3, H, 'F');
@@ -14296,7 +14402,7 @@ async function exportExecutiveReportPDF(preview) {
         doc.setTextColor(15, 23, 42); doc.setFontSize(28);
         doc.text(['Executive', 'Report'], 14, 50);
         doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(71, 85, 105);
-        doc.text(doc.splitTextToSize('Production Planning & Monitoring System — VPX station status for every vehicle and component, plus the Production Issues status report.', 78), 14, 74);
+        doc.text(doc.splitTextToSize(_execCoverBlurb(parts), 78), 14, 74);
         doc.setFontSize(8.5);
         [['Module', cover.module], ['Plan version', cover.version || '—'], ['Generated', cover.generated]].forEach(([k, v], i) => {
             doc.setTextColor(100, 116, 139); doc.text(k.toUpperCase(), 14, 150 + i * 14, { charSpace: 0.3 });
@@ -14331,8 +14437,8 @@ async function exportExecutiveReportPDF(preview) {
         doc.setTextColor(15, 23, 42); doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
         doc.text('Contents', tx, y); y += 7;
         const entries = models.map((m, i) => [`VPX Station Report — ${m.vtype} · ${m.cat}`, `${m.stats.units} units · ${m.stats.stations} stations`, i + 2]);
-        if (insights) entries.push(['Production Insights', 'Key figures, delivery forecast, where to act, issues', models.length + 2]);
-        entries.push(['Production Issues Status Report', `${issueRows.length} issues · all time`, models.length + (insights ? 3 : 2)]);
+        if (insights) entries.push(['Production Insights', 'Where we stand · where to act (2 pages)', models.length + 2]);
+        if (parts.issues) entries.push(['Production Issues Status Report', `${issueRows.length} issues · all time`, models.length + 2 + (insights ? INSIGHT_PAGES : 0)]);
         doc.setFontSize(8.5);
         entries.forEach(([name, sub, page]) => {
             doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 23, 42); doc.text(name, tx, y);
@@ -14341,7 +14447,7 @@ async function exportExecutiveReportPDF(preview) {
             doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.2); doc.line(tx, y + 2, W - 14, y + 2);
             y += 7;
         });
-        if (hasOutline) { try { doc.outline.add(null, 'Cover', { pageNumber: 1 }); } catch {} }
+        hasOutline.add('Cover', 1);
     }
 
     // ── One page per VPX segment, sized so the table always fits ──
@@ -14416,7 +14522,7 @@ async function exportExecutiveReportPDF(preview) {
             const t = doc.lastAutoTable || {};
             const ok = last === pageNo && (t.startPageNumber ?? pageNo) === pageNo;
             if (ok) {
-                if (hasOutline) { try { doc.outline.add(null, `${m.vtype} · ${m.cat}`, { pageNumber: pageNo }); } catch {} }
+                hasOutline.add(`${m.vtype} · ${m.cat}`, pageNo);
                 break;
             }
             const next = _execSegmentLayout(m, { maxFont: L.font - 0.25 });
@@ -14426,16 +14532,17 @@ async function exportExecutiveReportPDF(preview) {
         }
     });
 
-    // ── Production Insights (one page, between progress and issues) ──
+    // ── Production Insights (two pages, between progress and issues) ──
     if (insights) {
         const insightsPage = _execDrawInsightsPdf(doc, insights, band, meta);
-        if (hasOutline) { try { doc.outline.add(null, 'Production Insights', { pageNumber: insightsPage }); } catch {} }
+        hasOutline.add('Production Insights', insightsPage);
     }
 
     // ── Production Issues Status Report (list — may run over several pages) ──
+    if (parts.issues) {
     doc.addPage('a4', 'landscape');
     const issuesStart = doc.internal.getCurrentPageInfo().pageNumber;
-    if (hasOutline) { try { doc.outline.add(null, 'Production Issues Status Report', { pageNumber: issuesStart }); } catch {} }
+    hasOutline.add('Production Issues Status Report', issuesStart);
     band(297, 'Production Issues', 'Status Report — All Time', meta);
     {
         let x = M;
@@ -14459,10 +14566,16 @@ async function exportExecutiveReportPDF(preview) {
             didDrawPage: data => { if (data.pageNumber > 1) band(297, 'Production Issues', 'Status Report — All Time (continued)', meta); },
         });
     }
+    }
+
+    // No cover wanted: drop the blank first page; everything moves up one
+    const shift = parts.cover ? 0 : 1;
+    if (shift && doc.internal.getNumberOfPages() > 1) doc.deletePage(1);
+    if (doc.outline?.add) outline.forEach(([t, n]) => { try { doc.outline.add(null, t, { pageNumber: n - shift }); } catch {} });
 
     // ── Footer on every page except the cover ──
     const total = doc.internal.getNumberOfPages();
-    for (let p = 2; p <= total; p++) {
+    for (let p = parts.cover ? 2 : 1; p <= total; p++) {
         doc.setPage(p);
         const mb = doc.internal.getPageInfo(p).pageContext.mediaBox;
         const w = (mb.topRightX - mb.bottomLeftX) * MM_PER_PT, h = (mb.topRightY - mb.bottomLeftY) * MM_PER_PT;
@@ -14486,16 +14599,18 @@ async function exportExecutiveReportWord(preview) {
     if (!isKD2Module()) { showToast('Executive Report is only available for the F200-KD2 module.', 'error'); return; }
     showToast('Preparing Executive Report…', 'info');
 
-    const segments = _collectVpxExecutiveSegments();
+    const parts = _execParts();
+    if (_execNothingSelected(parts)) return;
+    const segments = parts.stations ? _collectVpxExecutiveSegments() : [];
     const issueRows = await _buildIssueStatusReportRowsAllTime();
-    if (!segments.length && !issueRows.length) { showToast('No data available for the Executive Report.', 'error'); return; }
+    if (!parts.cover && !segments.length && !parts.insights && !parts.issues) { showToast('No data available for the Executive Report.', 'error'); return; }
 
     const cover = _execCoverSummary();
     const meta = [cover.module, cover.version, `Generated ${cover.generated}`].filter(Boolean).join('  ·  ');
     const models = segments.map(_execSegmentModel);
     const layouts = models.map(m => ({ ..._execSegmentLayout(m, { word: true }), meta }));
-    const insights = _execIncludeInsights() ? _execInsightsModel(issueRows) : null;
-    const { body, style } = _execWordDocument(cover, models, layouts, issueRows, meta, insights);
+    const insights = parts.insights ? _execInsightsModel(issueRows) : null;
+    const { body, style } = _execWordDocument(cover, models, layouts, issueRows, meta, insights, parts);
 
     const now = localDateStr(new Date());
     exportHtmlAsWord(`executive_report_${now}.doc`, 'Executive Report', body, preview, { style });
@@ -14503,7 +14618,7 @@ async function exportExecutiveReportWord(preview) {
 
 /** Word document body + page-setup styles. Each page is its own Word
  *  section, so every VPX page can have its own paper size (A4 or A3). */
-function _execWordDocument(cover, models, layouts, issueRows, meta, insights = null) {
+function _execWordDocument(cover, models, layouts, issueRows, meta, insights = null, parts = { cover: true, stations: true, insights: !!insights, issues: true }) {
     const mPt = (EXEC_MARGIN * PT_PER_MM).toFixed(1) + 'pt';
     const pageCss = (name, page) => `@page ${name} { size: ${(page.w * PT_PER_MM).toFixed(1)}pt ${(page.h * PT_PER_MM).toFixed(1)}pt; mso-page-orientation: landscape; margin: ${mPt}; }
         div.${name} { page: ${name}; }`;
@@ -14521,12 +14636,13 @@ function _execWordDocument(cover, models, layouts, issueRows, meta, insights = n
     const tile = (label, value, color = '#0f172a') => `<td style="width:33%;padding:8pt 10pt;border:0.75pt solid #cbd5e1;background:#ffffff;vertical-align:top">
         <p style="margin:0;font-size:7pt;color:#64748b;letter-spacing:0.5pt">${label.toUpperCase()}</p>
         <p style="margin:2pt 0 0;font-size:17pt;font-weight:bold;color:${color}">${esc(String(value))}</p></td>`;
-    let body = `<div class="ExecA4">
+    const sections = [];
+    if (parts.cover) sections.push(`<div class="ExecA4">
         <table style="width:100%;border-collapse:collapse"><tr style="height:470pt">
         <td style="width:34%;padding:24pt 18pt;vertical-align:top;border:none;border-left:6pt solid #1e3a8a;border-right:0.75pt solid #e2e8f0">
             <p style="margin:0;font-size:9pt;font-weight:bold;letter-spacing:2pt;color:#1e3a8a">PPMS</p>
             <p style="margin:10pt 0 0;font-size:30pt;font-weight:bold;line-height:32pt;color:#0f172a">Executive<br>Report</p>
-            <p style="margin:12pt 0 60pt;font-size:9.5pt;color:#475569">Production Planning &amp; Monitoring System — VPX station status for every vehicle and component, plus the Production Issues status report.</p>
+            <p style="margin:12pt 0 60pt;font-size:9.5pt;color:#475569">${esc(_execCoverBlurb(parts))}</p>
             ${[['Module', cover.module], ['Plan version', cover.version || '—'], ['Generated', cover.generated]].map(([k, v]) =>
                 `<p style="margin:10pt 0 0;font-size:7.5pt;letter-spacing:0.5pt;color:#64748b">${k.toUpperCase()}</p><p style="margin:0;font-size:10pt;font-weight:bold;color:#0f172a">${esc(v)}</p>`).join('')}
         </td>
@@ -14541,25 +14657,25 @@ function _execWordDocument(cover, models, layouts, issueRows, meta, insights = n
                 ${models.map(m => `<tr><td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:9pt;font-weight:bold;color:#0f172a">VPX Station Report — ${esc(m.vtype)} · ${esc(m.cat)}</td>
                     <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">${m.stats.units} units · ${m.stats.stations} stations</td></tr>`).join('')}
                 ${insights ? `<tr><td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:9pt;font-weight:bold;color:#0f172a">Production Insights</td>
-                    <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">Key figures, delivery forecast, where to act, issues</td></tr>` : ''}
-                <tr><td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:9pt;font-weight:bold;color:#0f172a">Production Issues Status Report</td>
-                    <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">${issueRows.length} issues · all time</td></tr>
+                    <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">Where we stand · where to act (2 pages)</td></tr>` : ''}
+                ${parts.issues ? `<tr><td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:9pt;font-weight:bold;color:#0f172a">Production Issues Status Report</td>
+                    <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">${issueRows.length} issues · all time</td></tr>` : ''}
             </table>
             <p style="margin:10pt 0 0;font-size:7.5pt;color:#94a3b8">Each VPX report fits on one page: all stations and units, sized automatically (A4, or A3 for very large segments).</p>
-        </td></tr></table></div>`;
+        </td></tr></table></div>`);
 
     // One section per VPX segment
     models.forEach((m, i) => {
-        body += sectionBreak + `<div class="${divFor(layouts[i].page)}">${_execWordSegmentHtml(m, layouts[i])}</div>`;
+        sections.push(`<div class="${divFor(layouts[i].page)}">${_execWordSegmentHtml(m, layouts[i])}</div>`);
     });
 
-    // Production Insights (between progress and issues)
-    if (insights) body += sectionBreak + `<div class="ExecA4">${_execInsightsWordHtml(insights, meta)}</div>`;
+    // Production Insights (between progress and issues) — two sections
+    if (insights) sections.push(_execInsightsWordHtml(insights, meta, sectionBreak));
 
     // Issues
     const statusLabel = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Closed' };
     const td = 'padding:2pt 3pt;border:0.5pt solid #e2e8f0;font-size:7.5pt;vertical-align:top';
-    body += sectionBreak + `<div class="ExecA4">
+    if (parts.issues) sections.push(`<div class="ExecA4">
         <table style="width:100%;border-collapse:collapse;margin:0 0 6pt"><tr><td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a">
             <p style="margin:0;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#1e3a8a">PRODUCTION ISSUES</p>
             <p style="margin:0;font-size:15pt;font-weight:bold;color:#0f172a">Status Report — All Time</p></td>
@@ -14578,8 +14694,9 @@ function _execWordDocument(cover, models, layouts, issueRows, meta, insights = n
                 <td style="${td};white-space:nowrap">${esc(formatIssueDate(r.created_at))}</td>
                 <td style="${td};white-space:nowrap">${r.resolved_at ? esc(formatIssueDate(r.resolved_at)) : '—'}</td>
                 <td style="${td}">${esc(r.person_in_charge || '—')}</td></tr>`).join('')}
-        </table></div>`;
+        </table></div>`);
 
+    const body = sections.join(sectionBreak);
     return { body, style };
 }
 
@@ -14657,14 +14774,22 @@ function wireExecReportModal() {
     });
     document.getElementById('execReportModalClose')?.addEventListener('click', close);
     document.getElementById('execReportModalCancel')?.addEventListener('click', close);
-    // "Include production insights" — keep "What's inside" in step with it
-    document.getElementById('execIncludeInsights')?.addEventListener('change', e => {
-        const on = e.target.checked;
-        const row = document.getElementById('execInsidesInsights');
-        if (row) row.hidden = !on;
-        const no = document.getElementById('execInsideIssuesNo');
-        if (no) no.textContent = on ? '4' : '3';
-    });
+    // Each part is a switch: renumber what's in, and block the formats when nothing is
+    const syncParts = () => {
+        let n = 0;
+        overlay.querySelectorAll('.xr-opt').forEach(row => {
+            const on = row.querySelector('input[type="checkbox"]')?.checked;
+            row.classList.toggle('is-off', !on);
+            const num = row.querySelector('.xr-num');
+            if (num) num.textContent = on ? String(++n) : '–';
+        });
+        const none = n === 0;
+        overlay.querySelectorAll('.xr-fmt-btn').forEach(btn => { btn.disabled = none; });
+        const hint = document.getElementById('execPartsHint');
+        if (hint) hint.hidden = !none;
+    };
+    overlay.querySelectorAll('.xr-opt input[type="checkbox"]').forEach(cb => cb.addEventListener('change', syncParts));
+    syncParts();
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
     // Always previews (never a silent direct download) — the modal stays
