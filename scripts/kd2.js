@@ -6442,9 +6442,18 @@ window.PPMSModuleRuntime = (() => {
                 .filter(s => s.vehicle_type === vehicle)
                 .map(s => [s.station_code, s])
         );
-        // Processes deleted from the active plan version are not re-generated
-        const routeItems = templateRowsForVehicle(vehicle) // sorted by route_sequence, then station_code
-            .filter(item => stationVisibility(vehicle, item.route.station_code) !== 'removed');
+        // Hidden or deleted processes in the active plan version are not
+        // generated; order follows the active version's route (Reorder route),
+        // falling back to the shared catalog for stations it doesn't override.
+        const routeItems = templateRowsForVehicle(vehicle)
+            .filter(item => stationVisibility(vehicle, item.route.station_code) === 'visible')
+            .map(item => {
+                const vr = versionRouteFor(vehicle, item.route.station_code);
+                return vr ? { ...item, route: { ...item.route, route_sequence: vr.route_sequence } } : item;
+            })
+            .sort((a, b) =>
+                (parseInt(a.route.route_sequence, 10) || 9999) - (parseInt(b.route.route_sequence, 10) || 9999) ||
+                String(a.route.station_code || '').localeCompare(String(b.route.station_code || '')));
         const segments = [];
         let currentGroup = null;
 
@@ -6700,12 +6709,10 @@ window.PPMSModuleRuntime = (() => {
                     if (stationError) throw stationError;
                 }
             } else {
-                const { error: stationError } = await dbRef
-                    .from('kd2_process_stations')
-                    .update({ route_sequence: row.route_sequence, is_active: true })
-                    .eq('vehicle_type', row.vehicle_type)
-                    .eq('station_code', row.station_code);
-                if (stationError) throw stationError;
+                // Existing process: keep its place in the route. The template's
+                // own numbering (Hull, then Turret, then Assembly in one list)
+                // differs from the plan's, and writing it reordered the plan.
+                continue;
             }
 
             const { error: routeError } = await dbRef
@@ -7691,9 +7698,8 @@ window.PPMSModuleRuntime = (() => {
                 return;
             }
 
-            const saved = await saveTemplateDefaults({ silent: true });
-            if (!saved) return;
-
+            // Adding to the plan never saves the template over the process
+            // order — that rewrote the shared route for every unit and version.
             const { segments, processItems } = buildRouteSegmentsFromLiveConfig(vehicle);
             if (!processItems.length) {
                 setPlanCreateError('The selected vehicle has no route template.');
@@ -7782,6 +7788,522 @@ window.PPMSModuleRuntime = (() => {
         } catch (error) {
             setPlanCreateError(error.message);
         }
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       PLAN FROM A REFERENCE UNIT
+       The template is a unit that is already planned in the active plan
+       version: every block's process, order, duration and start offset (in
+       working days from the unit's first start) is copied exactly. It is
+       applied to other units / battalions from their own start date, using
+       the same working-day rules (Fridays, no-work days) as the plan.
+       It only ever INSERTS plan blocks — it never changes the process order,
+       the process list or the lead times — and one Undo removes them all.
+       ════════════════════════════════════════════════════════════════ */
+    const COPY_PLAN_COPY_FIELDS = ['category_code', 'station_code', 'category_sequence', 'station_sequence_in_category',
+        'route_sequence', 'parallel_with_previous', 'work_center', 'planning_level'];
+    const COPY_PLAN_LINE_COLORS = { Hull: '#2563eb', Turret: '#7c3aed', Structure: '#2563eb', 'Assembly & Processing & Testing': '#059669' };
+    const copyPlan = {
+        rows: [],            // every kd2_plan row of the active version (this vehicle)
+        reference: null,     // { battalionId, vehicle, serial, label, anchor, span, items[] }
+        overlayHome: null,
+    };
+
+    function copyPlanEl(id) { return document.getElementById(id); }
+    function copyPlanDate(d) {
+        return d ? parseDateLocal(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '—';
+    }
+
+    function copyPlanUnitOptions(battalionId, vehicle) {
+        if (!battalionId || !vehicle) return [];
+        const input = inputFor(battalionId, vehicle);
+        const quantity = parseInt(input?.required_quantity, 10) || 0;
+        const unitMap = new Map(
+            state.vehicleUnits
+                .filter(row => row.battalion_id === battalionId && row.vehicle_type === vehicle)
+                .map(row => [row.unit_serial, row])
+        );
+        const serials = new Set();
+        for (let i = 1; i <= quantity; i += 1) serials.add(i);
+        unitMap.forEach((_, serial) => serials.add(serial));
+        copyPlan.rows.forEach(r => { if (r.battalion_id === battalionId && r.vehicle_type === vehicle) serials.add(r.unit_serial); });
+        return [...serials].sort((a, b) => a - b).map(serial => {
+            const unit = unitMap.get(serial);
+            const planned = copyPlan.rows.find(r => r.battalion_id === battalionId && r.vehicle_type === vehicle && r.unit_serial === serial);
+            return {
+                serial,
+                label: unit?.unit_label || planned?.unit_label || `${vehicle}-${String(serial).padStart(2, '0')}`,
+                code: unit?.unit_code || '',
+            };
+        });
+    }
+
+    function copyPlanBlocksFor(battalionId, vehicle, serial) {
+        return copyPlan.rows.filter(r => r.battalion_id === battalionId && r.vehicle_type === vehicle && r.unit_serial === serial);
+    }
+
+    function copyPlanBattalionCode(id) {
+        return state.battalions.find(b => b.id === id)?.battalion_code || '—';
+    }
+
+    async function loadCopyPlanRows(vehicle) {
+        const rows = await queryAll(PlanVersions.scoped(
+            dbRef.from('kd2_plan').select('*').eq('vehicle_type', vehicle), 'kd2'
+        ).order('id'));
+        copyPlan.rows = rows;
+    }
+
+    /** Captures the reference unit: one item per block, in plan process order. */
+    function buildCopyPlanReference(battalionId, vehicle, serial) {
+        const rules = planningRulesFor(battalionId, vehicle);
+        const blocks = copyPlanBlocksFor(battalionId, vehicle, serial)
+            .filter(r => r.planned_start_date && r.planned_end_date)
+            .filter(r => stationVisibility(vehicle, r.station_code) === 'visible');
+        if (!blocks.length) return null;
+        const anchor = minDateStr(blocks.map(r => r.planned_start_date));
+        const order = window.PPMSModuleRuntime?.getStationOrderByCode?.(vehicle) || new Map();
+        const items = blocks.map(r => {
+            const station = state.stations.find(s => s.vehicle_type === vehicle && s.station_code === r.station_code) || {};
+            const line = order.get(r.station_code)?.line || stationTrack({ ...station, vehicle_type: vehicle, category_code: r.category_code }).line;
+            return {
+                row: r,
+                name: station.station_name || r.station_code,
+                line,
+                sortKey: order.get(r.station_code)?.sortKey ?? 99999999,
+                offset: workingDayOffsetBetween(anchor, r.planned_start_date, rules),
+                duration: Math.max(countWorkingDaysInclusive(r.planned_start_date, r.planned_end_date, rules), 1),
+            };
+        }).sort((a, b) => a.sortKey - b.sortKey || a.offset - b.offset || String(a.row.station_code).localeCompare(String(b.row.station_code)));
+        const span = Math.max(...items.map(i => i.offset + i.duration), 1);
+        const unit = copyPlanUnitOptions(battalionId, vehicle).find(u => u.serial === serial);
+        return { battalionId, vehicle, serial, label: unit?.label || String(serial), anchor, span, items, rules };
+    }
+
+    /** Dates for every reference block when the target unit starts on `start`. */
+    function scheduleCopyPlanUnit(ref, battalionId, start) {
+        const rules = planningRulesFor(battalionId, ref.vehicle);
+        const first = localDateStr(normalizeWorkingDateForward(start, rules));
+        return ref.items.map(item => {
+            const s = shiftWorkingDateByOffset(first, item.offset, rules);
+            const window = buildForwardWindow(s, item.duration, rules);
+            return { item, start: window.start, end: window.end };
+        });
+    }
+
+    /** Typical working-day gap between consecutive unit starts in a battalion. */
+    function copyPlanTypicalSpacing(battalionId, vehicle) {
+        const rules = planningRulesFor(battalionId, vehicle);
+        const starts = new Map();
+        copyPlan.rows.filter(r => r.battalion_id === battalionId && r.vehicle_type === vehicle && r.planned_start_date)
+            .forEach(r => { const s = starts.get(r.unit_serial); if (!s || r.planned_start_date < s) starts.set(r.unit_serial, r.planned_start_date); });
+        const sorted = [...starts.values()].sort();
+        const gaps = [];
+        for (let i = 1; i < sorted.length; i += 1) gaps.push(workingDayOffsetBetween(sorted[i - 1], sorted[i], rules));
+        const positive = gaps.filter(g => g > 0).sort((a, b) => a - b);
+        return positive.length ? positive[Math.floor(positive.length / 2)] : 5;
+    }
+
+    function copyPlanError(message) {
+        const el = copyPlanEl('kd2CopyPlanError');
+        if (!el) return;
+        el.textContent = message || '';
+        el.style.display = message ? 'flex' : 'none';
+    }
+
+    function fillCopyPlanBattalionSelect(select, preferId) {
+        select.innerHTML = state.battalions.map(b =>
+            `<option value="${b.id}">${escapeHtml(b.battalion_code)}${b.battalion_name ? ` · ${escapeHtml(b.battalion_name)}` : ''}</option>`).join('');
+        if (preferId && state.battalions.some(b => b.id === preferId)) select.value = String(preferId);
+    }
+
+    function renderCopyPlanRefUnits() {
+        const vehicle = copyPlanEl('kd2CopyPlanVehicle').value;
+        const battalionId = parseInt(copyPlanEl('kd2CopyPlanRefBattalion').value, 10);
+        const select = copyPlanEl('kd2CopyPlanRefUnit');
+        const units = copyPlanUnitOptions(battalionId, vehicle)
+            .map(u => ({ ...u, blocks: copyPlanBlocksFor(battalionId, vehicle, u.serial).length }))
+            .filter(u => u.blocks > 0);
+        if (!units.length) {
+            select.innerHTML = '<option value="">No planned units in this battalion</option>';
+            return;
+        }
+        // Default: the most recently started unit that has the full sequence
+        // (latest planning = the best-known durations), not the first prototype
+        const firstStart = u => minDateStr(copyPlanBlocksFor(battalionId, vehicle, u.serial).map(r => r.planned_start_date).filter(Boolean));
+        const most = Math.max(...units.map(u => u.blocks));
+        const best = units.filter(u => u.blocks === most).sort((a, b) => firstStart(b).localeCompare(firstStart(a)))[0];
+        const prev = parseInt(select.value, 10);
+        select.innerHTML = units.map(u =>
+            `<option value="${u.serial}">${escapeHtml(u.label)}${u.code ? ` · ${escapeHtml(u.code)}` : ''} — ${u.blocks} blocks</option>`).join('');
+        select.value = String(units.some(u => u.serial === prev) ? prev : best.serial);
+    }
+
+    function renderCopyPlanReference() {
+        const vehicle = copyPlanEl('kd2CopyPlanVehicle').value;
+        const battalionId = parseInt(copyPlanEl('kd2CopyPlanRefBattalion').value, 10);
+        const serial = parseInt(copyPlanEl('kd2CopyPlanRefUnit').value, 10);
+        const ref = serial ? buildCopyPlanReference(battalionId, vehicle, serial) : null;
+        copyPlan.reference = ref;
+        const box = copyPlanEl('kd2CopyPlanRefView');
+        const stats = copyPlanEl('kd2CopyPlanRefStats');
+        if (!ref) {
+            stats.innerHTML = '';
+            box.innerHTML = '<div class="kd2-cp-empty">Choose a planned unit to use as the template.</div>';
+            return;
+        }
+        const lines = [];
+        ref.items.forEach(i => { if (!lines.includes(i.line)) lines.push(i.line); });
+        const lineSpan = line => {
+            const its = ref.items.filter(i => i.line === line);
+            return Math.max(...its.map(i => i.offset + i.duration)) - Math.min(...its.map(i => i.offset));
+        };
+        const processes = new Set(ref.items.map(i => i.row.station_code)).size;
+        stats.innerHTML = [
+            ['Processes', processes],
+            ['Blocks', ref.items.length],
+            ['Unit duration', `${ref.span} wd`],
+            ...lines.map(l => [l.replace(' & Processing & Testing', ''), `${lineSpan(l)} wd`]),
+        ].map(([k, v]) => `<span class="kd2-cp-chip"><small>${escapeHtml(k)}</small><b>${escapeHtml(String(v))}</b></span>`).join('');
+
+        // Working-week ruler (6 working days per week)
+        // labelled every few weeks so the labels never overlap
+        const weeks = Math.ceil(ref.span / 6);
+        const step = Math.max(1, Math.ceil(weeks / 8));
+        const ruler = Array.from({ length: Math.ceil(weeks / step) }, (_, k) => {
+            const w = k * step;
+            return `<span style="left:${(w * 6 / ref.span) * 100}%;width:${(step * 6 / ref.span) * 100}%">Week ${w + 1}</span>`;
+        }).join('');
+        let html = `<div class="kd2-cp-gantt"><div class="kd2-cp-grow kd2-cp-ruler"><div class="kd2-cp-glabel">Process</div><div class="kd2-cp-gtrack">${ruler}</div></div>`;
+        let prevLine = null;
+        const color = name => (typeof window.ganttStationColor === 'function' ? window.ganttStationColor(name) : '#3b82f6');
+        ref.items.forEach(i => {
+            if (i.line !== prevLine) {
+                prevLine = i.line;
+                html += `<div class="kd2-cp-gsep" style="--cp-line:${COPY_PLAN_LINE_COLORS[i.line] || '#64748b'}">${escapeHtml(i.line)}</div>`;
+            }
+            const left = (i.offset / ref.span) * 100, width = Math.max((i.duration / ref.span) * 100, 0.6);
+            const tip = `${i.name}\nStarts on working day ${i.offset + 1} · ${i.duration} working day${i.duration === 1 ? '' : 's'}\nReference: ${copyPlanDate(i.row.planned_start_date)} → ${copyPlanDate(i.row.planned_end_date)}`;
+            html += `<div class="kd2-cp-grow" title="${escapeHtml(tip)}"><div class="kd2-cp-glabel">${escapeHtml(i.name)}</div>`
+                + `<div class="kd2-cp-gtrack"><span class="kd2-cp-bar" style="left:${left}%;width:${width}%;background:${color(i.name)}"></span>`
+                + `<em style="left:calc(${left + width}% + 4px)">${i.duration}d</em></div></div>`;
+        });
+        box.innerHTML = html + '</div>';
+    }
+
+    function copyPlanTargetUnits() {
+        return [...document.querySelectorAll('#kd2CopyPlanUnits tr[data-serial]')].map(tr => ({
+            tr,
+            serial: parseInt(tr.dataset.serial, 10),
+            label: tr.dataset.label,
+            checked: !!tr.querySelector('input[type="checkbox"]')?.checked,
+            blocked: tr.dataset.blocked === '1',
+            start: tr.querySelector('input[type="date"]')?.value || '',
+        }));
+    }
+
+    function renderCopyPlanTargets() {
+        const vehicle = copyPlanEl('kd2CopyPlanVehicle').value;
+        const battalionId = parseInt(copyPlanEl('kd2CopyPlanTargetBattalion').value, 10);
+        const body = copyPlanEl('kd2CopyPlanUnits');
+        const prev = new Map(copyPlanTargetUnits().map(u => [u.serial, u]));
+        const units = copyPlanUnitOptions(battalionId, vehicle);
+        if (!units.length) {
+            body.innerHTML = '<tr><td colspan="5" class="kd2-cp-empty">No units are set up for this battalion and vehicle (Planning Inputs / Unit Codes).</td></tr>';
+            renderCopyPlanSummary();
+            return;
+        }
+        body.innerHTML = units.map(u => {
+            const existing = copyPlanBlocksFor(battalionId, vehicle, u.serial).length;
+            const isRef = copyPlan.reference && copyPlan.reference.battalionId === battalionId && copyPlan.reference.serial === u.serial;
+            const blocked = existing > 0;
+            const p = prev.get(u.serial);
+            const checked = !blocked && (p ? p.checked : false);
+            return `<tr data-serial="${u.serial}" data-label="${escapeHtml(u.label)}" data-blocked="${blocked ? 1 : 0}" class="${blocked ? 'is-blocked' : ''}">
+                <td><input type="checkbox" ${checked ? 'checked' : ''} ${blocked ? 'disabled' : ''} aria-label="Plan ${escapeHtml(u.label)}"></td>
+                <td><b>${escapeHtml(u.label)}</b>${u.code ? `<small>${escapeHtml(u.code)}</small>` : ''}</td>
+                <td>${blocked ? `<span class="kd2-cp-tag">${isRef ? 'Reference unit' : `Already planned · ${existing} blocks`}</span>` : '<span class="kd2-cp-tag is-free">Not planned</span>'}</td>
+                <td><input type="date" class="filter-control" value="${escapeHtml(p?.start || '')}" ${blocked ? 'disabled' : ''}></td>
+                <td class="kd2-cp-finish">—</td>
+            </tr>`;
+        }).join('');
+        renderCopyPlanSummary();
+    }
+
+    /** Fills start dates for the ticked units: first start, then every N working days. */
+    function fillCopyPlanStarts() {
+        const vehicle = copyPlanEl('kd2CopyPlanVehicle').value;
+        const battalionId = parseInt(copyPlanEl('kd2CopyPlanTargetBattalion').value, 10);
+        const rules = planningRulesFor(battalionId, vehicle);
+        const first = copyPlanEl('kd2CopyPlanFirstStart').value;
+        const every = Math.max(parseInt(copyPlanEl('kd2CopyPlanEvery').value, 10) || 0, 0);
+        if (!first) { copyPlanError('Choose the first start date.'); return; }
+        copyPlanError('');
+        let date = localDateStr(normalizeWorkingDateForward(first, rules));
+        copyPlanTargetUnits().forEach(u => {
+            if (!u.checked || u.blocked) return;
+            u.tr.querySelector('input[type="date"]').value = date;
+            date = shiftWorkingDateForward(date, every, rules);
+        });
+        renderCopyPlanSummary();
+    }
+
+    function renderCopyPlanSummary() {
+        const ref = copyPlan.reference;
+        const vehicle = copyPlanEl('kd2CopyPlanVehicle').value;
+        const battalionId = parseInt(copyPlanEl('kd2CopyPlanTargetBattalion').value, 10);
+        const units = copyPlanTargetUnits();
+        const timeline = copyPlanEl('kd2CopyPlanTimeline');
+        const summary = copyPlanEl('kd2CopyPlanSummary');
+        const saveBtn = copyPlanEl('btnKd2CopyPlanSave');
+        const planned = [];
+        units.forEach(u => {
+            const cell = u.tr.querySelector('.kd2-cp-finish');
+            if (!u.checked || u.blocked || !ref || !u.start) { if (cell) cell.textContent = '—'; return; }
+            const sched = scheduleCopyPlanUnit(ref, battalionId, u.start);
+            const finish = maxDateStr(sched.map(s => s.end));
+            if (cell) cell.textContent = copyPlanDate(finish);
+            planned.push({ ...u, sched, start: minDateStr(sched.map(s => s.start)), finish });
+        });
+        const missingStart = units.filter(u => u.checked && !u.blocked && !u.start).length;
+
+        if (!planned.length) {
+            timeline.innerHTML = '<div class="kd2-cp-empty">Tick units and give them a start date to see them here.</div>';
+        } else {
+            const from = minDateStr(planned.map(p => p.start));
+            const to = maxDateStr(planned.map(p => p.finish));
+            const days = Math.max(dayDiff(from, to) + 1, 1);
+            const pos = d => (dayDiff(from, d) / days) * 100;
+            const months = [];
+            const cur = parseDateLocal(from); cur.setDate(1);
+            while (localDateStr(cur) <= to) {
+                const iso = localDateStr(cur);
+                const left = Math.max(pos(iso), 0);
+                months.push(`<span style="left:${left}%">${cur.toLocaleString('en-GB', { month: 'short', year: '2-digit' })}</span>`);
+                cur.setMonth(cur.getMonth() + 1);
+            }
+            const lineOrder = [];
+            ref.items.forEach(i => { if (!lineOrder.includes(i.line)) lineOrder.push(i.line); });
+            timeline.innerHTML = `<div class="kd2-cp-tl">
+                <div class="kd2-cp-tlrow kd2-cp-tlhead"><div class="kd2-cp-tllabel"></div><div class="kd2-cp-tltrack">${months.join('')}</div></div>
+                ${planned.map(p => {
+                    const segs = lineOrder.map((line, li) => {
+                        const its = p.sched.filter(s => s.item.line === line);
+                        if (!its.length) return '';
+                        const s = minDateStr(its.map(x => x.start)), e = maxDateStr(its.map(x => x.end));
+                        const n = lineOrder.length;
+                        return `<span class="kd2-cp-seg" title="${escapeHtml(`${p.label} · ${line}\n${copyPlanDate(s)} → ${copyPlanDate(e)}`)}"
+                            style="left:${pos(s)}%;width:${Math.max(((dayDiff(s, e) + 1) / days) * 100, 0.5)}%;top:${3 + li * (16 / n)}px;height:${Math.max(16 / n - 1, 3)}px;background:${COPY_PLAN_LINE_COLORS[line] || '#64748b'}"></span>`;
+                    }).join('');
+                    return `<div class="kd2-cp-tlrow"><div class="kd2-cp-tllabel">${escapeHtml(p.label)}</div><div class="kd2-cp-tltrack">${segs}</div></div>`;
+                }).join('')}
+                <div class="kd2-cp-legend">${lineOrder.map(l => `<span><i style="background:${COPY_PLAN_LINE_COLORS[l] || '#64748b'}"></i>${escapeHtml(l)}</span>`).join('')}</div>
+            </div>`;
+        }
+
+        const blocks = planned.reduce((n, p) => n + p.sched.length, 0);
+        const parts = [];
+        if (!ref) parts.push('Choose a reference unit first.');
+        else if (!planned.length) parts.push('No units ticked yet.');
+        else parts.push(`<b>${blocks.toLocaleString('en-GB')}</b> blocks for <b>${planned.length}</b> unit${planned.length === 1 ? '' : 's'} in ${escapeHtml(copyPlanBattalionCode(battalionId))} · first start ${copyPlanDate(minDateStr(planned.map(p => p.start)))} · last finish ${copyPlanDate(maxDateStr(planned.map(p => p.finish)))}`);
+        if (missingStart) parts.push(`<span class="kd2-cp-warn">${missingStart} ticked unit${missingStart === 1 ? ' has' : 's have'} no start date</span>`);
+        summary.innerHTML = parts.join(' · ');
+        if (saveBtn) {
+            saveBtn.disabled = !planned.length || missingStart > 0;
+            saveBtn.textContent = planned.length ? `Add ${planned.length} unit${planned.length === 1 ? '' : 's'} to the plan` : 'Add to the plan';
+        }
+        copyPlan.pending = planned;
+        copyPlan.pendingVehicle = vehicle;
+        copyPlan.pendingBattalion = battalionId;
+    }
+
+    function moveCopyPlanOverlayToActiveHost() {
+        const overlay = copyPlanEl('kd2CopyPlanOverlay');
+        if (!overlay) return;
+        if (!copyPlan.overlayHome && overlay.parentNode) copyPlan.overlayHome = { parent: overlay.parentNode };
+        const host = document.fullscreenElement || copyPlan.overlayHome?.parent || document.body;
+        if (overlay.parentNode !== host) host.appendChild(overlay);
+    }
+
+    function closeCopyPlanModal() {
+        const overlay = copyPlanEl('kd2CopyPlanOverlay');
+        if (overlay) overlay.style.display = 'none';
+        if (copyPlan.overlayHome?.parent && overlay && overlay.parentNode !== copyPlan.overlayHome.parent) copyPlan.overlayHome.parent.appendChild(overlay);
+    }
+
+    async function refreshCopyPlanForVehicle() {
+        const vehicle = copyPlanEl('kd2CopyPlanVehicle').value;
+        copyPlanError('');
+        copyPlanEl('kd2CopyPlanRefView').innerHTML = '<div class="kd2-cp-empty">Loading the plan…</div>';
+        await loadCopyPlanRows(vehicle);
+        // Reference battalion: the one with the most planned units for this vehicle
+        const counts = new Map();
+        copyPlan.rows.forEach(r => counts.set(r.battalion_id, (counts.get(r.battalion_id) || new Set()).add(r.unit_serial)));
+        const refBat = [...counts.entries()].sort((a, b) => b[1].size - a[1].size)[0]?.[0] || state.battalions[0]?.id;
+        fillCopyPlanBattalionSelect(copyPlanEl('kd2CopyPlanRefBattalion'), refBat);
+        renderCopyPlanRefUnits();
+        renderCopyPlanReference();
+        // Target: the first battalion that still has unplanned units for this vehicle
+        const hasFree = id => copyPlanUnitOptions(id, vehicle).some(u => !copyPlanBlocksFor(id, vehicle, u.serial).length);
+        const target = state.battalions.find(b => b.id !== refBat && hasFree(b.id))?.id
+            || state.battalions.find(b => hasFree(b.id))?.id || refBat;
+        fillCopyPlanBattalionSelect(copyPlanEl('kd2CopyPlanTargetBattalion'), target);
+        onCopyPlanTargetBattalionChange();
+    }
+
+    function onCopyPlanTargetBattalionChange() {
+        const vehicle = copyPlanEl('kd2CopyPlanVehicle').value;
+        const battalionId = parseInt(copyPlanEl('kd2CopyPlanTargetBattalion').value, 10);
+        const rules = planningRulesFor(battalionId, vehicle);
+        const spacing = copyPlanTypicalSpacing(parseInt(copyPlanEl('kd2CopyPlanRefBattalion').value, 10), vehicle);
+        copyPlanEl('kd2CopyPlanEvery').value = String(spacing);
+        // First start: after the battalion's last planned unit start, else the next working day
+        const starts = copyPlan.rows.filter(r => r.battalion_id === battalionId && r.planned_start_date).map(r => r.planned_start_date);
+        const unitStarts = new Map();
+        copyPlan.rows.filter(r => r.battalion_id === battalionId && r.planned_start_date)
+            .forEach(r => { const s = unitStarts.get(r.unit_serial); if (!s || r.planned_start_date < s) unitStarts.set(r.unit_serial, r.planned_start_date); });
+        const lastUnitStart = maxDateStr([...unitStarts.values()]);
+        copyPlanEl('kd2CopyPlanFirstStart').value = starts.length && lastUnitStart
+            ? shiftWorkingDateForward(lastUnitStart, spacing, rules)
+            : nextWorkingDate(localDateStr(new Date()), rules);
+        renderCopyPlanTargets();
+    }
+
+    async function openCopyPlanModal() {
+        if (!canManageKD2()) { toast('Only planners and operators can add KD2 plan rows.', 'error'); return; }
+        if (!PlanVersions?.getActiveId?.('kd2')) { toast('Select a plan version first.', 'error'); return; }
+        try {
+            if (!state.battalions.length || !state.stations.length) await loadWorkspaceData();
+            await loadVersionRoute({ force: true });
+        } catch (error) {
+            toast(`KD2 setup load failed: ${error.message}`, 'error');
+            return;
+        }
+        const vehicleSel = copyPlanEl('kd2CopyPlanVehicle');
+        vehicleSel.value = getVehicleFilterValue() || state.timelinePlacementVehicle || 'K9';
+        if (!vehicleSel.value) vehicleSel.value = 'K9';
+        moveCopyPlanOverlayToActiveHost();
+        copyPlanEl('kd2CopyPlanOverlay').style.display = 'flex';
+        try {
+            await refreshCopyPlanForVehicle();
+        } catch (error) {
+            copyPlanError(`Could not load the plan: ${error.message}`);
+        }
+    }
+
+    async function saveCopyPlan() {
+        const ref = copyPlan.reference;
+        const planned = copyPlan.pending || [];
+        const battalionId = copyPlan.pendingBattalion;
+        const vehicle = copyPlan.pendingVehicle;
+        if (!ref || !planned.length) return;
+        if (!canManageKD2()) { copyPlanError('Only planners and operators can add KD2 plan rows.'); return; }
+        const btn = copyPlanEl('btnKd2CopyPlanSave');
+        const label = btn.textContent;
+        btn.disabled = true; btn.textContent = 'Checking…';
+        try {
+            // Re-check against the database: never double-plan a unit
+            await loadCopyPlanRows(vehicle);
+            const taken = planned.filter(p => copyPlanBlocksFor(battalionId, vehicle, p.serial).length);
+            if (taken.length) {
+                renderCopyPlanTargets();
+                throw new Error(`${taken.map(t => t.label).join(', ')} ${taken.length === 1 ? 'was' : 'were'} planned by someone else in the meantime and ${taken.length === 1 ? 'has' : 'have'} been left out. Check the list and try again.`);
+            }
+            const versionId = PlanVersions.getActiveId('kd2');
+            const rows = planned.flatMap(p => p.sched.map(({ item, start, end }) => {
+                const row = {
+                    battalion_id: battalionId,
+                    vehicle_type: vehicle,
+                    unit_serial: p.serial,
+                    unit_label: p.label || null,
+                    schedule_week: weekLabel(start),
+                    planned_start_date: start,
+                    planned_end_date: end,
+                    planning_source: 'manual',
+                    remark: 'Template',
+                    plan_version_id: versionId,
+                };
+                COPY_PLAN_COPY_FIELDS.forEach(f => { if (f in item.row) row[f] = item.row[f]; });
+                return row;
+            }));
+            btn.textContent = `Adding ${rows.length} blocks…`;
+            const inserted = [];
+            for (const part of chunk(rows, 400)) {
+                const { data, error } = await dbRef.from('kd2_plan').insert(part).select('id');
+                if (error) {
+                    // Roll back what this run already added, so nothing half-done stays in the plan
+                    if (inserted.length) await dbRef.from('kd2_plan').delete().in('id', inserted);
+                    throw error;
+                }
+                inserted.push(...(data || []).map(r => r.id).filter(Boolean));
+            }
+            const summary = `${planned.length} unit(s) from ${copyPlanBattalionCode(ref.battalionId)} ${ref.label}`;
+            await writeAudit('INSERT', 'kd2_plan', `${vehicle}-copy-from-unit`, null, { reference: `${copyPlanBattalionCode(ref.battalionId)} ${ref.label}`, units: planned.map(p => p.label), blocks: inserted.length });
+            const undoPayloads = rows.map(r => ({ ...r }));
+            window.__ppmsShared?.registerGanttUndoAction?.({
+                label: `plan ${summary}`,
+                insertedIds: inserted,
+                async undo() {
+                    for (const ids of chunk(this.insertedIds, 400)) {
+                        const { error } = await dbRef.from('kd2_plan').delete().in('id', ids);
+                        if (error) throw error;
+                    }
+                    await writeAudit('DELETE', 'kd2_plan', `${vehicle}-copy-from-unit-undo`, { ids: this.insertedIds.length }, null);
+                },
+                async redo() {
+                    const again = [];
+                    for (const part of chunk(undoPayloads, 400)) {
+                        const { data, error } = await dbRef.from('kd2_plan').insert(part).select('id');
+                        if (error) throw error;
+                        again.push(...(data || []).map(r => r.id));
+                    }
+                    this.insertedIds = again;
+                    await writeAudit('INSERT', 'kd2_plan', `${vehicle}-copy-from-unit-redo`, null, { blocks: again.length });
+                },
+            });
+            closeCopyPlanModal();
+            toast(`Added ${inserted.length} blocks for ${summary}. Undo removes them all.`, 'success');
+            await helpers.reloadAll?.();
+        } catch (error) {
+            copyPlanError(error.message || String(error));
+        } finally {
+            btn.textContent = label;
+            renderCopyPlanSummary();
+        }
+    }
+
+    function wireCopyPlanModal() {
+        const overlay = copyPlanEl('kd2CopyPlanOverlay');
+        if (!overlay || overlay.dataset.wired) return;
+        overlay.dataset.wired = '1';
+        copyPlanEl('kd2CopyPlanClose')?.addEventListener('click', closeCopyPlanModal);
+        copyPlanEl('btnKd2CopyPlanCancel')?.addEventListener('click', closeCopyPlanModal);
+        copyPlanEl('kd2CopyPlanVehicle')?.addEventListener('change', () => refreshCopyPlanForVehicle().catch(e => copyPlanError(e.message)));
+        copyPlanEl('kd2CopyPlanRefBattalion')?.addEventListener('change', () => { renderCopyPlanRefUnits(); renderCopyPlanReference(); onCopyPlanTargetBattalionChange(); });
+        copyPlanEl('kd2CopyPlanRefUnit')?.addEventListener('change', () => { renderCopyPlanReference(); renderCopyPlanTargets(); });
+        copyPlanEl('kd2CopyPlanTargetBattalion')?.addEventListener('change', onCopyPlanTargetBattalionChange);
+        copyPlanEl('btnKd2CopyPlanFill')?.addEventListener('click', fillCopyPlanStarts);
+        copyPlanEl('btnKd2CopyPlanAll')?.addEventListener('click', () => {
+            const free = copyPlanTargetUnits().filter(u => !u.blocked);
+            const allOn = free.every(u => u.checked);
+            free.forEach(u => { u.tr.querySelector('input[type="checkbox"]').checked = !allOn; });
+            if (!allOn) fillCopyPlanStarts(); else renderCopyPlanSummary();
+        });
+        copyPlanEl('kd2CopyPlanUnits')?.addEventListener('change', e => {
+            const tr = e.target.closest('tr[data-serial]');
+            if (tr && e.target.type === 'checkbox' && e.target.checked && !tr.querySelector('input[type="date"]').value) {
+                // A newly ticked unit gets the next slot after the latest ticked start
+                const vehicle = copyPlanEl('kd2CopyPlanVehicle').value;
+                const battalionId = parseInt(copyPlanEl('kd2CopyPlanTargetBattalion').value, 10);
+                const rules = planningRulesFor(battalionId, vehicle);
+                const every = Math.max(parseInt(copyPlanEl('kd2CopyPlanEvery').value, 10) || 0, 0);
+                const latest = maxDateStr(copyPlanTargetUnits().filter(u => u.checked && u.start && u.tr !== tr).map(u => u.start));
+                tr.querySelector('input[type="date"]').value = latest
+                    ? shiftWorkingDateForward(latest, every, rules)
+                    : (copyPlanEl('kd2CopyPlanFirstStart').value || '');
+            }
+            renderCopyPlanSummary();
+        });
+        copyPlanEl('btnKd2CopyPlanSave')?.addEventListener('click', saveCopyPlan);
     }
 
     async function savePlanCreate() {
@@ -7898,6 +8420,7 @@ window.PPMSModuleRuntime = (() => {
         document.getElementById('btnManageKd2Processes')?.addEventListener('click', () => openProcessModal(state.routeVehicle || 'K9'));
         document.getElementById('btnKd2ManageLeadTimes')?.addEventListener('click', openLeadTimeModal);
         document.getElementById('btnKd2AddBlock')?.addEventListener('click', () => openPlanCreateModal());
+        wireCopyPlanModal();
         document.getElementById('btnKd2VisualAdd')?.addEventListener('click', event => {
             event.stopPropagation();
             if (!isKD2()) return;
@@ -8049,6 +8572,7 @@ window.PPMSModuleRuntime = (() => {
         document.getElementById('kd2PlanCreateModeToggle')?.addEventListener('click', e => {
             const btn = e.target.closest('.kd2-create-mode-btn');
             if (!btn) return;
+            if (btn.dataset.mode === 'copy') { closePlanCreateModal(); openCopyPlanModal(); return; }
             setPlanCreateMode(btn.dataset.mode);
         });
         document.getElementById('btnKd2TemplateSave')?.addEventListener('click', async () => {
@@ -8386,6 +8910,7 @@ window.PPMSModuleRuntime = (() => {
         currentTimelineViewMode,
         openPlanEdit,
         openPlanCreateModal,
+        openCopyPlanModal,
         openNoWorkModal,
         placePlanBlockFromGanttTrack,
         toggleTimelineVisualMenu,

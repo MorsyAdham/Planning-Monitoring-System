@@ -44,3 +44,73 @@
     outline: 2px solid rgba(248, 250, 252, .9);
     outline-offset: 1px;
 }
+
+/* ── Plan units from a planned unit (reference-unit template) ───── */
+.kd2-cp-modal { width: min(1240px, 96vw); max-width: none; max-height: 94vh; display: flex; flex-direction: column; }
+.kd2-cp-modal .modal-header { align-items: flex-start; gap: 16px; }
+.kd2-cp-sub { margin: 4px 0 0; max-width: 760px; font-size: .8rem; color: var(--clr-text-muted); }
+.kd2-cp-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; overflow: auto; flex: 1; min-height: 0; }
+.kd2-cp-col { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.kd2-cp-body > .ab-error { grid-column: 1 / -1; }
+.kd2-cp-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; align-items: end; }
+.kd2-cp-fields .form-group { margin: 0; }
+.kd2-cp-wide { grid-column: 1 / -1; }
+.kd2-cp-every { display: flex; align-items: center; gap: 6px; }
+.kd2-cp-every input { width: 74px; }
+.kd2-cp-every span { font-size: .76rem; color: var(--clr-text-muted); white-space: nowrap; }
+.kd2-cp-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.kd2-cp-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.kd2-cp-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 10px; border: 1px solid var(--clr-border); border-radius: 999px; background: var(--clr-surface-2, var(--clr-surface)); }
+.kd2-cp-chip small { font-size: .68rem; color: var(--clr-text-muted); text-transform: uppercase; letter-spacing: .06em; }
+.kd2-cp-chip b { font-size: .82rem; color: var(--clr-text); }
+.kd2-cp-empty { padding: 18px; text-align: center; font-size: .8rem; color: var(--clr-text-muted); }
+.kd2-cp-note { margin: 0; font-size: .74rem; color: var(--clr-text-muted); }
+
+/* Reference mini-Gantt */
+.kd2-cp-refview { border: 1px solid var(--clr-border); border-radius: 10px; overflow: auto; max-height: 52vh; background: var(--clr-surface); }
+.kd2-cp-gantt { min-width: 520px; font-size: .74rem; }
+.kd2-cp-grow { display: grid; grid-template-columns: 170px minmax(0, 1fr); align-items: center; min-height: 20px; border-bottom: 1px solid color-mix(in srgb, var(--clr-border) 55%, transparent); }
+.kd2-cp-grow:hover { background: var(--clr-accent-dim); }
+.kd2-cp-glabel { padding: 2px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--clr-text); }
+.kd2-cp-gtrack { position: relative; height: 20px; margin-right: 34px; }
+.kd2-cp-bar { position: absolute; top: 5px; height: 10px; border-radius: 3px; opacity: .92; }
+.kd2-cp-gtrack em { position: absolute; top: 3px; font-style: normal; font-size: .64rem; color: var(--clr-text-muted); white-space: nowrap; }
+.kd2-cp-ruler { position: sticky; top: 0; z-index: 2; background: var(--clr-surface-2, var(--clr-surface)); border-bottom: 1px solid var(--clr-border); }
+.kd2-cp-ruler .kd2-cp-glabel { font-weight: 700; font-size: .66rem; text-transform: uppercase; letter-spacing: .08em; color: var(--clr-text-muted); }
+.kd2-cp-ruler .kd2-cp-gtrack span { position: absolute; top: 0; height: 20px; line-height: 20px; padding-left: 3px; border-left: 1px solid var(--clr-border); font-size: .62rem; color: var(--clr-text-muted); overflow: hidden; }
+.kd2-cp-gsep { padding: 5px 8px 3px; font-size: .66rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--cp-line); border-left: 3px solid var(--cp-line); background: color-mix(in srgb, var(--cp-line) 8%, transparent); }
+
+/* Units table */
+.kd2-cp-units { border: 1px solid var(--clr-border); border-radius: 10px; overflow: auto; max-height: 30vh; }
+.kd2-cp-units table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.kd2-cp-units th { position: sticky; top: 0; z-index: 1; padding: 6px 8px; text-align: left; font-size: .66rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--clr-text-muted); background: var(--clr-surface-2, var(--clr-surface)); border-bottom: 1px solid var(--clr-border); }
+.kd2-cp-units td { padding: 4px 8px; border-bottom: 1px solid color-mix(in srgb, var(--clr-border) 55%, transparent); vertical-align: middle; }
+.kd2-cp-units td small { display: block; font-size: .7rem; color: var(--clr-text-muted); }
+.kd2-cp-units td input[type="date"] { height: 28px; padding: 2px 6px; font-size: .78rem; }
+.kd2-cp-units tr.is-blocked td { opacity: .55; }
+.kd2-cp-finish { white-space: nowrap; font-weight: 600; }
+.kd2-cp-tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: .7rem; background: var(--clr-surface-2, var(--clr-surface)); border: 1px solid var(--clr-border); color: var(--clr-text-muted); white-space: nowrap; }
+.kd2-cp-tag.is-free { border-color: color-mix(in srgb, var(--clr-completed) 50%, transparent); color: var(--clr-completed); }
+.kd2-cp-preview-title { margin-top: 4px; }
+
+/* Units timeline preview */
+.kd2-cp-timeline { border: 1px solid var(--clr-border); border-radius: 10px; padding: 6px 8px; max-height: 28vh; overflow: auto; background: var(--clr-surface); }
+.kd2-cp-tl { min-width: 420px; }
+.kd2-cp-tlrow { display: grid; grid-template-columns: 70px minmax(0, 1fr); align-items: center; min-height: 22px; }
+.kd2-cp-tllabel { font-size: .74rem; font-weight: 600; color: var(--clr-text); }
+.kd2-cp-tltrack { position: relative; height: 22px; border-bottom: 1px solid color-mix(in srgb, var(--clr-border) 50%, transparent); }
+.kd2-cp-tlhead .kd2-cp-tltrack span { position: absolute; top: 3px; padding-left: 3px; border-left: 1px solid var(--clr-border); font-size: .64rem; color: var(--clr-text-muted); white-space: nowrap; }
+.kd2-cp-seg { position: absolute; border-radius: 2px; opacity: .9; }
+.kd2-cp-legend { display: flex; gap: 14px; flex-wrap: wrap; padding: 6px 0 0 70px; font-size: .7rem; color: var(--clr-text-muted); }
+.kd2-cp-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border-radius: 2px; vertical-align: -1px; }
+
+.kd2-cp-foot { display: flex; align-items: center; gap: 10px; }
+.kd2-cp-summary { flex: 1; min-width: 0; font-size: .8rem; color: var(--clr-text-muted); }
+.kd2-cp-summary b { color: var(--clr-text); }
+.kd2-cp-warn { color: var(--clr-overdue); font-weight: 600; }
+
+@media (max-width: 900px) {
+    .kd2-cp-body { grid-template-columns: 1fr; }
+    .kd2-cp-fields { grid-template-columns: 1fr; }
+    .kd2-cp-foot { flex-wrap: wrap; }
+}

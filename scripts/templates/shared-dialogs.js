@@ -1132,9 +1132,9 @@ export function renderSharedDialogs() {
                                 <span class="kd2-create-mode-btn-title">Block</span>
                                 <span class="kd2-create-mode-btn-desc">Add one station block to the live plan</span>
                             </button>
-                            <button type="button" class="kd2-create-mode-btn" data-mode="template">
-                                <span class="kd2-create-mode-btn-title">Template</span>
-                                <span class="kd2-create-mode-btn-desc">Edit the reusable route template</span>
+                            <button type="button" class="kd2-create-mode-btn" data-mode="copy">
+                                <span class="kd2-create-mode-btn-title">From a planned unit</span>
+                                <span class="kd2-create-mode-btn-desc">Copy a unit's full sequence to other units</span>
                             </button>
                         </div>
                     </div>
@@ -1214,6 +1214,80 @@ export function renderSharedDialogs() {
                 <div class="modal-footer">
                     <button class="btn btn-primary" id="btnKd2PlanCreateSave">Add to KD2 Plan</button>
                     <button class="btn btn-ghost" id="btnKd2PlanCreateCancel">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-overlay" id="kd2CopyPlanOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="kd2CopyPlanTitle">
+            <div class="modal kd2-cp-modal">
+                <div class="modal-header">
+                    <div>
+                        <h4 class="modal-title" id="kd2CopyPlanTitle">Plan units from a planned unit</h4>
+                        <p class="kd2-cp-sub">A unit that is already planned is the template: every process, its order, duration and start day are copied exactly. Only new blocks are added. The process order is never changed.</p>
+                    </div>
+                    <button class="modal-close" id="kd2CopyPlanClose" aria-label="Close">&#x2715;</button>
+                </div>
+                <div class="modal-body kd2-cp-body">
+                    <section class="kd2-cp-col">
+                        <h5 class="kd2-modal-section-title"><span class="kd2-modal-section-num">1</span>Template — the reference unit</h5>
+                        <div class="kd2-cp-fields">
+                            <div class="form-group">
+                                <label class="form-label" for="kd2CopyPlanVehicle">Vehicle</label>
+                                <select id="kd2CopyPlanVehicle" class="filter-control">
+                                    <option value="K9">K9</option>
+                                    <option value="K10">K10</option>
+                                    <option value="K11">K11</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="kd2CopyPlanRefBattalion">Battalion</label>
+                                <select id="kd2CopyPlanRefBattalion" class="filter-control"></select>
+                            </div>
+                            <div class="form-group kd2-cp-wide">
+                                <label class="form-label" for="kd2CopyPlanRefUnit">Reference unit</label>
+                                <select id="kd2CopyPlanRefUnit" class="filter-control"></select>
+                            </div>
+                        </div>
+                        <div class="kd2-cp-chips" id="kd2CopyPlanRefStats"></div>
+                        <div class="kd2-cp-refview" id="kd2CopyPlanRefView"></div>
+                        <p class="kd2-cp-note">Bars show each process's start day and duration in working days (Fridays and no-work days excluded). To change the template, edit the reference unit in the Gantt.</p>
+                    </section>
+                    <section class="kd2-cp-col">
+                        <h5 class="kd2-modal-section-title"><span class="kd2-modal-section-num">2</span>Units to plan</h5>
+                        <div class="kd2-cp-fields">
+                            <div class="form-group">
+                                <label class="form-label" for="kd2CopyPlanTargetBattalion">Battalion</label>
+                                <select id="kd2CopyPlanTargetBattalion" class="filter-control"></select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="kd2CopyPlanFirstStart">First unit starts</label>
+                                <input type="date" id="kd2CopyPlanFirstStart" class="filter-control" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="kd2CopyPlanEvery">Next unit every</label>
+                                <div class="kd2-cp-every"><input type="number" id="kd2CopyPlanEvery" class="filter-control" min="0" step="1" value="5" /><span>working days</span></div>
+                            </div>
+                            <div class="form-group kd2-cp-actions">
+                                <button type="button" class="btn btn-ghost btn-sm" id="btnKd2CopyPlanAll">Tick all free units</button>
+                                <button type="button" class="btn btn-outline btn-sm" id="btnKd2CopyPlanFill">Fill start dates</button>
+                            </div>
+                        </div>
+                        <div class="kd2-cp-units">
+                            <table>
+                                <thead><tr><th></th><th>Unit</th><th>Status</th><th>Start</th><th>Finish</th></tr></thead>
+                                <tbody id="kd2CopyPlanUnits"></tbody>
+                            </table>
+                        </div>
+                        <h5 class="kd2-modal-section-title kd2-cp-preview-title"><span class="kd2-modal-section-num">3</span>Preview</h5>
+                        <div class="kd2-cp-timeline" id="kd2CopyPlanTimeline"></div>
+                    </section>
+                    <div class="ab-error" id="kd2CopyPlanError" style="display:none"></div>
+                </div>
+                <div class="modal-footer kd2-cp-foot">
+                    <div class="kd2-cp-summary" id="kd2CopyPlanSummary"></div>
+                    <button class="btn btn-ghost" id="btnKd2CopyPlanCancel">Cancel</button>
+                    <button class="btn btn-primary" id="btnKd2CopyPlanSave" disabled>Add to the plan</button>
                 </div>
             </div>
         </div>
