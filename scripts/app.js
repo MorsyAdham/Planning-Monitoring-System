@@ -5121,6 +5121,11 @@ const _isK10K11 = v => /K1[01]/i.test(String(v));
 let _vpxLastData = null;
 let _vpxVehicleTypeFilter = null;
 let _vpxCategoryFilter = null;
+// KD2: the VPX shows ONE battalion at a time. Unit labels (M1, M2…) repeat
+// in every battalion, so a stacked table made units easy to mix up.
+// null = every battalion (used only by the Executive Report).
+const VPX_BATTALION_KEY = 'ppms_vpx_battalion';
+let _vpxBattalionFilter = (() => { try { return localStorage.getItem(VPX_BATTALION_KEY) || null; } catch { return null; } })();
 let _vpxViewMode = 'matrix'; // 'matrix' | 'station' — mirrors the Gantt's Unit/Process view switch
 
 function _getVehicleType(vehicle) {
@@ -5135,6 +5140,35 @@ function _detectVpxVehicleTypes(data) {
     const seen = new Set();
     data.forEach(t => { const vt = _getVehicleType(t.vehicle); if (vt) seen.add(vt); });
     return ['K9', 'K10', 'K11'].filter(t => seen.has(t));
+}
+
+function _detectVpxBattalions(data) {
+    return [...new Set(data.map(t => t.battalion_code || '—'))]
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+function _vpxBattalionOf(task) {
+    return task.battalion_code || '—';
+}
+
+function _renderVpxBattalionTabs(battalions) {
+    const el = document.getElementById('vpxBattalionTabs');
+    if (!el) return;
+    if (!battalions.length) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    el.innerHTML = `<span class="vpx-bat-label">Battalion</span><span class="vpx-type-tabs vpx-bat-tabs" role="tablist" aria-label="Battalion">${battalions.map(b =>
+        `<button type="button" role="tab" aria-selected="${b === _vpxBattalionFilter}" class="vpx-type-tab vpx-bat-tab${b === _vpxBattalionFilter ? ' active' : ''}" data-vbat="${esc(b)}">${esc(b)}</button>`
+    ).join('')}</span>`;
+    el.querySelectorAll('.vpx-bat-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.dataset.vbat === _vpxBattalionFilter) return;
+            _vpxBattalionFilter = btn.dataset.vbat;
+            try { localStorage.setItem(VPX_BATTALION_KEY, _vpxBattalionFilter); } catch {}
+            _vpxVehicleTypeFilter = null; // re-detect for this battalion
+            _vpxCategoryFilter = null;
+            if (_vpxLastData) renderVPX(_vpxLastData);
+        });
+    });
 }
 
 function _renderVpxTypeTabs(types) {
@@ -5198,7 +5232,9 @@ function _renderVpxCategoryTabs(categories) {
  *  Single source of truth shared by renderVPX and both export functions so
  *  an export can never silently include more than what's on screen. */
 function _getVpxFilteredData(data, includeCategory = true) {
-    if (!isKD2Module() || !_vpxVehicleTypeFilter) return data;
+    if (!isKD2Module()) return data;
+    if (_vpxBattalionFilter) data = data.filter(t => _vpxBattalionOf(t) === _vpxBattalionFilter);
+    if (!_vpxVehicleTypeFilter) return data;
     let filtered = data.filter(t => _getVehicleType(t.vehicle) === _vpxVehicleTypeFilter);
     if (includeCategory && _vpxCategoryFilter) {
         const rt = getModuleRuntime?.();
@@ -5440,7 +5476,7 @@ function buildVpxRows(data) {
 
 function getVpxTitleParts() {
     const parts = [getModuleBadge()];
-    const battalion = isKD2Module() ? filterLabel('battalion', '') : '';
+    const battalion = isKD2Module() ? (_vpxBattalionFilter || filterLabel('battalion', '')) : '';
     const vehicle = filterLabel('vehicle', '');
     const unit = filterLabel('unit', '');
     const category = filterLabel('category', '');
@@ -5695,18 +5731,23 @@ function renderVPX(data) {
 
     if (!data?.length) {
         container.innerHTML = `<div class="vpx-empty">${meta.emptyMessage}</div>`;
+        _renderVpxBattalionTabs([]);
         _renderVpxTypeTabs([]);
         _renderVpxCategoryTabs([]);
         return;
     }
 
     if (isKD2Module()) {
-        const types = _detectVpxVehicleTypes(data);
+        const battalions = _detectVpxBattalions(data);
+        if (!battalions.includes(_vpxBattalionFilter)) _vpxBattalionFilter = battalions[0] || null;
+        _renderVpxBattalionTabs(battalions);
+        const inBattalion = data.filter(t => _vpxBattalionOf(t) === _vpxBattalionFilter);
+        const types = _detectVpxVehicleTypes(inBattalion);
         if (!types.includes(_vpxVehicleTypeFilter)) _vpxVehicleTypeFilter = types[0] || null;
         _renderVpxTypeTabs(types);
 
         if (_vpxVehicleTypeFilter) {
-            const byType = data.filter(t => _getVehicleType(t.vehicle) === _vpxVehicleTypeFilter);
+            const byType = inBattalion.filter(t => _getVehicleType(t.vehicle) === _vpxVehicleTypeFilter);
             const rt = getModuleRuntime?.();
             const compMap = (_vpxVehicleTypeFilter === 'K9' && rt?.getStationCategoryMap)
                 ? rt.getStationCategoryMap('K9') : null;
@@ -5718,6 +5759,7 @@ function renderVPX(data) {
         }
         data = _getVpxFilteredData(data);
     } else {
+        _renderVpxBattalionTabs([]);
         _renderVpxCategoryTabs([]);
     }
 
@@ -12901,6 +12943,7 @@ function _vpxStationReportData() {
     const allCols = activeCols;
 
     const titleParts = [getModuleBadge()];
+    if (_vpxBattalionFilter) titleParts.push(_vpxBattalionFilter);
     if (_vpxVehicleTypeFilter) titleParts.push(_vpxVehicleTypeFilter);
     if (_vpxCategoryFilter) titleParts.push(_vpxCategoryFilter);
     titleParts.push('Station Report');
@@ -13013,10 +13056,11 @@ function _addVpxStationReportSheet(wb, built, sheetName, categoryForReason = _vp
     const thickBord = side => ({ style: 'medium', color: { argb: 'FF475569' } });
 
     let excelRowIdx = 6;
+    const multiBattalion = new Set(rows.map(r => r.battalion_code || '')).size > 1;
     rows.forEach(row => {
         const { cells, finalDelay } = _vpxProjectRow(row, allCols, activeCols);
         const code = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
-        const label = `${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
+        const label = `${multiBattalion ? (row.battalion_code || '—') + ' · ' : ''}${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
         const planRowN = excelRowIdx;
         const actualRowN = excelRowIdx + 1;
 
@@ -13228,10 +13272,11 @@ function _drawVpxStationReportTable(doc, built, title, categoryForReason = _vpxC
     const cellFlags = []; // parallel to body — {projected,late,real} per station cell, per row
     const vehicleBlockStartRows = []; // body row index where each vehicle's Plan row starts
 
+    const multiBattalion = new Set(rows.map(r => r.battalion_code || '')).size > 1;
     rows.forEach(row => {
         const { cells, finalDelay } = _vpxProjectRow(row, allCols, activeCols);
         const code = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
-        const label = `${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
+        const label = `${multiBattalion ? (row.battalion_code || '—') + ' · ' : ''}${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
         const delayReason = getDelayReason(row.vehicle, row.vehicle_no, categoryForReason, row.battalion_code);
 
         vehicleBlockStartRows.push(body.length);
@@ -13620,8 +13665,9 @@ function _execWordSegmentHtml(model, L) {
  *  wrong tab selected. Segments with no data are skipped, same as the
  *  single-tab export's own empty-state handling. */
 function _collectVpxExecutiveSegments() {
-    const savedType = _vpxVehicleTypeFilter, savedCat = _vpxCategoryFilter;
+    const savedType = _vpxVehicleTypeFilter, savedCat = _vpxCategoryFilter, savedBat = _vpxBattalionFilter;
     const segments = [];
+    _vpxBattalionFilter = null; // the Executive Report covers every battalion
     try {
         const rt = getModuleRuntime?.();
         for (const vtype of ['K9', 'K10', 'K11']) {
@@ -13638,6 +13684,7 @@ function _collectVpxExecutiveSegments() {
     } finally {
         _vpxVehicleTypeFilter = savedType;
         _vpxCategoryFilter = savedCat;
+        _vpxBattalionFilter = savedBat;
     }
     return segments;
 }
@@ -14642,7 +14689,7 @@ function openVpxDelayReasonModal(vehicle, vehicleNo, category, battalion) {
     }
 
     const titleEl = document.getElementById('vpxDelayReasonModalTitle');
-    if (titleEl) titleEl.textContent = `Delay Reason — ${vehicle} ${vehicleNo} (${category})`;
+    if (titleEl) titleEl.textContent = `Delay Reason — ${battalion ? battalion + ' · ' : ''}${vehicle} ${vehicleNo} (${category})`;
     const textEl = document.getElementById('vpxDelayReasonText');
     if (textEl) textEl.value = entry.reasons?.[category] || '';
 

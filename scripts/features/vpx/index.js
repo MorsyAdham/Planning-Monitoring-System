@@ -31,6 +31,7 @@ export function initFeature() {
                                 Station Report
                             </button>
                         </div>
+                        <div id="vpxBattalionTabs" class="vpx-bat-picker" hidden></div>
                         <div id="vpxTypeTabs" class="vpx-type-tabs" hidden></div>
                         <div id="vpxCategoryTabs" class="vpx-type-tabs vpx-category-tabs" hidden></div>
                         <button class="btn btn-outline btn-sm" id="btnVpxReportModal" title="Generate a VPX report">
