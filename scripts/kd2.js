@@ -1322,6 +1322,7 @@ window.PPMSModuleRuntime = (() => {
         if (!force && Date.now() - _versionRouteLoadedAt < 2000) return;
         _versionRouteLoadedAt = Date.now();
         state.versionRoute = new Map();
+        state.versionRouteExplicit = new Map();
         state.stationVisibility = new Map();
         if (!dbRef || !PlanVersions?.getActiveId) return;
         // Only meaningful once a specific version is active — otherwise the
@@ -1332,7 +1333,7 @@ window.PPMSModuleRuntime = (() => {
             const [rows, orderRows] = await Promise.all([
                 queryAll(
                     PlanVersions.scoped(
-                        dbRef.from('kd2_plan').select('station_code, vehicle_type, route_sequence, parallel_with_previous, category_code'),
+                        dbRef.from('kd2_plan').select('id, station_code, vehicle_type, route_sequence, parallel_with_previous, category_code'),
                         'kd2'
                     )
                 ),
@@ -1348,20 +1349,37 @@ window.PPMSModuleRuntime = (() => {
                         .eq('plan_version_id', activeId)
                 )).catch(() => []), // table missing until migration 54 runs
             ]);
+            // A station without its own route row takes the position MOST of
+            // its blocks carry (ties: the oldest block) — never "whichever block
+            // the database returned first", which let a few blocks stamped with
+            // a different number (e.g. added from the shared catalog) reorder
+            // the whole route.
+            const votes = new Map();
             rows.forEach(r => {
                 if (!r.vehicle_type || !r.station_code) return;
+                const key = `${r.vehicle_type}||${r.station_code}`;
+                const val = `${parseInt(r.route_sequence, 10) || 9999}|${r.parallel_with_previous ? 1 : 0}`;
+                if (!votes.has(key)) votes.set(key, new Map());
+                const v = votes.get(key);
+                const cur = v.get(val) || { n: 0, minId: Infinity, row: r };
+                cur.n += 1;
+                if ((r.id ?? Infinity) < cur.minId) { cur.minId = r.id ?? Infinity; cur.row = r; }
+                v.set(val, cur);
+            });
+            votes.forEach(v => {
+                const best = [...v.values()].sort((a, b) => b.n - a.n || a.minId - b.minId)[0];
+                const r = best.row;
                 if (!state.versionRoute.has(r.vehicle_type)) state.versionRoute.set(r.vehicle_type, new Map());
-                const m = state.versionRoute.get(r.vehicle_type);
-                if (!m.has(r.station_code)) {
-                    m.set(r.station_code, {
-                        route_sequence: parseInt(r.route_sequence, 10) || 9999,
-                        parallel_with_previous: !!r.parallel_with_previous,
-                        category_code: r.category_code || null,
-                    });
-                }
+                state.versionRoute.get(r.vehicle_type).set(r.station_code, {
+                    route_sequence: parseInt(r.route_sequence, 10) || 9999,
+                    parallel_with_previous: !!r.parallel_with_previous,
+                    category_code: r.category_code || null,
+                });
             });
             orderRows.forEach(r => {
                 if (!r.vehicle_type || !r.station_code) return;
+                if (!state.versionRouteExplicit.has(r.vehicle_type)) state.versionRouteExplicit.set(r.vehicle_type, new Set());
+                state.versionRouteExplicit.get(r.vehicle_type).add(r.station_code);
                 if (!state.versionRoute.has(r.vehicle_type)) state.versionRoute.set(r.vehicle_type, new Map());
                 state.versionRoute.get(r.vehicle_type).set(r.station_code, {
                     route_sequence: parseInt(r.route_sequence, 10) || 9999,
@@ -1385,6 +1403,51 @@ window.PPMSModuleRuntime = (() => {
      *  version, or null to fall back to the global catalog. */
     function versionRouteFor(vehicle, stationCode) {
         return state.versionRoute?.get(vehicle)?.get(stationCode) || null;
+    }
+
+    /** The position a station has in the active version right now — the
+     *  version's own route, else the shared catalog. New plan blocks are
+     *  stamped with this, never with the catalog alone. */
+    function effectiveRouteFor(vehicle, stationCode) {
+        const vr = versionRouteFor(vehicle, stationCode);
+        if (vr) return { route_sequence: vr.route_sequence, parallel_with_previous: !!vr.parallel_with_previous };
+        const st = (state.stations || []).find(s => s.vehicle_type === vehicle && s.station_code === stationCode);
+        return { route_sequence: parseInt(st?.route_sequence, 10) || 9999, parallel_with_previous: !!st?.parallel_with_previous };
+    }
+
+    /** Saves the process order shown on screen as the active version's own
+     *  route for every station of `vehicle` that doesn't have one yet, so the
+     *  order can never again depend on the plan blocks. Existing route rows
+     *  are never overwritten. Called before any blocks are added. */
+    async function pinVersionRoute(vehicle) {
+        const activeId = PlanVersions?.getActiveId?.('kd2');
+        if (!dbRef || !activeId || !vehicle) return;
+        const explicit = state.versionRouteExplicit?.get(vehicle) || new Set();
+        const missing = (state.stations || []).filter(s => s.vehicle_type === vehicle && !explicit.has(s.station_code));
+        if (!missing.length) return;
+        const rows = missing.map(s => {
+            const e = effectiveRouteFor(vehicle, s.station_code);
+            return {
+                plan_version_id: activeId, vehicle_type: vehicle, station_code: s.station_code,
+                route_sequence: e.route_sequence, parallel_with_previous: e.parallel_with_previous,
+                category_code: versionRouteFor(vehicle, s.station_code)?.category_code ?? s.category_code ?? null,
+            };
+        });
+        const { error } = await dbRef.from('kd2_plan_route_order')
+            .upsert(rows, { onConflict: 'plan_version_id,vehicle_type,station_code', ignoreDuplicates: true });
+        if (error) { console.warn('KD2: could not pin the process order:', error.message); return; }
+        if (!state.versionRouteExplicit) state.versionRouteExplicit = new Map();
+        if (!state.versionRouteExplicit.has(vehicle)) state.versionRouteExplicit.set(vehicle, new Set());
+        if (!state.versionRoute.has(vehicle)) state.versionRoute.set(vehicle, new Map());
+        rows.forEach(r => {
+            state.versionRouteExplicit.get(vehicle).add(r.station_code);
+            if (!state.versionRoute.get(vehicle).has(r.station_code)) {
+                state.versionRoute.get(vehicle).set(r.station_code, {
+                    route_sequence: r.route_sequence, parallel_with_previous: r.parallel_with_previous, category_code: r.category_code,
+                });
+            }
+        });
+        await writeAudit('UPSERT', 'kd2_plan_route_order', `${vehicle}:pin-order`, null, { stations: rows.length });
     }
 
     /** 'visible' | 'hidden' | 'removed' for a station in the active plan
@@ -4632,7 +4695,7 @@ window.PPMSModuleRuntime = (() => {
                         station_code: station.station_code,
                         category_sequence: category?.category_sequence || 1,
                         station_sequence_in_category: station.station_sequence_in_category,
-                        route_sequence: station.route_sequence,
+                        route_sequence: effectiveRouteFor(vehicleType, station.station_code).route_sequence,
                         schedule_week: weekLabel(window.start),
                         planned_start_date: window.start,
                         planned_end_date: window.end,
@@ -4655,6 +4718,7 @@ window.PPMSModuleRuntime = (() => {
                 : [];
             const beforeMap = new Map(existingRows.map(row => [buildImportKey(row), row]));
             const upsertedRows = [];
+            for (const vt of new Set(payloads.map(p => p.vehicle_type))) await pinVersionRoute(vt);
             for (const batch of chunk(payloads, 200)) {
                 const { data, error } = await dbRef
                     .from('kd2_plan')
@@ -5034,7 +5098,7 @@ window.PPMSModuleRuntime = (() => {
             station_code: station.station_code,
             category_sequence: category.category_sequence,
             station_sequence_in_category: station.station_sequence_in_category,
-            route_sequence: station.route_sequence,
+            route_sequence: effectiveRouteFor(vehicle, station.station_code).route_sequence,
             schedule_week: weekLabel(window.start),
             planned_start_date: window.start,
             planned_end_date: window.end,
@@ -5042,6 +5106,7 @@ window.PPMSModuleRuntime = (() => {
             remark: remark || null,
             plan_version_id: PlanVersions.getActiveId('kd2'),
         };
+        await pinVersionRoute(vehicle);
         const { data, error } = await dbRef
             .from('kd2_plan')
             .insert(payload)
@@ -7508,7 +7573,7 @@ window.PPMSModuleRuntime = (() => {
                                 station_code: item.route.station_code,
                                 category_sequence: item.category?.category_sequence || item.route.route_sequence,
                                 station_sequence_in_category: item.station?.station_sequence_in_category || 1,
-                                route_sequence: item.route.route_sequence,
+                                route_sequence: effectiveRouteFor(vehicle, item.route.station_code).route_sequence,
                                 schedule_week: weekLabel(window.start),
                                 planned_start_date: window.start,
                                 planned_end_date: window.end,
@@ -7535,6 +7600,7 @@ window.PPMSModuleRuntime = (() => {
                 return;
             }
 
+            for (const vt of new Set(planRows.map(p => p.vehicle_type))) await pinVersionRoute(vt);
             await PlanVersions.scoped(dbRef.from('kd2_plan').delete(), 'kd2').eq('battalion_id', battalion.id);
             for (const batch of chunk(planRows, 500)) {
                 const { error } = await dbRef.from('kd2_plan').insert(batch);
@@ -7742,7 +7808,7 @@ window.PPMSModuleRuntime = (() => {
                 station_code: item.route.station_code,
                 category_sequence: item.category.category_sequence,
                 station_sequence_in_category: item.station.station_sequence_in_category,
-                route_sequence: item.route.route_sequence,
+                route_sequence: effectiveRouteFor(vehicle, item.route.station_code).route_sequence,
                 schedule_week: weekLabel(window.start),
                 planned_start_date: window.start,
                 planned_end_date: window.end,
@@ -7751,6 +7817,7 @@ window.PPMSModuleRuntime = (() => {
                 plan_version_id: PlanVersions.getActiveId('kd2'),
             }));
 
+            await pinVersionRoute(vehicle);
             const { data, error } = await dbRef
                 .from('kd2_plan')
                 .insert(planRows)
@@ -8223,9 +8290,13 @@ window.PPMSModuleRuntime = (() => {
                     plan_version_id: versionId,
                 };
                 COPY_PLAN_COPY_FIELDS.forEach(f => { if (f in item.row) row[f] = item.row[f]; });
+                const e = effectiveRouteFor(vehicle, item.row.station_code);
+                row.route_sequence = e.route_sequence;
+                if ('parallel_with_previous' in item.row) row.parallel_with_previous = e.parallel_with_previous;
                 return row;
             }));
             btn.textContent = `Adding ${rows.length} blocks…`;
+            await pinVersionRoute(vehicle);
             const inserted = [];
             for (const part of chunk(rows, 400)) {
                 const { data, error } = await dbRef.from('kd2_plan').insert(part).select('id');

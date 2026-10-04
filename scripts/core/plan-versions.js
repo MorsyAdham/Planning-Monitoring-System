@@ -141,6 +141,26 @@ window.PlanVersions = (() => {
                 );
                 const cloneRows = sourceRows.map(r => ({ ...r, plan_version_id: versionRow.id }));
                 await insertChunked(db, 'kd2_plan', cloneRows, chunkSize);
+                // The version's own process order (Reorder route, hidden /
+                // deleted processes) — without it the copy fell back to the
+                // shared catalog and showed a different order.
+                try {
+                    let orderRows;
+                    try {
+                        orderRows = await queryAllPages(db.from('kd2_plan_route_order')
+                            .select('vehicle_type, station_code, route_sequence, parallel_with_previous, category_code, visibility')
+                            .eq('plan_version_id', sourceId));
+                    } catch {
+                        orderRows = await queryAllPages(db.from('kd2_plan_route_order')
+                            .select('vehicle_type, station_code, route_sequence, parallel_with_previous, category_code')
+                            .eq('plan_version_id', sourceId));
+                    }
+                    if (orderRows.length) {
+                        await insertChunked(db, 'kd2_plan_route_order', orderRows.map(r => ({ ...r, plan_version_id: versionRow.id })), chunkSize);
+                    }
+                } catch (orderErr) {
+                    console.warn('Process order not copied to the new version:', orderErr?.message || orderErr);
+                }
                 if (auditFn) await auditFn('INSERT', 'kd2_plan', `revision-${versionRow.id}`, null,
                     { rows_added: cloneRows.length, plan_version_id: versionRow.id, source_version_id: sourceId });
             } else {
