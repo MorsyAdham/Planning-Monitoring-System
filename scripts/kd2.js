@@ -3968,6 +3968,21 @@ window.PPMSModuleRuntime = (() => {
         if (!legend || !wrap || !startInput || !endInput) return;
 
         state.timelineRows = Array.isArray(rows) ? rows.slice() : [];
+        // The KD2 workspace timeline is hidden (kd2WorkspaceSection). Keep its
+        // data current — other features read state.timelineRows — but don't
+        // build ~5,000 hidden elements on every load and live update; draw it
+        // the moment it is actually shown.
+        if (!wrap.getClientRects().length) {
+            state.timelineRenderPending = true;
+            if (!state.timelineShowObserver && typeof IntersectionObserver !== 'undefined') {
+                state.timelineShowObserver = new IntersectionObserver(entries => {
+                    if (state.timelineRenderPending && entries.some(e => e.isIntersecting)) renderSchedule();
+                });
+                state.timelineShowObserver.observe(wrap);
+            }
+            return;
+        }
+        state.timelineRenderPending = false;
         syncTimelineViewControls(state.timelineRows);
         const viewMode = currentTimelineViewMode();
         const processVehicle = resolveTimelineProcessVehicle(state.timelineRows);

@@ -2185,6 +2185,8 @@ function startCommentNotifSync() {
     function handleCommentUpdate(moduleId, row) {
         const comments = row?.comments;
         if (!Array.isArray(comments)) return;
+        // Most updates are date moves on blocks without comments — nothing to do
+        if (!comments.length && !currentData.some(r => String(r.id) === String(row.id) && r.comments?.length)) return;
 
         // Patch in-memory data so popovers opened afterwards show fresh comments
         const dataIdx = currentData.findIndex(r => String(r.id) === String(row.id));
@@ -2233,14 +2235,22 @@ function startCommentNotifSync() {
         }
     }
 
+    // Only the open plan version's rows reach this browser (every block move
+    // in every version used to arrive here too)
+    const scopeFor = moduleId => {
+        // Only the open module's versions are loaded — leave the other unfiltered
+        if (getActiveModuleId() !== moduleId) return {};
+        const id = window.PlanVersions?.getActiveId?.(moduleId);
+        return id ? { filter: `plan_version_id=eq.${id}` } : {};
+    };
     const kd2Ch = db.channel('ppms-kd2-comment-notif')
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kd2_plan' }, ({ new: row }) => {
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kd2_plan', ...scopeFor('kd2') }, ({ new: row }) => {
             handleCommentUpdate('kd2', row);
         })
         .subscribe();
 
     const f100Ch = db.channel('ppms-f100-comment-notif')
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'f100_plans' }, ({ new: row }) => {
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'f100_plans', ...scopeFor('f100kd2') }, ({ new: row }) => {
             handleCommentUpdate('f100kd2', row);
         })
         .subscribe();
@@ -2386,7 +2396,21 @@ function startPresenceTracking() {
             // Ask all already-connected users to respond with their heartbeat now
             _presenceChannel?.send({ type: 'broadcast', event: 'ping', payload: { from: myId } }).catch(() => {});
             // 12s while editing (co-editor presence needs to feel live), 30s otherwise.
-            _heartbeatTimer = setInterval(() => { sendHeartbeat(); pruneAndRender(); }, 12_000);
+            // A hidden tab only needs to say it's online every 60 s (others
+            // drop a user after 90 s); it re-announces as soon as it's shown.
+            let lastBeat = Date.now();
+            _heartbeatTimer = setInterval(() => {
+                if (document.hidden && Date.now() - lastBeat < 60_000) return;
+                lastBeat = Date.now();
+                sendHeartbeat();
+                pruneAndRender();
+            }, 12_000);
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) return;
+                lastBeat = Date.now();
+                sendHeartbeat();
+                pruneAndRender();
+            });
         });
 }
 
@@ -8884,11 +8908,8 @@ function setGanttRangeFromData(data) {
 // re-renders all of these together; Gantt-side edits need the same thing,
 // just without a full re-fetch since currentData is already up to date.
 function syncDataViewsAfterGanttEdit() {
-    const displayData = applyActiveFilters(currentData);
-    renderTable(applyTableSearchFilters(displayData));
-    updateSummary(displayData);
-    renderCharts(displayData);
-    renderVPX(displayData);
+    // Summary now; Plan Table and VPX redraw when they're on screen
+    _renderSecondaryViews({ includeTable: true, defer: true });
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -20094,7 +20115,7 @@ function wireGanttDragEdit(dayIndex, days) {
 
             const gsEl = document.getElementById('ganttStart');
             const geEl = document.getElementById('ganttEnd');
-            renderGantt(currentData, gsEl?.value, geEl?.value);
+            renderGantt(applyActiveFilters(currentData), gsEl?.value, geEl?.value, { patch: true });
             syncDataViewsAfterGanttEdit();
         }
 
@@ -20177,7 +20198,7 @@ function wireGanttDragEdit(dayIndex, days) {
 
             const gsEl = document.getElementById('ganttStart');
             const geEl = document.getElementById('ganttEnd');
-            renderGantt(currentData, gsEl?.value, geEl?.value);
+            renderGantt(applyActiveFilters(currentData), gsEl?.value, geEl?.value, { patch: true });
             syncDataViewsAfterGanttEdit();
         }
 

@@ -85,3 +85,15 @@
 [data-theme="light"] .gmt-grouped > .gmt-btn,
 [data-theme="light"] .gmt-grouped .gmt-group { border-color: #cbd5e1; }
 [data-theme="light"] .gmt-group-label { background: #f1f5f9; border-color: #cbd5e1; color: #64748b; }
+
+/* Bars carry no filter at rest — a filter on every bar made the browser keep
+   ~2,000 separate layers (slow layout, heavy GPU memory). Hover only. */
+#ganttInner .gc-bar { filter: none; }
+#ganttInner .gc-bar:hover { filter: brightness(1.15); }
+
+/* Rows scrolled out of view skip layout and painting (the browser draws them
+   when they come into view). Rows with an open menu, the hovered row and the
+   category separators (whose height follows their text) always draw. */
+#ganttInner .gantt-body > .gr:not(.gr-process-cat-sep) { content-visibility: auto; }
+#ganttInner .gantt-body > .gr.gc-row-menu-open,
+#ganttInner .gantt-body > .gr:hover { content-visibility: visible; }
