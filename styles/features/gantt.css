@@ -97,3 +97,7 @@
 #ganttInner .gantt-body > .gr:not(.gr-process-cat-sep) { content-visibility: auto; }
 #ganttInner .gantt-body > .gr.gc-row-menu-open,
 #ganttInner .gantt-body > .gr:hover { content-visibility: visible; }
+
+/* Battalion chips in the Gantt header (shortcut to the Battalion filter) */
+.gantt-bat-picker { margin-top: 8px; }
+.gantt-bat-picker .vpx-bat-tab:disabled { cursor: default; opacity: .85; }

@@ -35,6 +35,8 @@
             <div class="gantt-title-wrap">
                 <h3 class="gantt-title" id="ganttTitle">${escapeHtml(settings.title)}</h3>
                 <span class="gantt-subtitle" id="ganttSubtitle">${escapeHtml(settings.subtitle)}</span>
+                <div class="vpx-bat-picker gantt-bat-picker" id="ganttBattalionChips" hidden
+                    title="Loads only the chosen battalion — the whole page (Gantt, Summary, VPX, Plan Table) follows it"></div>
             </div>
             <div class="gantt-controls">
                 <div class="filter-item" style="min-width:148px">

@@ -1621,6 +1621,7 @@ function renderMultiSelectMenu(key) {
     `;
 
     updateMultiSelectButtonLabel(key);
+    if (key === 'battalion') _renderGanttBattalionChips();
 }
 
 /** Open one filter's menu, closing all others (single-menu-open-at-a-time). */
@@ -1650,6 +1651,98 @@ function toggleMultiSelectMenu(key) {
 }
 
 /** Rebuild filterOptions[key] from a plain array of values, then re-render its menu. */
+/* ── Battalion chips on the Gantt ───────────────────────────────
+   A shortcut to the main Battalion filter, not a second filter: choosing a
+   battalion loads ONLY its blocks (lighter and faster), and every view
+   follows it. Each person's last choice is remembered on this browser. */
+function _battalionPickKey() {
+    return `ppms_battalion_pick_${getCurrentUser()?.email || 'anon'}`;
+}
+function _saveBattalionPick() {
+    const sel = filterState.battalion;
+    try { localStorage.setItem(_battalionPickKey(), sel.has('all') ? 'all' : JSON.stringify([...sel])); } catch {}
+}
+/** Re-applies the remembered choice (call after the battalion list loads). */
+function _restoreBattalionPick() {
+    if (!isKD2Module()) return;
+    let raw = null;
+    try { raw = localStorage.getItem(_battalionPickKey()); } catch {}
+    if (!raw || raw === 'all') { _renderGanttBattalionChips(); return; }
+    let values = [];
+    try { values = JSON.parse(raw); } catch { return; }
+    const valid = new Set((filterOptions.battalion || []).map(o => o.value));
+    values = (Array.isArray(values) ? values : []).filter(v => valid.has(v));
+    if (values.length) {
+        filterState.battalion = new Set(values);
+        renderMultiSelectMenu('battalion');
+        populateUnitFilter(filterState.vehicle);
+    }
+    _renderGanttBattalionChips();
+}
+/** A different battalion scope gets a date range fitted to its own blocks. */
+function _refitGanttRangeOnNextLoad() {
+    const gs = document.getElementById('ganttStart'), ge = document.getElementById('ganttEnd');
+    if (gs) gs.value = '';
+    if (ge) ge.value = '';
+}
+function _setBattalionPick(value) {
+    filterState.battalion = new Set([value || 'all']);
+    _refitGanttRangeOnNextLoad();
+    renderMultiSelectMenu('battalion');
+    populateUnitFilter(filterState.vehicle);
+    _saveBattalionPick();
+    _renderGanttBattalionChips();
+    window.PPMSFilterUI?.refresh?.();
+    loadDataDebounced();
+}
+/** The battalion the main filter has locked the page to (one chosen), else null. */
+function _mainBattalionLock() {
+    const key = isF100KD2Module() ? 'f100Battalion' : 'battalion';
+    const sel = filterState[key];
+    return sel && !sel.has('all') && sel.size === 1 ? [...sel][0] : null;
+}
+/** "Battalion · BTL-02 · from the battalion filter · Load all battalions" */
+function _battalionLockHtml(code) {
+    return `<span class="vpx-bat-label">Battalion</span>`
+        + `<span class="bat-lock" title="Set by the battalion filter (top filter bar / Gantt) — only this battalion is loaded"><b>${esc(code)}</b><span>from the battalion filter</span></span>`
+        + `<button type="button" class="bat-load-all" data-load-all-bats>Load all battalions</button>`;
+}
+document.addEventListener('click', e => {
+    if (!e.target.closest?.('[data-load-all-bats]')) return;
+    if (isF100KD2Module()) {
+        filterState.f100Battalion = new Set(['all']);
+        renderMultiSelectMenu('f100Battalion');
+        window.PPMSFilterUI?.refresh?.();
+        loadDataDebounced();
+    } else {
+        _setBattalionPick('all');
+    }
+});
+
+function _renderGanttBattalionChips() {
+    const el = document.getElementById('ganttBattalionChips');
+    if (!el) return;
+    el.dataset.loadedScope = _mainBattalionLock() || 'all';
+    const opts = filterOptions.battalion || [];
+    if (!isKD2Module() || opts.length < 1) { el.hidden = true; el.innerHTML = ''; return; }
+    const sel = filterState.battalion;
+    const active = sel.has('all') ? 'all' : (sel.size === 1 ? [...sel][0] : null);
+    const chip = (value, label) => `<button type="button" role="tab" aria-selected="${value === active}" class="vpx-type-tab vpx-bat-tab${value === active ? ' active' : ''}" data-gbat="${esc(value)}">${esc(label)}</button>`;
+    el.hidden = false;
+    el.innerHTML = `<span class="vpx-bat-label">Battalion</span><span class="vpx-type-tabs vpx-bat-tabs" role="tablist" aria-label="Battalion to load">`
+        + chip('all', 'All') + opts.map(o => chip(o.value, o.label)).join('')
+        + (active === null ? `<button type="button" class="vpx-type-tab vpx-bat-tab active" disabled>${sel.size} selected</button>` : '')
+        + `</span>`;
+}
+document.addEventListener('click', e => {
+    const btn = e.target.closest?.('#ganttBattalionChips [data-gbat]');
+    if (!btn) return;
+    const value = btn.dataset.gbat;
+    const sel = filterState.battalion;
+    const current = sel.has('all') ? 'all' : (sel.size === 1 ? [...sel][0] : null);
+    if (value !== current) _setBattalionPick(value);
+});
+
 function populateMultiSelectOptions(key, values, labelFn = v => v) {
     filterOptions[key] = (values || []).map(v => ({ value: v, label: labelFn(v) }));
     renderMultiSelectMenu(key);
@@ -1900,6 +1993,7 @@ async function initializeApp() {
 
     _loaderSetProgress(35, 'Loading filters…');
     await loadFilters();
+    _restoreBattalionPick();
 
     _loaderSetProgress(60, 'Loading plan data…');
     await loadData();
@@ -4755,10 +4849,17 @@ function _renderExBattalionTabs(data) {
         ? [...new Set(data.map(_exBattalionOf))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
         : [];
     if (!bats.length) { el.hidden = true; el.innerHTML = ''; return; }
-    if (_exBattalion !== 'all' && !bats.includes(_exBattalion)) _exBattalion = 'all';
     el.hidden = false;
+    // Main filter loaded one battalion: nothing to choose here — say so
+    const lock = _mainBattalionLock();
+    if (lock) {
+        _exBattalion = 'all';
+        el.innerHTML = _battalionLockHtml(lock);
+        return;
+    }
+    if (_exBattalion !== 'all' && !bats.includes(_exBattalion)) _exBattalion = 'all';
     const tab = (value, label) => `<button type="button" role="tab" aria-selected="${value === _exBattalion}" class="vpx-type-tab vpx-bat-tab${value === _exBattalion ? ' active' : ''}" data-exbat="${esc(value)}">${esc(label)}</button>`;
-    el.innerHTML = `<span class="vpx-bat-label">Battalion</span><span class="vpx-type-tabs vpx-bat-tabs" role="tablist" aria-label="Executive Summary battalion">${tab('all', 'All')}${bats.map(b => tab(b, b)).join('')}</span>`;
+    el.innerHTML = `<span class="vpx-bat-label" title="Switches this section only — the battalion filter decides what is loaded">View</span><span class="vpx-type-tabs vpx-bat-tabs" role="tablist" aria-label="Executive Summary battalion">${tab('all', 'All')}${bats.map(b => tab(b, b)).join('')}</span>`;
     el.querySelectorAll('[data-exbat]').forEach(btn => btn.addEventListener('click', () => {
         if (btn.dataset.exbat === _exBattalion) return;
         _exBattalion = btn.dataset.exbat;
@@ -5316,7 +5417,9 @@ function _renderVpxBattalionTabs(battalions) {
     if (!el) return;
     if (!battalions.length) { el.hidden = true; el.innerHTML = ''; return; }
     el.hidden = false;
-    el.innerHTML = `<span class="vpx-bat-label">Battalion</span><span class="vpx-type-tabs vpx-bat-tabs" role="tablist" aria-label="Battalion">${battalions.map(b =>
+    const lock = _mainBattalionLock();
+    if (lock && battalions.length === 1) { el.innerHTML = _battalionLockHtml(lock); return; }
+    el.innerHTML = `<span class="vpx-bat-label" title="Switches the VPX only — the battalion filter decides what is loaded">View</span><span class="vpx-type-tabs vpx-bat-tabs" role="tablist" aria-label="Battalion">${battalions.map(b =>
         `<button type="button" role="tab" aria-selected="${b === _vpxBattalionFilter}" class="vpx-type-tab vpx-bat-tab${b === _vpxBattalionFilter ? ' active' : ''}" data-vbat="${esc(b)}">${esc(b)}</button>`
     ).join('')}</span>`;
     el.querySelectorAll('.vpx-bat-tab').forEach(btn => {
@@ -7877,7 +7980,7 @@ function wireEvents() {
             handleMultiSelectMenuChange(key, e, () => {
                 if (ISSUE_FILTER_KEYS.has(key)) { loadIssuesDebounced(); return; }
                 if (key === 'vehicle') onVehicleFilterChange();
-                if (key === 'battalion' && isKD2Module()) populateUnitFilter(filterState.vehicle);
+                if (key === 'battalion' && isKD2Module()) { populateUnitFilter(filterState.vehicle); _saveBattalionPick(); _refitGanttRangeOnNextLoad(); }
                 loadDataDebounced();
             });
         });
