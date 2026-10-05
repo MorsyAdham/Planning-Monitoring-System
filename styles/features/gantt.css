@@ -120,3 +120,85 @@
 [data-theme="light"] .gantt-combine.is-on { background: rgba(37,99,235,.08); border-color: #2563eb; color: #1d4ed8; }
 [data-theme="light"] .gantt-combine.is-on .gantt-combine-switch { background: #2563eb; }
 #ganttInner .gc-bar-veh-mark { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: rgba(255,255,255,.9); border-radius: 5px 0 0 5px; pointer-events: none; }
+
+/* ── Edit bar layout ──────────────────────────────────────────────
+   Row 1: Editing · task switch ............ undo/redo · options · Done
+   Row 2: the chosen task's options in their own panel (+ explanation)
+   Row 3: selection strip (when blocks are selected) */
+#ganttEditBar {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+        "badge tasks . right"
+        "ctx ctx ctx ctx";
+    align-items: center;
+    gap: 10px 12px;
+    padding: 10px 12px;
+}
+#ganttEditBar .gantt-edit-badge { grid-area: badge; }
+#ganttEditBar .gantt-mode-seg { grid-area: tasks; }
+#ganttEditBar .gantt-edit-right { grid-area: right; justify-self: end; gap: 6px; }
+#ganttEditBar > .gantt-edit-spacer { display: none; }
+#ganttEditBar .gantt-edit-right #btnGanttEditDone { margin-left: 6px; min-width: 76px; }
+#ganttEditBar .gantt-sel-strip { grid-column: 1 / -1; margin-top: 0; }
+#ganttEditBar .gantt-sel-strip[hidden] { display: none; }
+#ganttEditBar .gantt-ctx {
+    grid-area: ctx;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, .06);
+    border-left: 1px solid rgba(255, 255, 255, .06);
+    border-radius: 10px;
+    background: rgba(0, 0, 0, .18);
+}
+#ganttEditBar .gantt-ctx[hidden] { display: none; }
+#ganttEditBar .gantt-ctx-label { min-width: 84px; }
+#ganttEditBar #gmtSelectLane { margin-left: auto; }
+#ganttEditBar .gmt-hint { padding-left: 94px; }
+#ganttEditBar .gantt-ctx-hint { flex: 1 1 260px; }
+[data-theme="light"] #ganttEditBar .gantt-ctx { background: rgba(255, 255, 255, .55); border-color: rgba(0, 0, 0, .08); }
+@media (max-width: 900px) {
+    #ganttEditBar {
+        grid-template-columns: auto minmax(0, 1fr);
+        grid-template-areas: "badge right" "tasks tasks" "ctx ctx";
+    }
+    #ganttEditBar .gmt-hint { padding-left: 0; }
+    #ganttEditBar #gmtSelectLane { margin-left: 0; }
+}
+
+.gantt-export-opt[hidden] { display: none; }
+
+/* ── Edit bar v2: titled cards for the move options, labelled actions ── */
+#ganttEditBar { gap: 12px 14px; padding: 12px 14px; border-radius: 12px; }
+#ganttEditBar .gantt-edit-badge { padding: 5px 11px; border-radius: 8px; font-size: .74rem; }
+#ganttEditBar .gantt-edit-right .btn { display: inline-flex; align-items: center; gap: 6px; }
+#ganttEditBar .gx-btn-text { font-size: .74rem; font-weight: 600; }
+#ganttEditBar .gantt-undo-group { display: inline-flex; gap: 4px; padding-right: 8px; margin-right: 2px; border-right: 1px solid var(--clr-border); }
+#ganttEditBar .gantt-ctx { flex-direction: column; align-items: stretch; gap: 10px; padding: 12px 14px; }
+.gx-ctx-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.gx-ctx-title { font-size: .7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--clr-text-muted); }
+#ganttEditBar #gmtSelectLane { margin-left: 0; border: 1px solid var(--clr-border); border-radius: 8px; }
+.gantt-move-toggle.gmt-cards { display: flex; flex-wrap: wrap; gap: 8px; border: none; overflow: visible; }
+.gmt-cards .gmt-card { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; border: 1px solid var(--clr-border); border-radius: 10px; background: var(--clr-surface); min-width: 0; }
+.gmt-cards .gmt-card[hidden] { display: none; }
+.gmt-card-title { font-size: .62rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--clr-text-muted); }
+.gmt-card-opts { display: flex; gap: 4px; flex-wrap: wrap; }
+.gmt-cards .gmt-btn { border: 1px solid transparent; border-radius: 7px; padding: 6px 11px; background: var(--clr-surface-2); font-size: .76rem; }
+.gmt-cards .gmt-btn + .gmt-btn { border-left: 1px solid transparent; }
+.gmt-cards .gmt-btn:hover { border-color: rgba(245, 158, 11, .45); }
+.gmt-cards .gmt-btn.gmt-active { background: rgba(245, 158, 11, .18); border-color: rgba(245, 158, 11, .6); color: #fbbf24; }
+.gx-hint { display: flex; align-items: flex-start; gap: 7px; font-size: .74rem; line-height: 1.4; color: var(--clr-text-muted); }
+.gx-hint svg { width: 13px; height: 13px; flex: none; margin-top: 2px; opacity: .8; }
+.gx-hint b { color: var(--clr-text); font-weight: 600; }
+#ganttEditBar .gx-hint .gmt-hint { padding-left: 0; flex-basis: auto; }
+.gx-add-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+[data-theme="light"] .gmt-cards .gmt-card { background: #fff; border-color: #e2e8f0; }
+[data-theme="light"] .gmt-cards .gmt-btn { background: #f8fafc; }
+[data-theme="light"] .gmt-cards .gmt-btn.gmt-active { background: #fffbeb; border-color: #d97706; color: #b45309; }
+@media (max-width: 900px) {
+    #ganttEditBar .gx-btn-text { display: none; }
+}

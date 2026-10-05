@@ -916,6 +916,9 @@ function _syncGanttCombineButton(available) {
         : 'Process view: show K10 and K11 as one plan — both vehicles\' blocks on the same station rows (K11 blocks have a white left edge)';
 }
 document.addEventListener('click', e => {
+    if (e.target.closest?.('#btnGanttCopyPlan')) getModuleRuntime()?.openCopyPlanModal?.();
+});
+document.addEventListener('click', e => {
     if (!e.target.closest?.('#btnGanttCombineK1011')) return;
     _ganttCombineK1011 = !_ganttCombineK1011;
     try { localStorage.setItem('ppms_gantt_combine_k10k11', _ganttCombineK1011 ? '1' : '0'); } catch {}
@@ -9940,6 +9943,11 @@ function wireGanttExportMenu() {
         const menu = document.getElementById('ganttExportMenu');
         if (!menu) return;
         const open = menu.style.display !== 'none';
+        const combinedOpt = document.getElementById('ganttExportCombinedOpt');
+        if (combinedOpt) {
+            const vts = new Set(currentData.map(r => r.vehicle || r.vehicle_type));
+            combinedOpt.hidden = !(isKD2Module() && vts.has('K10') && vts.has('K11'));
+        }
         menu.style.display = open ? 'none' : '';
         e.currentTarget.setAttribute('aria-expanded', open ? 'false' : 'true');
         e.stopPropagation();
@@ -10032,11 +10040,14 @@ async function exportGanttSchedule(exportView = 'process') {
         if (!visible.length) { showToast('No tasks fall in the selected date range.', 'error'); return; }
 
         // ── 4. Build groups (same logic as renderGantt) ───────────
-        const isProcessView = exportView === 'process';
+        // "process-combined": Process view with K10 and K11 as one plan
+        const combineK1011 = exportView === 'process-combined' && isKD2Module();
+        const isProcessView = exportView === 'process' || combineK1011;
+        const exportGroupOf = v => (combineK1011 && GANTT_COMBINED_VEHICLES.has(v) ? GANTT_COMBINED_KEY : v);
         const groups = {};
         visible.forEach(p => {
             const groupKey = isProcessView
-                ? (p.vehicle || '—')
+                ? exportGroupOf(p.vehicle || '—')
                 : (isKD2Module() || isF100KD2Module() ? (p.battalion_code || '—') : p.vehicle);
             const laneKey = isProcessView
                 ? (p.process_station || '—')
@@ -10104,7 +10115,7 @@ async function exportGanttSchedule(exportView = 'process') {
         let r = 1;
 
         // ── Row 1: Title ──────────────────────────────────────────
-        const viewLabel   = isProcessView ? 'Process View' : 'Unit View';
+        const viewLabel   = combineK1011 ? 'Process View · K10 + K11 together' : isProcessView ? 'Process View' : 'Unit View';
         const moduleLabel = isKD2Module() ? 'KD2' : isF100KD2Module() ? 'F100-KD2' : 'Assembly';
         ws.getRow(r).height = 24;
         ws.mergeCells(r, 1, r, numDays + LC);
@@ -10272,7 +10283,9 @@ async function exportGanttSchedule(exportView = 'process') {
                         const txtArgb = statusTextArgb(task);
                         const barLen  = ei - si + 1;
                         const barText = isProcessView
-                            ? `#${task.unit_serial ?? '?'}`
+                            ? (combineK1011 && GANTT_COMBINED_VEHICLES.has(task.vehicle)
+                                ? `${task.vehicle} #${task.unit_serial ?? '?'}`
+                                : `#${task.unit_serial ?? '?'}`)
                             : (task.process_station || '');
 
                         for (let di = si; di <= ei; di++) {
@@ -10325,12 +10338,14 @@ async function exportGanttSchedule(exportView = 'process') {
             // _exportLaneOrder groups by physical/logical line (Hull, Turret,
             // then downstream categories) — sorting by raw route_sequence alone
             // interleaves the parallel Hull and Turret lines.
-            const _exportCatMap = (isProcessView && isKD2Module())
-                ? (getModuleRuntime()?.getStationCategoryMap?.(groupKey) || new Map())
-                : null;
-            const _exportLaneOrder = (isProcessView && isKD2Module())
-                ? (getModuleRuntime()?.getStationLaneOrder?.(groupKey) || new Map())
-                : null;
+            const _exportMap = getter => {
+                if (groupKey !== GANTT_COMBINED_KEY) return getModuleRuntime()?.[getter]?.(groupKey) || new Map();
+                const m = new Map();
+                GANTT_COMBINED_VEHICLES.forEach(v => (getModuleRuntime()?.[getter]?.(v) || new Map()).forEach((val, k) => { if (!m.has(k)) m.set(k, val); }));
+                return m;
+            };
+            const _exportCatMap = (isProcessView && isKD2Module()) ? _exportMap('getStationCategoryMap') : null;
+            const _exportLaneOrder = (isProcessView && isKD2Module()) ? _exportMap('getStationLaneOrder') : null;
             // Group header row
             ws.getRow(r).height = 18;
             ws.mergeCells(r, 1, r, numDays + LC);
@@ -10451,7 +10466,7 @@ async function exportGanttSchedule(exportView = 'process') {
             { type: 'gap' },
             { type: 'section', text: 'TASK BARS' },
             { type: 'item',    label: 'Bar fill',       desc: 'White — no station color in the export; status is shown via text color only' },
-            { type: 'item',    label: 'Bar text',       desc: isProcessView ? 'Shows vehicle number (#1, #2 …) — unit serial in the current battalion' : 'Shows process station name (unit view)' },
+            { type: 'item',    label: 'Bar text',       desc: combineK1011 ? 'Shows vehicle and number (K10 #1, K11 #2 …) in the K10 + K11 section; #1, #2 … elsewhere' : isProcessView ? 'Shows vehicle number (#1, #2 …) — unit serial in the current battalion' : 'Shows process station name (unit view)' },
             { type: 'item',    label: 'Bar border',     desc: 'Thick black outer border marks the full span of the task (start → end). No inner lines.' },
             { type: 'item',    label: 'Multiple rows',  desc: 'When two tasks overlap on the same station/unit, each gets its own sub-row (lane)' },
             { type: 'gap' },
@@ -19676,6 +19691,8 @@ function _syncSelectedBlockUi() {
     const delBtn = document.getElementById('btnDeleteSelectedBlocks');
     const selStrip = document.getElementById('ganttSelStrip');
     if (countEl) countEl.textContent = String(count);
+    const nounEl = document.getElementById('ganttSelectedNoun');
+    if (nounEl) nounEl.textContent = count === 1 ? 'block' : 'blocks';
     if (delBtn) {
         delBtn.disabled = count === 0;
         delBtn.textContent = count > 0 ? `Delete ${count} block${count === 1 ? '' : 's'}` : 'Delete selected';
@@ -19788,6 +19805,13 @@ function syncGanttModuleEditControls() {
         });
     }
     _syncGanttMoveHint();
+    // A move card whose options are all unavailable here is hidden entirely
+    document.querySelectorAll('#ganttMoveToggle .gmt-card').forEach(card => {
+        if (card.id === 'gmtGroupLater') return; // shown/hidden as a whole above
+        card.hidden = ![...card.querySelectorAll('.gmt-btn')].some(b => b.style.display !== 'none');
+    });
+    const copyPlanBtn = document.getElementById('btnGanttCopyPlan');
+    if (copyPlanBtn) copyPlanBtn.style.display = isKd2 && typeof getModuleRuntime()?.openCopyPlanModal === 'function' ? '' : 'none';
     const laneBtn = document.getElementById('gmtSelectLane');
     if (laneBtn) {
         laneBtn.style.display = isKd2 ? '' : 'none';
@@ -19822,7 +19846,7 @@ function setGanttEditMode(on) {
         if (pop) { pop.hidden = true; document.getElementById('btnGanttOptions')?.setAttribute('aria-expanded', 'false'); }
         if (isF100KD2Module()) cancelF100Placement();
     }
-    document.getElementById('ganttEditBar').style.display = on ? 'flex' : 'none';
+    document.getElementById('ganttEditBar').style.display = on ? '' : 'none'; // layout: gantt.css (grid)
     document.getElementById('btnGanttEdit').style.display = (on || !canEditPlan()) ? 'none' : '';
     // Sync undo button states whenever edit mode changes
     _syncUndoButtons();

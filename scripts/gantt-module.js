@@ -78,6 +78,13 @@
                             </svg>
                             Process View
                         </button>
+                        <button type="button" class="gantt-export-opt" data-export-view="process-combined" id="ganttExportCombinedOpt" role="menuitem" hidden
+                            title="Process view with K10 and K11 as one plan — both vehicles' blocks on the same station rows">
+                            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" style="width:11px;height:11px">
+                                <path d="M2 4h4M2 10h4M6 4c2 0 2 3 4 3M6 10c2 0 2-3 4-3M10 7h2"/>
+                            </svg>
+                            Process View · K10 + K11 together
+                        </button>
                         <button type="button" class="gantt-export-opt" data-export-view="unit" role="menuitem">
                             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" style="width:11px;height:11px">
                                 <rect x="1" y="1" width="12" height="3" rx="1"/>
@@ -148,7 +155,7 @@
                         <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" style="width:12px;height:12px">
                             <path d="M10 1.5l2.5 2.5L4 12.5H1.5V10L10 1.5z" />
                         </svg>
-                        Editing
+                        Editing plan
                     </span>
 
                     <div class="gantt-mode-seg" id="ganttModeSeg" role="tablist" aria-label="Edit task">
@@ -167,47 +174,69 @@
                     </div>
 
                     <div class="gantt-ctx" id="ganttCtxReschedule">
-                        <span class="gantt-ctx-label">Drag moves</span>
-                        <div class="gantt-move-toggle gmt-grouped" id="ganttMoveToggle" title="Choose what moves when you drag a block">
-                            <button class="gmt-btn gmt-active" id="gmtSingle" data-mode="single">Only this block</button>
-                            <span class="gmt-group">
-                                <span class="gmt-group-label">This vehicle</span>
-                                <button class="gmt-btn" id="gmtFromBlock" data-mode="from-block" style="display:none">From this process on</button>
-                                <button class="gmt-btn" id="gmtLane" data-mode="lane">All processes</button>
-                            </span>
-                            <span class="gmt-group" id="gmtGroupLater" style="display:none">
-                                <span class="gmt-group-label">This + later vehicles</span>
-                                <button class="gmt-btn" id="gmtFromBlockAfter" data-mode="from-block-after">From this process on</button>
-                                <button class="gmt-btn" id="gmtUnitAfter" data-mode="unit-after">All processes</button>
-                            </span>
-                            <button class="gmt-btn" id="gmtFromBlockLane" data-mode="from-block-lane" style="display:none">This station's queue</button>
-                            <button class="gmt-btn" id="gmtPlan" data-mode="plan">Whole plan</button>
+                        <div class="gx-ctx-head">
+                            <span class="gx-ctx-title">When you drag a block, move&hellip;</span>
+                            <button class="gmt-btn gantt-ctx-standalone gx-select-lane" id="gmtSelectLane" aria-pressed="false" title="Adds a button on each row to select all of its blocks at once">Select lane</button>
                         </div>
-                        <button class="gmt-btn gantt-ctx-standalone" id="gmtSelectLane" aria-pressed="false">Select lane</button>
-                        <span class="gmt-hint" id="gmtHint" aria-live="polite"></span>
+                        <div class="gantt-move-toggle gmt-cards" id="ganttMoveToggle" title="Choose what moves when you drag a block">
+                            <div class="gmt-card">
+                                <span class="gmt-card-title">Block</span>
+                                <div class="gmt-card-opts"><button class="gmt-btn gmt-active" id="gmtSingle" data-mode="single">Only this block</button></div>
+                            </div>
+                            <div class="gmt-card gmt-group">
+                                <span class="gmt-card-title">This vehicle</span>
+                                <div class="gmt-card-opts">
+                                    <button class="gmt-btn" id="gmtFromBlock" data-mode="from-block" style="display:none">From this process on</button>
+                                    <button class="gmt-btn" id="gmtLane" data-mode="lane">All processes</button>
+                                </div>
+                            </div>
+                            <div class="gmt-card gmt-group" id="gmtGroupLater" style="display:none">
+                                <span class="gmt-card-title">This + later vehicles</span>
+                                <div class="gmt-card-opts">
+                                    <button class="gmt-btn" id="gmtFromBlockAfter" data-mode="from-block-after">From this process on</button>
+                                    <button class="gmt-btn" id="gmtUnitAfter" data-mode="unit-after">All processes</button>
+                                </div>
+                            </div>
+                            <div class="gmt-card">
+                                <span class="gmt-card-title">Station</span>
+                                <div class="gmt-card-opts"><button class="gmt-btn" id="gmtFromBlockLane" data-mode="from-block-lane" style="display:none">This station's queue</button></div>
+                            </div>
+                            <div class="gmt-card">
+                                <span class="gmt-card-title">Plan</span>
+                                <div class="gmt-card-opts"><button class="gmt-btn" id="gmtPlan" data-mode="plan">Whole plan</button></div>
+                            </div>
+                        </div>
+                        <div class="gx-hint"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="7" cy="7" r="5.6"/><path d="M7 6.3v3.6M7 4.3v.1"/></svg><span class="gmt-hint" id="gmtHint" aria-live="polite"></span></div>
                     </div>
 
                     <div class="gantt-ctx" id="ganttCtxAdd" hidden>
-                        <span class="gantt-ctx-label">Add by</span>
-                        <div class="kd2-visual-add-shell" id="ganttVisualAddShell" style="display:none">
-                            <button class="btn btn-sm btn-visual-block" id="btnGanttVisualAdd" aria-expanded="false" aria-pressed="false">
-                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="12" height="10" rx="2" /><path d="M8 5.5v5M5.5 8h5" /></svg>
-                                <span>Click to place</span>
+                        <div class="gx-ctx-head"><span class="gx-ctx-title">Add work by&hellip;</span></div>
+                        <div class="gx-add-row">
+                            <div class="kd2-visual-add-shell" id="ganttVisualAddShell" style="display:none">
+                                <button class="btn btn-sm btn-visual-block" id="btnGanttVisualAdd" aria-expanded="false" aria-pressed="false">
+                                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="12" height="10" rx="2" /><path d="M8 5.5v5M5.5 8h5" /></svg>
+                                    <span>Click to place</span>
+                                </button>
+                                <button class="btn btn-sm btn-outline" id="btnF100AddTemplate" style="display:none">
+                                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px"><rect x="2" y="2" width="12" height="3" rx="1"/><rect x="2" y="6.5" width="12" height="3" rx="1"/><rect x="2" y="11" width="12" height="3" rx="1"/></svg>
+                                    <span>Add Template</span>
+                                </button>
+                            </div>
+                            <button class="btn btn-primary btn-sm" id="btnAddBlock" style="gap:5px">
+                                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M7 2v10M2 7h10" /></svg>
+                                Fill in a form
                             </button>
-                            <button class="btn btn-sm btn-outline" id="btnF100AddTemplate" style="display:none">
-                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px"><rect x="2" y="2" width="12" height="3" rx="1"/><rect x="2" y="6.5" width="12" height="3" rx="1"/><rect x="2" y="11" width="12" height="3" rx="1"/></svg>
-                                <span>Add Template</span>
+                            <button class="btn btn-outline btn-sm" id="btnGanttCopyPlan" type="button" style="display:none;gap:5px">
+                                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" style="width:12px;height:12px"><rect x="1.5" y="3.5" width="7" height="8" rx="1.2"/><path d="M5.5 3.5V2.2c0-.4.3-.7.7-.7h5.6c.4 0 .7.3.7.7v6.6c0 .4-.3.7-.7.7H8.5"/></svg>
+                                Copy a planned unit
                             </button>
                         </div>
-                        <button class="btn btn-primary btn-sm" id="btnAddBlock" style="gap:5px">
-                            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M7 2v10M2 7h10" /></svg>
-                            Fill in a form
-                        </button>
+                        <div class="gx-hint"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="7" cy="7" r="5.6"/><path d="M7 6.3v3.6M7 4.3v.1"/></svg><span><b>Click to place</b> — pick a unit or station, then click a row and date &middot; <b>Fill in a form</b> — exact dates &middot; <b>Copy a planned unit</b> — a whole vehicle's sequence to other units</span></div>
                     </div>
 
                     <div class="gantt-ctx" id="ganttCtxReorder" hidden>
-                        <span class="gantt-ctx-label" id="ganttReorderScope">Route order</span>
-                        <span class="gantt-ctx-hint">Use the arrows on each row &middot; &#8741; joins with the row above &middot; changes apply to this plan version</span>
+                        <div class="gx-ctx-head"><span class="gx-ctx-title" id="ganttReorderScope">Route order</span></div>
+                        <div class="gx-hint"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="7" cy="7" r="5.6"/><path d="M7 6.3v3.6M7 4.3v.1"/></svg><span>Use the arrows on each row &middot; &#8741; joins with the row above &middot; changes apply to this plan version</span></div>
                     </div>
 
                     <div class="gantt-coeditors" id="ganttCoEditors" hidden></div>
@@ -218,9 +247,11 @@
                         <div class="gantt-undo-group">
                             <button class="btn btn-ghost btn-sm gantt-undo-btn" id="btnGanttUndo" disabled title="Nothing to undo">
                                 <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" style="width:12px;height:12px"><path d="M2 7a5 5 0 1 1 1.5 3.5" /><path d="M2 3.5V7h3.5" /></svg>
+                                <span class="gx-btn-text">Undo</span>
                             </button>
                             <button class="btn btn-ghost btn-sm gantt-undo-btn" id="btnGanttRedo" disabled title="Nothing to redo">
                                 <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" style="width:12px;height:12px"><path d="M12 7a5 5 0 1 0-1.5 3.5" /><path d="M12 3.5V7H8.5" /></svg>
+                                <span class="gx-btn-text">Redo</span>
                             </button>
                         </div>
                         <button class="btn btn-ghost btn-sm gantt-activity-btn" id="btnEditActivity" hidden aria-pressed="true" title="Show / hide the live edit feed">
@@ -230,6 +261,7 @@
                         <div class="gantt-opt-wrap">
                             <button class="btn btn-ghost btn-sm gantt-opt-btn" id="btnGanttOptions" aria-expanded="false" title="Options — Saturdays, no-work days">
                                 <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" style="width:13px;height:13px"><circle cx="7" cy="7" r="2.2"/><path d="M7 1v2M7 11v2M1 7h2M11 7h2M2.8 2.8l1.4 1.4M9.8 9.8l1.4 1.4M11.2 2.8 9.8 4.2M4.2 9.8 2.8 11.2"/></svg>
+                                <span class="gx-btn-text">Options</span>
                             </button>
                             <div class="gantt-opt-popover" id="ganttOptionsPopover" hidden>
                                 <label class="gantt-edit-sat-toggle" id="ganttSatToggleWrap">
@@ -243,7 +275,7 @@
                     </div>
 
                     <div class="gantt-sel-strip" id="ganttSelStrip" hidden>
-                        <span class="gantt-sel-count"><b id="ganttSelectedCount">0</b> blocks selected</span>
+                        <span class="gantt-sel-count"><b id="ganttSelectedCount">0</b> <span id="ganttSelectedNoun">blocks</span> selected</span>
                         <button class="btn btn-ghost btn-sm" id="btnGanttClearSel">Clear</button>
                         <div class="gantt-edit-spacer"></div>
                         <button class="btn btn-ghost btn-sm gantt-sel-del" id="btnDeleteSelectedBlocks" disabled>
