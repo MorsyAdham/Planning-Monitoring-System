@@ -910,7 +910,7 @@ function _syncGanttCombineButton(available) {
     if (!btn) return;
     btn.hidden = !available;
     btn.classList.toggle('is-on', _ganttCombineK1011);
-    btn.setAttribute('aria-pressed', _ganttCombineK1011 ? 'true' : 'false');
+    btn.setAttribute('aria-checked', _ganttCombineK1011 ? 'true' : 'false');
     btn.title = _ganttCombineK1011 && _ganttEditMode && _ganttReorderMode
         ? 'Shown separately while Reorder route is on (the route order is per vehicle)'
         : 'Process view: show K10 and K11 as one plan — both vehicles\' blocks on the same station rows (K11 blocks have a white left edge)';
