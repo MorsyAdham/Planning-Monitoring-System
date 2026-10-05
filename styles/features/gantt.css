@@ -101,3 +101,11 @@
 /* Battalion chips in the Gantt header (shortcut to the Battalion filter) */
 .gantt-bat-picker { margin-top: 8px; }
 .gantt-bat-picker .vpx-bat-tab:disabled { cursor: default; opacity: .85; }
+
+/* K10 + K11 together toggle + marker on K11 blocks in the combined view */
+.gantt-combine-btn { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; padding: 0 10px; min-height: 32px; border: 1px solid var(--clr-border); border-radius: var(--radius-sm); background: var(--clr-surface-2); color: var(--clr-text-muted); font: 500 .74rem var(--ff-body); cursor: pointer; white-space: nowrap; }
+.gantt-combine-btn:hover { color: var(--clr-text); border-color: var(--clr-accent); }
+.gantt-combine-btn.is-on { background: rgba(79,142,247,.16); border-color: rgba(79,142,247,.55); color: #93c5fd; font-weight: 600; }
+.gantt-combine-btn[hidden] { display: none; }
+[data-theme="light"] .gantt-combine-btn.is-on { background: rgba(79,142,247,.1); border-color: #4f8ef7; color: #2563eb; }
+#ganttInner .gc-bar-veh-mark { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: rgba(255,255,255,.9); border-radius: 5px 0 0 5px; pointer-events: none; }

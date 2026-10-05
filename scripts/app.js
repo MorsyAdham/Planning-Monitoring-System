@@ -880,6 +880,49 @@ function samePlanLane(a, b) {
 // station (or one process step for F100), shared across every unit passing
 // through it — NOT one vehicle's whole route. In Unit View a row is one
 // vehicle/unit's whole schedule, so that's where samePlanLane() still applies.
+/* ── K10 + K11 together (KD2 Process view) ─────────────────────────
+   K10 and K11 run the same stations in the same order, so they can be
+   planned as one: one "K10 + K11" section whose station rows carry both
+   vehicles' blocks. Editing works as usual; Reorder route (a per-vehicle
+   route) shows them separately while it is on. Remembered per browser. */
+const GANTT_COMBINED_KEY = 'K10 + K11';
+const GANTT_COMBINED_VEHICLES = new Set(['K10', 'K11']);
+let _ganttCombineK1011 = (() => { try { return localStorage.getItem('ppms_gantt_combine_k10k11') === '1'; } catch { return false; } })();
+let _ganttCombineInEffect = false; // set by renderGantt: toggle on AND both vehicles in scope
+function _ganttCombinedGroupOf(vehicle) {
+    return _ganttCombineInEffect && GANTT_COMBINED_VEHICLES.has(vehicle) ? GANTT_COMBINED_KEY : vehicle;
+}
+/** Station row a KD2 block sits on in Process view (station name / row key). */
+function _kd2StationRowKey(row) {
+    const v = row.vehicle_type || row.vehicle;
+    return getModuleRuntime()?.getStationRowKeyMap?.(v)?.get(row.station_code) || row.process_station || row.station_code || '';
+}
+/** "This station's queue" in the combined view: both vehicles at this station, from this date on. */
+function _kd2CombinedStationQueue(anchor, rows) {
+    const key = _kd2StationRowKey(anchor);
+    const from = anchor.start_date || anchor.planned_start_date || '';
+    return rows
+        .filter(r => GANTT_COMBINED_VEHICLES.has(r.vehicle_type || r.vehicle) && _kd2StationRowKey(r) === key)
+        .filter(r => (r.start_date || r.planned_start_date || '') >= from);
+}
+function _syncGanttCombineButton(available) {
+    const btn = document.getElementById('btnGanttCombineK1011');
+    if (!btn) return;
+    btn.hidden = !available;
+    btn.classList.toggle('is-on', _ganttCombineK1011);
+    btn.setAttribute('aria-pressed', _ganttCombineK1011 ? 'true' : 'false');
+    btn.title = _ganttCombineK1011 && _ganttEditMode && _ganttReorderMode
+        ? 'Shown separately while Reorder route is on (the route order is per vehicle)'
+        : 'Process view: show K10 and K11 as one plan — both vehicles\' blocks on the same station rows (K11 blocks have a white left edge)';
+}
+document.addEventListener('click', e => {
+    if (!e.target.closest?.('#btnGanttCombineK1011')) return;
+    _ganttCombineK1011 = !_ganttCombineK1011;
+    try { localStorage.setItem('ppms_gantt_combine_k10k11', _ganttCombineK1011 ? '1' : '0'); } catch {}
+    const gs = document.getElementById('ganttStart'), ge = document.getElementById('ganttEnd');
+    renderGantt(applyActiveFilters(currentData), gs?.value, ge?.value);
+});
+
 function sameGanttRowLane(a, b) {
     if (!a || !b) return false;
     const inProcessView = getModuleRuntime()?.currentTimelineViewMode?.() === 'process';
@@ -890,7 +933,7 @@ function sameGanttRowLane(a, b) {
                    (a.process_name || '') === (b.process_name || '');
         }
         if (isKD2Module()) {
-            return (a.vehicle || '') === (b.vehicle || '') &&
+            return _ganttCombinedGroupOf(a.vehicle || '') === _ganttCombinedGroupOf(b.vehicle || '') &&
                    (a.process_station || '') === (b.process_station || '');
         }
     }
@@ -1023,19 +1066,25 @@ function getKd2ForwardMoveRowsByStation(anchorTask, rows = []) {
 // vehicles and the other two shift with it. Vehicles that start earlier stay.
 function getKd2UnitAndAfterRows(anchor, rows = []) {
     if (!anchor) return [];
-    const vt = anchor.vehicle_type || anchor.vehicle;
-    const same = rows.filter(r => String(r.battalion_id) === String(anchor.battalion_id) && (r.vehicle_type || r.vehicle) === vt);
+    // In the K10 + K11 view both types are one plan: a later K11 is a later vehicle too
+    const vt = _ganttCombinedGroupOf(anchor.vehicle_type || anchor.vehicle);
+    const vtOf = r => _ganttCombinedGroupOf(r.vehicle_type || r.vehicle);
+    const unitKey = r => `${r.vehicle_type || r.vehicle}|${r.unit_serial}`;
+    const same = rows.filter(r => String(r.battalion_id) === String(anchor.battalion_id) && vtOf(r) === vt);
     const unitStart = new Map();
     same.forEach(r => {
         const s = r.start_date || r.planned_start_date;
-        if (s && (!unitStart.has(r.unit_serial) || s < unitStart.get(r.unit_serial))) unitStart.set(r.unit_serial, s);
+        const k = unitKey(r);
+        if (s && (!unitStart.has(k) || s < unitStart.get(k))) unitStart.set(k, s);
     });
-    const a = unitStart.get(anchor.unit_serial);
+    const anchorKey = unitKey(anchor);
+    const a = unitStart.get(anchorKey);
     if (!a) return [anchor];
-    const keep = new Set([...unitStart].filter(([serial, s]) =>
-        serial === anchor.unit_serial || s > a || (s === a && Number(serial) >= Number(anchor.unit_serial))
-    ).map(([serial]) => serial));
-    return same.filter(r => keep.has(r.unit_serial));
+    const serialOf = k => Number(k.split('|')[1]);
+    const keep = new Set([...unitStart].filter(([k, s]) =>
+        k === anchorKey || s > a || (s === a && serialOf(k) >= Number(anchor.unit_serial))
+    ).map(([k]) => k));
+    return same.filter(r => keep.has(unitKey(r)));
 }
 
 // "This + later vehicles · From this process on": the dragged process and
@@ -1054,7 +1103,9 @@ function getKd2FromProcessAfterRows(anchor, rows = []) {
 function kd2RowsFromProcessOn(anchor, rows = []) {
     if (!anchor) return [];
     const vt = anchor.vehicle_type || anchor.vehicle;
-    const order = getModuleRuntime()?.getStationOrderByCode?.(vt);
+    const orders = {};
+    const orderOf = v => (orders[v] ??= getModuleRuntime()?.getStationOrderByCode?.(v) || new Map());
+    const order = orderOf(vt);
     const a = order?.get(anchor.station_code);
     if (!a) {
         const helper = getModuleRuntime()?.getPlanMoveRowsFromAnchor;
@@ -1062,7 +1113,7 @@ function kd2RowsFromProcessOn(anchor, rows = []) {
     }
     const anchorIsFeeder = /^(Hull|Turret|Structure)$/i.test(a.line);
     const picked = rows.filter(r => {
-        const o = order.get(r.station_code);
+        const o = orderOf(r.vehicle_type || r.vehicle).get(r.station_code);
         if (!o) return false;
         if (o.line === a.line) return o.sortKey >= a.sortKey;
         return anchorIsFeeder && !/^(Hull|Turret|Structure)$/i.test(o.line);
@@ -1095,7 +1146,8 @@ async function fetchKd2BattalionVehicleRowsForGantt(task) {
             .from('kd2_plan')
             .select('id, battalion_id, vehicle_type, unit_serial, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date'), 'kd2')
             .eq('battalion_id', task.battalion_id)
-            .eq('vehicle_type', task.vehicle_type || task.vehicle)
+            .in('vehicle_type', _ganttCombinedGroupOf(task.vehicle_type || task.vehicle) === GANTT_COMBINED_KEY
+                ? [...GANTT_COMBINED_VEHICLES] : [task.vehicle_type || task.vehicle])
             .order('id')
             .range(from, from + 999);
         if (error) throw error;
@@ -1165,6 +1217,15 @@ async function resolveGanttMoveSet(task) {
         return currentData.filter(row => samePlanLane(row, task));
     }
     if (_ganttMoveMode === 'from-block-lane') {
+        if (isKD2Module() && _ganttCombinedGroupOf(task.vehicle_type || task.vehicle) === GANTT_COMBINED_KEY) {
+            const rows = [];
+            for (const v of GANTT_COMBINED_VEHICLES) {
+                const vr = await fetchKd2StationRowsForGantt({ ...task, vehicle_type: v, vehicle: v, station_code: [...(getModuleRuntime()?.getStationRowKeyMap?.(v) || new Map())].find(([, k]) => k === _kd2StationRowKey(task))?.[0] });
+                rows.push(...vr);
+            }
+            const queue = _kd2CombinedStationQueue(task, rows.length ? rows : currentData);
+            return queue.length ? queue : [task];
+        }
         if (isKD2Module()) {
             const stationRows = await fetchKd2StationRowsForGantt(task);
             if (stationRows.length) return getKd2ForwardMoveRowsByStation(task, stationRows);
@@ -9259,6 +9320,13 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
     // row per active station of every vehicle in scope, straight from the
     // station config (Manage Processes / Flow), same as Unit View already
     // does from the unit registry above.
+    // K10 + K11 together: toggle on, both vehicles in scope, not reordering the route
+    const _vehiclesInScope = isKd2ProcessView
+        ? new Set([...(effectiveVehicleSetG ? [...effectiveVehicleSetG] : filterOptions.vehicle.map(o => o.value)), ...visible.map(p => p.vehicle)])
+        : new Set();
+    const _combineAvailable = isKd2ProcessView && _vehiclesInScope.has('K10') && _vehiclesInScope.has('K11');
+    _ganttCombineInEffect = _combineAvailable && _ganttCombineK1011 && !(_ganttEditMode && _ganttReorderMode);
+    _syncGanttCombineButton(_combineAvailable);
     if (isKd2ProcessView) {
         const vehiclesToSeed = effectiveVehicleSetG
             ? [...effectiveVehicleSetG]
@@ -9278,12 +9346,13 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
             // plan version (greyed) so they can be shown / restored.
             const stationNames = getModuleRuntime()?.getActiveStationNames?.(vehicle, { includeHidden: _ganttEditMode && _ganttReorderMode });
             if (!stationNames) return;
+            const seedGroup = _ganttCombinedGroupOf(vehicle);
             stationNames.forEach(stationName => {
-                ensureGroupLane(vehicle, stationName);
-                laneMetaMap[laneMetaKey(vehicle, stationName)] = {
+                ensureGroupLane(seedGroup, stationName);
+                laneMetaMap[laneMetaKey(seedGroup, stationName)] = {
                     battalion_id: null,
                     battalion_code: '',
-                    vehicle_type: vehicle,
+                    vehicle_type: seedGroup === GANTT_COMBINED_KEY ? '' : vehicle,
                     unit_serial: null,
                     unit_label: '',
                 };
@@ -9294,7 +9363,7 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
         const groupKey = isF100ProcessView
             ? (p.part_name || '—')
             : isKd2ProcessView
-                ? (p.vehicle || '—')
+                ? _ganttCombinedGroupOf(p.vehicle || '—')
                 : (isKD2Module() || isF100KD2Module() ? (p.battalion_code || '—') : p.vehicle);
         const laneKey = isF100ProcessView
             ? `${p.step_number != null ? p.step_number + ' ' : ''}${p.process_name || '—'}`
@@ -9308,7 +9377,7 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
         laneMetaMap[laneMetaKey(groupKey, laneKey)] = {
             battalion_id: p.battalion_id ?? null,
             battalion_code: p.battalion_code || '',
-            vehicle_type: p.vehicle_type || p.vehicle || '',
+            vehicle_type: groupKey === GANTT_COMBINED_KEY ? '' : (p.vehicle_type || p.vehicle || ''),
             unit_serial: isF100KD2Module() ? (p.serial_number ?? null) : (p.unit_serial ?? null),
             unit_label: p.unit_label || p.vehicle_no || '',
         };
@@ -9350,7 +9419,7 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
             if (!_kd2UnitCompMap[unitKey]) _kd2UnitCompMap[unitKey] = { done: 0, total: 0 };
             _kd2UnitCompMap[unitKey].total++;
             if (done) _kd2UnitCompMap[unitKey].done++;
-            const statKey = r.process_station ? `${r.vehicle}||${r.process_station}` : '';
+            const statKey = r.process_station ? `${_ganttCombinedGroupOf(r.vehicle)}||${r.process_station}` : '';
             if (statKey) {
                 if (!_kd2StatCompMap[statKey]) _kd2StatCompMap[statKey] = { done: 0, total: 0 };
                 _kd2StatCompMap[statKey].total++;
@@ -9491,8 +9560,16 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
         // the KD2 process view — the single source of truth for both lane sort
         // order and the block separators below. Sorting by route_sequence alone
         // interleaves the parallel Hull and Turret lines.
+        // Combined K10 + K11: both vehicles' station rows (same names, same order)
+        const _mergeVehicleMaps = getter => {
+            const m = new Map();
+            for (const v of GANTT_COMBINED_VEHICLES) {
+                (getModuleRuntime()?.[getter]?.(v) || new Map()).forEach((val, k) => { if (!m.has(k)) m.set(k, val); });
+            }
+            return m;
+        };
         const _laneOrder = isKd2ProcessView
-            ? (getModuleRuntime()?.getStationLaneOrder?.(groupKey) || new Map())
+            ? (groupKey === GANTT_COMBINED_KEY ? _mergeVehicleMaps('getStationLaneOrder') : (getModuleRuntime()?.getStationLaneOrder?.(groupKey) || new Map()))
             : null;
         const unitKeys = Object.keys(groups[groupKey]).sort((a, b) => {
             if (isF100ProcessView) return naturalSort(a, b);
@@ -9534,7 +9611,7 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
 
         // For KD2 process view: build a station→category map for this vehicle (groupKey)
         const _kd2CatMap = isKd2ProcessView
-            ? (getModuleRuntime()?.getStationCategoryMap?.(groupKey) || new Map())
+            ? (groupKey === GANTT_COMBINED_KEY ? _mergeVehicleMaps('getStationCategoryMap') : (getModuleRuntime()?.getStationCategoryMap?.(groupKey) || new Map()))
             : null;
 
         vehicleSections.forEach(section => {
@@ -9612,6 +9689,8 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
                 const actualStart = task.progress?.actual_start_date || null;
 
                 let extraCls = ` gc-bar-state-${highlightState}`;
+                const vehMark = groupKey === GANTT_COMBINED_KEY && task.vehicle === 'K11'
+                    ? '<span class="gc-bar-veh-mark" aria-hidden="true"></span>' : '';
                 if (status === 'Overdue') extraCls += ' gc-bar-overdue';
 
                 let actualStartMarker = '';
@@ -9665,8 +9744,8 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
           data-plan-id="${task.id}"${_ganttEditMode && !eagerControls ? ' data-lazy-controls="1"' : ''}
           style="left:${left}px;width:${width}px;height:${BAR_H}px;top:${topPx}px;transform:none;background:${color}"
           title="${esc(tip)}">
-          ${actualStartMarker}
-          <span class="gc-bar-text">${esc(isF100ProcessView ? `${task.vehicle_type || '—'} #${task.serial_number ?? task.vehicle_no}` : isF100KD2Module() ? `${task.part_name || ''} · ${task.process_station}` : isKd2ProcessView ? `${task.battalion_code || '—'} · ${task.vehicle_no}` : isKD2Module() ? `${getRowCode(task)} · ${task.process_station}` : task.process_station)}</span>
+          ${actualStartMarker}${vehMark}
+          <span class="gc-bar-text">${esc(isF100ProcessView ? `${task.vehicle_type || '—'} #${task.serial_number ?? task.vehicle_no}` : isF100KD2Module() ? `${task.part_name || ''} · ${task.process_station}` : isKd2ProcessView ? (groupKey === GANTT_COMBINED_KEY ? `${task.battalion_code || '—'} · ${task.vehicle} ${task.vehicle_no}` : `${task.battalion_code || '—'} · ${task.vehicle_no}`) : isKD2Module() ? `${getRowCode(task)} · ${task.process_station}` : task.process_station)}</span>
 
           ${blockMenu}
         </div>`;
@@ -9746,7 +9825,7 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
             data-kd2-lane-key="${esc(unit)}"
             data-battalion-id="${esc(laneMeta.battalion_id ?? '')}"
             data-battalion-code="${esc(laneMeta.battalion_code || groupKey || '')}"
-            data-vehicle-type="${esc(laneMeta.vehicle_type || laneVehicle || '')}"
+            data-vehicle-type="${esc(groupKey === GANTT_COMBINED_KEY ? '' : (laneMeta.vehicle_type || laneVehicle || ''))}"
             data-unit-serial="${esc(laneMeta.unit_serial ?? '')}"
             data-unit-label="${esc(laneMeta.unit_label || laneUnit || '')}"
             data-gantt-days="1">
@@ -20144,7 +20223,7 @@ function wireGanttDragEdit(dayIndex, days) {
         const previewMoveSet = _ganttMoveMode === 'lane'
             ? currentData.filter(row => samePlanLane(row, task))
             : _ganttMoveMode === 'from-block-lane'
-                ? getKd2ForwardMoveRowsByStation(task, currentData)
+                ? (_ganttCombinedGroupOf(task.vehicle) === GANTT_COMBINED_KEY ? _kd2CombinedStationQueue(task, currentData) : getKd2ForwardMoveRowsByStation(task, currentData))
                 : _ganttMoveMode === 'unit-after'
                 ? getKd2UnitAndAfterRows(task, currentData)
                 : _ganttMoveMode === 'from-block-after'

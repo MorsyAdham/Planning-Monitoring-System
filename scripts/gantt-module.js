@@ -126,6 +126,11 @@
                             Process
                         </button>
                     </div>
+                    <button class="gantt-combine-btn" id="btnGanttCombineK1011" type="button" aria-pressed="false" hidden
+                        title="Process view: show K10 and K11 as one plan — both vehicles' blocks on the same station rows">
+                        <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" style="width:11px;height:11px"><path d="M2 4h4M2 10h4M6 4c2 0 2 3 4 3M6 10c2 0 2-3 4-3M10 7h2"/></svg>
+                        K10 + K11 together
+                    </button>
                 </div>
                 <div class="filter-item" style="padding-top:18px">
                     <button class="btn btn-ghost gantt-edit-toggle" id="btnGanttEdit">
