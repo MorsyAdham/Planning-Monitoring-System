@@ -327,22 +327,24 @@
             </div>
         </div>
         <div class="gantt-legend" id="ganttLegend"></div>
-        <div class="gantt-status-key" id="ganttStatusKey" aria-label="Block status key">
-            <span class="gsk-title">Status</span>
-            <span class="gsk-item"><span class="gc-bar-st gc-st-complete">✓</span>Completed</span>
-            <span class="gsk-item"><span class="gc-bar-st gc-st-early">✓</span>Completed early</span>
-            <span class="gsk-item"><span class="gc-bar-st gc-st-late-complete">✓</span>Completed late</span>
-            <span class="gsk-item"><span class="gc-bar-st gc-st-progress">▶</span>In progress</span>
-            <span class="gsk-item"><span class="gc-bar-st gc-st-late">!</span>Overdue <em>(striped)</em></span>
-            <span class="gsk-item"><span class="gsk-planned"></span>Planned</span>
-        </div>
-        <div class="gantt-zone-key" id="ganttZoneKey" style="display:none">
-            <span class="gantt-zone-key-item gantt-zone-key-holiday">
-                <span class="gantt-zone-key-swatch"></span>Holiday
-            </span>
-            <span class="gantt-zone-key-item gantt-zone-key-fat">
-                <span class="gantt-zone-key-swatch"></span>FAT Period
-            </span>
+        <div class="gantt-keys-row">
+            <div class="gantt-zone-key" id="ganttZoneKey" style="display:none">
+                <span class="gantt-zone-key-item gantt-zone-key-holiday">
+                    <span class="gantt-zone-key-swatch"></span>Holiday
+                </span>
+                <span class="gantt-zone-key-item gantt-zone-key-fat">
+                    <span class="gantt-zone-key-swatch"></span>FAT Period
+                </span>
+            </div>
+            <div class="gantt-status-key" id="ganttStatusKey" aria-label="Block status key">
+                <span class="gsk-title">Status</span>
+                <span class="gsk-item"><span class="gc-bar-st gc-st-complete">✓</span>Completed</span>
+                <span class="gsk-item"><span class="gc-bar-st gc-st-early">✓</span>Completed early</span>
+                <span class="gsk-item"><span class="gc-bar-st gc-st-late-complete">✓</span>Completed late</span>
+                <span class="gsk-item"><span class="gc-bar-st gc-st-progress">▶</span>In progress</span>
+                <span class="gsk-item"><span class="gc-bar-st gc-st-late">!</span>Overdue <em>(striped)</em></span>
+                <span class="gsk-item"><span class="gsk-planned"></span>Planned</span>
+            </div>
         </div>
         <div class="gantt-scroll-root" id="ganttScrollRoot">
             <div id="ganttInner">

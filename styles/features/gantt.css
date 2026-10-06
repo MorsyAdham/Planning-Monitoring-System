@@ -217,13 +217,17 @@
 .gc-st-late { background: #dc2626; }
 #ganttInner .gc-bar-has-st .gc-bar-text { padding-right: 16px; }
 
-/* Status key above the Gantt */
-.gantt-status-key { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 6px 2px 8px; font-size: .72rem; color: var(--clr-text-muted); }
-.gsk-title { font-size: .64rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+/* Key strip above the Gantt: Holiday / FAT on the left, block status on the right */
+.gantt-keys-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 24px; padding: 7px 24px; border-bottom: 1px solid var(--clr-border-soft); background: var(--clr-surface-2); }
+.gantt-keys-row .gantt-zone-key { padding: 0; border: none; background: none; }
+.gantt-status-key { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-left: auto; font-size: .72rem; color: var(--clr-text-muted); }
+.gsk-title { font-size: .64rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding-right: 10px; border-right: 1px solid var(--clr-border); }
 .gsk-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .gsk-item .gc-bar-st { position: static !important; transform: none; }
 .gsk-item em { font-style: normal; opacity: .75; }
-.gsk-planned { width: 15px; height: 15px; border-radius: 4px; background: var(--clr-surface-2); border: 1px dashed var(--clr-border); }
+.gsk-planned { width: 15px; height: 15px; border-radius: 4px; background: var(--clr-surface); border: 1px dashed var(--clr-border); }
+.gantt-card:fullscreen .gantt-keys-row { padding-left: 28px; padding-right: 28px; }
+@media (max-width: 900px) { .gantt-keys-row { padding: 7px 14px; } .gantt-status-key { margin-left: 0; } }
 
 /* ── Unit view: one band per line (Hull / Turret / Assembly …) ─── */
 #ganttInner .gr-line-band { position: absolute; left: 0; right: 0; pointer-events: none; border-top: 1px dashed rgba(148,163,184,.18); }
