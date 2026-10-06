@@ -1,8 +1,8 @@
 {
- "version": "v155-ec9a1af",
- "label": "v155",
- "deployedAt": "2026-10-06T09:46:34.992Z",
- "notes": "Korean and Arabic interface languages, language button, translated loading screen",
+ "version": "v156-98e9b17",
+ "label": "v156",
+ "deployedAt": "2026-10-06T11:35:43.543Z",
+ "notes": "Translate the rest of the interface and share the hover card",
  "files": [
   "index.html",
   "login.html",
@@ -16,6 +16,7 @@
   "scripts/core/events.js",
   "scripts/core/formatters.js",
   "scripts/core/guards.js",
+  "scripts/core/hover-card.js",
   "scripts/core/i18n.js",
   "scripts/core/notifications.js",
   "scripts/core/plan-versions.js",
@@ -63,6 +64,7 @@
   "styles/base.css",
   "styles/components/buttons.css",
   "styles/components/forms.css",
+  "styles/components/hover-card.css",
   "styles/components/modals.css",
   "styles/components/tables.css",
   "styles/components/toasts.css",

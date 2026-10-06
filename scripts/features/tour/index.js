@@ -13,6 +13,7 @@
    ================================================================ */
 
 import { getCurrentUser } from '../../core/guards.js';
+import { _t } from '../../core/i18n.js';
 
 const OFFER_KEY = 'ppms_tour_offered_v1_';
 
@@ -262,14 +263,14 @@ function go(i) {
     const step = state.steps[i];
     const root = state.root;
     const card = root.querySelector('.tour-card');
-    root.querySelector('.tour-count').textContent = `Step ${i + 1} of ${state.steps.length}`;
-    root.querySelector('.tour-title').textContent = step.title;
-    root.querySelector('.tour-text').innerHTML = step.text;
+    root.querySelector('.tour-count').textContent = _t('Step {n} of {total}', { n: i + 1, total: state.steps.length });
+    root.querySelector('.tour-title').textContent = _t(step.title);
+    root.querySelector('.tour-text').innerHTML = _t(step.text);
     root.querySelector('.tour-icon').innerHTML = icon(step.icon || '<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>');
     root.querySelector('.tour-progress span').style.width = `${Math.round((i + 1) / state.steps.length * 100)}%`;
     root.querySelector('[data-tour="back"]').hidden = i === 0;
     const next = root.querySelector('[data-tour="next"] span');
-    next.textContent = step.final ? 'Finish' : (i === 0 ? 'Start' : 'Next');
+    next.textContent = _t(step.final ? 'Finish' : (i === 0 ? 'Start' : 'Next'));
     root.querySelector('.tour-skip').hidden = !!step.final;
 
     const els = targetsOf(step);

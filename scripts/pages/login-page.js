@@ -6,6 +6,7 @@ import { applyStoredTheme, applyTheme, getTheme, saveSession } from '../core/ses
 import { createSupabaseClient } from '../core/supabase-client.js';
 import { renderLoginLayout } from '../templates/login-layout.js';
 import { _t, adoptProfileLang } from '../core/i18n.js';
+import '../core/hover-card.js';
 
 const THEME_ORDER = ['dark', 'light', 'nord', 'dracula', 'midnight', 'catppuccin', 'crimson'];
 const THEME_META = {

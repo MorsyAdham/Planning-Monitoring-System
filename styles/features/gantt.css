@@ -242,24 +242,7 @@
 .gr-line-structure { border-right-color: #3b82f6; }
 .gr-line-assembly { border-right-color: #10b981; }
 
-/* ── Hover card ─── */
-.gantt-tip { position: fixed; z-index: 10050; width: 290px; padding: 10px 12px 9px; border-radius: 10px; background: color-mix(in srgb, var(--clr-surface) 96%, #000 4%); border: 1px solid var(--clr-border); box-shadow: 0 14px 34px rgba(0,0,0,.45); color: var(--clr-text); font-size: .76rem; pointer-events: none; }
-.gantt-tip[hidden] { display: none; }
-.gtip-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-.gtip-title { font-weight: 700; font-size: .84rem; line-height: 1.25; }
-.gtip-pill { flex: none; padding: 2px 8px; border-radius: 999px; font-size: .66rem; font-weight: 700; color: #fff; white-space: nowrap; }
-.gtip-complete { background: #16a34a; } .gtip-early { background: #9333ea; } .gtip-late-complete { background: #2563eb; }
-.gtip-progress { background: #d97706; } .gtip-late { background: #dc2626; } .gtip-planned { background: #475569; }
-.gtip-sub { margin-top: 2px; color: var(--clr-text-muted); font-size: .72rem; }
-.gtip-grid { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--clr-border); display: grid; gap: 4px; }
-.gtip-row { display: grid; grid-template-columns: 96px 1fr; gap: 8px; align-items: baseline; }
-.gtip-row span { color: var(--clr-text-muted); font-size: .7rem; }
-.gtip-row b { font-weight: 600; }
-.gtip-row i { font-style: normal; color: var(--clr-text-muted); font-weight: 500; margin-left: 4px; }
-.gtip-bad b { color: #f87171; } .gtip-good b { color: #4ade80; }
-.gtip-foot { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--clr-border); font-size: .66rem; color: var(--clr-text-muted); }
-[data-theme="light"] .gantt-tip { background: #fff; box-shadow: 0 14px 34px rgba(15,23,42,.18); }
-[data-theme="light"] .gtip-bad b { color: #dc2626; } [data-theme="light"] .gtip-good b { color: #16a34a; }
+/* Hover card: styles/components/hover-card.css (shared by the whole app) */
 
 /* Sticky row labels are opaque, so bars scrolled underneath never show through */
 #ganttInner .gr-unit-label { background-image: linear-gradient(var(--clr-surface), var(--clr-surface)); background-color: var(--clr-bg, #0b1120); }

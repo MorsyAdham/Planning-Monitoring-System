@@ -1,4 +1,4 @@
-import { _t, langPickerHtml } from '../core/i18n.js';
+import { _t, langButtonHtml } from '../core/i18n.js';
 export function renderLoginLayout() {
     return `
 <div class="lp-root">
@@ -168,7 +168,7 @@ export function renderLoginLayout() {
 
         <!-- Theme picker -->
         <div class="lp-theme-wrap" id="lpThemeWrap">
-            ${langPickerHtml('lang-picker--login')}
+            ${langButtonHtml()}
             <button class="lp-theme-btn" id="btnTheme" title="${_t("Theme")}" type="button" aria-haspopup="true" aria-expanded="false">
                 <span id="lpThemePickerIcon"></span>
             </button>

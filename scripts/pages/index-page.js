@@ -1,7 +1,8 @@
 import { bootstrapPage, exposeCoreGlobals, loadRuntimeScripts } from '../core/app-bootstrap.js';
 import { CDN_SCRIPTS, ROUTES } from '../core/config.js';
 import { byId, loadClassicScript } from '../core/dom.js';
-import { _t } from '../core/i18n.js';
+import { _t, registerChartTranslation } from '../core/i18n.js';
+import { registerChartHoverCard } from '../core/hover-card.js';
 import { canEditPlan, canWrite, getCurrentUser, isPlanner, isMasterAdmin } from '../core/guards.js';
 import { installToastGlobal } from '../core/notifications.js';
 import { applyTheme, applyStoredTheme, clearSession, toggleTheme } from '../core/session.js';
@@ -174,9 +175,12 @@ async function initPage() {
     });
 
     wireLazyExportLibs();
+    await loadClassicScript(CDN_SCRIPTS.supabase.src, CDN_SCRIPTS.supabase);
+    await loadClassicScript(CDN_SCRIPTS.chartJs.src, CDN_SCRIPTS.chartJs);
+    // Before any chart is drawn: tooltips in the hover-card style, text in the user's language
+    registerChartHoverCard(window.Chart);
+    registerChartTranslation(window.Chart);
     await loadRuntimeScripts([
-        CDN_SCRIPTS.supabase,
-        CDN_SCRIPTS.chartJs,
         { src: 'scripts/core/custom-select.js' },
         { src: 'scripts/core/plan-versions.js' },
         { src: 'scripts/gantt-module.js' },

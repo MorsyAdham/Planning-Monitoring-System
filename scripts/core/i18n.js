@@ -12,6 +12,15 @@
    • Plan data (station, part and unit names, codes) is never
      translated — only the interface around it.
    • Dates and numbers follow the language, always with Western digits.
+   • Screen text (stage 2): most of the interface is not wrapped in
+     _t(). In Korean / Arabic a watcher translates every text, tooltip,
+     placeholder and label on the page whose English matches a key in
+     strings.js — exactly, or through a {placeholder} pattern
+     ("{a} issue{s}" matches "3 issues"; {s} is a plural ending and may
+     be left out of the translation). A sentence with bold / code words
+     ("Click <b>Refresh</b> to …") is matched as a whole, markup included.
+     Anything inside translate="no" is left alone (report previews).
+     In English the watcher never starts.
    ================================================================ */
 import STRINGS from '../i18n/strings.js';
 
@@ -159,9 +168,229 @@ function translateStatic(root = document) {
     root.querySelectorAll('[data-i18n-label]').forEach(el => { el.setAttribute('aria-label', _t(el.dataset.i18nLabel)); });
 }
 
+/* ── Screen text ───────────────────────────────────────────────── */
+const norm = s => s.replace(/\s+/g, ' ').replace(/\s*<br>\s*/g, '<br>').trim();
+const escRx = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const domMissing = new Set();
+const memo = new Map();
+// Everything this layer has written. Text that is already a translation is
+// never translated again — so writing it back can't start a loop, even when
+// a text translates to itself ("PPMS", "X-ray") or one output looks like
+// another key.
+const outputs = new Set();
+let patterns = null;
+
+/** Keys with {placeholders} as regular expressions. {s} is a plural ending. */
+function buildPatterns() {
+    patterns = [];
+    for (const [en, e] of Object.entries(STRINGS)) {
+        if (!e[LANG] || !en.includes('{')) continue;
+        const names = [];
+        let lit = '';
+        const src = en.split(/(\{\w+\})/).map(part => {
+            const m = /^\{(\w+)\}$/.exec(part);
+            if (m) { names.push(m[1]); return m[1] === 's' ? '([a-z]{0,3})' : '(.+?)'; }
+            if (part.length > lit.length) lit = part;
+            return escRx(part);
+        }).join('');
+        if (!/[A-Za-z]{2}/.test(lit)) continue;
+        patterns.push({ rx: new RegExp(`^${src}$`), names, tr: e[LANG], lit });
+    }
+    // Longer literal text first, so "Delete {a} block" wins over "Delete {a}"
+    patterns.sort((a, b) => b.lit.length - a.lit.length);
+}
+
+/** Translation of a whole piece of screen text, or null when there is none. */
+function trText(raw) {
+    const key = norm(raw);
+    if (!key || !/[A-Za-z]{2}/.test(key.replace(/<[^>]*>/g, ''))) return null;
+    if (outputs.has(key)) return null;
+    if (memo.has(key)) return memo.get(key);
+    let out = STRINGS[key]?.[LANG] || null;
+    if (!out) {
+        if (!patterns) buildPatterns();
+        for (const p of patterns) {
+            if (!key.includes(p.lit)) continue;
+            const m = p.rx.exec(key);
+            if (!m) continue;
+            // A value that is itself an interface word ("Status : Overdue") is translated too
+            const vals = {};
+            p.names.forEach((n, i) => { vals[n] = STRINGS[m[i + 1]]?.[LANG] || m[i + 1]; });
+            out = p.tr.replace(/\{(\w+)\}/g, (x, k) => vals[k] ?? '');
+            break;
+        }
+    }
+    if (out === key) out = null;           // same in both languages: nothing to do
+    if (memo.size > 20000) memo.clear();
+    if (outputs.size > 20000) outputs.clear();
+    memo.set(key, out);
+    if (out) outputs.add(norm(out));
+    if (!out && domMissing.size < 5000) domMissing.add(key);
+    return out;
+}
+
+/** confirm() / alert() text: whole message, else line by line. */
+function trMessage(msg) {
+    if (msg == null) return msg;
+    const s = String(msg);
+    const whole = trText(s);
+    if (whole) return whole;
+    return s.split('\n').map(line => trText(line) ?? line).join('\n');
+}
+
+const INLINE = new Set(['B', 'STRONG', 'EM', 'I', 'CODE', 'KBD', 'U', 'SMALL', 'SPAN', 'BR']);
+const SKIP = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'NOSCRIPT', 'svg']);
+const ATTRS = ['title', 'placeholder', 'aria-label'];
+
+/** "Click <b>Refresh</b> to …" — an element whose children are text and
+ *  plain inline elements (each holding only text) is translated as one
+ *  sentence. Returns true when it was. */
+function trMixed(el) {
+    let hasText = false, hasInline = false, key = '';
+    for (const c of el.childNodes) {
+        if (c.nodeType === 3) { key += c.nodeValue; if (/[A-Za-z]/.test(c.nodeValue)) hasText = true; }
+        else if (c.nodeType === 1 && INLINE.has(c.tagName)) {
+            if (c.tagName === 'BR') { key += '<br>'; continue; }
+            // An element the code updates by id must survive — leave such sentences to the text nodes
+            if (c.children.length || c.id) return false;
+            const t = c.tagName.toLowerCase();
+            key += `<${t}>${c.textContent}</${t}>`;
+            hasInline = true;
+        } else if (c.nodeType !== 8) return false;
+    }
+    if (!hasText || !hasInline) return false;
+    const out = trText(key);
+    if (!out) return false;
+    // Rebuild from the translation, keeping each inline element's attributes
+    const tpl = document.createElement('template');
+    tpl.innerHTML = out;
+    const originals = [...el.children];
+    for (const n of tpl.content.querySelectorAll('*')) {
+        const i = originals.findIndex(o => o.tagName === n.tagName);
+        if (i < 0) continue;
+        for (const a of originals[i].attributes) n.setAttribute(a.name, a.value);
+        originals.splice(i, 1);
+    }
+    el.replaceChildren(tpl.content);
+    return true;
+}
+
+/** An attribute value: multi-line tooltips are translated line by line. */
+function trValue(v) {
+    if (!v.includes('\n')) return trText(v);
+    const lines = v.split('\n').map(line => trText(line) ?? line).join('\n');
+    return lines === v ? null : lines;
+}
+
+function trAttrs(el) {
+    for (const a of ATTRS) {
+        const v = el.getAttribute(a);
+        if (v) { const out = trValue(v); if (out && out !== v) el.setAttribute(a, out); }
+    }
+}
+
+function trTextNode(n) {
+    const v = n.nodeValue;
+    if (!v || v.length > 1500 || !/[A-Za-z]/.test(v)) return;
+    const out = trText(v);
+    if (!out) return;
+    const next = v.match(/^\s*/)[0] + out + v.match(/\s*$/)[0];
+    if (next !== v) n.nodeValue = next;
+}
+
+// Left alone: report previews (translate="no") and anything the user is typing in
+const isFrozen = el => !!el?.closest?.('[translate="no"], [contenteditable]:not([contenteditable="false"])');
+
+function trTree(root) {
+    if (root.nodeType === 3) {
+        if (!isFrozen(root.parentElement)) trTextNode(root);
+        return;
+    }
+    if (root.nodeType !== 1 || SKIP.has(root.tagName) || isFrozen(root)) return;
+    const walk = el => {
+        if (SKIP.has(el.tagName) || el.getAttribute('translate') === 'no' || el.isContentEditable) return;
+        if (el.hasAttributes()) trAttrs(el);
+        if (el.firstChild && trMixed(el)) return;
+        for (let c = el.firstChild; c; c = c.nextSibling) {
+            if (c.nodeType === 3) trTextNode(c);
+            else if (c.nodeType === 1) walk(c);
+        }
+    };
+    walk(root);
+}
+
+function startScreenTranslation() {
+    if (LANG === 'en' || !document.body) return;
+    if (document.title) document.title = trText(document.title) ?? document.title;
+    trTree(document.body);
+    new MutationObserver(records => {
+        for (const r of records) {
+            if (r.type === 'childList') {
+                // A changed sentence (e.g. innerHTML of a <p>) is retried as a whole
+                if (r.target.nodeType === 1 && r.addedNodes.length && !isFrozen(r.target) && trMixed(r.target)) continue;
+                r.addedNodes.forEach(trTree);
+            } else if (r.type === 'characterData') {
+                if (!isFrozen(r.target.parentElement)) trTextNode(r.target);
+            } else if (r.type === 'attributes') {
+                const v = r.target.getAttribute(r.attributeName);
+                if (v && !isFrozen(r.target)) { const out = trValue(v); if (out && out !== v) r.target.setAttribute(r.attributeName, out); }
+            }
+        }
+    }).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ATTRS });
+    // Browser dialogs
+    const nativeConfirm = window.confirm.bind(window), nativeAlert = window.alert.bind(window);
+    window.confirm = msg => nativeConfirm(trMessage(msg));
+    window.alert = msg => nativeAlert(trMessage(msg));
+}
+
+/** Chart.js draws text on a canvas: translate legend / series names,
+ *  category names that are interface words, and titles before each draw. */
+export function registerChartTranslation(Chart) {
+    if (LANG === 'en' || !Chart?.register) return;
+    const tr = v => (typeof v === 'string' ? (trText(v) ?? v) : Array.isArray(v) ? v.map(tr) : v);
+    const exact = v => (typeof v === 'string' ? (STRINGS[norm(v)]?.[LANG] || v) : v);
+    Chart.register({
+        id: 'ppmsI18n',
+        beforeUpdate(chart) {
+            const { data, options } = chart.config;
+            data?.datasets?.forEach(ds => { if (ds.label) ds.label = tr(ds.label); });
+            // Category names: only when the points are plain values (points given as
+            // { x, y: 'name' } refer to the names and would lose their category)
+            const keyed = data?.datasets?.some(ds => Array.isArray(ds.data) && ds.data.some(v => v && typeof v === 'object' && !Array.isArray(v)));
+            if (Array.isArray(data?.labels) && !keyed) data.labels = data.labels.map(exact);
+            const t = options?.plugins?.title;
+            if (t?.text) t.text = tr(t.text);
+            Object.values(options?.scales || {}).forEach(s => { if (s?.title?.text) s.title.text = tr(s.title.text); });
+            const marker = options?.plugins?.anMarker;
+            if (marker?.label) marker.label = tr(marker.label);
+            // Tooltip lines built in code ("12% complete", "Week of …")
+            const cb = options?.plugins?.tooltip?.callbacks;
+            if (cb) {
+                for (const k of ['title', 'beforeLabel', 'label', 'afterLabel', 'footer']) {
+                    const fn = cb[k];
+                    if (typeof fn !== 'function' || fn.ppmsI18n) continue;
+                    const wrapped = function (...args) {
+                        const out = fn.apply(this, args);
+                        const one = v => (typeof v === 'string' && /[A-Za-z]{2}/.test(v) ? v.match(/^\s*/)[0] + tr(v.trim()) : v);
+                        return Array.isArray(out) ? out.map(one) : one(out);
+                    };
+                    wrapped.ppmsI18n = true;
+                    cb[k] = wrapped;
+                }
+            }
+        },
+    });
+}
+
 applyLangToDocument();
 translateStatic();
+startScreenTranslation();
 
 // Classic scripts (app.js, kd2.js, gantt-module.js) use the globals
 window._t = _t;
-window.PPMSi18n = { _t, getLang, getLocale, fmtDate, setLang, adoptProfileLang, LANGS, missing: () => [...missing] };
+window.PPMSi18n = {
+    _t, getLang, getLocale, fmtDate, setLang, adoptProfileLang, LANGS,
+    tr: s => trText(s) ?? s,
+    // Interface text still in English — open the page in Korean / Arabic, use it, then run PPMSi18n.missing()
+    missing: () => [...new Set([...missing, ...domMissing])],
+};

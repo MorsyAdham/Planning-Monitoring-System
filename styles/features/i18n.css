@@ -12,7 +12,11 @@
 .nav-user-menu-lang { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; border-bottom: 1px solid var(--clr-border); margin-bottom: 4px; }
 .nav-user-menu-label { font-size: .64rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--clr-text-muted); }
 .lang-picker--menu { align-self: flex-start; }
-.lang-picker--login { margin-inline-end: 8px; }
+/* Sign-in page: the same globe button + menu as the header, next to the theme button */
+.lp-theme-wrap { display: flex; align-items: center; gap: 8px; }
+.lp-theme-wrap .lang-menu-btn { height: 34px; min-width: 34px; background: var(--clr-surface); }
+html[dir="rtl"] .lp-theme-wrap { right: auto; left: 20px; }
+html[dir="rtl"] .lp-theme-dropdown { right: auto; left: 0; }
 [data-theme="light"] .lang-opt:hover { background: rgba(0, 0, 0, .05); }
 
 /* Fonts: Korean / Arabic glyphs fall back to Noto (Latin keeps Inter) */
@@ -43,10 +47,8 @@ html[dir="rtl"] .gantt-export-menu { right: auto; left: 0; }
 
 /* Text alignment that was written as left */
 html[dir="rtl"] .fx-chip,
-html[dir="rtl"] .gtip-row,
 html[dir="rtl"] .xr-body,
 html[dir="rtl"] .modal-body { text-align: right; }
-html[dir="rtl"] .gantt-tip { direction: rtl; }
 html[dir="rtl"] .gx-hint svg { transform: scaleX(-1); }
 
 /* Segmented tabs overlap their borders with a negative margin — mirror it */

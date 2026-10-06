@@ -1,0 +1,37 @@
+/* ================================================================
+   Hover card — the one tooltip style of PPMS (core/hover-card.js).
+   Replaces the browser's title tooltip everywhere; the Gantt block
+   card uses the same shell with its own rows.
+   ================================================================ */
+.ppms-tip { position: fixed; z-index: 10050; width: max-content; max-width: min(320px, calc(100vw - 16px)); padding: 9px 12px 8px; border-radius: 10px; background: color-mix(in srgb, var(--clr-surface) 96%, #000 4%); border: 1px solid var(--clr-border); box-shadow: 0 14px 34px rgba(0,0,0,.45); color: var(--clr-text); font-size: .76rem; line-height: 1.4; pointer-events: none; text-align: start; white-space: normal; overflow-wrap: anywhere; }
+.ppms-tip[hidden] { display: none; }
+.ppms-tip--wide { width: 290px; padding: 10px 12px 9px; }
+
+/* A one-line note (most buttons and icons) */
+.tip-note { font-weight: 500; }
+
+/* Heading, optional status pill, sub line */
+.tip-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.tip-title { font-weight: 700; font-size: .84rem; line-height: 1.25; }
+.tip-pill { flex: none; padding: 2px 8px; border-radius: 999px; font-size: .66rem; font-weight: 700; color: #fff; white-space: nowrap; }
+.tip-complete { background: #16a34a; } .tip-early { background: #9333ea; } .tip-late-complete { background: #2563eb; }
+.tip-progress { background: #d97706; } .tip-late { background: #dc2626; } .tip-planned { background: #475569; }
+.tip-sub { margin-top: 2px; color: var(--clr-text-muted); font-size: .72rem; }
+
+/* Plain lines under the heading */
+.tip-text { margin-top: 5px; display: grid; gap: 2px; color: var(--clr-text-muted); }
+
+/* Label / value rows */
+.tip-grid { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--clr-border); display: grid; gap: 4px; }
+.tip-row { display: grid; grid-template-columns: minmax(70px, max-content) 1fr; gap: 10px; align-items: baseline; }
+.ppms-tip--wide .tip-row { grid-template-columns: 96px 1fr; gap: 8px; }
+.tip-row span { color: var(--clr-text-muted); font-size: .7rem; }
+.tip-row b { font-weight: 600; }
+.tip-row i { font-style: normal; color: var(--clr-text-muted); font-weight: 500; margin-inline-start: 4px; }
+.tip-bad b { color: #f87171; } .tip-good b { color: #4ade80; }
+.tip-foot { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--clr-border); font-size: .66rem; color: var(--clr-text-muted); }
+
+[data-theme="light"] .ppms-tip { background: #fff; box-shadow: 0 14px 34px rgba(15,23,42,.18); }
+[data-theme="light"] .tip-bad b { color: #dc2626; } [data-theme="light"] .tip-good b { color: #16a34a; }
+
+html[dir="rtl"] .ppms-tip { direction: rtl; }

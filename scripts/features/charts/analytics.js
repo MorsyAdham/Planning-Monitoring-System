@@ -47,6 +47,8 @@ function anOpt(key) { return _an.opts[key] ?? AN_DEFAULTS[key]; }
 const _anIsF100Row = r => r.module === 'gun' || r.module === 'vehicle';
 const _anFmt = n => Number(n).toLocaleString('en-GB');
 const _anNoun = () => (isKD2Module() ? 'blocks' : 'tasks');
+/** A noun ("blocks", "units" …) in the user's language. */
+const _anN = noun => _t(noun);
 
 function _anIsDone(r) {
     const s = calculateStatus(r);
@@ -226,6 +228,12 @@ function _anGroupRows(data, dim) {
 function _anPlural(dim) {
     return { unit: 'units', battalion: 'battalions', vehicle: 'vehicle types' }[dim] || 'groups';
 }
+/** "12 of 40 units" / "all 40 units" */
+function _anCountOf(shown, total, plural) {
+    return shown < total
+        ? _t('{n} of {total} {noun}', { n: shown, total, noun: _anN(plural) })
+        : _t('all {total} {noun}', { total, noun: _anN(plural) });
+}
 function _anGroupStats(g, today) {
     // Expected finish = the latest process-order forecast finish of the
     // group's blocks (same engine as the delivery card — planForecast).
@@ -338,7 +346,7 @@ function _anRenderThroughput(data) {
     const items = data.map(r => ({ end: _anPlanEnd(r), done: _anDoneDate(r) })).filter(x => x.end);
     if (!items.length) {
         _anClear('tp');
-        anSetInsight('anTpInsight', `No ${noun} in the current filter.`);
+        anSetInsight('anTpInsight', _t('No {noun} in the current filter.', { noun: _anN(noun) }));
         return;
     }
 
@@ -394,14 +402,14 @@ function _anRenderThroughput(data) {
         options: _anOptions({
             scales: {
                 x: _anAxis({ grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 10 } }),
-                y: _anAxis({ beginAtZero: true, title: `${noun[0].toUpperCase()}${noun.slice(1)} / week`, ticks: { precision: 0 } }),
-                y1: _anAxis({ beginAtZero: true, position: 'right', grid: { display: false }, title: 'Backlog', ticks: { precision: 0 } }),
+                y: _anAxis({ beginAtZero: true, title: _t(noun === 'blocks' ? 'Blocks / week' : 'Tasks / week'), ticks: { precision: 0 } }),
+                y1: _anAxis({ beginAtZero: true, position: 'right', grid: { display: false }, title: _t('Backlog'), ticks: { precision: 0 } }),
             },
             plugins: {
-                anMarker: { value: markerIdx >= 0 ? markerIdx : null, label: 'This week' },
+                anMarker: { value: markerIdx >= 0 ? markerIdx : null, label: _t('This week') },
                 tooltip: {
                     callbacks: {
-                        title: ctx => `Week of ${formatDate(weeks[ctx[0].dataIndex])}${future[ctx[0].dataIndex] ? ' (upcoming)' : ''}`,
+                        title: ctx => _t(future[ctx[0].dataIndex] ? 'Week of {date} (upcoming)' : 'Week of {date}', { date: formatDate(weeks[ctx[0].dataIndex]) }),
                     },
                 },
             },
@@ -415,15 +423,15 @@ function _anRenderThroughput(data) {
     const dSum = recent.reduce((s, w) => s + (done.get(w) || 0), 0);
     const bNow = backlogAt(today);
     const bThen = backlogAt(_anAddDays(recent[3], -1));
-    const trend = bNow === bThen ? `overdue backlog steady at ${_anFmt(bNow)}`
-        : `overdue backlog ${bNow > bThen ? 'up' : 'down'} ${_anFmt(Math.abs(bNow - bThen))} to ${_anFmt(bNow)}`;
+    const trend = bNow === bThen ? _t('overdue backlog steady at {n}', { n: _anFmt(bNow) })
+        : _t(bNow > bThen ? 'overdue backlog up {d} to {n}' : 'overdue backlog down {d} to {n}', { d: _anFmt(Math.abs(bNow - bThen)), n: _anFmt(bNow) });
     let text, tone;
     if (!pSum && !dSum) {
-        text = `Nothing was planned or completed in the last 4 weeks · ${trend}.`;
+        text = _t('Nothing was planned or completed in the last 4 weeks · {trend}.', { trend });
         tone = bNow ? 'warn' : 'neutral';
     } else {
         const rate = pSum ? Math.round(dSum / pSum * 100) : 100;
-        text = `Last 4 weeks: ${_anFmt(dSum)} ${noun} completed vs ${_anFmt(pSum)} planned (${rate}%) · ${trend}.`;
+        text = _t('Last 4 weeks: {done} {noun} completed vs {planned} planned ({rate}%) · {trend}.', { done: _anFmt(dSum), noun: _anN(noun), planned: _anFmt(pSum), rate, trend });
         tone = bNow > bThen ? 'bad' : dSum < pSum ? 'warn' : 'good';
     }
     anSetInsight('anTpInsight', text, tone);
@@ -437,8 +445,8 @@ function _anRenderRanking(data) {
     const all = _anGroupRows(data, dim).map(g => _anGroupStats(g, today));
     if (!all.length) {
         _anClear('rank');
-        _anText('anRankSub', '% complete vs expected by today');
-        anSetInsight('anRankInsight', `No ${plural} in the current filter.`);
+        _anText('anRankSub', _t('% complete vs expected by today'));
+        anSetInsight('anRankInsight', _t('No {noun} in the current filter.', { noun: _anN(plural) }));
         return;
     }
     const show = anOpt('rankShow');
@@ -449,7 +457,7 @@ function _anRenderRanking(data) {
     else rows.sort((a, b) => naturalSort(a.label, b.label));
     if (show !== 'all') rows = rows.slice(0, AN_TOP_N);
 
-    _anText('anRankSub', `% complete vs expected by today · ${rows.length < all.length ? `${rows.length} of ${all.length}` : `all ${all.length}`} ${plural}`);
+    _anText('anRankSub', _t('% complete vs expected by today') + ' · ' + _anCountOf(rows.length, all.length, plural));
 
     const p = _anPalette();
     const colorOf = s => (s.pct >= 99.95 || s.gap >= -2) ? (s.exp === 0 && s.pct === 0 ? p.planned : p.completed)
@@ -460,11 +468,11 @@ function _anRenderRanking(data) {
             labels: rows.map(s => s.label),
             datasets: [
                 {
-                    label: '% complete', data: rows.map(s => _anRound(s.pct)), order: 2,
+                    label: _t('% complete'), data: rows.map(s => _anRound(s.pct)), order: 2,
                     backgroundColor: rows.map(s => _anAlpha(colorOf(s), 0.8)), borderRadius: 3, maxBarThickness: 26,
                 },
                 {
-                    type: 'line', label: 'Expected by today', data: rows.map(s => _anRound(s.exp)), order: 1,
+                    type: 'line', label: _t('Expected by today'), data: rows.map(s => _anRound(s.exp)), order: 1,
                     showLine: false, pointStyle: 'line', pointRadius: 9, pointHoverRadius: 10,
                     pointBorderWidth: 2.5, borderColor: p.text, backgroundColor: p.text,
                 },
@@ -480,14 +488,14 @@ function _anRenderRanking(data) {
                     callbacks: {
                         label: ctx => {
                             const s = rows[ctx.dataIndex];
-                            return ctx.datasetIndex === 0
-                                ? ` Complete: ${_anRound(s.pct)}% (${_anFmt(s.done)} of ${_anFmt(s.total)})`
-                                : ` Expected by today: ${_anRound(s.exp)}%`;
+                            return ' ' + (ctx.datasetIndex === 0
+                                ? _t('Complete: {pct}% ({done} of {total})', { pct: _anRound(s.pct), done: _anFmt(s.done), total: _anFmt(s.total) })
+                                : _t('Expected by today: {pct}%', { pct: _anRound(s.exp) }));
                         },
                         footer: ctx => {
                             const s = rows[ctx[0].dataIndex];
                             const g = Math.round(s.gap);
-                            return g < 0 ? `${-g} pts behind schedule` : g > 0 ? `${g} pts ahead of schedule` : 'On schedule';
+                            return g < 0 ? _t('{n} pts behind schedule', { n: -g }) : g > 0 ? _t('{n} pts ahead of schedule', { n: g }) : _t('On schedule');
                         },
                     },
                 },
@@ -498,11 +506,11 @@ function _anRenderRanking(data) {
     const behind = all.filter(s => s.gap < -2);
     if (!behind.length) {
         const avg = Math.round(all.reduce((s, x) => s + x.pct, 0) / all.length);
-        anSetInsight('anRankInsight', `All ${all.length} ${plural} are on or ahead of schedule — ${avg}% complete on average.`, 'good');
+        anSetInsight('anRankInsight', _t('All {n} {noun} are on or ahead of schedule — {avg}% complete on average.', { n: all.length, noun: _anN(plural), avg }), 'good');
     } else {
         const w = behind.reduce((a, b) => (b.gap < a.gap ? b : a));
         anSetInsight('anRankInsight',
-            `${behind.length} of ${all.length} ${plural} are behind schedule; furthest behind: ${w.label} — ${Math.round(w.pct)}% done vs ${Math.round(w.exp)}% expected.`,
+            _t('{n} of {total} {noun} are behind schedule; furthest behind: {name} — {pct}% done vs {exp}% expected.', { n: behind.length, total: all.length, noun: _anN(plural), name: w.label, pct: Math.round(w.pct), exp: Math.round(w.exp) }),
             behind.length / all.length > 0.3 ? 'bad' : 'warn');
     }
 }
@@ -515,8 +523,8 @@ function _anRenderFinish(data) {
     const all = _anGroupRows(data, dim).map(g => _anGroupStats(g, today)).filter(s => s.planned);
     if (!all.length) {
         _anClear('finish');
-        _anText('anFinishSub', 'Planned finish → expected finish');
-        anSetInsight('anFinishInsight', `No ${plural} in the current filter.`);
+        _anText('anFinishSub', _t('Planned finish → expected finish'));
+        anSetInsight('anFinishInsight', _t('No {noun} in the current filter.', { noun: _anN(plural) }));
         return;
     }
     const show = anOpt('finishShow');
@@ -526,7 +534,7 @@ function _anRenderFinish(data) {
     else rows = [...all].sort((a, b) => a.planned.localeCompare(b.planned) || naturalSort(a.label, b.label));
     if (!rows.length) rows = [...all].sort((a, b) => a.planned.localeCompare(b.planned)).slice(0, AN_TOP_N);
 
-    _anText('anFinishSub', `Planned finish → forecast finish (process order, working days) · ${rows.length < all.length ? `${rows.length} of ${all.length}` : `all ${all.length}`} ${plural}`);
+    _anText('anFinishSub', _t('Planned finish → forecast finish (process order, working days)') + ' · ' + _anCountOf(rows.length, all.length, plural));
 
     const p = _anPalette();
     const days = rows.flatMap(s => [_anDay(s.planned), _anDay(s.expected)]).concat(_anDay(today));
@@ -538,19 +546,19 @@ function _anRenderFinish(data) {
             labels,
             datasets: [
                 {
-                    label: 'Delay', order: 3,
+                    label: _t('Delay'), order: 3,
                     data: rows.map(s => (s.worst > 0 ? [_anDay(s.planned), _anDay(s.expected)] : null)),
                     backgroundColor: _anAlpha(p.overdue, 0.28), borderColor: _anAlpha(p.overdue, 0.7),
                     borderWidth: 1, borderSkipped: false, borderRadius: 3, maxBarThickness: 12,
                 },
                 {
-                    type: 'line', label: 'Planned finish', order: 2, showLine: false,
+                    type: 'line', label: _t('Planned finish'), order: 2, showLine: false,
                     data: rows.map(s => ({ x: _anDay(s.planned), y: s.label })),
                     pointStyle: 'circle', pointRadius: 4, pointHoverRadius: 5,
                     backgroundColor: p.planned, borderColor: p.planned,
                 },
                 {
-                    type: 'line', label: 'Expected finish', order: 1, showLine: false,
+                    type: 'line', label: _t('Expected finish'), order: 1, showLine: false,
                     data: rows.map(s => ({ x: _anDay(s.expected), y: s.label })),
                     pointStyle: 'rectRot', pointRadius: 5, pointHoverRadius: 6,
                     backgroundColor: rows.map(s => (s.worst > 0 ? p.overdue : p.completed)),
@@ -566,17 +574,17 @@ function _anRenderFinish(data) {
                 y: _anAxis({ type: 'category', labels, grid: { display: false }, ticks: { autoSkip: rows.length > 24, font: { family: 'Inter', size: 9 } } }),
             },
             plugins: {
-                anMarker: { value: _anDay(today), label: 'Today' },
+                anMarker: { value: _anDay(today), label: _t('Today') },
                 tooltip: {
                     filter: item => item.datasetIndex !== 0,
                     callbacks: {
                         label: ctx => {
                             const s = rows[ctx.dataIndex];
-                            return ctx.datasetIndex === 1 ? ` Planned finish: ${formatDate(s.planned)}` : ` Expected finish: ${formatDate(s.expected)}`;
+                            return ' ' + (ctx.datasetIndex === 1 ? _t('Planned finish: {date}', { date: formatDate(s.planned) }) : _t('Expected finish: {date}', { date: formatDate(s.expected) }));
                         },
                         footer: ctx => {
                             const s = rows[ctx[0].dataIndex];
-                            return `${s.worst > 0 ? `+${s.worst} working days late` : 'On time'} · ${Math.round(s.pct)}% complete`;
+                            return `${s.worst > 0 ? _t('+{n} working days late', { n: s.worst }) : _t('On time')} · ${_t('{pct}% complete', { pct: Math.round(s.pct) })}`;
                         },
                     },
                 },
@@ -588,11 +596,11 @@ function _anRenderFinish(data) {
     const late = all.filter(s => s.worst > 0);
     if (!late.length) {
         const lastPlanned = all.reduce((m, s) => (s.planned > m ? s.planned : m), all[0].planned);
-        anSetInsight('anFinishInsight', `All ${all.length} ${plural} are forecast to finish on their planned date — last planned finish ${formatDate(lastPlanned)}.`, 'good');
+        anSetInsight('anFinishInsight', _t('All {n} {noun} are forecast to finish on their planned date — last planned finish {date}.', { n: all.length, noun: _anN(plural), date: formatDate(lastPlanned) }), 'good');
     } else {
         const w = late.reduce((a, b) => (b.worst > a.worst ? b : a));
         anSetInsight('anFinishInsight',
-            `${late.length} of ${all.length} ${plural} forecast to finish late; worst: ${w.label}, +${w.worst} working days (${formatDateShort(w.planned)} → ${formatDateShort(w.expected)}).`,
+            _t('{n} of {total} {noun} forecast to finish late; worst: {name}, +{days} working days ({from} → {to}).', { n: late.length, total: all.length, noun: _anN(plural), name: w.label, days: w.worst, from: formatDateShort(w.planned), to: formatDateShort(w.expected) }),
             late.length / all.length > 0.3 ? 'bad' : 'warn');
     }
 }
@@ -630,17 +638,17 @@ function _anRenderIssues() {
     const issues = _an.issuesModule === getActiveModuleId() ? _an.issues : null;
     if (!issues) {
         _anClear('iss');
-        anSetInsight('anIssInsight', 'Loading issues…');
+        anSetInsight('anIssInsight', _t('Loading issues…'));
         return;
     }
     if (!issues.length) {
         _anClear('iss');
-        anSetInsight('anIssInsight', 'No production issues have been reported in this module yet.', 'good');
+        anSetInsight('anIssInsight', _t('No production issues have been reported in this module yet.'), 'good');
         return;
     }
 
     const doneStatuses = typeof ISSUE_DONE_STATUSES !== 'undefined' ? ISSUE_DONE_STATUSES : ['resolved', 'closed'];
-    const catLabel = c => (typeof ISSUE_CATEGORY_LABELS !== 'undefined' && ISSUE_CATEGORY_LABELS[c]) || c || 'Uncategorised';
+    const catLabel = c => _t((typeof ISSUE_CATEGORY_LABELS !== 'undefined' && ISSUE_CATEGORY_LABELS[c]) || c || 'Uncategorised');
     const today = todayStr();
     const thisWeek = _anWeekStart(today);
     const list = issues.map(i => {
@@ -672,8 +680,8 @@ function _anRenderIssues() {
             data: {
                 labels: rows.map(r => r[0]),
                 datasets: [
-                    { label: 'Open', data: rows.map(r => r[1].open), backgroundColor: _anAlpha(p.late, 0.85), borderRadius: 3, maxBarThickness: 16 },
-                    { label: 'Resolved', data: rows.map(r => r[1].done), backgroundColor: _anAlpha(p.completed, 0.75), borderRadius: 3, maxBarThickness: 16 },
+                    { label: _t('Open'), data: rows.map(r => r[1].open), backgroundColor: _anAlpha(p.late, 0.85), borderRadius: 3, maxBarThickness: 16 },
+                    { label: _t('Resolved'), data: rows.map(r => r[1].done), backgroundColor: _anAlpha(p.completed, 0.75), borderRadius: 3, maxBarThickness: 16 },
                 ],
             },
             options: _anOptions({
@@ -698,10 +706,10 @@ function _anRenderIssues() {
             data: {
                 labels: weeks.map(w => formatDateShort(w)),
                 datasets: [
-                    { label: 'Opened', data: weeks.map(w => opened.get(w) || 0), order: 2, backgroundColor: _anAlpha(p.late, 0.8), borderRadius: 3, maxBarThickness: 16 },
-                    { label: 'Resolved', data: weeks.map(w => closed.get(w) || 0), order: 2, backgroundColor: _anAlpha(p.completed, 0.75), borderRadius: 3, maxBarThickness: 16 },
+                    { label: _t('Opened'), data: weeks.map(w => opened.get(w) || 0), order: 2, backgroundColor: _anAlpha(p.late, 0.8), borderRadius: 3, maxBarThickness: 16 },
+                    { label: _t('Resolved'), data: weeks.map(w => closed.get(w) || 0), order: 2, backgroundColor: _anAlpha(p.completed, 0.75), borderRadius: 3, maxBarThickness: 16 },
                     {
-                        type: 'line', label: 'Open at week end', yAxisID: 'y1', order: 1,
+                        type: 'line', label: _t('Open at week end'), yAxisID: 'y1', order: 1,
                         data: weeks.map(w => openAt(w === thisWeek ? today : _anAddDays(w, 6))),
                         borderColor: p.overdue, backgroundColor: p.overdue, borderWidth: 2, cubicInterpolationMode: 'monotone',
                         pointRadius: weeks.length > 30 ? 0 : 2, pointHoverRadius: 4,
@@ -711,11 +719,11 @@ function _anRenderIssues() {
             options: _anOptions({
                 scales: {
                     x: _anAxis({ grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 10 } }),
-                    y: _anAxis({ beginAtZero: true, title: 'Issues / week', ticks: { precision: 0 } }),
-                    y1: _anAxis({ beginAtZero: true, position: 'right', grid: { display: false }, title: 'Open', ticks: { precision: 0 } }),
+                    y: _anAxis({ beginAtZero: true, title: _t('Issues / week'), ticks: { precision: 0 } }),
+                    y1: _anAxis({ beginAtZero: true, position: 'right', grid: { display: false }, title: _t('Open'), ticks: { precision: 0 } }),
                 },
                 plugins: {
-                    tooltip: { callbacks: { title: ctx => `Week of ${formatDate(weeks[ctx[0].dataIndex])}` } },
+                    tooltip: { callbacks: { title: ctx => _t('Week of {date}', { date: formatDate(weeks[ctx[0].dataIndex]) }) } },
                 },
             }),
         });
@@ -727,11 +735,14 @@ function _anRenderIssues() {
     const closedR = list.filter(x => inRange(x.closed)).length;
     const times = list.filter(x => inRange(x.closed) && x.hours != null).map(x => x.hours);
     const avgH = times.length ? times.reduce((s, h) => s + h, 0) / times.length : null;
-    const avgTxt = avgH == null ? '' : avgH < 48 ? ` · avg ${Math.max(1, Math.round(avgH))} h to resolve` : ` · avg ${_anRound(avgH / 24)} days to resolve`;
+    const avgTxt = avgH == null ? '' : ' · ' + (avgH < 48 ? _t('avg {n} h to resolve', { n: Math.max(1, Math.round(avgH)) }) : _t('avg {n} days to resolve', { n: _anRound(avgH / 24) }));
     const catCount = new Map();
     openNow.forEach(x => catCount.set(x.cat, (catCount.get(x.cat) || 0) + 1));
     const topCat = [...catCount.entries()].sort((a, b) => b[1] - a[1])[0];
-    const period = range === 'all' ? 'overall' : `in ${range} weeks`;
-    const text = `${openNow.length} open now · ${openedR} opened vs ${closedR} resolved ${period}${avgTxt}${topCat ? ` · most open: ${topCat[0]} (${topCat[1]})` : ''}.`;
+    const flow = range === 'all'
+        ? _t('{opened} opened vs {closed} resolved overall', { opened: openedR, closed: closedR })
+        : _t('{opened} opened vs {closed} resolved in {weeks} weeks', { opened: openedR, closed: closedR, weeks: range });
+    const text = _t('{n} open now', { n: openNow.length }) + ' · ' + flow + avgTxt
+        + (topCat ? ' · ' + _t('most open: {cat} ({n})', { cat: topCat[0], n: topCat[1] }) : '') + '.';
     anSetInsight('anIssInsight', text, !openNow.length ? 'good' : openedR > closedR ? 'warn' : 'neutral');
 }

@@ -932,9 +932,9 @@ document.addEventListener('click', e => {
 });
 
 /* ── Gantt hover card ───────────────────────────────────────────────
-   Replaces the plain browser tooltip: what the block is, its status,
-   planned / actual dates, delay and forecast, laid out as a small card. */
-let _ganttTipEl = null, _ganttTipId = null, _ganttTipRaf = 0;
+   What the block is, its status, planned / actual dates, delay and
+   forecast — shown in the app-wide hover card (core/hover-card.js). */
+let _ganttTipId = null, _ganttTipRaf = 0;
 function _ganttTipFmt(iso) {
     if (!iso) return '—';
     return new Date(iso + 'T00:00:00').toLocaleDateString(window.PPMSi18n?.getLocale?.() || 'en-GB', { day: '2-digit', month: 'short', year: '2-digit' });
@@ -946,7 +946,7 @@ function _ganttTipWd(a, b) {
 }
 function _ganttTipHtml(task) {
     const st = ganttHighlightState(task);
-    const row = (k, v, cls = '') => v ? `<div class="gtip-row${cls ? ' ' + cls : ''}"><span>${_t(k)}</span><b>${v}</b></div>` : '';
+    const row = (k, v, cls = '') => v ? `<div class="tip-row${cls ? ' ' + cls : ''}"><span>${_t(k)}</span><b>${v}</b></div>` : '';
     const f100 = isF100KD2Module();
     const plannedS = f100 ? task.planned_start_date : task.start_date;
     const plannedE = f100 ? task.planned_end_date : task.end_date;
@@ -968,18 +968,18 @@ function _ganttTipHtml(task) {
     }
     let delayHtml = '';
     const d = typeof delayDays === 'function' ? delayDays(task) : 0;
-    if (st === 'late-complete' || st === 'late') delayHtml = row(st === 'late' ? 'Overdue by' : 'Finished late by', d > 0 ? _t('{n} wd', { n: d }) : '—', 'gtip-bad');
-    else if (st === 'early') delayHtml = row('Finished', _t('early'), 'gtip-good');
+    if (st === 'late-complete' || st === 'late') delayHtml = row(st === 'late' ? 'Overdue by' : 'Finished late by', d > 0 ? _t('{n} wd', { n: d }) : '—', 'tip-bad');
+    else if (st === 'early') delayHtml = row('Finished', _t('early'), 'tip-good');
     if (!f100 && isKD2Module() && st !== 'complete' && st !== 'early' && st !== 'late-complete') {
         try {
             const step = getPlanForecast(applyActiveFilters(currentData)).byRowId?.get(task.id);
-            if (step?.projEnd && step.projEnd > plannedE) delayHtml += row('Expected finish', `${_ganttTipFmt(step.projEnd)} <i>(${_t('+{n} wd', { n: _fcSlip(plannedE, step.projEnd) })})</i>`, 'gtip-bad');
+            if (step?.projEnd && step.projEnd > plannedE) delayHtml += row('Expected finish', `${_ganttTipFmt(step.projEnd)} <i>(${_t('+{n} wd', { n: _fcSlip(plannedE, step.projEnd) })})</i>`, 'tip-bad');
         } catch {}
     }
     const comments = Array.isArray(task.comments) ? task.comments.length : 0;
-    return `<div class="gtip-head"><span class="gtip-title">${esc(title)}</span><span class="gtip-pill gtip-${st}">${GANTT_STATUS_ICON[st] ? GANTT_STATUS_ICON[st] + ' ' : ''}${_t(GANTT_STATUS_LABEL[st] || '')}</span></div>`
-        + (sub ? `<div class="gtip-sub">${esc(sub)}</div>` : '')
-        + `<div class="gtip-grid">`
+    return `<div class="tip-head"><span class="tip-title">${esc(title)}</span><span class="tip-pill tip-${st}">${GANTT_STATUS_ICON[st] ? GANTT_STATUS_ICON[st] + ' ' : ''}${_t(GANTT_STATUS_LABEL[st] || '')}</span></div>`
+        + (sub ? `<div class="tip-sub">${esc(sub)}</div>` : '')
+        + `<div class="tip-grid">`
         + row('Planned', `${_ganttTipFmt(plannedS)} → ${_ganttTipFmt(plannedE)} <i>${_ganttTipWd(plannedS, plannedE)}</i>`)
         + row('Actual start', actualS ? _ganttTipFmt(actualS) : '')
         + row('Completed', doneOn ? _ganttTipFmt(doneOn) : '')
@@ -987,48 +987,32 @@ function _ganttTipHtml(task) {
         + row('Remark', esc(task.remark || ''))
         + row('Comments', comments ? String(comments) : '')
         + `</div>`
-        + (_ganttEditMode ? `<div class="gtip-foot">${_t('Drag to move · drag an edge to resize · ⋯ for more')}</div>` : '');
+        + (_ganttEditMode ? `<div class="tip-foot">${_t('Drag to move · drag an edge to resize · ⋯ for more')}</div>` : '');
 }
 function _ganttHideTip() {
+    if (!_ganttTipId) return;
     _ganttTipId = null;
-    if (_ganttTipEl) _ganttTipEl.hidden = true;
-}
-function _ganttPlaceTip(x, y) {
-    const el = _ganttTipEl;
-    if (!el) return;
-    const pad = 14, w = el.offsetWidth, h = el.offsetHeight;
-    let left = x + pad, top = y + pad;
-    if (left + w > window.innerWidth - 8) left = x - w - pad;
-    if (top + h > window.innerHeight - 8) top = y - h - pad;
-    el.style.left = Math.max(8, left) + 'px';
-    el.style.top = Math.max(8, top) + 'px';
+    cancelAnimationFrame(_ganttTipRaf);
+    window.PPMSHoverCard?.hide({ rich: true });
 }
 document.addEventListener('pointermove', e => {
     if (e.pointerType === 'touch') return;
     const bar = e.target.closest?.('#ganttInner .gc-bar');
-    if (!bar || _ganttDragActive || e.buttons || e.target.closest('.gc-bar-menu, .gc-bar-menu-trigger, .gc-bar-select, .gc-bar-resize')) { if (_ganttTipId) _ganttHideTip(); return; }
+    if (!bar || _ganttDragActive || e.buttons || e.target.closest('.gc-bar-menu, .gc-bar-menu-trigger, .gc-bar-select, .gc-bar-resize')) { _ganttHideTip(); return; }
     const id = bar.dataset.planId;
-    if (!_ganttTipEl) {
-        _ganttTipEl = document.createElement('div');
-        _ganttTipEl.className = 'gantt-tip';
-        _ganttTipEl.setAttribute('role', 'tooltip');
-        _ganttTipEl.hidden = true;
-    }
-    const host = document.fullscreenElement || document.body;
-    if (_ganttTipEl.parentNode !== host) host.appendChild(_ganttTipEl);
+    const x = e.clientX, y = e.clientY;
     if (_ganttTipId !== id) {
         const task = currentData.find(r => String(r.id) === id);
         if (!task) { _ganttHideTip(); return; }
         _ganttTipId = id;
-        _ganttTipEl.innerHTML = _ganttTipHtml(task);
-        _ganttTipEl.hidden = false;
+        window.PPMSHoverCard?.show(_ganttTipHtml(task), x, y, { wide: true });
+        return;
     }
-    const x = e.clientX, y = e.clientY;
     cancelAnimationFrame(_ganttTipRaf);
-    _ganttTipRaf = requestAnimationFrame(() => _ganttPlaceTip(x, y));
+    _ganttTipRaf = requestAnimationFrame(() => window.PPMSHoverCard?.move(x, y));
 }, { passive: true });
 document.addEventListener('pointerdown', _ganttHideTip, true);
-document.addEventListener('scroll', () => { if (_ganttTipId) _ganttHideTip(); }, true);
+document.addEventListener('scroll', _ganttHideTip, true);
 
 function sameGanttRowLane(a, b) {
     if (!a || !b) return false;
@@ -6577,17 +6561,19 @@ function renderKD2BottleneckChart(data) {
     const values = stations.map(valueOf);
     const colors = stations.map(s => hexA(s.maxDelay >= 14 ? cOver : s.maxDelay >= 7 ? cLate : s.maxDelay >= 1 ? cPlan : '#94a3b8', s.maxDelay >= 1 ? 0.8 : 0.38));
 
-    const metricTxt = { max: 'Worst delay per station (working days)', avg: 'Average delay of delayed tasks (working days)', count: 'Delayed tasks per station' }[metric];
+    const metricTxt = _t({ max: 'Worst delay per station (working days)', avg: 'Average delay of delayed tasks (working days)', count: 'Delayed tasks per station' }[metric]);
     const sub = document.getElementById('kd2BottleneckSubtitle');
-    if (sub) sub.textContent = `${delayed.length} of ${all.length} station${all.length !== 1 ? 's' : ''} with delays · ${vSel === 'all' ? 'worst first' : 'process order'}`;
+    if (sub) sub.textContent = _t('{n} of {total} stations with delays', { n: delayed.length, total: all.length }) + ' · ' + _t(vSel === 'all' ? 'worst first' : 'process order');
 
     if (typeof anSetInsight === 'function') {
         if (!delayed.length) {
-            anSetInsight('anBnInsight', `No station has delayed tasks${vSel === 'all' ? '' : ` for ${vSel}`} in the current filter.`, 'good');
+            anSetInsight('anBnInsight', vSel === 'all'
+                ? _t('No station has delayed tasks in the current filter.')
+                : _t('No station has delayed tasks for {vehicle} in the current filter.', { vehicle: vSel }), 'good');
         } else {
             const w = [...delayed].sort((a, b) => b.maxDelay - a.maxDelay || b.delayed - a.delayed)[0];
             anSetInsight('anBnInsight',
-                `Main bottleneck: ${w.name} (${w.vtype}) — ${w.delayed} of ${w.total} tasks delayed, worst +${w.maxDelay} wd · ${delayed.length} of ${all.length} stations have delays.`,
+                _t('Main bottleneck: {name} ({vehicle}) — {n} of {total} tasks delayed, worst +{worst} wd · {stations} of {all} stations have delays.', { name: w.name, vehicle: w.vtype, n: w.delayed, total: w.total, worst: w.maxDelay, stations: delayed.length, all: all.length }),
                 w.maxDelay >= 14 ? 'bad' : 'warn');
         }
     }
@@ -6621,13 +6607,13 @@ function renderKD2BottleneckChart(data) {
                             const s = stations[ctx.dataIndex];
                             const lines = [];
                             if (s.maxDelay === 0) {
-                                lines.push(`  No delays  ·  ${s.total} task${s.total !== 1 ? 's' : ''}`);
+                                lines.push('  ' + _t('No delays · {n} tasks', { n: s.total }));
                             } else {
-                                lines.push(`  Worst +${s.maxDelay} wd  ·  avg +${Math.round(s.delaySum / s.delayed * 10) / 10} wd`);
-                                lines.push(`  ${s.delayed} delayed of ${s.total} tasks`);
+                                lines.push('  ' + _t('Worst +{n} wd · avg +{avg} wd', { n: s.maxDelay, avg: Math.round(s.delaySum / s.delayed * 10) / 10 }));
+                                lines.push('  ' + _t('{n} delayed of {total} tasks', { n: s.delayed, total: s.total }));
                             }
-                            lines.push(`  Vehicle: ${s.vtype}`);
-                            if (s.component) lines.push(`  Component: ${s.component}`);
+                            lines.push('  ' + _t('Vehicle: {v}', { v: s.vtype }));
+                            if (s.component) lines.push('  ' + _t('Component: {c}', { c: _t(s.component) }));
                             return lines;
                         },
                     },
@@ -7093,17 +7079,18 @@ function renderBarChart(data) {
 
     // Insight — where the overdue work sits
     if (typeof anSetInsight === 'function') {
-        const noun = isKD2Module() ? 'blocks' : 'tasks';
+        const noun = _t(isKD2Module() ? 'blocks' : 'tasks');
         const total = data.length;
         const overdue = counts[4], totalOver = overdue.reduce((a, b) => a + b, 0);
         const done = counts[0].reduce((a, b) => a + b, 0) + counts[1].reduce((a, b) => a + b, 0);
-        if (!total) anSetInsight('anStatusInsight', `No ${noun} in the current filter.`);
-        else if (!totalOver) anSetInsight('anStatusInsight', `No overdue ${noun} · ${Math.round(done / total * 100)}% of ${total.toLocaleString('en-GB')} ${noun} complete.`, 'good');
+        if (!total) anSetInsight('anStatusInsight', _t('No {noun} in the current filter.', { noun }));
+        else if (!totalOver) anSetInsight('anStatusInsight', _t('No overdue {noun} · {pct}% of {total} {noun} complete.', { noun, pct: Math.round(done / total * 100), total: total.toLocaleString('en-GB') }), 'good');
         else {
             const wi = overdue.indexOf(Math.max(...overdue));
-            const where = labels.length > 1 ? ` — most in ${labels[wi]} (${overdue[wi]}, ${Math.round(overdue[wi] / totalOver * 100)}%)` : '';
+            const where = labels.length > 1 ? ' — ' + _t('most in {name} ({n}, {pct}%)', { name: labels[wi], n: overdue[wi], pct: Math.round(overdue[wi] / totalOver * 100) }) : '';
             anSetInsight('anStatusInsight',
-                `${totalOver.toLocaleString('en-GB')} overdue ${noun} (${Math.round(totalOver / total * 100)}% of total)${where} · ${Math.round(done / total * 100)}% complete.`,
+                _t('{n} overdue {noun} ({pct}% of total)', { n: totalOver.toLocaleString('en-GB'), noun, pct: Math.round(totalOver / total * 100) }) + where
+                    + ' · ' + _t('{pct}% complete', { pct: Math.round(done / total * 100) }) + '.',
                 totalOver / total > 0.1 ? 'bad' : 'warn');
         }
     }
@@ -7217,18 +7204,19 @@ function renderLineChart(data) {
 
     // Insight — where actual stands against the plan today
     if (typeof anSetInsight === 'function') {
-        const noun = isKD2Module() ? 'blocks' : 'tasks';
+        const noun = _t(isKD2Module() ? 'blocks' : 'tasks');
         const count = (sorted, d) => { let n = 0; for (const x of sorted) { if (x > d) break; n++; } return n; };
         const due = count(ends, today), done = count(doneDates, today);
         const fmt = n => n.toLocaleString('en-GB');
         if (!due) {
-            anSetInsight('anCumInsight', `No ${noun} are due yet — first planned finish ${formatDate(ends[0])}${done ? ` · ${fmt(done)} already done early` : ''}.`, 'neutral');
+            anSetInsight('anCumInsight', _t('No {noun} are due yet — first planned finish {date}', { noun, date: formatDate(ends[0]) })
+                + (done ? ' · ' + _t('{n} already done early', { n: fmt(done) }) : '') + '.', 'neutral');
         } else if (done >= due) {
-            anSetInsight('anCumInsight', `On plan: ${fmt(done)} ${noun} done vs ${fmt(due)} due by today (${Math.round(done / ends.length * 100)}% of the plan).`, 'good');
+            anSetInsight('anCumInsight', _t('On plan: {done} {noun} done vs {due} due by today ({pct}% of the plan).', { done: fmt(done), noun, due: fmt(due), pct: Math.round(done / ends.length * 100) }), 'good');
         } else {
             const gap = due - done;
             anSetInsight('anCumInsight',
-                `${fmt(gap)} ${noun} behind plan: ${fmt(done)} done vs ${fmt(due)} due by today (${Math.round(done / due * 100)}% of due) · ${Math.round(done / ends.length * 100)}% of the whole plan done.`,
+                _t('{gap} {noun} behind plan: {done} done vs {due} due by today ({pct}% of due) · {whole}% of the whole plan done.', { gap: fmt(gap), noun, done: fmt(done), due: fmt(due), pct: Math.round(done / due * 100), whole: Math.round(done / ends.length * 100) }),
                 gap / due > 0.2 ? 'bad' : 'warn');
         }
     }
