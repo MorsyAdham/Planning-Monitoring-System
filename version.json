@@ -1,8 +1,8 @@
 {
- "version": "v157-0a05ab1",
- "label": "v157",
- "deployedAt": "2026-10-06T12:39:09.054Z",
- "notes": "Readable audit log, new user management, Korean \"equipment\" wording",
+ "version": "v158-164ff34",
+ "label": "v158",
+ "deployedAt": "2026-10-06T13:28:07.487Z",
+ "notes": "Live active users panel; log exports and returning sessions",
  "files": [
   "index.html",
   "login.html",

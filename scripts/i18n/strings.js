@@ -13,11 +13,6 @@ export default {
   "ko": "새 버전을 사용할 수 있습니다",
   "ar": "يتوفر إصدار أحدث"
  },
- "Active users": {
-  "area": "Header & menus",
-  "ko": "접속 중인 사용자",
-  "ar": "المستخدمون النشطون"
- },
  "Analytics": {
   "area": "Header & menus",
   "ko": "분석",
@@ -1148,10 +1143,35 @@ export default {
   "ko": "{a} — 유닛 또는 스테이션을 고른 뒤 행과 날짜를 클릭 · {b} — 정확한 날짜 입력 · {c} — 장비 한 대의 전체 순서를 다른 유닛에 적용",
   "ar": "{a} — اختر وحدة أو محطة، ثم انقر على صف وتاريخ · {b} — تواريخ دقيقة · {c} — تسلسل مركبة كاملة إلى وحدات أخرى"
  },
+ "(you)": {
+  "area": "Gantt / shared",
+  "ko": "(나)",
+  "ar": "(أنت)"
+ },
  "+{n} wd": {
   "area": "Gantt / shared",
   "ko": "+{n} 근무일",
   "ar": "+{n} يوم عمل"
+ },
+ "Active": {
+  "area": "Gantt / shared",
+  "ko": "사용 중",
+  "ar": "نشط"
+ },
+ "active": {
+  "area": "Gantt / shared",
+  "ko": "활동 중",
+  "ar": "نشط"
+ },
+ "Active users": {
+  "area": "Gantt / shared",
+  "ko": "접속 중인 사용자",
+  "ar": "المستخدمون النشطون"
+ },
+ "Activity": {
+  "area": "Gantt / shared",
+  "ko": "활동",
+  "ar": "النشاط"
  },
  "All": {
   "area": "Gantt / shared",
@@ -1172,6 +1192,16 @@ export default {
   "area": "Gantt / shared",
   "ko": "조립 계획 · 일별 간트 보기",
   "ar": "خطة التجميع · عرض جانت اليومي"
+ },
+ "Away": {
+  "area": "Gantt / shared",
+  "ko": "백그라운드",
+  "ar": "بعيد"
+ },
+ "away": {
+  "area": "Gantt / shared",
+  "ko": "백그라운드",
+  "ar": "بعيد"
  },
  "Battalion": {
   "area": "Gantt / shared",
@@ -1243,6 +1273,26 @@ export default {
   "ko": "간트 편집",
   "ar": "تعديل جانت"
  },
+ "Editing": {
+  "area": "Gantt / shared",
+  "ko": "편집 중",
+  "ar": "يعدّل"
+ },
+ "editing": {
+  "area": "Gantt / shared",
+  "ko": "편집 중",
+  "ar": "يعدّل"
+ },
+ "Editing the plan": {
+  "area": "Gantt / shared",
+  "ko": "계획 편집",
+  "ar": "تعديل الخطة"
+ },
+ "Everything this user did, in the audit log": {
+  "area": "Gantt / shared",
+  "ko": "감사 로그에서 이 사용자의 모든 활동 보기",
+  "ar": "كل ما فعله هذا المستخدم في سجل التدقيق"
+ },
  "Executive Summary battalion": {
   "area": "Gantt / shared",
   "ko": "경영 요약 대대",
@@ -1277,6 +1327,26 @@ export default {
   "area": "Gantt / shared",
   "ko": "차체",
   "ar": "الهيكل"
+ },
+ "Idle": {
+  "area": "Gantt / shared",
+  "ko": "자리 비움",
+  "ar": "خامل"
+ },
+ "idle": {
+  "area": "Gantt / shared",
+  "ko": "자리 비움",
+  "ar": "خامل"
+ },
+ "just now": {
+  "area": "Gantt / shared",
+  "ko": "방금",
+  "ar": "الآن"
+ },
+ "Live — updates as people come and go. Idle = no activity for 5 min · Away = PPMS is in a background tab.": {
+  "area": "Gantt / shared",
+  "ko": "실시간 — 사용자가 들어오고 나갈 때마다 갱신됩니다. 자리 비움 = 5분간 활동 없음 · 백그라운드 = PPMS가 백그라운드 탭에 있음.",
+  "ar": "مباشر — يتحدّث مع دخول المستخدمين وخروجهم. خامل = لا نشاط منذ 5 دقائق · بعيد = PPMS في تبويب بالخلفية."
  },
  "Load all battalions": {
   "area": "Gantt / shared",
@@ -1313,6 +1383,16 @@ export default {
   "ko": "현재 필터에서 지연 작업이 있는 스테이션이 없습니다.",
   "ar": "لا توجد محطة بها مهام متأخرة ضمن الفلتر الحالي."
  },
+ "No users match \"{a}\".": {
+  "area": "Gantt / shared",
+  "ko": "\"{a}\"와 일치하는 사용자가 없습니다.",
+  "ar": "لا يوجد مستخدمون يطابقون \"{a}\"."
+ },
+ "No users online": {
+  "area": "Gantt / shared",
+  "ko": "접속 중인 사용자가 없습니다",
+  "ar": "لا يوجد مستخدمون متصلون"
+ },
  "No {noun} are due yet — first planned finish {date}": {
   "area": "Gantt / shared",
   "ko": "아직 기한이 된 {noun}이(가) 없습니다 — 첫 계획 완료 {date}",
@@ -1333,10 +1413,20 @@ export default {
   "ko": "취소할 작업이 없습니다",
   "ar": "لا شيء للتراجع عنه"
  },
+ "older version": {
+  "area": "Gantt / shared",
+  "ko": "이전 버전",
+  "ar": "إصدار أقدم"
+ },
  "On plan: {done} {noun} done vs {due} due by today ({pct}% of the plan).": {
   "area": "Gantt / shared",
   "ko": "계획대로: 오늘까지 기한 {due}개 대비 {noun} {done}개 완료 (계획의 {pct}%).",
   "ar": "وفق الخطة: أُنجز {done} من {noun} مقابل {due} مستحقة حتى اليوم ({pct}% من الخطة)."
+ },
+ "Open in User Management": {
+  "area": "Gantt / shared",
+  "ko": "사용자 관리에서 열기",
+  "ar": "فتح في إدارة المستخدمين"
  },
  "Other": {
   "area": "Gantt / shared",
@@ -1393,10 +1483,25 @@ export default {
   "ko": "블록 {n}개 저장 중…",
   "ar": "جارٍ حفظ {n} بلوك…"
  },
+ "Search name, email or role…": {
+  "area": "Gantt / shared",
+  "ko": "이름, 이메일 또는 역할 검색…",
+  "ar": "ابحث بالاسم أو البريد الإلكتروني أو الدور…"
+ },
+ "Search users": {
+  "area": "Gantt / shared",
+  "ko": "사용자 검색",
+  "ar": "البحث عن مستخدمين"
+ },
  "SECURE": {
   "area": "Gantt / shared",
   "ko": "보안 연결",
   "ar": "آمن"
+ },
+ "session {d}": {
+  "area": "Gantt / shared",
+  "ko": "세션 {d}",
+  "ar": "الجلسة {d}"
  },
  "Set by the battalion filter (top filter bar / Gantt) — only this battalion is loaded": {
   "area": "Gantt / shared",
@@ -1423,6 +1528,16 @@ export default {
   "ko": "공정 순서 변경 중에는 따로 표시됩니다 (공정 순서는 장비별)",
   "ar": "يُعرضان منفصلين أثناء إعادة ترتيب المسار (ترتيب المسار لكل مركبة)"
  },
+ "Sign-in time not recorded": {
+  "area": "Gantt / shared",
+  "ko": "로그인 시각 기록 없음",
+  "ar": "وقت تسجيل الدخول غير مسجّل"
+ },
+ "Signed in {time}": {
+  "area": "Gantt / shared",
+  "ko": "{time} 로그인",
+  "ar": "سجّل الدخول {time}"
+ },
  "Structure": {
   "area": "Gantt / shared",
   "ko": "구조물",
@@ -1438,6 +1553,16 @@ export default {
   "ko": "이 섹션만 전환합니다 — 불러올 데이터는 대대 필터가 결정합니다",
   "ar": "يغيّر هذا القسم فقط — فلتر الكتيبة هو الذي يحدّد ما يتم تحميله"
  },
+ "This person is on an older PPMS version — they should load the latest version (blinking version badge) to show where they are and to log their exports.": {
+  "area": "Gantt / shared",
+  "ko": "이 사용자는 이전 PPMS 버전을 사용 중입니다 — 위치 표시와 내보내기 기록을 위해 최신 버전을 불러와야 합니다(깜박이는 버전 배지).",
+  "ar": "هذا المستخدم على إصدار أقدم من PPMS — عليه تحميل أحدث إصدار (شارة الإصدار الوامضة) لإظهار مكانه وتسجيل عمليات التصدير."
+ },
+ "this visit {d}": {
+  "area": "Gantt / shared",
+  "ko": "이번 접속 {d}",
+  "ar": "هذه الزيارة {d}"
+ },
  "Turret": {
   "area": "Gantt / shared",
   "ko": "포탑",
@@ -1447,6 +1572,11 @@ export default {
   "area": "Gantt / shared",
   "ko": "마지막 이동 취소 (기록 {n}개)",
   "ar": "التراجع عن آخر نقل ({n} في السجل)"
+ },
+ "User": {
+  "area": "Gantt / shared",
+  "ko": "사용자",
+  "ar": "المستخدم"
  },
  "Vehicle / Station": {
   "area": "Gantt / shared",
@@ -1493,10 +1623,25 @@ export default {
   "ko": "이 계획을 편집 중입니다",
   "ar": "أنت تعدّل هذه الخطة"
  },
+ "{d} d {h} h": {
+  "area": "Gantt / shared",
+  "ko": "{d}일 {h}시간",
+  "ar": "{d} ي {h} س"
+ },
  "{gap} {noun} behind plan: {done} done vs {due} due by today ({pct}% of due) · {whole}% of the whole plan done.": {
   "area": "Gantt / shared",
   "ko": "계획보다 {noun} {gap}개 뒤처짐: 오늘까지 기한 {due}개 대비 {done}개 완료 (기한 대비 {pct}%) · 전체 계획의 {whole}% 완료.",
   "ar": "متأخر عن الخطة بـ{gap} {noun}: أُنجز {done} مقابل {due} مستحقة حتى اليوم ({pct}% من المستحق) · أُنجز {whole}% من الخطة كاملة."
+ },
+ "{h} h": {
+  "area": "Gantt / shared",
+  "ko": "{h}시간",
+  "ar": "{h} س"
+ },
+ "{h} h {m} min": {
+  "area": "Gantt / shared",
+  "ko": "{h}시간 {m}분",
+  "ar": "{h} س {m} د"
  },
  "{names} are editing this plan": {
   "area": "Gantt / shared",
@@ -1527,6 +1672,11 @@ export default {
   "area": "Gantt / shared",
   "ko": "작업 {total}개 중 {n}개 지연",
   "ar": "{n} متأخرة من {total} مهمة"
+ },
+ "{n} min": {
+  "area": "Gantt / shared",
+  "ko": "{n}분",
+  "ar": "{n} د"
  },
  "{n} of {total} stations with delays": {
   "area": "Gantt / shared",
@@ -2928,11 +3078,6 @@ export default {
   "ko": "읽지 않은 알림이 없습니다",
   "ar": "لا توجد إشعارات غير مقروءة"
  },
- "No users online": {
-  "area": "Screens & messages",
-  "ko": "접속 중인 사용자가 없습니다",
-  "ar": "لا يوجد مستخدمون متصلون"
- },
  "No valid rows found. Check format.": {
   "area": "Screens & messages",
   "ko": "올바른 행이 없습니다. 형식을 확인하세요.",
@@ -4102,11 +4247,6 @@ export default {
   "area": "Screens & messages",
   "ko": "{a}근무일 지연",
   "ar": "متأخر {a} يوم عمل"
- },
- "{a} · Logged in {b}{c}": {
-  "area": "Screens & messages",
-  "ko": "{a} · {b}{c} 로그인",
-  "ar": "{a} · سجّل الدخول {b}{c}"
  },
  "{a} · Saved {b}": {
   "area": "Screens & messages",
@@ -6072,11 +6212,6 @@ export default {
   "area": "Dialogs",
   "ko": "범위: 현재 차종 및 분류 탭",
   "ar": "النطاق: تبويب نوع المركبة والفئة الحالي"
- },
- "Search name, email or role…": {
-  "area": "Dialogs",
-  "ko": "이름, 이메일 또는 역할 검색…",
-  "ar": "ابحث بالاسم أو البريد الإلكتروني أو الدور…"
  },
  "Select a type to preview count": {
   "area": "Dialogs",
@@ -8368,11 +8503,6 @@ export default {
   "ko": "매뉴얼을 Word 문서로 다운로드",
   "ar": "تنزيل الدليل كمستند Word"
  },
- "Editing the plan": {
-  "area": "Help & tour",
-  "ko": "계획 편집",
-  "ar": "تعديل الخطة"
- },
  "End tour": {
   "area": "Help & tour",
   "ko": "투어 종료",
@@ -8923,11 +9053,6 @@ export default {
   "ko": "시스템 가동 중",
   "ar": "الأنظمة تعمل"
  },
- "(you)": {
-  "area": "Administration",
-  "ko": "(나)",
-  "ar": "(أنت)"
- },
  "+{n} more": {
   "area": "Administration",
   "ko": "+{n}개 더",
@@ -8978,16 +9103,6 @@ export default {
   "ko": "조치 내용",
   "ar": "الإجراء المتخذ"
  },
- "Active": {
-  "area": "Administration",
-  "ko": "사용 중",
-  "ar": "نشط"
- },
- "Activity": {
-  "area": "Administration",
-  "ko": "활동",
-  "ar": "النشاط"
- },
  "Actual dates": {
   "area": "Administration",
   "ko": "실제 날짜",
@@ -9012,6 +9127,11 @@ export default {
   "area": "Administration",
   "ko": "변경 후",
   "ar": "بعد"
+ },
+ "after {n} min away": {
+  "area": "Administration",
+  "ko": "{n}분 후 복귀",
+  "ar": "بعد غياب {n} دقيقة"
  },
  "All actions": {
   "area": "Administration",
@@ -9048,6 +9168,11 @@ export default {
   "ko": "6자 이상",
   "ar": "6 أحرف على الأقل"
  },
+ "Away (minutes)": {
+  "area": "Administration",
+  "ko": "자리 비운 시간 (분)",
+  "ar": "مدة الغياب (دقائق)"
+ },
  "Battalion name": {
   "area": "Administration",
   "ko": "대대 이름",
@@ -9062,6 +9187,11 @@ export default {
   "area": "Administration",
   "ko": "변경 전",
   "ar": "قبل"
+ },
+ "Came back": {
+  "area": "Administration",
+  "ko": "복귀",
+  "ar": "عاد"
  },
  "Can export reports": {
   "area": "Administration",
@@ -9233,11 +9363,6 @@ export default {
   "ko": "전체",
   "ar": "الكل"
  },
- "Everything this user did, in the audit log": {
-  "area": "Administration",
-  "ko": "감사 로그에서 이 사용자의 모든 활동 보기",
-  "ar": "كل ما فعله هذا المستخدم في سجل التدقيق"
- },
  "Excel exported.": {
   "area": "Administration",
   "ko": "Excel을 내보냈습니다.",
@@ -9257,6 +9382,11 @@ export default {
   "area": "Administration",
   "ko": "내보내기 실패:",
   "ar": "فشل التصدير:"
+ },
+ "Exported": {
+  "area": "Administration",
+  "ko": "내보내기",
+  "ar": "صدّر"
  },
  "F100 part": {
   "area": "Administration",
@@ -9278,10 +9408,20 @@ export default {
   "ko": "필드",
   "ar": "الحقل"
  },
+ "File": {
+  "area": "Administration",
+  "ko": "파일",
+  "ar": "الملف"
+ },
  "Filter users": {
   "area": "Administration",
   "ko": "사용자 필터",
   "ar": "تصفية المستخدمين"
+ },
+ "Format": {
+  "area": "Administration",
+  "ko": "형식",
+  "ar": "التنسيق"
  },
  "Full access to every module, users, audit log and system settings.": {
   "area": "Administration",
@@ -9337,11 +9477,6 @@ export default {
   "area": "Administration",
   "ko": "이슈 분류",
   "ar": "فئة المشكلة"
- },
- "just now": {
-  "area": "Administration",
-  "ko": "방금",
-  "ar": "الآن"
  },
  "Last 30 days": {
   "area": "Administration",
@@ -9418,11 +9553,6 @@ export default {
   "ko": "이 보기에 사용자가 없습니다.",
   "ar": "لا يوجد مستخدمون في هذا العرض."
  },
- "No users match \"{a}\".": {
-  "area": "Administration",
-  "ko": "\"{a}\"와 일치하는 사용자가 없습니다.",
-  "ar": "لا يوجد مستخدمون يطابقون \"{a}\"."
- },
  "No-work days": {
   "area": "Administration",
   "ko": "휴무일",
@@ -9443,10 +9573,25 @@ export default {
   "ko": "이 페이지에는 검색과 일치하는 항목이 없습니다 — 더 불러오거나 필터를 바꾸세요.",
   "ar": "لا شيء في هذه الصفحة يطابق البحث — حمّل المزيد أو غيّر الفلاتر."
  },
+ "online {d}": {
+  "area": "Administration",
+  "ko": "접속 {d}",
+  "ar": "متصل منذ {d}"
+ },
  "Open this in the system": {
   "area": "Administration",
   "ko": "시스템에서 열기",
   "ar": "افتحه في النظام"
+ },
+ "Opened from": {
+  "area": "Administration",
+  "ko": "열린 화면",
+  "ar": "فُتح من"
+ },
+ "Opened PPMS": {
+  "area": "Administration",
+  "ko": "PPMS 열기",
+  "ar": "فتح PPMS"
  },
  "Part no.": {
   "area": "Administration",
@@ -9593,6 +9738,16 @@ export default {
   "ko": "교체",
   "ar": "استبدل"
  },
+ "Report / export": {
+  "area": "Administration",
+  "ko": "보고서 / 내보내기",
+  "ar": "تقرير / تصدير"
+ },
+ "Reports & exports": {
+  "area": "Administration",
+  "ko": "보고서 및 내보내기",
+  "ar": "التقارير والتصدير"
+ },
  "Rescheduled": {
   "area": "Administration",
   "ko": "일정 변경",
@@ -9628,11 +9783,6 @@ export default {
   "ko": "감사 로그 검색",
   "ar": "البحث في سجل التدقيق"
  },
- "Search users": {
-  "area": "Administration",
-  "ko": "사용자 검색",
-  "ar": "البحث عن مستخدمين"
- },
  "Search — unit, station, user, field…": {
   "area": "Administration",
   "ko": "검색 — 유닛, 스테이션, 사용자, 항목…",
@@ -9642,6 +9792,11 @@ export default {
   "area": "Administration",
   "ko": "세션",
   "ar": "جلسة"
+ },
+ "Session (already signed in)": {
+  "area": "Administration",
+  "ko": "세션 (로그인 유지)",
+  "ar": "جلسة (مسجّل للدخول مسبقًا)"
  },
  "Set up": {
   "area": "Administration",
@@ -9678,6 +9833,11 @@ export default {
   "ko": "로그인 / 로그아웃",
   "ar": "تسجيل الدخول / الخروج"
  },
+ "Signed in at": {
+  "area": "Administration",
+  "ko": "로그인 시각",
+  "ar": "وقت تسجيل الدخول"
+ },
  "Signed out": {
   "area": "Administration",
   "ko": "로그아웃",
@@ -9687,6 +9847,11 @@ export default {
   "area": "Live edits",
   "ko": "누군가",
   "ar": "شخص ما"
+ },
+ "still signed in": {
+  "area": "Administration",
+  "ko": "로그인 상태 유지",
+  "ar": "ما زال مسجّلًا للدخول"
  },
  "Switch to F200 – KD2 to manage its no-work days.": {
   "area": "Administration",
@@ -9802,11 +9967,6 @@ export default {
   "area": "Live edits",
   "ko": "{a} 수정",
   "ar": "حدّث {a}"
- },
- "User": {
-  "area": "Administration",
-  "ko": "사용자",
-  "ar": "المستخدم"
  },
  "User \"{a}\" deleted.": {
   "area": "Administration",

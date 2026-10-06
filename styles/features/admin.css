@@ -161,3 +161,47 @@ tr.ppms-flash > td { background: color-mix(in srgb, var(--clr-accent) 12%, trans
 html[dir="rtl"] .al2-diff th, html[dir="rtl"] .al2-diff td { text-align: right; }
 html[dir="rtl"] .um2-form { animation-name: um2InRtl; }
 @keyframes um2InRtl { from { transform: translateX(-16px); opacity: 0; } }
+
+/* ── Active users (live panel, master admin) ─────────────────────── */
+.au2-panel { width: 380px; max-width: calc(100vw - 16px); max-height: min(560px, calc(100vh - 90px)); display: flex; flex-direction: column; }
+.au2-head { padding: 12px 14px 10px; border-bottom: 1px solid var(--clr-border-soft); }
+.au2-title { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: .86rem; color: var(--clr-text); }
+.au2-title-n { margin-inline-start: auto; font: 700 .72rem var(--ff-mono); padding: 1px 8px; border-radius: 999px; background: var(--clr-surface-2); color: var(--clr-text-muted); }
+.au2-live { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 0 rgba(34, 197, 94, .6); animation: au2Live 2s infinite; }
+@keyframes au2Live { 70% { box-shadow: 0 0 0 7px rgba(34, 197, 94, 0); } 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); } }
+.au2-counts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 7px; font-size: .72rem; color: var(--clr-text-muted); }
+.au2-count { display: inline-flex; align-items: center; gap: 5px; }
+.au2-count i { width: 7px; height: 7px; border-radius: 50%; }
+.au2-c-active i { background: #22c55e; } .au2-c-editing i { background: #8b5cf6; } .au2-c-idle i { background: #f59e0b; } .au2-c-away i { background: #94a3b8; }
+.au2-search { padding: 8px 14px; border-bottom: 1px solid var(--clr-border-soft); }
+.au2-search[hidden] { display: none; }
+.au2-search input { width: 100%; height: 30px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--clr-border); background: var(--clr-surface-2); color: var(--clr-text); font: inherit; font-size: .8rem; }
+.au2-list { overflow-y: auto; flex: 1; }
+.au2-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border-bottom: 1px solid var(--clr-border-soft); }
+.au2-row:last-child { border-bottom: none; }
+.au2-row.au2-away { opacity: .7; }
+.au2-avatar { position: relative; flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--clr-accent); color: #fff; font: 700 .74rem var(--ff-body); }
+.au2-dot { position: absolute; right: -1px; bottom: -1px; width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--clr-surface); background: #22c55e; }
+.au2-editing .au2-dot { background: #8b5cf6; } .au2-idle .au2-dot { background: #f59e0b; } .au2-away .au2-dot { background: #94a3b8; }
+.au2-info { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.au2-line1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.au2-line1 b { font-size: .82rem; color: var(--clr-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.au2-line1 .role-pill { font-size: .56rem; padding: 1px 6px; flex: none; }
+.au2-you { font-size: .68rem; color: var(--clr-text-muted); }
+.au2-line2 { display: flex; flex-wrap: wrap; gap: 4px 8px; font-size: .72rem; }
+.au2-status { font-weight: 600; color: #16a34a; }
+.au2-editing .au2-status { color: #8b5cf6; } .au2-idle .au2-status { color: #d97706; } .au2-away .au2-status { color: var(--clr-text-muted); }
+.au2-where { color: var(--clr-text); }
+.au2-line3 { font-size: .68rem; color: var(--clr-text-muted); }
+.au2-ver { font-family: var(--ff-mono); }
+.au2-acts { display: flex; flex-direction: column; gap: 4px; flex: none; }
+.au2-btn { height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--clr-border); background: var(--clr-surface); color: var(--clr-text-muted); font: 600 .68rem var(--ff-body); cursor: pointer; white-space: nowrap; }
+.au2-btn:hover { color: var(--clr-accent); border-color: var(--clr-accent); }
+.au2-empty { padding: 18px 14px; font-size: .8rem; color: var(--clr-text-muted); text-align: center; }
+.au2-foot { padding: 8px 14px; border-top: 1px solid var(--clr-border-soft); font-size: .66rem; line-height: 1.4; color: var(--clr-text-dim); }
+.active-users-badge { transition: background .2s; }
+.active-users-badge.is-quiet { background: #94a3b8; }
+.active-users-badge.au-badge-pop { animation: auPop .5s ease; }
+@keyframes auPop { 40% { transform: scale(1.45); } }
+.al2-tone-export { color: #a855f7; }
+.au2-old { flex: none; font-size: .58rem; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: rgba(245, 158, 11, .14); color: #d97706; cursor: help; }

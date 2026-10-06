@@ -32,6 +32,7 @@ const AREAS = [
     { id: 'f100', label: 'F100 parts & processes', tables: ['f100_parts', 'f100_processes'] },
     { id: 'users', label: 'Users & access', tables: ['planning_app_users', 'ppms_export_permissions'] },
     { id: 'sessions', label: 'Sign-ins', actions: ['LOGIN', 'LOGOUT'] },
+    { id: 'exports', label: 'Reports & exports', actions: ['EXPORT'] },
 ];
 const ACTION_GROUPS = [
     { id: 'add', label: 'Added', actions: ['INSERT', 'CREATE'] },
@@ -39,14 +40,15 @@ const ACTION_GROUPS = [
     { id: 'delete', label: 'Deleted', actions: ['DELETE'] },
     { id: 'generate', label: 'Generated / set up', actions: ['GENERATE', 'BOOTSTRAP'] },
     { id: 'session', label: 'Signed in / out', actions: ['LOGIN', 'LOGOUT'] },
+    { id: 'export', label: 'Exported', actions: ['EXPORT'] },
 ];
 const VERB = {
     INSERT: 'Added', CREATE: 'Added', UPDATE: 'Changed', UPSERT: 'Saved', REPLACE: 'Replaced',
-    DELETE: 'Deleted', GENERATE: 'Generated', BOOTSTRAP: 'Set up', LOGIN: 'Signed in', LOGOUT: 'Signed out',
+    DELETE: 'Deleted', GENERATE: 'Generated', BOOTSTRAP: 'Set up', LOGIN: 'Signed in', LOGOUT: 'Signed out', EXPORT: 'Exported',
 };
 const TONE = {
     INSERT: 'add', CREATE: 'add', UPDATE: 'change', UPSERT: 'change', REPLACE: 'change',
-    DELETE: 'delete', GENERATE: 'system', BOOTSTRAP: 'system', LOGIN: 'session', LOGOUT: 'session',
+    DELETE: 'delete', GENERATE: 'system', BOOTSTRAP: 'system', LOGIN: 'session', LOGOUT: 'session', EXPORT: 'export',
 };
 const MODULE_OF = t => (/^assembly/.test(t) ? 'kd1' : /^kd2/.test(t) ? 'kd2' : /^f100/.test(t) ? 'f100kd2' : null);
 const MODULE_LABEL = { kd1: 'F200 – KD1', kd2: 'F200 – KD2', f100kd2: 'F100 – KD2' };
@@ -71,10 +73,11 @@ const FIELD = {
     proposed_solution: 'Proposed solution', action_taken: 'Action taken', pic: 'Person in charge', module: 'Module',
     name: 'Name', is_baseline: 'Baseline', count: 'Blocks', blocks: 'Blocks', units: 'Units', reference: 'Reference unit',
     xray_status: 'X-ray status', delay_reason: 'Delay reason', unit_code: 'Unit code', unit_name: 'Unit name',
+    away_minutes: 'Away (minutes)', signed_in_at: 'Signed in at', file: 'File', format: 'Format', from: 'Opened from',
 };
 const HIDDEN = new Set(['id', 'created_at', 'updated_at', 'plan_version_id', 'password_hash', '_ctx', 'category_sequence',
     'station_sequence_in_category', 'route_sequence', 'planning_source', 'reporter_email', 'updated_by_email', 'updated_by_name',
-    'plan_id', 'ids', 'sample', 'module_id', 'user_id']);
+    'plan_id', 'ids', 'sample', 'module_id', 'user_id', 'session']);
 
 /* ── State ───────────────────────────────────────────────────── */
 const S = {
@@ -200,6 +203,7 @@ function fmtValue(L, key, v, row) {
     if (key === 'role') return typeof roleLabel === 'function' ? _t(roleLabel(v)) : String(v);
     if (key === 'category' && L.cat.has(String(v))) return _t(L.cat.get(String(v)));
     if (key === 'modules' && Array.isArray(v)) return v.map(m => MODULE_SHORT[m] || m).join(', ');
+    if (key === 'module' && MODULE_LABEL[v]) return MODULE_LABEL[v];
     if (isDate(v)) return fmtDate(v);
     if (Array.isArray(v)) return v.length <= 4 && v.every(x => typeof x !== 'object') ? v.join(', ') : _t('{n} items', { n: v.length });
     if (typeof v === 'object') return _t('{n} fields', { n: Object.keys(v).length });
@@ -247,6 +251,15 @@ function describe(L, rows, e) {
         kind = _t('Session');
         subject = userName(L, e.user_id || e.user_email) || e.user_email || '';
         nav = { kind: 'user', id: e.user_id, email: e.user_email };
+        // Still signed in: PPMS opened again, or back after being away (written by app.js)
+        if (a.session === 'reopened') { verb = _t('Opened PPMS'); subject += ` — ${_t('still signed in')}`; kind = _t('Session (already signed in)'); }
+        if (a.session === 'resumed') { verb = _t('Came back'); subject += a.away_minutes ? ` — ${_t('after {n} min away', { n: a.away_minutes })}` : ''; kind = _t('Session (already signed in)'); }
+    } else if (action === 'EXPORT') {
+        kind = _t('Report / export');
+        const file = a.file || rid;
+        // "executive_report_2026-10-06.pdf" -> "Executive report (PDF)"
+        const base = file.replace(/\.[a-z0-9]+$/i, '').replace(/[_-]?\d{4}-\d{2}-\d{2}.*$/, '').replace(/[_]+/g, ' ').trim();
+        subject = `${base ? base.charAt(0).toUpperCase() + base.slice(1) : file}${a.format ? ` (${a.format})` : ''}`;
     } else if (PLAN_TABLES.has(t)) {
         kind = _t('Plan block');
         const row = rows[t]?.get(rid);

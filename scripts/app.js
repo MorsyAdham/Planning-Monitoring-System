@@ -362,6 +362,41 @@ async function sha256(str) {
         .map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+/* ── Exports in the Audit Log ────────────────────────────────────────
+   Every report or file PPMS downloads (Excel, PDF, Word, templates) ends
+   in a link with a download name being clicked — by our own code
+   (a.click()) or by the PDF / Excel libraries (dispatching a click). One
+   hook there writes an EXPORT entry for all of them, including exports
+   added later. Previews (no download name) are not logged. */
+let _lastExportLogged = { name: '', at: 0 };
+function _logExport(fileName) {
+    const name = String(fileName || '').trim();
+    if (!name) return;
+    const now = Date.now();
+    if (_lastExportLogged.name === name && now - _lastExportLogged.at < 3000) return; // same file, one click
+    _lastExportLogged = { name, at: now };
+    const ext = (name.match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
+    const format = { pdf: 'PDF', xlsx: 'Excel', xls: 'Excel', csv: 'CSV', doc: 'Word', docx: 'Word' }[ext] || ext.toUpperCase();
+    const section = document.querySelector('.modal-overlay[style*="flex"] .modal-title')?.textContent?.trim() || '';
+    auditLog('EXPORT', null, name, null, { file: name, format, module: getActiveModuleId(), from: section || null });
+}
+function _installExportAudit() {
+    if (window.__ppmsExportAudit) return;
+    window.__ppmsExportAudit = true;
+    const isDownload = el => el instanceof HTMLAnchorElement && el.hasAttribute('download') && el.getAttribute('download');
+    const nativeClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function (...args) {
+        if (isDownload(this)) _logExport(this.getAttribute('download'));
+        return nativeClick.apply(this, args);
+    };
+    const nativeDispatch = EventTarget.prototype.dispatchEvent;
+    EventTarget.prototype.dispatchEvent = function (ev) {
+        if (ev?.type === 'click' && isDownload(this)) _logExport(this.getAttribute('download'));
+        return nativeDispatch.call(this, ev);
+    };
+}
+_installExportAudit();
+
 /** { module, label, planId, battalion } for an audit entry about a plan block
  *  or its actual dates — from the loaded plan rows. null when there is nothing
  *  to add. Stored as `_ctx` in the entry's data (the Audit Log hides it). */
@@ -2573,15 +2608,33 @@ function startCommentNotifSync() {
     _commentNotifChannels = [kd2Ch, f100Ch];
 }
 
-/* ── Active-user broadcast heartbeat (master admin view) ────────── */
-// Supabase Presence is unreliable with anon-only clients.
-// Instead each user broadcasts a heartbeat every 30 s on a broadcast channel.
-// Master admin keeps a local map of who sent a heartbeat in the last 90 s.
+/* ── Active users: live presence (broadcast heartbeat) ──────────────
+   Supabase Presence is unreliable with anon-only clients, so each tab
+   broadcasts a small heartbeat on 'ppms-hb':
+     • at once when it connects, then every 15 s (hidden tabs: 60 s),
+     • immediately (debounced) when something people can see changes —
+       status, module, section in view, Gantt editing,
+     • a 'bye' when the tab closes, so it leaves the list at once.
+   Status: active · idle (no mouse / keyboard for 5 min) · away (tab hidden).
+   Anyone not heard from for 90 s is dropped.
+   The master admin sees the live list (Active Users button); co-editor
+   badges on the Gantt use the same map. */
 let _presenceChannel = null;
-let _presenceOnlineMap = {};   // { userId: { name, email, role, ts, editing } }
+let _presenceOnlineMap = {};   // { id: payload }
 let _heartbeatTimer   = null;
 let _sendPresenceHeartbeat = () => {};  // set by startPresenceTracking
 let _ganttEditSince = 0;
+
+const PRESENCE_IDLE_MS = 5 * 60_000;
+const PRESENCE_DROP_MS = 90_000;
+const SESSION_RETURN_MS = 20 * 60_000;   // away this long, then back → "resumed" in the Audit Log
+const PRESENCE_SECTIONS = {
+    summarySection: 'Summary', ganttSection: 'Schedule', vpxSection: 'Progress',
+    chartsSection: 'Analytics', f100ChartsSection: 'Analytics', tableSection: 'Plan Table', issuesSection: 'Issues',
+};
+let _presenceLastInput = Date.now();
+let _presenceSection = '';
+let _presenceAwaySince = 0;      // when the user went idle / hid the tab (0 = here)
 
 /** What we broadcast about our own Gantt edit session, or null when not editing. */
 function _myGanttEditingState() {
@@ -2649,6 +2702,67 @@ function _renderGanttCoEditors() {
     badge.innerHTML = `<span class="gce-live" aria-hidden="true"></span><span class="gce-avs">${parts.join('')}</span><span class="gce-label">${text}</span>`;
 }
 
+function _myPresenceStatus() {
+    if (document.hidden) return 'away';
+    return Date.now() - _presenceLastInput > PRESENCE_IDLE_MS ? 'idle' : 'active';
+}
+
+/** Section of the page most in view (Summary, Schedule …). */
+function _watchPresenceSection(onChange) {
+    if (typeof IntersectionObserver === 'undefined') return;
+    const ratios = new Map();
+    const io = new IntersectionObserver(entries => {
+        entries.forEach(e => ratios.set(e.target.id, e.isIntersecting ? e.intersectionRect.height : 0));
+        let best = '', bestH = 0;
+        ratios.forEach((h, id) => { if (h > bestH) { best = id; bestH = h; } });
+        const label = PRESENCE_SECTIONS[best] || '';
+        if (label !== _presenceSection) { _presenceSection = label; onChange(); }
+    }, { threshold: [0, 0.25, 0.5, 0.75, 1] });
+    Object.keys(PRESENCE_SECTIONS).forEach(id => { const el = document.getElementById(id); if (el) io.observe(el); });
+}
+
+/* ── "Came back" in the Audit Log ──────────────────────────────────
+   Most people sign in once and keep PPMS open (or reopen the tab with the
+   session still alive), so a LOGIN entry alone says little about who is
+   using the system. A LOGIN entry with data_after.session = 'reopened' /
+   'resumed' is written when PPMS is opened again in a signed-in session,
+   or when someone comes back after 20+ min away — at most once per
+   20 min per browser, so reloads don't flood the log. */
+const SESSION_LOG_KEY = 'ppms_session_logged_at';
+function _sessionLoggedRecently() {
+    try { return Date.now() - Number(localStorage.getItem(SESSION_LOG_KEY) || 0) < SESSION_RETURN_MS; } catch { return false; }
+}
+async function _logSessionResume(kind, awayMs = 0) {
+    const user = getCurrentUser();
+    if (!user || !db || _sessionLoggedRecently()) return;
+    try { localStorage.setItem(SESSION_LOG_KEY, String(Date.now())); } catch {}
+    const createdAt = new Date().toISOString();
+    const detail = { session: kind, module: getActiveModuleId() };
+    if (awayMs) detail.away_minutes = Math.round(awayMs / 60_000);
+    if (user.loginAt) detail.signed_in_at = user.loginAt;
+    try {
+        await db.from('planning_audit_log').insert({
+            user_id: user.id, user_email: user.email, user_role: user.role,
+            action: 'LOGIN', table_name: null, record_id: null,
+            data_before: null, data_after: detail,
+            ip_address: getCachedIP(), created_at: createdAt,
+        });
+        if (typeof _broadcastAuditEvent === 'function') _broadcastAuditEvent('LOGIN', null, null, user, createdAt, null);
+    } catch (e) {
+        console.warn('Session audit write failed (non-fatal):', e.message);
+    }
+}
+/** On page load: a session that wasn't just created on the sign-in page. */
+function _logSessionOpen() {
+    const user = getCurrentUser();
+    const loginAt = user?.loginAt ? Date.parse(user.loginAt) : 0;
+    if (loginAt && Date.now() - loginAt < 2 * 60_000) {
+        try { localStorage.setItem(SESSION_LOG_KEY, String(Date.now())); } catch {} // the sign-in itself was just logged
+        return;
+    }
+    _logSessionResume('reopened');
+}
+
 function startPresenceTracking() {
     const user = getCurrentUser();
     if (!user || !db) return;
@@ -2667,11 +2781,12 @@ function startPresenceTracking() {
         name:  user.name  || user.email,
         email: user.email,
         role:  user.role,
-        joined: Date.now(),   // session start — stays fixed in each user's myInfo
+        joined: Date.now(),          // this page was opened
+        loginAt: user.loginAt || null, // when the session was signed in
     };
 
     function pruneAndRender() {
-        const cutoff = Date.now() - 90_000; // 90 s
+        const cutoff = Date.now() - PRESENCE_DROP_MS;
         Object.keys(_presenceOnlineMap).forEach(k => {
             if ((_presenceOnlineMap[k].ts || 0) < cutoff) delete _presenceOnlineMap[k];
         });
@@ -2679,54 +2794,170 @@ function startPresenceTracking() {
         _renderGanttCoEditors();
     }
 
-    function sendHeartbeat() {
-        _presenceChannel?.send({
-            type: 'broadcast',
-            event: 'hb',
-            payload: { ...myInfo, ts: Date.now(), moduleId: getActiveModuleId(), editing: _myGanttEditingState() },
-        }).catch(() => {});
+    function payload() {
+        const moduleId = getActiveModuleId();
+        return {
+            ...myInfo, ts: Date.now(), moduleId,
+            versionName: _activeVersionInfo(moduleId)?.name || null,
+            section: _presenceSection,
+            status: _myPresenceStatus(),
+            statusSince: _presenceAwaySince || null,
+            editing: _myGanttEditingState(),
+        };
     }
-    _sendPresenceHeartbeat = sendHeartbeat;
+    let lastBeat = 0;
+    function sendHeartbeat() {
+        lastBeat = Date.now();
+        const p = payload();
+        _presenceOnlineMap[myId] = p;
+        _presenceChannel?.send({ type: 'broadcast', event: 'hb', payload: p }).catch(() => {});
+    }
+    // Several changes in a row (scrolling past sections) send one heartbeat
+    let soonTimer = 0;
+    function announceSoon() {
+        clearTimeout(soonTimer);
+        soonTimer = setTimeout(() => { sendHeartbeat(); pruneAndRender(); }, 600);
+    }
+    _sendPresenceHeartbeat = () => { sendHeartbeat(); pruneAndRender(); };
+
+    // Activity: idle / away / back
+    let lastStatus = _myPresenceStatus();
+    function onStatusMaybeChanged() {
+        const s = _myPresenceStatus();
+        if (s === lastStatus) return;
+        if (s === 'active' && _presenceAwaySince && Date.now() - _presenceAwaySince >= SESSION_RETURN_MS) {
+            _logSessionResume('resumed', Date.now() - _presenceAwaySince);
+        }
+        _presenceAwaySince = s === 'active' ? 0 : (_presenceAwaySince || Date.now());
+        lastStatus = s;
+        announceSoon();
+    }
+    let lastInputMark = 0;
+    const onInput = () => {
+        const now = Date.now();
+        _presenceLastInput = now;
+        if (now - lastInputMark > 2000) { lastInputMark = now; onStatusMaybeChanged(); }
+    };
+    ['pointerdown', 'keydown', 'wheel', 'pointermove', 'touchstart'].forEach(ev => document.addEventListener(ev, onInput, { passive: true, capture: true }));
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) _presenceLastInput = Date.now(); // coming back to the tab counts as activity
+        onStatusMaybeChanged();
+        if (!document.hidden) { sendHeartbeat(); pruneAndRender(); }
+    });
+    _watchPresenceSection(announceSoon);
 
     _presenceChannel = db.channel('ppms-hb', {
-        config: { broadcast: { self: true, ack: false } },
+        config: { broadcast: { self: false, ack: false } },
     });
 
     _presenceChannel
-        .on('broadcast', { event: 'hb' }, ({ payload }) => {
-            if (!payload?.id) return;
-            _presenceOnlineMap[payload.id] = payload;
+        .on('broadcast', { event: 'hb' }, ({ payload: p }) => {
+            if (!p?.id) return;
+            const isNew = !_presenceOnlineMap[p.id];
+            // Receiver's clock (no drift between PCs). Tabs on an older PPMS
+            // version send no status / section — count them as active.
+            _presenceOnlineMap[p.id] = { ...p, status: p.status || 'active', legacy: !('status' in p), ts: Date.now() };
+            if (isNew) { _flashActiveUsersBadge(); _auLoadSessions(); }
+            pruneAndRender();
+        })
+        .on('broadcast', { event: 'bye' }, ({ payload: p }) => {
+            if (!p?.id || p.id === myId) return;
+            delete _presenceOnlineMap[p.id];
             pruneAndRender();
         })
         .on('broadcast', { event: 'ping' }, () => {
-            // Another user just connected — respond immediately so they see us right away
-            sendHeartbeat();
+            // Someone just connected — answer within a second (spread out so
+            // a room full of tabs doesn't answer in the same instant)
+            setTimeout(sendHeartbeat, 100 + Math.random() * 900);
         })
         .subscribe((status) => {
             if (status !== 'SUBSCRIBED') return;
-            // Announce self immediately, then every 30 s
-            _presenceOnlineMap[myId] = { ...myInfo, ts: Date.now() };
-            pruneAndRender();
             sendHeartbeat();
-            // Ask all already-connected users to respond with their heartbeat now
+            pruneAndRender();
+            // Ask everyone already connected to answer now
             _presenceChannel?.send({ type: 'broadcast', event: 'ping', payload: { from: myId } }).catch(() => {});
-            // 12s while editing (co-editor presence needs to feel live), 30s otherwise.
-            // A hidden tab only needs to say it's online every 60 s (others
-            // drop a user after 90 s); it re-announces as soon as it's shown.
-            let lastBeat = Date.now();
+            if (_heartbeatTimer) clearInterval(_heartbeatTimer);
             _heartbeatTimer = setInterval(() => {
-                if (document.hidden && Date.now() - lastBeat < 60_000) return;
-                lastBeat = Date.now();
-                sendHeartbeat();
+                onStatusMaybeChanged();              // idle after 5 min without input
+                const every = document.hidden ? 60_000 : 15_000;
+                if (Date.now() - lastBeat >= every - 500) sendHeartbeat();
                 pruneAndRender();
-            }, 12_000);
-            document.addEventListener('visibilitychange', () => {
-                if (document.hidden) return;
-                lastBeat = Date.now();
-                sendHeartbeat();
-                pruneAndRender();
-            });
+            }, 5_000);
         });
+
+    // Leave the list at once when the tab closes
+    window.addEventListener('pagehide', () => {
+        _presenceChannel?.send({ type: 'broadcast', event: 'bye', payload: { id: myId } }).catch(() => {});
+    });
+
+    _logSessionOpen();
+}
+
+/* ── Active Users button + live panel (master admin) ───────────── */
+let _auPanel = null;
+let _auSearch = '';
+
+/* Sign-in time per user from the Audit Log (the database), so it is right
+   for every tab — whatever PPMS version it runs — and survives reloads:
+   signedIn = last real sign-in (LOGIN without a session marker),
+   lastOpen = last time PPMS was opened or resumed. */
+const _auSessions = new Map();   // email → { signedIn, lastOpen }
+let _auSessionsAt = 0, _auSessionsBusy = false;
+async function _auLoadSessions(force = false) {
+    if (!isMasterAdmin() || !db || _auSessionsBusy) return;
+    const emails = [...new Set(Object.values(_presenceOnlineMap).map(u => String(u.email || '').toLowerCase()).filter(Boolean))];
+    const missing = emails.some(e => !_auSessions.has(e));
+    if (!force && !missing && Date.now() - _auSessionsAt < 60_000) return;
+    if (!emails.length) return;
+    _auSessionsBusy = true;
+    try {
+        const { data } = await db.from('planning_audit_log')
+            .select('user_email, created_at, data_after')
+            .eq('action', 'LOGIN').in('user_email', emails)
+            .order('created_at', { ascending: false }).limit(400);
+        const seen = new Map();
+        (data || []).forEach(r => {
+            const k = String(r.user_email || '').toLowerCase();
+            const cur = seen.get(k) || { signedIn: null, lastOpen: null };
+            if (!cur.lastOpen) cur.lastOpen = r.created_at;
+            if (!cur.signedIn && !r.data_after?.session) cur.signedIn = r.created_at;
+            seen.set(k, cur);
+        });
+        emails.forEach(e => _auSessions.set(e, seen.get(e) || { signedIn: null, lastOpen: null }));
+        _auSessionsAt = Date.now();
+        if (_auPanel?.isConnected) _renderActiveUsersPanel();
+    } catch {} finally { _auSessionsBusy = false; }
+}
+
+function _flashActiveUsersBadge() {
+    const b = document.getElementById('activeUsersCount');
+    if (!b) return;
+    b.classList.remove('au-badge-pop');
+    void b.offsetWidth;
+    b.classList.add('au-badge-pop');
+}
+
+function _auSorted(users) {
+    const rank = u => (u.editing ? 0 : u.status === 'idle' ? 2 : u.status === 'away' ? 3 : 1);
+    const myId = String(getCurrentUser()?.id || getCurrentUser()?.email || '');
+    return [...users].sort((a, b) => (String(a.id) === myId) - (String(b.id) === myId) || rank(a) - rank(b)
+        || String(a.name || a.email).localeCompare(String(b.name || b.email)));
+}
+
+function _auDuration(ms) {
+    const m = Math.max(0, Math.floor(ms / 60_000));
+    if (m < 1) return _t('just now');
+    if (m < 60) return _t('{n} min', { n: m });
+    const h = Math.floor(m / 60), rm = m % 60;
+    if (h < 24) return rm ? _t('{h} h {m} min', { h, m: rm }) : _t('{h} h', { h });
+    return _t('{d} d {h} h', { d: Math.floor(h / 24), h: h % 24 });
+}
+function _auClock(ts) {
+    if (!ts) return '';
+    const d = new Date(ts), today = new Date();
+    const time = d.toLocaleTimeString(window.PPMSi18n?.getLocale?.() || 'en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+    if (d.toDateString() === today.toDateString()) return time;
+    return `${formatDate(d.toISOString().slice(0, 10))} ${time}`;
 }
 
 function _renderActiveUsers(users) {
@@ -2735,70 +2966,122 @@ function _renderActiveUsers(users) {
     const countEl = document.getElementById('activeUsersCount');
     if (!wrap) return;
     wrap.style.display = 'flex';
-    if (countEl) countEl.textContent = users.length;
+    const others = users.filter(u => u.status !== 'away');
+    if (countEl) {
+        countEl.textContent = users.length;
+        countEl.classList.toggle('is-quiet', !others.length);
+    }
+    const btn = document.getElementById('activeUsersBtn');
+    if (btn) btn.title = users.length
+        ? `${_t('Active users')}: ${_auSorted(users).slice(0, 8).map(u => (u.name || u.email || '').split(' ')[0]).join(', ')}${users.length > 8 ? '…' : ''}`
+        : _t('Active users');
+    if (_auPanel?.isConnected) _renderActiveUsersPanel();
+}
+
+function _renderActiveUsersPanel() {
+    const users = _auSorted(Object.values(_presenceOnlineMap));
+    const me = getCurrentUser();
+    const myId = String(me?.id || me?.email || '');
+    const now = Date.now();
+    const q = _auSearch.trim().toLowerCase();
+    const shown = q ? users.filter(u => `${u.name} ${u.email} ${roleLabel(u.role)}`.toLowerCase().includes(q)) : users;
+    const stOf = u => (u.editing ? 'editing' : (u.status || 'active'));
+    const n = s => users.filter(u => stOf(u) === s).length;
+    const statusTxt = u => (u.editing ? _t('Editing the plan') : u.status === 'idle' ? _t('Idle') : u.status === 'away' ? _t('Away') : _t('Active'));
+    const editTask = { reschedule: 'Reschedule', add: 'Add work', reorder: 'Reorder route' };
+
+    const rows = shown.map(u => {
+        const isMe = String(u.id) === myId;
+        const st = stOf(u);
+        const initials = esc(((u.name || u.email || '?').trim().split(/\s+/).map(p => p[0]).slice(0, 2).join('') || '?').toUpperCase());
+        const where = [
+            u.moduleId ? _moduleLabel(u.moduleId) : '',
+            u.section ? _t(u.section) : '',
+            u.editing ? `${_t('Editing')} · ${_t(editTask[u.editing.task] || 'Reschedule')}` : '',
+        ].filter(Boolean).join(' · ');
+        const since = (st === 'idle' || st === 'away') && u.statusSince ? ` · ${_auDuration(now - u.statusSince)}` : '';
+        const sess = _auSessions.get(String(u.email || '').toLowerCase());
+        const signedAt = Date.parse(u.loginAt || sess?.signedIn || '') || 0;
+        const signedIn = signedAt
+            ? `${_t('Signed in {time}', { time: _auClock(signedAt) })} · ${_t('session {d}', { d: _auDuration(now - signedAt) })}`
+            : (sess ? _t('Sign-in time not recorded') : '');
+        const online = u.joined ? _t('this visit {d}', { d: _auDuration(now - u.joined) }) : '';
+        const oldVersion = u.legacy ? `<span class="au2-old" title="${esc(_t('This person is on an older PPMS version — they should load the latest version (blinking version badge) to show where they are and to log their exports.'))}">${esc(_t('older version'))}</span>` : '';
+        return `<div class="au2-row au2-${st}">
+            <span class="au2-avatar">${initials}<i class="au2-dot" title="${esc(statusTxt(u))}"></i></span>
+            <div class="au2-info">
+                <div class="au2-line1"><b>${esc(u.name || u.email || '—')}</b>${isMe ? ` <span class="au2-you">${esc(_t('(you)'))}</span>` : ''}<span class="role-pill ${roleClass(u.role)}">${esc(roleLabel(u.role))}</span>${oldVersion}</div>
+                <div class="au2-line2"><span class="au2-status">${esc(statusTxt(u))}${esc(since)}</span>${where ? `<span class="au2-where">${esc(where)}</span>` : ''}</div>
+                <div class="au2-line3">${esc(signedIn)}</div>
+                <div class="au2-line3">${esc(online)}${u.versionName ? ` · <span class="au2-ver">${esc(u.versionName)}</span>` : ''}</div>
+            </div>
+            <div class="au2-acts">
+                <button type="button" class="au2-btn" data-au-activity="${esc(u.email || '')}" title="${esc(_t('Everything this user did, in the audit log'))}">${esc(_t('Activity'))}</button>
+                ${isMe ? '' : `<button type="button" class="au2-btn" data-au-user="${esc(u.id)}" title="${esc(_t('Open in User Management'))}">${esc(_t('User'))}</button>`}
+            </div>
+        </div>`;
+    }).join('');
+
+    _auPanel.querySelector('.au2-counts').innerHTML = [
+        `<span class="au2-count au2-c-active"><i></i>${n('active')} ${esc(_t('active'))}</span>`,
+        n('editing') ? `<span class="au2-count au2-c-editing"><i></i>${n('editing')} ${esc(_t('editing'))}</span>` : '',
+        n('idle') ? `<span class="au2-count au2-c-idle"><i></i>${n('idle')} ${esc(_t('idle'))}</span>` : '',
+        n('away') ? `<span class="au2-count au2-c-away"><i></i>${n('away')} ${esc(_t('away'))}</span>` : '',
+    ].join('');
+    _auPanel.querySelector('.au2-title-n').textContent = users.length;
+    _auPanel.querySelector('.au2-search').hidden = users.length < 7;
+    _auPanel.querySelector('.au2-list').innerHTML = rows
+        || `<div class="au2-empty">${esc(q ? _t('No users match "{a}".', { a: q }) : _t('No users online'))}</div>`;
 }
 
 function openActiveUsersDropdown() {
+    if (_auPanel?.isConnected) { _auPanel.remove(); _auPanel = null; return; }
     document.querySelectorAll('.active-users-dropdown').forEach(d => d.remove());
-    // Use module-level map (rebuilt from presence sync/join/leave events)
-    const users = Object.values(_presenceOnlineMap).flat();
-    const me = getCurrentUser();
-
-    const dropdown = document.createElement('div');
-    dropdown.className = 'active-users-dropdown f100-notif-dropdown';
-
-    function _fmtDuration(ms) {
-        const m = Math.floor(ms / 60_000);
-        if (m < 1)  return 'just now';
-        if (m < 60) return m + 'm';
-        const h = Math.floor(m / 60);
-        const rm = m % 60;
-        return rm ? h + 'h ' + rm + 'm' : h + 'h';
-    }
-
-    dropdown.innerHTML = `
-        <div class="f100-notif-hdr" style="padding:10px 14px 8px">
-            <span style="font-weight:700;font-size:.82rem">Active Users</span>
-            <span style="font-size:.72rem;color:var(--clr-text-muted)">${users.length} online</span>
-        </div>
-        <div style="max-height:300px;overflow-y:auto">
-            ${users.map(u => {
-                const isMe = u.id === (me?.id || me?.email);
-                const roleLbl = roleLabel(u.role);
-                const initials = esc((u.name || u.email || '?').charAt(0).toUpperCase());
-                const loginTime  = u.joined ? new Date(u.joined).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
-                const sessionDur = u.joined ? _fmtDuration(Date.now() - u.joined) : '';
-                const modLbl = u.moduleId ? _moduleLabel(u.moduleId) : '';
-                return `<div class="au-row" style="align-items:flex-start;padding:10px 14px;gap:10px">
-                    <div class="au-avatar" style="margin-top:2px;flex-shrink:0">${initials}</div>
-                    <div class="au-info" style="flex:1;min-width:0">
-                        <div style="display:flex;align-items:center;gap:6px">
-                            <span class="au-name" style="font-weight:600">${esc(u.name || u.email || '—')}${isMe ? ' <span style="color:var(--clr-text-muted);font-weight:400">(you)</span>' : ''}</span>
-                            ${modLbl ? `<span style="display:inline-block;padding:1px 5px;border-radius:4px;background:rgba(59,130,246,.12);color:#3b82f6;font-size:.63rem;font-weight:600;flex-shrink:0">${modLbl}</span>` : ''}
-                        </div>
-                        <span style="display:block;font-size:.71rem;color:var(--clr-text-muted);margin-top:1px">${esc(u.email || '')}</span>
-                        <span style="display:block;font-size:.71rem;color:var(--clr-text-muted);margin-top:3px">
-                            ${roleLbl} · Logged in ${loginTime}${sessionDur ? ' · ' + sessionDur : ''}
-                        </span>
-                    </div>
-                    <span class="au-dot" style="flex-shrink:0;margin-top:6px"></span>
-                </div>`;
-            }).join('') || '<div style="padding:12px 14px;color:var(--clr-text-muted);font-size:.78rem">No users online</div>'}
-        </div>
-    `;
-
     const btn = document.getElementById('activeUsersBtn');
     if (!btn) return;
-    const rect = btn.getBoundingClientRect();
-    dropdown.style.cssText = `position:fixed;top:${rect.bottom + 6}px;right:${window.innerWidth - rect.right}px;z-index:10000;min-width:240px`;
-    _fullscreenOverlayHost().appendChild(dropdown);
 
-    setTimeout(() => document.addEventListener('click', function handler(ev) {
-        if (!dropdown.contains(ev.target) && ev.target !== btn) {
-            dropdown.remove();
-            document.removeEventListener('click', handler);
-        }
-    }), 0);
+    const panel = document.createElement('div');
+    panel.className = 'active-users-dropdown au2-panel';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', _t('Active users'));
+    panel.innerHTML = `
+        <div class="au2-head">
+            <div class="au2-title"><span class="au2-live" aria-hidden="true"></span>${esc(_t('Active users'))}<span class="au2-title-n">0</span></div>
+            <div class="au2-counts"></div>
+        </div>
+        <div class="au2-search" hidden><input type="search" placeholder="${esc(_t('Search name, email or role…'))}" aria-label="${esc(_t('Search users'))}"></div>
+        <div class="au2-list"></div>
+        <div class="au2-foot">${esc(_t('Live — updates as people come and go. Idle = no activity for 5 min · Away = PPMS is in a background tab.'))}</div>`;
+    const rect = btn.getBoundingClientRect();
+    const rtl = document.documentElement.dir === 'rtl';
+    panel.style.cssText = `position:fixed;top:${rect.bottom + 8}px;${rtl ? `left:${rect.left}px` : `right:${window.innerWidth - rect.right}px`};z-index:10000`;
+    _fullscreenOverlayHost().appendChild(panel);
+    _auPanel = panel;
+    _auSearch = '';
+    _renderActiveUsersPanel();
+    _auLoadSessions(true);
+
+    panel.addEventListener('input', e => { if (e.target.matches('.au2-search input')) { _auSearch = e.target.value; _renderActiveUsersPanel(); } });
+    panel.addEventListener('click', e => {
+        const act = e.target.closest('[data-au-activity]');
+        const usr = e.target.closest('[data-au-user]');
+        if (act) { close(); window.PPMSAudit?.open({ user: act.dataset.auActivity }); }
+        else if (usr) { close(); window.PPMSUsers?.open({ focusUser: usr.dataset.auUser }); }
+    });
+    // Times ("online 12 min") stay current while the panel is open
+    const tick = setInterval(() => { if (_auPanel === panel && panel.isConnected) _renderActiveUsersPanel(); else clearInterval(tick); }, 20_000);
+    function close() {
+        panel.remove();
+        if (_auPanel === panel) _auPanel = null;
+        document.removeEventListener('click', outside, true);
+        document.removeEventListener('keydown', onKey, true);
+    }
+    function outside(ev) { if (!panel.contains(ev.target) && !btn.contains(ev.target)) close(); }
+    function onKey(ev) { if (ev.key === 'Escape') close(); }
+    setTimeout(() => {
+        document.addEventListener('click', outside, true);
+        document.addEventListener('keydown', onKey, true);
+    }, 0);
 }
 
 function wireActiveUsersBtn() {
@@ -18776,15 +19059,19 @@ function startIssuesPoll() {
    AUDIT-LOG NOTIFICATIONS — every audited action (plan/task changes,
    production issues, user management, export permissions, F100 parts
    & processes) surfaces as a notification for every other user, feeding
-   the same bell/dropdown as comments and issues. Exports, login and
-   logout are intentionally never audit-logged, so they never appear here.
+   the same bell/dropdown as comments and issues. Sign-ins (including
+   "opened PPMS / came back" while still signed in) reach master admins only.
    ================================================================ */
 const AUDIT_ACTION_VERBS = {
     INSERT: 'created', UPDATE: 'updated', DELETE: 'deleted',
+    LOGIN: 'signed in / opened PPMS', LOGOUT: 'signed out', EXPORT: 'exported a report',
     grant_export: 'granted export access', revoke_export: 'revoked export access',
 };
 // One color per action so the bell/dropdown reads at a glance (create vs. update vs. delete vs. permission changes).
 const AUDIT_ACTION_COLORS = {
+    LOGIN:         '#0ea5e9', // sky
+    LOGOUT:        '#94a3b8', // slate
+    EXPORT:        '#a855f7', // purple
     INSERT:        '#22c55e', // green
     UPDATE:        '#3b82f6', // blue
     DELETE:        '#ef4444', // red
@@ -18797,7 +19084,7 @@ const AUDIT_NOTIF_EXCLUDED_ACTIONS = new Set(['BOOTSTRAP']);
 // System-management audit events (authentication, export permissions, user
 // administration) notify master_admin only. Every other role sees just data
 // updates and production-issue events.
-const AUDIT_NOTIF_SYSTEM_ACTIONS = new Set(['LOGIN', 'LOGOUT', 'grant_export', 'revoke_export']);
+const AUDIT_NOTIF_SYSTEM_ACTIONS = new Set(['LOGIN', 'LOGOUT', 'EXPORT', 'grant_export', 'revoke_export']);
 const AUDIT_NOTIF_SYSTEM_TABLES = new Set(['planning_app_users', 'ppms_export_permissions']);
 
 /** Whether an audit event should surface as a notification for the current user.
@@ -18813,7 +19100,7 @@ function _auditNotifVerb(action) {
     return AUDIT_ACTION_VERBS[action] || (action || '').toLowerCase();
 }
 function _auditNotifTableLabel(table) {
-    return AL_TABLE_LABELS[table] || table || 'record';
+    return AL_TABLE_LABELS[table] || table || 'Session / report';
 }
 function _auditNotifColor(action) {
     return AUDIT_ACTION_COLORS[action] || AUDIT_ACTION_COLOR_DEFAULT;
