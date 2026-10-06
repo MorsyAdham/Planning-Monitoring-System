@@ -1,0 +1,80 @@
+/* ================================================================
+   Interface languages — picker, fonts, right-to-left (Arabic)
+   ================================================================ */
+
+/* Language picker (user menu + sign-in page) */
+.lang-picker { display: inline-flex; gap: 2px; padding: 2px; border-radius: 9px; border: 1px solid var(--clr-border); background: var(--clr-surface-2); }
+.lang-opt { border: none; background: transparent; color: var(--clr-text-muted); font: 600 .74rem var(--ff-body); padding: 4px 9px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
+.lang-opt:hover { color: var(--clr-text); background: rgba(255, 255, 255, .06); }
+.lang-opt.is-active { background: var(--clr-accent); color: #fff; }
+.lang-opt[lang="ko"] { font-family: 'Noto Sans KR', var(--ff-body); }
+.lang-opt[lang="ar"] { font-family: 'Noto Sans Arabic', var(--ff-body); }
+.nav-user-menu-lang { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; border-bottom: 1px solid var(--clr-border); margin-bottom: 4px; }
+.nav-user-menu-label { font-size: .64rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--clr-text-muted); }
+.lang-picker--menu { align-self: flex-start; }
+/* Sign-in page: the same globe button + menu as the header, next to the theme button */
+.lp-theme-wrap { display: flex; align-items: center; gap: 8px; }
+.lp-theme-wrap .lang-menu-btn { height: 34px; min-width: 34px; background: var(--clr-surface); }
+html[dir="rtl"] .lp-theme-wrap { right: auto; left: 20px; }
+html[dir="rtl"] .lp-theme-dropdown { right: auto; left: 0; }
+[data-theme="light"] .lang-opt:hover { background: rgba(0, 0, 0, .05); }
+
+/* Fonts: Korean / Arabic glyphs fall back to Noto (Latin keeps Inter) */
+html.lang-ko { --ff-body: 'Inter', 'Noto Sans KR', sans-serif; --ff-display: 'Rajdhani', 'Noto Sans KR', sans-serif; }
+html.lang-ar { --ff-body: 'Inter', 'Noto Sans Arabic', sans-serif; --ff-display: 'Rajdhani', 'Noto Sans Arabic', sans-serif; }
+
+/* Arabic letters are joined — letter-spacing pulls them apart */
+html.lang-ar body, html.lang-ar body * { letter-spacing: 0 !important; }
+html.lang-ar body { line-height: 1.55; }
+
+/* ── Right-to-left ── */
+/* Time and process order stay left-to-right: Gantt timeline and VPX matrix */
+html[dir="rtl"] #ganttScrollRoot,
+html[dir="rtl"] .gantt-keys-row .gantt-zone-key,
+html[dir="rtl"] #vpxMatrix,
+html[dir="rtl"] .kd2-cp-gantt,
+html[dir="rtl"] .kd2-cp-tl { direction: ltr; }
+/* Text inside them still reads right-to-left where it is Arabic */
+html[dir="rtl"] #ganttScrollRoot .gr-label,
+html[dir="rtl"] #vpxMatrix th,
+html[dir="rtl"] #vpxMatrix td { unicode-bidi: plaintext; }
+
+/* Dropdowns anchored to the right edge open from the left in RTL */
+html[dir="rtl"] .nav-more-dropdown,
+html[dir="rtl"] .theme-picker-dropdown,
+html[dir="rtl"] .nav-user-menu { right: auto; left: 0; }
+html[dir="rtl"] .gantt-export-menu { right: auto; left: 0; }
+
+/* Text alignment that was written as left */
+html[dir="rtl"] .fx-chip,
+html[dir="rtl"] .xr-body,
+html[dir="rtl"] .modal-body { text-align: right; }
+html[dir="rtl"] .gx-hint svg { transform: scaleX(-1); }
+
+/* Segmented tabs overlap their borders with a negative margin — mirror it */
+html[dir="rtl"] .vpx-type-tab { margin-left: 0; margin-right: -1px; }
+html[dir="rtl"] .vpx-type-tab:first-child { border-radius: 0 6px 6px 0; margin-right: 0; }
+html[dir="rtl"] .vpx-type-tab:last-child { border-radius: 6px 0 0 6px; }
+html[dir="rtl"] .vpx-type-tab:only-child { border-radius: 6px; }
+
+/* Codes keep their own order inside right-to-left text (K10 + K11, BTL-01 …) */
+html[dir="rtl"] .gantt-combine-label,
+html[dir="rtl"] .bat-lock b,
+html[dir="rtl"] .vpx-bat-tab { direction: ltr; unicode-bidi: isolate; }
+
+/* "TODAY" marker on the Gantt is drawn by CSS — its text comes from core/i18n.js */
+.gc-today-line::before { content: var(--ppms-today-label, 'TODAY'); }
+
+/* Header language button + menu */
+.lang-menu-wrap { position: relative; }
+.lang-menu-btn { width: auto; min-width: 32px; padding: 0 7px; gap: 4px; }
+.lang-menu-btn svg { width: 15px; height: 15px; }
+.lang-menu-code { font: 700 .66rem/1 var(--ff-body); letter-spacing: .02em; }
+.lang-menu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 1100; min-width: 168px; padding: 8px; border-radius: 12px; border: 1px solid var(--clr-border); background: var(--clr-surface); box-shadow: 0 8px 32px rgba(0, 0, 0, .32); display: flex; flex-direction: column; gap: 6px; }
+.lang-menu[hidden] { display: none; }
+.lang-menu-title { padding: 0 4px; font-size: .64rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--clr-text-muted); }
+.lang-picker--list { flex-direction: column; border: none; background: none; padding: 0; gap: 2px; }
+.lang-picker--list .lang-opt { display: flex; align-items: center; justify-content: space-between; text-align: start; padding: 8px 10px; font-size: .82rem; }
+.lang-picker--list .lang-opt i { font-style: normal; }
+[data-theme="light"] .lang-menu { background: #fff; box-shadow: 0 8px 28px rgba(15, 23, 42, .14); }
+html[dir="rtl"] .lang-menu { right: auto; left: 0; }

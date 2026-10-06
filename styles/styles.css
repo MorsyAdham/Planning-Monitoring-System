@@ -9834,9 +9834,10 @@ th.vpx-grp-processing:first-of-type {
     opacity: .5;
 }
 
-/* Planned date: accent-colored */
+/* Planned date: the theme's "planned" status colour, never the accent —
+   in accent-red themes (Crimson) an accent-coloured date reads as "late". */
 .vpx-date-plan {
-    color: var(--clr-accent);
+    color: var(--clr-planned);
     font-weight: 600;
     font-size: .63rem;
 }

@@ -95,3 +95,53 @@
     padding: 3px 11px;
     font-size: .68rem;
 }
+
+/* Battalion picker — first tier; one battalion at a time so units that
+   share a label (M1, M2…) in different battalions are never mixed up. */
+.vpx-bat-picker {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    min-width: 0;
+}
+.vpx-bat-picker[hidden] { display: none; }
+.vpx-bat-label {
+    font-size: .64rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--clr-text-muted, #94a3b8);
+    white-space: nowrap;
+}
+.vpx-bat-tabs {
+    overflow-x: auto;
+    scrollbar-width: thin;
+    min-width: 0;
+}
+.vpx-bat-tab {
+    white-space: nowrap;
+    letter-spacing: .03em;
+}
+.vpx-bat-tab.active {
+    background: rgba(245,158,11,.16);
+    border-color: rgba(245,158,11,.6);
+    color: #fbbf24;
+}
+.vpx-bat-tab:hover { border-color: rgba(245,158,11,.45); color: #fcd34d; }
+[data-theme="light"] .vpx-bat-label { color: #64748b; }
+[data-theme="light"] .vpx-bat-tab.active {
+    background: rgba(245,158,11,.12);
+    border-color: #d97706;
+    color: #b45309;
+}
+[data-theme="light"] .vpx-bat-tab:hover { border-color: #d97706; color: #b45309; }
+
+/* Summary / VPX battalion picker when the battalion filter has loaded one battalion */
+.bat-lock { display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 10px; border-radius: 6px; border: 1px solid rgba(245,158,11,.45); background: rgba(245,158,11,.10); font-size: .74rem; white-space: nowrap; }
+.bat-lock b { color: #fbbf24; font-weight: 700; letter-spacing: .03em; }
+.bat-lock span { color: var(--clr-text-muted); font-size: .7rem; }
+.bat-load-all { border: none; background: none; padding: 2px 4px; font: inherit; font-size: .72rem; font-weight: 600; color: var(--clr-accent, #4f8ef7); cursor: pointer; white-space: nowrap; }
+.bat-load-all:hover { text-decoration: underline; }
+[data-theme="light"] .bat-lock { border-color: #d97706; background: #fffbeb; }
+[data-theme="light"] .bat-lock b { color: #b45309; }

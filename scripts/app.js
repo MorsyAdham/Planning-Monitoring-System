@@ -3,7 +3,12 @@
    Production-ready vanilla JS + Supabase + Chart.js
    ================================================================ */
 
+
 'use strict';
+
+// Interface language (scripts/core/i18n.js). Falls back to English if a
+// cached older page hasn't loaded the translation module.
+var _t = window._t || ((text, vars) => (vars ? String(text).replace(/\{(\w+)\}/g, (m, k) => (vars[k] ?? m)) : text));
 
 /* ──────────────────────────────────────────────────────────────────
    1. CONFIGURATION — Replace with your Supabase project credentials
@@ -34,7 +39,7 @@ function canEditPlan() { return isMasterAdmin() || getCurrentUser()?.role === 'p
 // so rows still stored as 'admin' (before migration 46) render correctly.
 const ROLE_LABELS = { master_admin: 'Master Admin', operator: 'Operator', planner: 'Planner', viewer: 'Viewer' };
 function normalizeRole(role) { return role === 'admin' ? 'operator' : role; }
-function roleLabel(role) { const r = normalizeRole(role); return ROLE_LABELS[r] || r || '—'; }
+function roleLabel(role) { const r = normalizeRole(role); return ROLE_LABELS[r] ? _t(ROLE_LABELS[r]) : (r || '—'); }
 function roleClass(role) { return normalizeRole(role) || 'viewer'; }
 function getCachedIP() { return getCurrentUser()?.ip || 'unknown'; }
 
@@ -880,6 +885,135 @@ function samePlanLane(a, b) {
 // station (or one process step for F100), shared across every unit passing
 // through it — NOT one vehicle's whole route. In Unit View a row is one
 // vehicle/unit's whole schedule, so that's where samePlanLane() still applies.
+/* ── K10 + K11 together (KD2 Process view) ─────────────────────────
+   K10 and K11 run the same stations in the same order, so they can be
+   planned as one: one "K10 + K11" section whose station rows carry both
+   vehicles' blocks. Editing works as usual; Reorder route (a per-vehicle
+   route) shows them separately while it is on. Remembered per browser. */
+const GANTT_COMBINED_KEY = 'K10 + K11';
+const GANTT_COMBINED_VEHICLES = new Set(['K10', 'K11']);
+let _ganttCombineK1011 = (() => { try { return localStorage.getItem('ppms_gantt_combine_k10k11') === '1'; } catch { return false; } })();
+let _ganttCombineInEffect = false; // set by renderGantt: toggle on AND both vehicles in scope
+function _ganttCombinedGroupOf(vehicle) {
+    return _ganttCombineInEffect && GANTT_COMBINED_VEHICLES.has(vehicle) ? GANTT_COMBINED_KEY : vehicle;
+}
+/** Station row a KD2 block sits on in Process view (station name / row key). */
+function _kd2StationRowKey(row) {
+    const v = row.vehicle_type || row.vehicle;
+    return getModuleRuntime()?.getStationRowKeyMap?.(v)?.get(row.station_code) || row.process_station || row.station_code || '';
+}
+/** "This station's queue" in the combined view: both vehicles at this station, from this date on. */
+function _kd2CombinedStationQueue(anchor, rows) {
+    const key = _kd2StationRowKey(anchor);
+    const from = anchor.start_date || anchor.planned_start_date || '';
+    return rows
+        .filter(r => GANTT_COMBINED_VEHICLES.has(r.vehicle_type || r.vehicle) && _kd2StationRowKey(r) === key)
+        .filter(r => (r.start_date || r.planned_start_date || '') >= from);
+}
+function _syncGanttCombineButton(available) {
+    const btn = document.getElementById('btnGanttCombineK1011');
+    if (!btn) return;
+    btn.hidden = !available;
+    btn.classList.toggle('is-on', _ganttCombineK1011);
+    btn.setAttribute('aria-checked', _ganttCombineK1011 ? 'true' : 'false');
+    btn.title = _ganttCombineK1011 && _ganttEditMode && _ganttReorderMode
+        ? _t('Shown separately while Reorder route is on (the route order is per vehicle)')
+        : _t('Process view: show K10 and K11 as one plan — both vehicles\' blocks on the same station rows (K11 blocks have a white left edge)');
+}
+document.addEventListener('click', e => {
+    if (e.target.closest?.('#btnGanttCopyPlan')) getModuleRuntime()?.openCopyPlanModal?.();
+});
+document.addEventListener('click', e => {
+    if (!e.target.closest?.('#btnGanttCombineK1011')) return;
+    _ganttCombineK1011 = !_ganttCombineK1011;
+    try { localStorage.setItem('ppms_gantt_combine_k10k11', _ganttCombineK1011 ? '1' : '0'); } catch {}
+    const gs = document.getElementById('ganttStart'), ge = document.getElementById('ganttEnd');
+    renderGantt(applyActiveFilters(currentData), gs?.value, ge?.value);
+});
+
+/* ── Gantt hover card ───────────────────────────────────────────────
+   What the block is, its status, planned / actual dates, delay and
+   forecast — shown in the app-wide hover card (core/hover-card.js). */
+let _ganttTipId = null, _ganttTipRaf = 0;
+function _ganttTipFmt(iso) {
+    if (!iso) return '—';
+    return new Date(iso + 'T00:00:00').toLocaleDateString(window.PPMSi18n?.getLocale?.() || 'en-GB', { day: '2-digit', month: 'short', year: '2-digit' });
+}
+function _ganttTipWd(a, b) {
+    if (!a || !b || b < a) return '';
+    const n = daysBetween(a, b) + (new Date(a + 'T00:00:00').getDay() === 5 ? 0 : 1);
+    return _t('{n} wd', { n });
+}
+function _ganttTipHtml(task) {
+    const st = ganttHighlightState(task);
+    const row = (k, v, cls = '') => v ? `<div class="tip-row${cls ? ' ' + cls : ''}"><span>${_t(k)}</span><b>${v}</b></div>` : '';
+    const f100 = isF100KD2Module();
+    const plannedS = f100 ? task.planned_start_date : task.start_date;
+    const plannedE = f100 ? task.planned_end_date : task.end_date;
+    const actualS = f100 ? task.actual_start_date : task.progress?.actual_start_date;
+    const doneOn = f100 ? task.actual_end_date : task.progress?.completion_date;
+    let title, sub, extra = '';
+    if (f100) {
+        title = `#${task.step_number ?? ''} ${task.process_name || task.process_station || ''}`;
+        sub = [task.battalion_code, task.vehicle_type ? `${task.vehicle_type} #${task.serial_number ?? '?'}` : '', task.part_name].filter(Boolean).join(' · ');
+        extra = row('Manufacturer', esc(task.manufacturer || ''));
+    } else {
+        title = task.process_station || task.station_code || '';
+        const code = isKD2Module() ? getUnitCode(task.vehicle, task.vehicle_no, task.battalion_code) : '';
+        sub = [isKD2Module() ? task.battalion_code : '', `${task.vehicle || ''} ${task.vehicle_no || ''}`.trim(), code].filter(Boolean).join(' · ');
+        if (isKD2Module()) {
+            const line = _ganttLineOrderFor(task.vehicle || task.vehicle_type).get(task.station_code)?.line;
+            extra = row('Line', esc(line || '')) + row('Work center', esc(getRowCode(task) || ''));
+        }
+    }
+    let delayHtml = '';
+    const d = typeof delayDays === 'function' ? delayDays(task) : 0;
+    if (st === 'late-complete' || st === 'late') delayHtml = row(st === 'late' ? 'Overdue by' : 'Finished late by', d > 0 ? _t('{n} wd', { n: d }) : '—', 'tip-bad');
+    else if (st === 'early') delayHtml = row('Finished', _t('early'), 'tip-good');
+    if (!f100 && isKD2Module() && st !== 'complete' && st !== 'early' && st !== 'late-complete') {
+        try {
+            const step = getPlanForecast(applyActiveFilters(currentData)).byRowId?.get(task.id);
+            if (step?.projEnd && step.projEnd > plannedE) delayHtml += row('Expected finish', `${_ganttTipFmt(step.projEnd)} <i>(${_t('+{n} wd', { n: _fcSlip(plannedE, step.projEnd) })})</i>`, 'tip-bad');
+        } catch {}
+    }
+    const comments = Array.isArray(task.comments) ? task.comments.length : 0;
+    return `<div class="tip-head"><span class="tip-title">${esc(title)}</span><span class="tip-pill tip-${st}">${GANTT_STATUS_ICON[st] ? GANTT_STATUS_ICON[st] + ' ' : ''}${_t(GANTT_STATUS_LABEL[st] || '')}</span></div>`
+        + (sub ? `<div class="tip-sub">${esc(sub)}</div>` : '')
+        + `<div class="tip-grid">`
+        + row('Planned', `${_ganttTipFmt(plannedS)} → ${_ganttTipFmt(plannedE)} <i>${_ganttTipWd(plannedS, plannedE)}</i>`)
+        + row('Actual start', actualS ? _ganttTipFmt(actualS) : '')
+        + row('Completed', doneOn ? _ganttTipFmt(doneOn) : '')
+        + delayHtml + extra
+        + row('Remark', esc(task.remark || ''))
+        + row('Comments', comments ? String(comments) : '')
+        + `</div>`
+        + (_ganttEditMode ? `<div class="tip-foot">${_t('Drag to move · drag an edge to resize · ⋯ for more')}</div>` : '');
+}
+function _ganttHideTip() {
+    if (!_ganttTipId) return;
+    _ganttTipId = null;
+    cancelAnimationFrame(_ganttTipRaf);
+    window.PPMSHoverCard?.hide({ rich: true });
+}
+document.addEventListener('pointermove', e => {
+    if (e.pointerType === 'touch') return;
+    const bar = e.target.closest?.('#ganttInner .gc-bar');
+    if (!bar || _ganttDragActive || e.buttons || e.target.closest('.gc-bar-menu, .gc-bar-menu-trigger, .gc-bar-select, .gc-bar-resize')) { _ganttHideTip(); return; }
+    const id = bar.dataset.planId;
+    const x = e.clientX, y = e.clientY;
+    if (_ganttTipId !== id) {
+        const task = currentData.find(r => String(r.id) === id);
+        if (!task) { _ganttHideTip(); return; }
+        _ganttTipId = id;
+        window.PPMSHoverCard?.show(_ganttTipHtml(task), x, y, { wide: true });
+        return;
+    }
+    cancelAnimationFrame(_ganttTipRaf);
+    _ganttTipRaf = requestAnimationFrame(() => window.PPMSHoverCard?.move(x, y));
+}, { passive: true });
+document.addEventListener('pointerdown', _ganttHideTip, true);
+document.addEventListener('scroll', _ganttHideTip, true);
+
 function sameGanttRowLane(a, b) {
     if (!a || !b) return false;
     const inProcessView = getModuleRuntime()?.currentTimelineViewMode?.() === 'process';
@@ -890,7 +1024,7 @@ function sameGanttRowLane(a, b) {
                    (a.process_name || '') === (b.process_name || '');
         }
         if (isKD2Module()) {
-            return (a.vehicle || '') === (b.vehicle || '') &&
+            return _ganttCombinedGroupOf(a.vehicle || '') === _ganttCombinedGroupOf(b.vehicle || '') &&
                    (a.process_station || '') === (b.process_station || '');
         }
     }
@@ -925,11 +1059,16 @@ function compareGanttLanePriority(a, b) {
     return (a.task.id ?? 0) - (b.task.id ?? 0);
 }
 
+// Same range for every row of one Gantt draw — build the day index once
+let _ganttLaneDaysCache = { key: '', numDays: 0, dayIndex: null };
 function buildPositionedGanttLaneTasks(tasks, startDate, endDate) {
-    const days = buildVisibleGanttDays(startDate, endDate);
-    const numDays = days.length;
+    const rangeKey = `${startDate}|${endDate}`;
+    if (_ganttLaneDaysCache.key !== rangeKey) {
+        const days = buildVisibleGanttDays(startDate, endDate);
+        _ganttLaneDaysCache = { key: rangeKey, numDays: days.length, dayIndex: Object.fromEntries(days.map((d, i) => [d, i])) };
+    }
+    const { numDays, dayIndex } = _ganttLaneDaysCache;
     if (!numDays) return [];
-    const dayIndex = Object.fromEntries(days.map((d, i) => [d, i]));
     const positioned = tasks
         .map(task => {
             const rawSi = task.start_date < startDate ? 0 : resolveVisibleGanttColumn(dayIndex, task.start_date, null);
@@ -1012,6 +1151,122 @@ function getKd2ForwardMoveRowsByStation(anchorTask, rows = []) {
     return moveRows?.length ? moveRows : (anchorTask ? [anchorTask] : []);
 }
 
+// "This vehicle + all after": every block of the dragged block's vehicle
+// (unit) plus every block of the vehicles in the same battalion and vehicle
+// type that start on or after it — e.g. move the first of the last three
+// vehicles and the other two shift with it. Vehicles that start earlier stay.
+function getKd2UnitAndAfterRows(anchor, rows = []) {
+    if (!anchor) return [];
+    // In the K10 + K11 view both types are one plan: a later K11 is a later vehicle too
+    const vt = _ganttCombinedGroupOf(anchor.vehicle_type || anchor.vehicle);
+    const vtOf = r => _ganttCombinedGroupOf(r.vehicle_type || r.vehicle);
+    const unitKey = r => `${r.vehicle_type || r.vehicle}|${r.unit_serial}`;
+    const same = rows.filter(r => String(r.battalion_id) === String(anchor.battalion_id) && vtOf(r) === vt);
+    const unitStart = new Map();
+    same.forEach(r => {
+        const s = r.start_date || r.planned_start_date;
+        const k = unitKey(r);
+        if (s && (!unitStart.has(k) || s < unitStart.get(k))) unitStart.set(k, s);
+    });
+    const anchorKey = unitKey(anchor);
+    const a = unitStart.get(anchorKey);
+    if (!a) return [anchor];
+    const serialOf = k => Number(k.split('|')[1]);
+    const keep = new Set([...unitStart].filter(([k, s]) =>
+        k === anchorKey || s > a || (s === a && serialOf(k) >= Number(anchor.unit_serial))
+    ).map(([k]) => k));
+    return same.filter(r => keep.has(unitKey(r)));
+}
+
+// "This + later vehicles · From this process on": the dragged process and
+// every process after it, on this vehicle and on every vehicle of the same
+// battalion and type that starts on or after it. Earlier processes of the
+// later vehicles (and earlier vehicles altogether) stay where they are.
+function getKd2FromProcessAfterRows(anchor, rows = []) {
+    return kd2RowsFromProcessOn(anchor, getKd2UnitAndAfterRows(anchor, rows));
+}
+
+// "This component only": blocks of the dragged block's own line (Hull, Turret,
+// Structure or Assembly) on this vehicle — from it on, or the whole line.
+// No other line moves, not even the downstream Assembly.
+function kd2RowsSameLine(anchor, rows = [], { fromAnchor = true } = {}) {
+    if (!anchor) return [];
+    const vt = anchor.vehicle_type || anchor.vehicle;
+    const order = getModuleRuntime()?.getStationOrderByCode?.(vt) || new Map();
+    const a = order.get(anchor.station_code);
+    if (!a) return [anchor];
+    const picked = rows.filter(r => {
+        const o = order.get(r.station_code);
+        return o && o.line === a.line && (!fromAnchor || o.sortKey >= a.sortKey);
+    });
+    return picked.length ? picked : [anchor];
+}
+
+// "From this process on", line-aware: the dragged process and the ones after
+// it on the SAME line (e.g. Hull), plus the whole downstream line (Assembly &
+// Processing & Testing), which follows every feeder line. The parallel feeder
+// line (Turret when you drag a Hull process) is left alone — route numbers
+// alone can't tell, because Hull and Turret are numbered independently.
+function kd2RowsFromProcessOn(anchor, rows = []) {
+    if (!anchor) return [];
+    const vt = anchor.vehicle_type || anchor.vehicle;
+    const orders = {};
+    const orderOf = v => (orders[v] ??= getModuleRuntime()?.getStationOrderByCode?.(v) || new Map());
+    const order = orderOf(vt);
+    const a = order?.get(anchor.station_code);
+    if (!a) {
+        const helper = getModuleRuntime()?.getPlanMoveRowsFromAnchor;
+        return typeof helper === 'function' ? helper(anchor, rows) : [anchor];
+    }
+    const anchorIsFeeder = /^(Hull|Turret|Structure)$/i.test(a.line);
+    const picked = rows.filter(r => {
+        const o = orderOf(r.vehicle_type || r.vehicle).get(r.station_code);
+        if (!o) return false;
+        if (o.line === a.line) return o.sortKey >= a.sortKey;
+        return anchorIsFeeder && !/^(Hull|Turret|Structure)$/i.test(o.line);
+    });
+    return picked.length ? picked : [anchor];
+}
+
+/** What each drag option moves, in one line (shown next to the options). */
+const GANTT_MOVE_HINTS = {
+    single: 'Moves only the block you drag (or every selected block, if several are selected).',
+    'from-block': 'Moves the process you drag and every process after it on this vehicle — the rest of its line (e.g. Hull), then Assembly. The parallel line (Turret) stays.',
+    'from-date': 'Moves every block of this vehicle that starts on or after the one you drag — all lines (Hull, Turret and Assembly) together.',
+    'line-from': 'Moves the process you drag and the later processes of the same component only (Hull, Turret or Assembly). No other component moves.',
+    'line-all': 'Moves every block of the component you drag (its whole Hull, Turret or Assembly sequence) on this vehicle. No other component moves.',
+    lane: 'Moves every process of the vehicle you drag.',
+    'from-block-after': 'Moves the process you drag and every process after it (rest of its line, then Assembly) — on this vehicle and on every later vehicle of the same battalion and type.',
+    'unit-after': 'Moves every process of this vehicle and of every later vehicle of the same battalion and type.',
+    'from-block-lane': 'Moves this block and every block queued after it at the same station, across all vehicles.',
+    plan: 'Moves every block in the plan.',
+};
+function _syncGanttMoveHint() {
+    const hint = document.getElementById('gmtHint');
+    if (hint) hint.textContent = _t(GANTT_MOVE_HINTS[_ganttMoveMode] || '');
+}
+
+// Every block of this battalion + vehicle type in the active version, straight
+// from the database — so vehicles outside the Gantt's date range move too.
+async function fetchKd2BattalionVehicleRowsForGantt(task) {
+    if (!db || !task?.battalion_id || !(task.vehicle_type || task.vehicle)) return [];
+    const rows = [];
+    for (let from = 0; ; from += 1000) {
+        const { data, error } = await window.PlanVersions.scoped(db
+            .from('kd2_plan')
+            .select('id, battalion_id, vehicle_type, unit_serial, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date'), 'kd2')
+            .eq('battalion_id', task.battalion_id)
+            .in('vehicle_type', _ganttCombinedGroupOf(task.vehicle_type || task.vehicle) === GANTT_COMBINED_KEY
+                ? [...GANTT_COMBINED_VEHICLES] : [task.vehicle_type || task.vehicle])
+            .order('id')
+            .range(from, from + 999);
+        if (error) throw error;
+        rows.push(...(data || []));
+        if (!data || data.length < 1000) break;
+    }
+    return rows.map(normalizeKd2PlanRowForGantt);
+}
+
 function getF100ForwardMoveRows(anchor, rows) {
     const laneKey = r => [r.battalion_code || '', r.vehicle_type || '', r.serial_number ?? '', String(r.part_id || '')].join('||');
     const anchorKey = laneKey(anchor);
@@ -1072,11 +1327,32 @@ async function resolveGanttMoveSet(task) {
         return currentData.filter(row => samePlanLane(row, task));
     }
     if (_ganttMoveMode === 'from-block-lane') {
+        if (isKD2Module() && _ganttCombinedGroupOf(task.vehicle_type || task.vehicle) === GANTT_COMBINED_KEY) {
+            const rows = [];
+            for (const v of GANTT_COMBINED_VEHICLES) {
+                const vr = await fetchKd2StationRowsForGantt({ ...task, vehicle_type: v, vehicle: v, station_code: [...(getModuleRuntime()?.getStationRowKeyMap?.(v) || new Map())].find(([, k]) => k === _kd2StationRowKey(task))?.[0] });
+                rows.push(...vr);
+            }
+            const queue = _kd2CombinedStationQueue(task, rows.length ? rows : currentData);
+            return queue.length ? queue : [task];
+        }
         if (isKD2Module()) {
             const stationRows = await fetchKd2StationRowsForGantt(task);
             if (stationRows.length) return getKd2ForwardMoveRowsByStation(task, stationRows);
         }
         return getKd2ForwardMoveRowsByStation(task, currentData);
+    }
+    if ((_ganttMoveMode === 'line-from' || _ganttMoveMode === 'line-all') && isKD2Module()) {
+        const laneRows = await fetchKd2LaneRowsForGantt(task);
+        const rows = laneRows.length ? laneRows : currentData.filter(row => samePlanLane(row, task));
+        return kd2RowsSameLine(task, rows, { fromAnchor: _ganttMoveMode === 'line-from' });
+    }
+    if (_ganttMoveMode === 'from-date' && isKD2Module()) {
+        const laneRows = await fetchKd2LaneRowsForGantt(task);
+        const rows = laneRows.length ? laneRows : currentData.filter(row => samePlanLane(row, task));
+        const from = task.start_date || task.planned_start_date || '';
+        const picked = rows.filter(r => (r.start_date || r.planned_start_date || '') >= from);
+        return picked.length ? picked : [task];
     }
     if (_ganttMoveMode === 'from-block') {
         if (isF100KD2Module()) {
@@ -1084,9 +1360,20 @@ async function resolveGanttMoveSet(task) {
         }
         if (isKD2Module()) {
             const laneRows = await fetchKd2LaneRowsForGantt(task);
-            if (laneRows.length) return getKd2ForwardMoveRows(task, laneRows);
+            if (laneRows.length) return kd2RowsFromProcessOn(task, laneRows);
+            return kd2RowsFromProcessOn(task, currentData.filter(row => samePlanLane(row, task)));
         }
         return getKd2ForwardMoveRows(task, currentData);
+    }
+    if ((_ganttMoveMode === 'unit-after' || _ganttMoveMode === 'from-block-after') && isKD2Module()) {
+        const rows = await fetchKd2BattalionVehicleRowsForGantt(task);
+        const pick = _ganttMoveMode === 'unit-after' ? getKd2UnitAndAfterRows : getKd2FromProcessAfterRows;
+        const moveRows = pick(task, rows.length ? rows : currentData);
+        if (moveRows.length > 1) {
+            const units = new Set(moveRows.map(r => r.unit_serial)).size;
+            showToast(_t(units === 1 ? 'Shifting 1 vehicle ({b} blocks)…' : 'Shifting {n} vehicles ({b} blocks)…', { n: units, b: moveRows.length }), 'info');
+        }
+        return moveRows;
     }
     if (_ganttMoveMode === 'plan') return currentData;
     return _selectedGanttPlanIds.has(String(task.id)) && _selectedGanttPlanIds.size > 1
@@ -1462,7 +1749,7 @@ function updateMultiSelectButtonLabel(key) {
     if (!ISSUE_FILTER_KEYS.has(key) && !REPORT_FILTER_KEYS.has(key)) queueMicrotask(() => window.PPMSFilterUI?.refresh?.());
 
     if (!selected || selected.has('all') || selected.size === 0) {
-        btn.textContent = filterAllLabels[key] || 'All';
+        btn.textContent = _t(filterAllLabels[key] || 'All');
         return;
     }
     if (selected.size === 1) {
@@ -1471,7 +1758,7 @@ function updateMultiSelectButtonLabel(key) {
         btn.textContent = opt ? opt.label : v;
         return;
     }
-    btn.textContent = `${selected.size} selected`;
+    btn.textContent = _t('{n} selected', { n: selected.size });
 }
 
 /** Same summary text as the button label, for use in titles/filenames/export chips. */
@@ -1505,7 +1792,7 @@ function renderMultiSelectMenu(key) {
     menu.innerHTML = `
         <label class="ms-option ms-option-all">
             <input type="checkbox" data-value="all" ${allChecked ? 'checked' : ''} />
-            <span>All</span>
+            <span>${_t('All')}</span>
         </label>
         <div class="ms-option-divider"></div>
         ${options.map(o => `
@@ -1517,6 +1804,7 @@ function renderMultiSelectMenu(key) {
     `;
 
     updateMultiSelectButtonLabel(key);
+    if (key === 'battalion') _renderGanttBattalionChips();
 }
 
 /** Open one filter's menu, closing all others (single-menu-open-at-a-time). */
@@ -1546,6 +1834,98 @@ function toggleMultiSelectMenu(key) {
 }
 
 /** Rebuild filterOptions[key] from a plain array of values, then re-render its menu. */
+/* ── Battalion chips on the Gantt ───────────────────────────────
+   A shortcut to the main Battalion filter, not a second filter: choosing a
+   battalion loads ONLY its blocks (lighter and faster), and every view
+   follows it. Each person's last choice is remembered on this browser. */
+function _battalionPickKey() {
+    return `ppms_battalion_pick_${getCurrentUser()?.email || 'anon'}`;
+}
+function _saveBattalionPick() {
+    const sel = filterState.battalion;
+    try { localStorage.setItem(_battalionPickKey(), sel.has('all') ? 'all' : JSON.stringify([...sel])); } catch {}
+}
+/** Re-applies the remembered choice (call after the battalion list loads). */
+function _restoreBattalionPick() {
+    if (!isKD2Module()) return;
+    let raw = null;
+    try { raw = localStorage.getItem(_battalionPickKey()); } catch {}
+    if (!raw || raw === 'all') { _renderGanttBattalionChips(); return; }
+    let values = [];
+    try { values = JSON.parse(raw); } catch { return; }
+    const valid = new Set((filterOptions.battalion || []).map(o => o.value));
+    values = (Array.isArray(values) ? values : []).filter(v => valid.has(v));
+    if (values.length) {
+        filterState.battalion = new Set(values);
+        renderMultiSelectMenu('battalion');
+        populateUnitFilter(filterState.vehicle);
+    }
+    _renderGanttBattalionChips();
+}
+/** A different battalion scope gets a date range fitted to its own blocks. */
+function _refitGanttRangeOnNextLoad() {
+    const gs = document.getElementById('ganttStart'), ge = document.getElementById('ganttEnd');
+    if (gs) gs.value = '';
+    if (ge) ge.value = '';
+}
+function _setBattalionPick(value) {
+    filterState.battalion = new Set([value || 'all']);
+    _refitGanttRangeOnNextLoad();
+    renderMultiSelectMenu('battalion');
+    populateUnitFilter(filterState.vehicle);
+    _saveBattalionPick();
+    _renderGanttBattalionChips();
+    window.PPMSFilterUI?.refresh?.();
+    loadDataDebounced();
+}
+/** The battalion the main filter has locked the page to (one chosen), else null. */
+function _mainBattalionLock() {
+    const key = isF100KD2Module() ? 'f100Battalion' : 'battalion';
+    const sel = filterState[key];
+    return sel && !sel.has('all') && sel.size === 1 ? [...sel][0] : null;
+}
+/** "Battalion · BTL-02 · from the battalion filter · Load all battalions" */
+function _battalionLockHtml(code) {
+    return `<span class="vpx-bat-label">${_t('Battalion')}</span>`
+        + `<span class="bat-lock" title="${_t('Set by the battalion filter (top filter bar / Gantt) — only this battalion is loaded')}"><b>${esc(code)}</b><span>${_t('from the battalion filter')}</span></span>`
+        + `<button type="button" class="bat-load-all" data-load-all-bats>${_t('Load all battalions')}</button>`;
+}
+document.addEventListener('click', e => {
+    if (!e.target.closest?.('[data-load-all-bats]')) return;
+    if (isF100KD2Module()) {
+        filterState.f100Battalion = new Set(['all']);
+        renderMultiSelectMenu('f100Battalion');
+        window.PPMSFilterUI?.refresh?.();
+        loadDataDebounced();
+    } else {
+        _setBattalionPick('all');
+    }
+});
+
+function _renderGanttBattalionChips() {
+    const el = document.getElementById('ganttBattalionChips');
+    if (!el) return;
+    el.dataset.loadedScope = _mainBattalionLock() || 'all';
+    const opts = filterOptions.battalion || [];
+    if (!isKD2Module() || opts.length < 1) { el.hidden = true; el.innerHTML = ''; return; }
+    const sel = filterState.battalion;
+    const active = sel.has('all') ? 'all' : (sel.size === 1 ? [...sel][0] : null);
+    const chip = (value, label) => `<button type="button" role="tab" aria-selected="${value === active}" class="vpx-type-tab vpx-bat-tab${value === active ? ' active' : ''}" data-gbat="${esc(value)}">${esc(label)}</button>`;
+    el.hidden = false;
+    el.innerHTML = `<span class="vpx-bat-label">${_t('Battalion')}</span><span class="vpx-type-tabs vpx-bat-tabs" role="tablist" aria-label="${_t('Battalion to load')}">`
+        + chip('all', _t('All')) + opts.map(o => chip(o.value, o.label)).join('')
+        + (active === null ? `<button type="button" class="vpx-type-tab vpx-bat-tab active" disabled>${_t('{n} selected', { n: sel.size })}</button>` : '')
+        + `</span>`;
+}
+document.addEventListener('click', e => {
+    const btn = e.target.closest?.('#ganttBattalionChips [data-gbat]');
+    if (!btn) return;
+    const value = btn.dataset.gbat;
+    const sel = filterState.battalion;
+    const current = sel.has('all') ? 'all' : (sel.size === 1 ? [...sel][0] : null);
+    if (value !== current) _setBattalionPick(value);
+});
+
 function populateMultiSelectOptions(key, values, labelFn = v => v) {
     filterOptions[key] = (values || []).map(v => ({ value: v, label: labelFn(v) }));
     renderMultiSelectMenu(key);
@@ -1663,7 +2043,7 @@ function _loaderSetProgress(pct, label) {
     const pctEl  = document.getElementById('appLoaderPct');
     const clamped = Math.max(0, Math.min(100, pct));
     if (fill)   fill.style.width = clamped + '%';
-    if (status && label) status.textContent = label;
+    if (status && label) status.textContent = _t(label);
     if (pctEl)  pctEl.textContent = Math.round(clamped) + '%';
 }
 
@@ -1673,7 +2053,7 @@ function _loaderSetWelcome() {
     if (!el) return;
     const u = getCurrentUser();
     const raw = (u?.name || u?.full_name || u?.email || '').split('@')[0].split(' ')[0];
-    el.textContent = raw ? `WELCOME, ${raw.toUpperCase()}` : 'WELCOME';
+    el.textContent = raw ? _t('WELCOME, {name}', { name: raw.toUpperCase() }) : _t('WELCOME');
 }
 
 /** HUD corner readout — which module (F200-KD1 / F200-KD2 / F100-KD2) is being loaded. */
@@ -1688,7 +2068,7 @@ let _loaderClockTimer = null;
 function _loaderStartClock() {
     const el = document.getElementById('appLoaderClock');
     if (!el) return;
-    const tick = () => { el.textContent = new Date().toLocaleTimeString('en-GB', { hour12: false }); };
+    const tick = () => { el.textContent = new Date().toLocaleTimeString(window.PPMSi18n?.getLocale?.() || 'en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }); };
     tick();
     _loaderClockTimer = setInterval(tick, 1000);
 }
@@ -1699,7 +2079,7 @@ function _loaderHide() {
     if (!el) return;
     _loaderSetProgress(100, 'All systems ready');
     const link = document.getElementById('appLoaderLink');
-    if (link) link.textContent = 'SECURE';
+    if (link) link.textContent = _t('SECURE');
     clearInterval(_loaderClockTimer);
     el.classList.add('app-loader--hidden');
     setTimeout(() => el.remove(), 550);
@@ -1731,13 +2111,14 @@ async function initializeApp() {
                 storage: _noopStorage,
             },
         });
+        _markPlanWritesAsLocal(db);
         setConnStatus('connected', 'Connected');
     } catch (err) {
         setConnStatus('error', 'Connection Error');
         showToast('Failed to initialise Supabase. Check your credentials.', 'error');
         console.error(err);
         const link = document.getElementById('appLoaderLink');
-        if (link) link.textContent = 'FAILED';
+        if (link) link.textContent = _t('FAILED');
         _loaderSetProgress(100, 'Connection failed');
         clearInterval(_loaderClockTimer);
         document.getElementById('appLoader')?.classList.add('app-loader--hidden');
@@ -1782,6 +2163,12 @@ async function initializeApp() {
             markLocalSave();
             await loadFilters();
             await loadData();
+            markLocalSave(); // late echoes of the write that preceded this reload
+        },
+        // Just-written blocks only (e.g. a block placed on the Gantt)
+        patchRows: async (ids, opts) => {
+            markLocalSave();
+            await _patchKd2Rows(ids, opts);
         },
     });
 
@@ -1789,6 +2176,7 @@ async function initializeApp() {
 
     _loaderSetProgress(35, 'Loading filters…');
     await loadFilters();
+    _restoreBattalionPick();
 
     _loaderSetProgress(60, 'Loading plan data…');
     await loadData();
@@ -1816,7 +2204,90 @@ let _realtimeChannel = null;
 let _realtimePending = false;
 let _lastLocalSaveMs = 0; // timestamp of most recent local write — suppress echo toast
 
+/* Called when this tab writes plan data (and again when a multi-row save
+   finishes) — the realtime echoes of our own writes arrive during and
+   shortly after the save and must not be reported as another user's edit. */
 function markLocalSave() { _lastLocalSaveMs = Date.now(); }
+/* Every insert/update/upsert/delete on a plan table made through this tab's
+   client (app.js and kd2.js share it) marks a local save when it starts and
+   again when it completes — so no edit path can forget to, and the realtime
+   listener never mistakes our own change for someone else's. */
+const _REALTIME_PLAN_TABLES = new Set([
+    'kd2_plan', 'kd2_progress', 'kd2_process_stations', 'kd2_process_categories',
+    'kd2_process_routes', 'kd2_process_lead_times', 'kd2_plan_route_order', 'f100_plans',
+]);
+function _markPlanWritesAsLocal(client) {
+    if (!client?.from || client.__planWritesMarked) return;
+    client.__planWritesMarked = true;
+    const from = client.from.bind(client);
+    client.from = table => {
+        const qb = from(table);
+        if (!_REALTIME_PLAN_TABLES.has(table)) return qb;
+        ['insert', 'update', 'upsert', 'delete'].forEach(m => {
+            const fn = qb[m];
+            if (typeof fn !== 'function') return;
+            qb[m] = (...args) => {
+                markLocalSave();
+                const builder = fn.apply(qb, args);
+                const then = builder?.then;
+                if (typeof then === 'function') {
+                    builder.then = (onOk, onErr) => then.call(builder, v => { markLocalSave(); return onOk ? onOk(v) : v; }, onErr);
+                }
+                return builder;
+            };
+        });
+        return qb;
+    };
+}
+const LOCAL_ECHO_MS = 6000;
+function _isLocalEcho() { return Date.now() - _lastLocalSaveMs < LOCAL_ECHO_MS; }
+
+/* Who really changed the plan: every write is followed by an audit broadcast
+   carrying the editor's email (see startAuditNotifSync). A realtime change is
+   attributed to another user only when such a broadcast arrived recently. */
+let _recentForeignPlanEdit = null; // { email, at }
+function _noteForeignPlanEdit(payload) {
+    if (!payload?.user_email) return;
+    if (_auditTableModuleId(payload.table_name) !== getActiveModuleId()) return;
+    _recentForeignPlanEdit = { email: payload.user_email, at: Date.now() };
+}
+function _takeForeignPlanEdit(maxAgeMs = 10000) {
+    const e = _recentForeignPlanEdit;
+    if (!e || Date.now() - e.at > maxAgeMs) return null;
+    _recentForeignPlanEdit = null;
+    return e;
+}
+function _peekForeignPlanEdit(maxAgeMs = 10000) {
+    const e = _recentForeignPlanEdit;
+    return e && Date.now() - e.at <= maxAgeMs ? e : null;
+}
+function _planEditorLabel(email) {
+    const known = Object.values(typeof _presenceOnlineMap !== 'undefined' ? _presenceOnlineMap : {})
+        .find(p => p?.email === email && p?.name);
+    return known?.name || String(email || '').split('@')[0] || 'another user';
+}
+/** Toast for a reload triggered by a remote change — names the editor when known. */
+function _remotePlanChangeToast() {
+    const foreign = _takeForeignPlanEdit();
+    showToast(foreign ? `Plan updated by ${_planEditorLabel(foreign.email)}.` : 'Plan refreshed with the latest changes.', 'info');
+}
+
+/* ── Background tabs ────────────────────────────────────────────
+   A hidden PPMS tab (another tab in front, window minimised) does not
+   redraw or poll: live changes are collected and applied ONCE when the
+   tab is shown again, so ten open tabs cost about as much as one. */
+const _visibleQueue = new Set();
+function _whenVisible(fn) {
+    if (!document.hidden) { fn(); return; }
+    _visibleQueue.add(fn); // a Set — the same catch-up never runs twice
+}
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden || !_visibleQueue.size) return;
+    const fns = [..._visibleQueue];
+    _visibleQueue.clear();
+    fns.forEach(fn => { try { fn(); } catch (err) { console.warn('Catch-up failed:', err); } });
+});
+const _reloadIssuesQuietly = () => { loadIssues(true).catch(() => {}); };
 
 function startRealtimeSync() {
     if (_realtimeChannel) {
@@ -1825,16 +2296,23 @@ function startRealtimeSync() {
     }
 
     if (isF100KD2Module()) {
-        _realtimeChannel = db
-            .channel('f100_plans_realtime')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'f100_plans' }, (payload) => {
+        // Hidden tab: one full refresh when shown again (see _whenVisible)
+        const catchUp = async () => {
+            const pos = saveScrollPos();
+            await loadData();
+            restoreScrollPos(pos);
+        };
+        const onF100Change = (payload) => {
+                // Echo of our own save (judged on arrival, not after the debounce)
+                if (_isLocalEcho() && !_peekForeignPlanEdit()) return;
+                if (document.hidden) { _whenVisible(catchUp); return; }
                 if (_realtimePending) return;
                 _realtimePending = true;
                 setTimeout(async () => {
                     _realtimePending = false;
-                    const isEcho = (Date.now() - _lastLocalSaveMs) < 3000;
+                    if (document.hidden) { _whenVisible(catchUp); return; }
                     // Own saves: skip full reload — the in-memory data is already patched
-                    if (isEcho) return;
+                    if (_isLocalEcho() && !_peekForeignPlanEdit()) return;
                     // If a date input is focused, skip to avoid losing the user's input
                     const activeDateInput = document.activeElement?.matches?.('.inline-date-input, .inline-end-input');
                     if (activeDateInput) return;
@@ -1846,17 +2324,27 @@ function startRealtimeSync() {
                             currentData[idx] = { ...currentData[idx], ...record };
                             const surgicalOk = updateF100TableRowInPlace(record.id);
                             if (surgicalOk) {
-                                showToast('Plan updated by another user.', 'info');
+                                _remotePlanChangeToast();
                                 return;
                             }
                         }
                     }
                     // Fallback: full reload with scroll preservation
-                    const pos = saveScrollPos();
-                    await loadData();
-                    restoreScrollPos(pos);
-                    showToast('Plan updated by another user.', 'info');
-                }, 800);
+                    await catchUp();
+                    _remotePlanChangeToast();
+                }, 1200);
+        };
+        // Only this plan version's rows (deletes carry no version — unfiltered)
+        const f100Version = window.PlanVersions?.getActiveId?.('f100kd2');
+        const f100Scope = f100Version ? { filter: `plan_version_id=eq.${f100Version}` } : {};
+        _realtimeChannel = db
+            .channel('f100_plans_realtime')
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'f100_plans', ...f100Scope }, onF100Change)
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'f100_plans', ...f100Scope }, onF100Change)
+            .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'f100_plans' }, (payload) => {
+                const id = payload?.old?.id;
+                if (id != null && !currentData.some(r => String(r.id) === String(id))) return; // another version's row
+                onF100Change(payload);
             })
             .subscribe();
         return;
@@ -1869,26 +2357,85 @@ function startRealtimeSync() {
         // categories/routes), and either kind can reshape what the Gantt,
         // VPX, table and charts need to show. Debounce to one full reload
         // covering every table any of those screens read from.
-        let pending = false;
-        const onChange = () => {
-            if (pending) return;
-            pending = true;
-            setTimeout(async () => {
-                pending = false;
-                const isEcho = (Date.now() - _lastLocalSaveMs) < 3000;
-                if (isEcho) return;
-                const activeDateInput = document.activeElement?.matches?.('.inline-date-input, .inline-end-input');
-                if (activeDateInput) return;
-                const pos = saveScrollPos();
-                await loadFilters();
+        // A co-editor's drag fires dozens of change events. Collect the ids of
+        // the changed blocks until the events stop (1.2 s quiet, at most 5 s),
+        // then fetch ONLY those blocks and patch them in (_patchKd2Rows) —
+        // no full plan reload. Process-definition changes (Manage Processes,
+        // route reorder) still do a full reload, as they reshape every view.
+        let timer = null, firstAt = 0;
+        let ids = new Set(), needFull = false, filtersChanged = false, progressDeleteUnknown = false;
+        const reloadNow = async () => {
+            // Don't redraw the Gantt under a bar the user is dragging
+            if (_ganttDragActive && Date.now() - _ganttDragActive < 30000) { timer = setTimeout(reloadNow, 800); return; }
+            timer = null;
+            firstAt = 0;
+            // Hidden tab: keep the collected ids and apply them once when shown
+            if (document.hidden) { _whenVisible(reloadNow); return; }
+            const batch = [...ids];
+            const full = needFull || (progressDeleteUnknown && !batch.length);
+            const withFilters = filtersChanged;
+            ids = new Set(); needFull = false; filtersChanged = false; progressDeleteUnknown = false;
+            if (_isLocalEcho() && !_peekForeignPlanEdit()) return;
+            const activeDateInput = document.activeElement?.matches?.('.inline-date-input, .inline-end-input');
+            if (activeDateInput) return;
+            try {
+                if (full) {
+                    const pos = saveScrollPos();
+                    await loadFilters();
+                    await loadData();
+                    restoreScrollPos(pos);
+                } else if (batch.length) {
+                    await _patchKd2Rows(batch, { filtersChanged: withFilters });
+                } else {
+                    return;
+                }
+                _remotePlanChangeToast();
+            } catch (err) {
+                console.warn('Live update failed — reloading the plan:', err);
                 await loadData();
-                restoreScrollPos(pos);
-                showToast('Plan updated by another user.', 'info');
-            }, 800);
+            }
         };
+        const onChange = (payload) => {
+            // Echo of our own save — judged when it arrives, not after the
+            // debounce (a long multi-block save used to outlast the old 3 s
+            // window, so its own echoes triggered a full reload + a false
+            // "updated by another user" toast).
+            if (_isLocalEcho() && !_peekForeignPlanEdit()) return;
+            const table = payload?.table;
+            const type = payload?.eventType;
+            if (table === 'kd2_plan') {
+                const id = payload.new?.id ?? payload.old?.id;
+                // Deletes arrive for every plan version — ignore rows we don't hold
+                if (type === 'DELETE' && id != null && !currentData.some(r => String(r.id) === String(id))) return;
+                if (id != null) ids.add(id); else needFull = true;
+                if (type !== 'UPDATE') filtersChanged = true;
+            } else if (table === 'kd2_progress') {
+                const planId = payload.new?.plan_id ?? payload.old?.plan_id;
+                if (planId != null) ids.add(planId);
+                // A delete only carries the progress row's own id — it comes
+                // with its plan block's delete (cascade) in the same burst
+                else if (type === 'DELETE') progressDeleteUnknown = true;
+                else needFull = true;
+            } else {
+                needFull = true; // process definitions
+            }
+            // A long absence piles up ids — past a point one full reload is cheaper
+            if (ids.size > 400) { needFull = true; ids = new Set(); }
+            const now = Date.now();
+            if (!firstAt) firstAt = now;
+            clearTimeout(timer);
+            timer = setTimeout(reloadNow, Math.max(0, Math.min(1200, firstAt + 5000 - now)));
+        };
+        // Only this plan version's blocks reach this browser (a version switch
+        // reloads the page, so the filter is fixed for the session). Deletes
+        // carry no version, so they stay unfiltered and are checked above.
+        const kd2Version = window.PlanVersions?.getActiveId?.('kd2');
+        const kd2Scope = kd2Version ? { filter: `plan_version_id=eq.${kd2Version}` } : {};
         _realtimeChannel = db
             .channel('kd2_plan_realtime')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'kd2_plan' }, onChange)
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'kd2_plan', ...kd2Scope }, onChange)
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kd2_plan', ...kd2Scope }, onChange)
+            .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'kd2_plan' }, onChange)
             // kd2_progress holds actual start / completion / X-ray cycles — an
             // edit there reshapes status, delay and the Gantt markers for every
             // viewer, so it must trigger the same reload as a kd2_plan change.
@@ -1915,6 +2462,8 @@ function startCommentNotifSync() {
     function handleCommentUpdate(moduleId, row) {
         const comments = row?.comments;
         if (!Array.isArray(comments)) return;
+        // Most updates are date moves on blocks without comments — nothing to do
+        if (!comments.length && !currentData.some(r => String(r.id) === String(row.id) && r.comments?.length)) return;
 
         // Patch in-memory data so popovers opened afterwards show fresh comments
         const dataIdx = currentData.findIndex(r => String(r.id) === String(row.id));
@@ -1963,14 +2512,22 @@ function startCommentNotifSync() {
         }
     }
 
+    // Only the open plan version's rows reach this browser (every block move
+    // in every version used to arrive here too)
+    const scopeFor = moduleId => {
+        // Only the open module's versions are loaded — leave the other unfiltered
+        if (getActiveModuleId() !== moduleId) return {};
+        const id = window.PlanVersions?.getActiveId?.(moduleId);
+        return id ? { filter: `plan_version_id=eq.${id}` } : {};
+    };
     const kd2Ch = db.channel('ppms-kd2-comment-notif')
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kd2_plan' }, ({ new: row }) => {
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kd2_plan', ...scopeFor('kd2') }, ({ new: row }) => {
             handleCommentUpdate('kd2', row);
         })
         .subscribe();
 
     const f100Ch = db.channel('ppms-f100-comment-notif')
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'f100_plans' }, ({ new: row }) => {
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'f100_plans', ...scopeFor('f100kd2') }, ({ new: row }) => {
             handleCommentUpdate('f100kd2', row);
         })
         .subscribe();
@@ -2044,10 +2601,10 @@ function _renderGanttCoEditors() {
 
     let text;
     const names = peers.map(p => (p.name || p.email || 'Someone').split(' ')[0]);
-    if (iAmEditing && !peers.length) text = "You're editing this plan";
-    else if (iAmEditing) text = `You &amp; ${esc(names.join(', '))} editing together`;
-    else if (peers.length === 1) text = `${esc(names[0])} is editing this plan`;
-    else text = `${esc(names.join(', '))} are editing this plan`;
+    if (iAmEditing && !peers.length) text = _t("You're editing this plan");
+    else if (iAmEditing) text = _t('You & {names} editing together', { names: esc(names.join(', ')) });
+    else if (peers.length === 1) text = _t('{name} is editing this plan', { name: esc(names[0]) });
+    else text = _t('{names} are editing this plan', { names: esc(names.join(', ')) });
 
     badge.hidden = false;
     badge.className = 'gce-badge' + (iAmEditing ? ' gce-badge-me' : '');
@@ -2116,7 +2673,21 @@ function startPresenceTracking() {
             // Ask all already-connected users to respond with their heartbeat now
             _presenceChannel?.send({ type: 'broadcast', event: 'ping', payload: { from: myId } }).catch(() => {});
             // 12s while editing (co-editor presence needs to feel live), 30s otherwise.
-            _heartbeatTimer = setInterval(() => { sendHeartbeat(); pruneAndRender(); }, 12_000);
+            // A hidden tab only needs to say it's online every 60 s (others
+            // drop a user after 90 s); it re-announces as soon as it's shown.
+            let lastBeat = Date.now();
+            _heartbeatTimer = setInterval(() => {
+                if (document.hidden && Date.now() - lastBeat < 60_000) return;
+                lastBeat = Date.now();
+                sendHeartbeat();
+                pruneAndRender();
+            }, 12_000);
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) return;
+                lastBeat = Date.now();
+                sendHeartbeat();
+                pruneAndRender();
+            });
         });
 }
 
@@ -2199,7 +2770,37 @@ function wireActiveUsersBtn() {
 /* ──────────────────────────────────────────────────────────────────
    4. FILTERS
    ────────────────────────────────────────────────────────────────── */
-async function loadFilters() {
+/* Never run two full loads at once. Each load fetches the whole plan and
+   rebuilds every view; overlapping ones (a co-editor's changes arriving
+   while an earlier reload is still running, or a local reload colliding with
+   a remote one) each held their own copy of the data and DOM and could run
+   the tab out of memory ("This page is having a problem"). A call made while
+   one is running is merged into ONE follow-up run, and every caller's await
+   resolves when the latest data is on screen. */
+function _serialized(fn) {
+    let running = null;
+    let again = false;
+    const run = function () {
+        if (running) { again = true; return running; }
+        running = (async () => {
+            try {
+                do { again = false; await fn(); } while (again);
+            } finally {
+                running = null;
+            }
+        })();
+        return running;
+    };
+    /** Resolves once no load is running (never rejects). */
+    run.idle = () => (running ? running.catch(() => {}) : Promise.resolve());
+    return run;
+}
+const loadFilters = _serialized(_loadFiltersOnce);
+const loadData = _serialized(_loadDataOnce);
+window.loadData = loadData;       // used by the assistant's actions
+window.loadFilters = loadFilters;
+
+async function _loadFiltersOnce() {
     try {
         if (isKD2Module() && getModuleRuntime()?.loadFilters) {
             const kd2Filters = await getModuleRuntime().loadFilters(db);
@@ -2434,16 +3035,84 @@ function restoreScrollPos(pos) {
  * from currentData without touching the DB.  Always preserves scroll.
  * Call this after any in-memory mutation of currentData.
  */
+/* Table, summary cards, charts and VPX. In Gantt edit mode those are
+   off-screen while the user works on the Gantt, so they're rebuilt after the
+   Gantt has painted — and a burst of edits (drag, drag, undo…) coalesces
+   into ONE rebuild instead of re-rendering thousands of table rows and every
+   chart after each save. Outside edit mode this renders immediately. */
+/* Off-screen views redraw only when they're on (or about to scroll onto)
+   the screen. The DATA is always current — every change is applied to
+   currentData the moment it arrives, and exports/reports/search read that —
+   this only skips redrawing a Plan Table or VPX nobody is looking at (e.g.
+   while editing on the Gantt, or with the Gantt in full screen). The latest
+   redraw is remembered and runs once when the section comes into view. */
+const _viewOnScreen = new Set();
+const _viewPending = new Map(); // section id -> redraw
+let _viewObserver = null;
+function _isViewOnScreen(id) {
+    if (typeof isGanttFullscreen === 'function' && isGanttFullscreen()) return false;
+    return !_viewObserver || _viewOnScreen.has(id);
+}
+function _flushVisibleViews() {
+    _viewPending.forEach((redraw, id) => {
+        if (!_isViewOnScreen(id)) return;
+        _viewPending.delete(id);
+        try { redraw(); } catch (err) { console.error(err); }
+    });
+}
+function _renderViewWhenVisible(id, redraw) {
+    const el = document.getElementById(id);
+    if (!el || typeof IntersectionObserver === 'undefined') { redraw(); return; }
+    if (!_viewObserver) {
+        _viewObserver = new IntersectionObserver(entries => {
+            entries.forEach(e => (e.isIntersecting ? _viewOnScreen.add(e.target.id) : _viewOnScreen.delete(e.target.id)));
+            _flushVisibleViews();
+        }, { rootMargin: '800px 0px' });
+        document.addEventListener('fullscreenchange', () => setTimeout(_flushVisibleViews, 60));
+    }
+    if (!el.dataset.viewObserved) {
+        // First time: the observer reports visibility on its next callback
+        el.dataset.viewObserved = '1';
+        _viewObserver.observe(el);
+        _viewPending.set(id, redraw);
+        return;
+    }
+    if (_isViewOnScreen(id)) { _viewPending.delete(id); redraw(); }
+    else _viewPending.set(id, redraw);
+}
+
+let _secondaryViewsTimer = null;
+let _secondaryViewsNeedTable = false;
+function _renderSecondaryViews({ includeTable = true, defer = false } = {}) {
+    if (includeTable) _secondaryViewsNeedTable = true;
+    const run = () => {
+        _secondaryViewsTimer = null;
+        const displayData = applyActiveFilters(currentData);
+        if (_secondaryViewsNeedTable) {
+            _secondaryViewsNeedTable = false;
+            // Redraws read currentData when they actually run, never a stale copy
+            _renderViewWhenVisible('tableSection', () => {
+                const pos = saveScrollPos();
+                renderTable(applyTableSearchFilters(applyActiveFilters(currentData)));
+                restoreScrollPos(pos);
+            });
+        }
+        updateSummary(displayData);
+        renderCharts(displayData);
+        _renderViewWhenVisible('vpxSection', () => renderVPX(applyActiveFilters(currentData)));
+    };
+    clearTimeout(_secondaryViewsTimer);
+    if (!_ganttEditMode && !defer) { run(); return; }
+    _secondaryViewsTimer = setTimeout(() => {
+        if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 1500 });
+        else run();
+    }, 700);
+}
+
 function refreshAllViews() {
     const displayData = applyActiveFilters(currentData);
 
-    const pos = saveScrollPos();
-    renderTable(applyTableSearchFilters(displayData));
-    restoreScrollPos(pos);
-
-    updateSummary(displayData);
-    renderCharts(displayData);
-    renderVPX(displayData);
+    _renderSecondaryViews();
     if (isKD2Module()) {
         // Ensure KD2 schedule uses the same filtered view as other components
         getModuleRuntime()?.renderSchedule?.(displayData);
@@ -2462,9 +3131,7 @@ function refreshAllViews() {
    and charts stale until a page reload. */
 function syncSiblingViews() {
     const displayData = applyActiveFilters(currentData);
-    updateSummary(displayData);
-    renderCharts(displayData);
-    renderVPX(displayData);
+    _renderSecondaryViews({ includeTable: false });
     if (isKD2Module()) getModuleRuntime()?.renderSchedule?.(displayData);
     const gsEl = document.getElementById('ganttStart');
     const geEl = document.getElementById('ganttEnd');
@@ -2708,7 +3375,119 @@ function loadDataDebounced(delay = 350) {
     _loadDataDebounceTimer = setTimeout(() => { loadData(); }, delay);
 }
 
-async function loadData() {
+/* ── KD2 loading helpers (shared by the full load and the row patch) ── */
+
+/** The filter-bar state as the KD2 runtime's query filters. */
+function _kd2QueryFilters() {
+    const weekList = filterState.week.has('all') ? [] : [...filterState.week];
+    const weekRanges = weekList.map(w => isoWeekDateRange(w)).filter(Boolean);
+    const impliedVehicles = impliedVehiclesFromUnits();
+    const vehicleList = !filterState.vehicle.has('all')
+        ? [...filterState.vehicle]
+        : (impliedVehicles ? [...impliedVehicles] : []);
+    return {
+        vehicle: vehicleList,
+        battalion: filterState.battalion.has('all') ? selectedUnitBattalions(filterState.unit) : [...filterState.battalion],
+        unit: selectedUnitNames(filterState.unit),
+        weekRanges,
+        timeFrame: getVal('filterTimeFrame'),
+        today: todayStr(),
+        ...currentWeekRange(),
+        ...currentMonthRange(),
+        startDate: getVal('filterStartDate'),
+        endDate: getVal('filterEndDate'),
+        k9Component: filterState.k9Component.has('all') ? [] : [...filterState.k9Component],
+    };
+}
+
+/** kd2_plan_live doesn't expose the X-ray/repair columns — fetch them for
+ *  every X-ray-eligible row that already has a progress record (cycles can
+ *  be logged before the welding station itself is marked complete) and
+ *  stitch them in. */
+async function _stitchKd2Xray(rows) {
+    const xrayProgressIds = rows
+        .filter(row => row.progress?.id && isXrayEligible(row))
+        .map(row => row.progress.id);
+    if (!xrayProgressIds.length) return;
+    try {
+        // Chunked — hundreds of ids in one .in() list can exceed the URL length limit
+        const xrayRows = [];
+        for (let i = 0; i < xrayProgressIds.length; i += 150) {
+            const { data: chunk, error: xrayErr } = await db.from('kd2_progress')
+                .select('id, xray_cycles, final_qa_date')
+                .in('id', xrayProgressIds.slice(i, i + 150));
+            if (xrayErr) throw xrayErr;
+            xrayRows.push(...(chunk || []));
+        }
+        const xrayMap = new Map(xrayRows.map(r => [r.id, r]));
+        rows.forEach(row => {
+            const x = row.progress?.id ? xrayMap.get(row.progress.id) : null;
+            if (x) {
+                row.progress.xray_cycles = x.xray_cycles || [];
+                row.progress.final_qa_date = x.final_qa_date || null;
+            }
+        });
+    } catch (e) {
+        // Migration 42 not applied yet — X-ray markers just won't show until it is.
+        console.warn('X-ray/repair columns unavailable:', e.message);
+    }
+}
+
+function _kd2RowCompare(a, b) {
+    const vCmp = vehicleSort(a.vehicle, b.vehicle); if (vCmp !== 0) return vCmp;
+    const uCmp = naturalSort(a.vehicle_no, b.vehicle_no); if (uCmp !== 0) return uCmp;
+    if (getModuleRuntime()?.getStationOrderByCode) return kd2StationCompare(a, b);
+    const kd2Compare = getModuleRuntime()?.comparePlanRowsByLaneOrder;
+    if (typeof kd2Compare === 'function') return kd2Compare(a, b);
+    const rA = parseInt(a.route_sequence, 10) || 9999;
+    const rB = parseInt(b.route_sequence, 10) || 9999;
+    if (rA !== rB) return rA - rB;
+    const wA = parseInt((a.week || '').replace(/\D/g, ''), 10) || 9999;
+    const wB = parseInt((b.week || '').replace(/\D/g, ''), 10) || 9999;
+    if (wA !== wB) return wA - wB;
+    return (a.start_date || '').localeCompare(b.start_date || '');
+}
+
+/* Apply changed plan blocks WITHOUT reloading the whole plan — used for
+   another user's live edits and for a block just placed. Fetches only those
+   ids (same filters and row shape as a full load), swaps them into
+   currentData (replaced / added / dropped when deleted or no longer in the
+   filter), redraws the Gantt once and refreshes the table, VPX, charts and
+   summary in the background. A drag by a co-editor costs a handful of rows
+   instead of the entire plan twice. */
+async function _patchKd2Rows(ids, { filtersChanged = false } = {}) {
+    const rt = getModuleRuntime();
+    if (!isKD2Module() || !rt?.loadRowsByIds) { await loadData(); return; }
+    await loadData.idle(); // never interleave with a full load
+    const idSet = new Set(ids.map(String));
+    const rows = await rt.loadRowsByIds(db, _kd2QueryFilters(), ids);
+    await _stitchKd2Xray(rows);
+    const fresh = new Map(rows.map(r => [String(r.id), r]));
+    const next = [];
+    currentData.forEach(r => {
+        const key = String(r.id);
+        if (!idSet.has(key)) next.push(r);
+        else if (fresh.has(key)) { next.push(fresh.get(key)); fresh.delete(key); }
+        // else: deleted, or moved outside the current filter → dropped
+    });
+    fresh.forEach(r => next.push(r)); // new blocks
+    currentData = next;
+    resetKd2LaneOrderCache();
+    currentData.sort(_kd2RowCompare);
+
+    const displayData = applyActiveFilters(currentData);
+    await rt.renderSchedule?.(currentData);
+    const gsEl = document.getElementById('ganttStart');
+    const geEl = document.getElementById('ganttEnd');
+    renderGantt(displayData, gsEl?.value, geEl?.value, { patch: true });
+    _renderSecondaryViews({ defer: true });
+    saveNotifSnapshot();
+    updateNotifBadge();
+    // New/removed blocks can add a battalion or week to the filter lists
+    if (filtersChanged) loadFilters().catch(() => {});
+}
+
+async function _loadDataOnce() {
     clearTimeout(_loadDataDebounceTimer);
     try {
         setTableLoading(true);
@@ -2719,80 +3498,16 @@ async function loadData() {
         }
 
         if (isKD2Module() && getModuleRuntime()?.loadData) {
-            const weekList = filterState.week.has('all') ? [] : [...filterState.week];
-            const weekRanges = weekList.map(w => isoWeekDateRange(w)).filter(Boolean);
-            const impliedVehicles = impliedVehiclesFromUnits();
-            const vehicleList = !filterState.vehicle.has('all')
-                ? [...filterState.vehicle]
-                : (impliedVehicles ? [...impliedVehicles] : []);
-            currentData = await getModuleRuntime().loadData(db, {
-                vehicle: vehicleList,
-                battalion: filterState.battalion.has('all') ? selectedUnitBattalions(filterState.unit) : [...filterState.battalion],
-                unit: selectedUnitNames(filterState.unit),
-                weekRanges,
-                timeFrame: getVal('filterTimeFrame'),
-                today: todayStr(),
-                ...currentWeekRange(),
-                ...currentMonthRange(),
-                startDate: getVal('filterStartDate'),
-                endDate: getVal('filterEndDate'),
-                k9Component: filterState.k9Component.has('all') ? [] : [...filterState.k9Component],
-            });
+            currentData = await getModuleRuntime().loadData(db, _kd2QueryFilters());
 
-            // kd2_plan_live (the view loadData() above queries) doesn't expose the
-            // X-ray/repair columns — fetch them separately for every X-ray-eligible
-            // row that already has a progress record (cycles can be logged before
-            // the welding station itself is marked complete) and stitch them in.
-            const xrayProgressIds = currentData
-                .filter(row => row.progress?.id && isXrayEligible(row))
-                .map(row => row.progress.id);
-            if (xrayProgressIds.length) {
-                try {
-                    // Chunked — hundreds of ids in one .in() list can exceed the URL length limit
-                    const xrayRows = [];
-                    for (let i = 0; i < xrayProgressIds.length; i += 150) {
-                        const { data: chunk, error: xrayErr } = await db.from('kd2_progress')
-                            .select('id, xray_cycles, final_qa_date')
-                            .in('id', xrayProgressIds.slice(i, i + 150));
-                        if (xrayErr) throw xrayErr;
-                        xrayRows.push(...(chunk || []));
-                    }
-                    const xrayMap = new Map((xrayRows || []).map(r => [r.id, r]));
-                    currentData.forEach(row => {
-                        const x = row.progress?.id ? xrayMap.get(row.progress.id) : null;
-                        if (x) {
-                            row.progress.xray_cycles = x.xray_cycles || [];
-                            row.progress.final_qa_date = x.final_qa_date || null;
-                        }
-                    });
-                } catch (e) {
-                    // Migration 42 not applied yet — X-ray markers just won't show until it is.
-                    console.warn('X-ray/repair columns unavailable:', e.message);
-                }
-            }
-
+            await _stitchKd2Xray(currentData);
             resetKd2LaneOrderCache();
-            currentData.sort((a, b) => {
-                const vCmp = vehicleSort(a.vehicle, b.vehicle); if (vCmp !== 0) return vCmp;
-                const uCmp = naturalSort(a.vehicle_no, b.vehicle_no); if (uCmp !== 0) return uCmp;
-                if (getModuleRuntime()?.getStationOrderByCode) return kd2StationCompare(a, b);
-                const kd2Compare = getModuleRuntime()?.comparePlanRowsByLaneOrder;
-                if (typeof kd2Compare === 'function') return kd2Compare(a, b);
-                const rA = parseInt(a.route_sequence, 10) || 9999;
-                const rB = parseInt(b.route_sequence, 10) || 9999;
-                if (rA !== rB) return rA - rB;
-                const wA = parseInt((a.week || '').replace(/\D/g, ''), 10) || 9999;
-                const wB = parseInt((b.week || '').replace(/\D/g, ''), 10) || 9999;
-                if (wA !== wB) return wA - wB;
-                return (a.start_date || '').localeCompare(b.start_date || '');
-            });
+            currentData.sort(_kd2RowCompare);
 
             const displayData = applyActiveFilters(currentData);
 
-            renderTable(applyTableSearchFilters(displayData));
-            updateSummary(displayData);
-            renderCharts(displayData);
-            renderVPX(displayData);
+            // Immediate outside edit mode; after the Gantt paints while editing
+            _renderSecondaryViews();
             await getModuleRuntime().loadPlanningSnapshot?.(db);
             await getModuleRuntime().refreshWorkspace?.();
             await getModuleRuntime().renderSchedule?.(currentData);
@@ -3209,7 +3924,8 @@ function updateTableRowInPlace(planId) {
     const row = currentData.find(t => String(t.id) === String(planId));
     if (!row) return false;
     const tr = document.querySelector(`#mainTable tbody tr[data-plan-id="${planId}"]`);
-    if (!tr) return false;
+    // Not drawn yet (further down the table) — it will show current data when drawn
+    if (!tr) return !!_tableProg?.pending.has(String(planId));
 
     const cells = tr.querySelectorAll('td');
     // Column order: Vehicle(0), Unit(1), Station(2), Code(3), Week(4),
@@ -3728,7 +4444,7 @@ function _renderThFilterMenu(field) {
     menu.innerHTML = `
         <label class="ms-option ms-option-all">
             <input type="checkbox" data-value="all" ${allChecked ? 'checked' : ''} />
-            <span>All</span>
+            <span>${_t('All')}</span>
         </label>
         <div class="ms-option-divider"></div>
         ${options.map(o => `
@@ -3882,6 +4598,7 @@ function renderTable(data) {
           </div>
         </td>
       </tr>`;
+        _tableProg = null;
         return;
     }
 
@@ -3934,6 +4651,8 @@ function renderTable(data) {
     }
 
     let html = '';
+    const rowItems = []; // one entry per record: its separator rows + its own row
+    const rowIds = [];
     let prevGroupKey = null;
     let prevLineLabel = null; // K9 Hull/Turret/… line separator within a group
 
@@ -4053,9 +4772,24 @@ function renderTable(data) {
         <td>${delayHtml}</td>
         <td class="f100-comment-cell">${commentBtn}</td>
       </tr>`;
+        rowItems.push(html);
+        rowIds.push(String(row.id));
+        html = '';
     });
 
-    tbody.innerHTML = html;
+    // Draw the first rows now and the rest in batches as the table is
+    // scrolled (_appendTableBatch) — the full table was ~30,000 elements,
+    // 70% of the page. Never fewer rows than were showing, so a live update
+    // doesn't cut the table short under the user's scroll position.
+    const prevShown = _tableProg && _tableProg.tbody === tbody ? _tableProg.next : 0;
+    tbody.innerHTML = '';
+    _tableProg = {
+        tbody, items: rowItems, ids: rowIds, next: 0, wire: wireTableRows,
+        pending: new Set(rowIds), sentinel: null,
+    };
+    _appendTableBatch(Math.max(TABLE_BATCH, prevShown));
+
+    function wireTableRows(tbody) {
 
     // ── Viewer mode: disable date inputs ─────────────────────────
     if (!canWrite()) {
@@ -4215,12 +4949,112 @@ function renderTable(data) {
             }), 0);
         });
     });
+    } // wireTableRows
+}
+
+/* ── Plan Table: rows drawn in batches as the table scrolls ─────── */
+const TABLE_BATCH = 150;
+let _tableProg = null;      // { tbody, items, ids, next, wire, pending, sentinel }
+let _tableMoreObserver = null;
+
+function _tableScrollRoot(el) {
+    for (let p = el?.parentElement; p && p !== document.body; p = p.parentElement) {
+        const oy = getComputedStyle(p).overflowY;
+        if (oy === 'auto' || oy === 'scroll') return p;
+    }
+    return null;
+}
+
+/** Draws the next `count` records of the Plan Table (wiring only those). */
+function _appendTableBatch(count = TABLE_BATCH) {
+    const st = _tableProg;
+    if (!st || !st.tbody.isConnected && st.next > 0) return false;
+    if (st.next >= st.items.length) return false;
+    const end = Math.min(st.items.length, st.next + count);
+    const tmp = document.createElement('tbody');
+    tmp.innerHTML = st.items.slice(st.next, end).join('');
+    st.wire(tmp);
+    st.sentinel?.remove();
+    st.sentinel = null;
+    const frag = document.createDocumentFragment();
+    while (tmp.firstChild) frag.appendChild(tmp.firstChild);
+    st.tbody.appendChild(frag);
+    for (let i = st.next; i < end; i++) st.pending.delete(st.ids[i]);
+    st.next = end;
+    if (st.next < st.items.length) {
+        const more = document.createElement('tr');
+        more.className = 'tbl-more-row';
+        more.innerHTML = `<td colspan="12">Showing ${st.next.toLocaleString('en-GB')} of ${st.items.length.toLocaleString('en-GB')} records — <button type="button" class="tbl-more-btn">show more</button> or keep scrolling</td>`;
+        more.querySelector('.tbl-more-btn').addEventListener('click', () => _appendTableBatch());
+        st.tbody.appendChild(more);
+        st.sentinel = more;
+        if (typeof IntersectionObserver !== 'undefined') {
+            _tableMoreObserver?.disconnect();
+            _tableMoreObserver = new IntersectionObserver(entries => {
+                if (entries.some(e => e.isIntersecting)) _appendTableBatch();
+            }, { root: _tableScrollRoot(st.tbody), rootMargin: '400px 0px' });
+            _tableMoreObserver.observe(more);
+        }
+    } else {
+        _tableMoreObserver?.disconnect();
+    }
+    return true;
+}
+
+/** Make sure a record's row is drawn (e.g. before jumping to it). */
+function _ensureTableRowRendered(planId) {
+    if (typeof _viewPending !== 'undefined' && _viewPending.has('tableSection')) {
+        const redraw = _viewPending.get('tableSection');
+        _viewPending.delete('tableSection');
+        redraw();
+    }
+    const st = _tableProg;
+    const idx = st ? st.ids.indexOf(String(planId)) : -1;
+    if (idx >= st?.next) _appendTableBatch(idx - st.next + 1);
 }
 
 /* ──────────────────────────────────────────────────────────────────
    8. SUMMARY CARDS
    ────────────────────────────────────────────────────────────────── */
+/* Executive Summary battalion picker — "All" or one battalion, like the
+   VPX picker. Scopes the ring, tiles and the delivery card (and its delay
+   breakdown). Remembered per browser. */
+const EX_BATTALION_KEY = 'ppms_ex_battalion';
+let _exBattalion = (() => { try { return localStorage.getItem(EX_BATTALION_KEY) || 'all'; } catch { return 'all'; } })();
+let _exSummaryData = [];
+
+function _exBattalionOf(r) { return r.battalion_code || '—'; }
+
+function _renderExBattalionTabs(data) {
+    const el = document.getElementById('exBattalionTabs');
+    if (!el) return;
+    const bats = (isKD2Module() || isF100KD2Module())
+        ? [...new Set(data.map(_exBattalionOf))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+        : [];
+    if (!bats.length) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    // Main filter loaded one battalion: nothing to choose here — say so
+    const lock = _mainBattalionLock();
+    if (lock) {
+        _exBattalion = 'all';
+        el.innerHTML = _battalionLockHtml(lock);
+        return;
+    }
+    if (_exBattalion !== 'all' && !bats.includes(_exBattalion)) _exBattalion = 'all';
+    const tab = (value, label) => `<button type="button" role="tab" aria-selected="${value === _exBattalion}" class="vpx-type-tab vpx-bat-tab${value === _exBattalion ? ' active' : ''}" data-exbat="${esc(value)}">${esc(label)}</button>`;
+    el.innerHTML = `<span class="vpx-bat-label" title="${_t('Switches this section only — the battalion filter decides what is loaded')}">${_t('View')}</span><span class="vpx-type-tabs vpx-bat-tabs" role="tablist" aria-label="${_t('Executive Summary battalion')}">${tab('all', _t('All'))}${bats.map(b => tab(b, b)).join('')}</span>`;
+    el.querySelectorAll('[data-exbat]').forEach(btn => btn.addEventListener('click', () => {
+        if (btn.dataset.exbat === _exBattalion) return;
+        _exBattalion = btn.dataset.exbat;
+        try { localStorage.setItem(EX_BATTALION_KEY, _exBattalion); } catch {}
+        updateSummary(_exSummaryData);
+    }));
+}
+
 function updateSummary(data) {
+    _exSummaryData = data || [];
+    _renderExBattalionTabs(_exSummaryData);
+    if (_exBattalion !== 'all') data = _exSummaryData.filter(r => _exBattalionOf(r) === _exBattalion);
     const total = data.length;
     const completed = data.filter(r => calculateStatus(r) === 'Completed').length;
     const late = data.filter(r => calculateStatus(r) === 'Late Completion').length;
@@ -4247,19 +5081,25 @@ function updateSummary(data) {
     document.querySelectorAll('#exSplit .ex-split-seg').forEach(seg => {
         const n = split[seg.dataset.k] || 0;
         seg.style.flexGrow = total ? n : (seg.dataset.k === 'planned' ? 1 : 0);
-        seg.title = `${seg.dataset.k === 'inprogress' ? 'In progress' : seg.dataset.k === 'planned' ? 'Not started' : seg.dataset.k[0].toUpperCase() + seg.dataset.k.slice(1)}: ${n}`;
+        seg.title = `${_t({ completed: 'On time', late: 'Late', inprogress: 'In progress', overdue: 'Overdue', planned: 'Not started' }[seg.dataset.k] || seg.dataset.k)}: ${n}`;
     });
     setText('exLegCompleted', completed); setText('exLegLate', late); setText('exLegProgress', inProgress);
     setText('exLegOverdue', overdue); setText('exLegPlanned', notStarted);
     document.querySelector('.summary-card.card-overdue')?.classList.toggle('has-alert', overdue > 0);
     window.PPMSFilterUI?.refresh?.();
+    const scopeEl = document.getElementById('exScope');
+    if (scopeEl && _exBattalion !== 'all') {
+        scopeEl.textContent = scopeEl.textContent.endsWith('All data')
+            ? scopeEl.textContent.replace(/All data$/, _exBattalion)
+            : `${scopeEl.textContent} · ${_exBattalion}`;
+    }
     _updateDeliveryCard(data);
 }
 
 function _fmtDeliveryDate(iso) {
     if (!iso) return '—';
     const d = new Date(iso + 'T00:00:00');
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    return d.toLocaleDateString(window.PPMSi18n?.getLocale?.() || 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 function _addWorkingDays(dateStr, n) {
@@ -4271,6 +5111,179 @@ function _addWorkingDays(dateStr, n) {
         if (d.getDay() !== 5) added++;
     }
     return localDateStr(d);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   DELIVERY FORECAST — process order
+   The one engine behind every FORWARD-looking delay figure: the delivery
+   card, the Delivery Delay Analysis, the VPX Station Report (and the
+   Executive Report built on it) and the Analytics finish chart.
+
+   Each unit is walked through its stations in route order:
+     • KD2 lines — Hull and Turret (K9) / Structure (K10/K11) run in
+       parallel; the downstream line (Assembly & Processing & Testing)
+       starts after ALL of them. Stations sharing a route position
+       (parallel work centres) share the same predecessor.
+     • A completed station ends on its actual completion date.
+     • An unfinished station starts no earlier than its planned start, the
+       working day after the station(s) before it, and today — unless it
+       was actually started, then on its actual start. It takes its planned
+       working-day duration and can't finish before today.
+   A unit's delay is its forecast finish vs its planned finish, in working
+   days (Fridays excluded). A slip the plan's later slack absorbed no
+   longer counts — previously the single worst block delay ever recorded
+   (e.g. a station finished 62 wd late in May) was added to delivery for
+   good. Per-block lateness (Plan Table "Delay", Station Bottleneck) is a
+   separate, historical fact and still comes from delayDays().
+   ══════════════════════════════════════════════════════════════════ */
+const _FC_FEEDER_LINES = /^(Hull|Turret|Structure)$/i;
+const _fcIsWork = iso => new Date(iso + 'T00:00:00').getDay() !== 5;
+const _fcNextWork = iso => _addWorkingDays(iso, 1);
+const _fcOnOrAfterWork = iso => (_fcIsWork(iso) ? iso : _fcNextWork(iso));
+/** Working days from a to b inclusive (planned duration). */
+const _fcSpan = (a, b) => Math.max(1, daysBetween(a, b) + (_fcIsWork(a) ? 1 : 0));
+/** Signed working-day slip of `actual` vs `planned` (negative = early). */
+function _fcSlip(planned, actual) {
+    if (!planned || !actual) return 0;
+    return actual >= planned ? daysBetween(planned, actual) : -daysBetween(actual, planned);
+}
+function _fcUnitKey(r) {
+    const vt = _getVehicleType(r.vehicle || r.vehicle_type) || r.vehicle || '';
+    return `${r.battalion_code || ''}|${vt}|${r.vehicle_no || r.unit_label || ''}`;
+}
+
+/** Forecast every unit in `rows` (F200 plan rows). Returns
+ *  { units[], byRowId: Map(id → step), plannedDelivery, expectedDelivery, deliverySlip }.
+ *  step = { row, line, done, projStart, projEnd, slip, added, credit } —
+ *  `added` is the slip this station adds on top of what reached it, and
+ *  `credit` the part of that which still reaches the unit's finish. */
+function planForecast(rows, today = todayStr()) {
+    const kd2 = isKD2Module();
+    const rt = getModuleRuntime();
+    const orderCache = {};
+    const slotOf = (r, i) => {
+        if (!kd2) return 'i' + i;
+        const v = _getVehicleType(r.vehicle) || r.vehicle;
+        if (!(v in orderCache)) orderCache[v] = rt?.getStationOrderByCode?.(v) || new Map();
+        const info = orderCache[v].get(r.station_code);
+        return info ? info.sortKey : 'i' + i;
+    };
+    const groups = new Map();
+    rows.forEach(r => {
+        if (!r || !r.start_date || !r.end_date || r.module === 'gun' || r.module === 'vehicle') return;
+        const k = _fcUnitKey(r);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(r);
+    });
+
+    const byRowId = new Map();
+    const units = [];
+    groups.forEach((list, key) => {
+        list = list.slice().sort(kd2
+            ? kd2StationCompare
+            : (a, b) => a.start_date.localeCompare(b.start_date) || a.end_date.localeCompare(b.end_date));
+        const lines = new Map();
+        const steps = [];
+        list.forEach((r, i) => {
+            const lineName = kd2 ? (kd2LineLabel(r) || 'Other') : 'Main';
+            let L = lines.get(lineName);
+            if (!L) {
+                L = { name: lineName, prevEnd: null, prevSlip: 0, slot: undefined, slotEnd: null, slotSlip: null, end: null, endSlip: 0, steps: [] };
+                if (kd2 && !_FC_FEEDER_LINES.test(lineName)) {
+                    // Downstream starts after every feeder line has finished
+                    lines.forEach(F => {
+                        if (!_FC_FEEDER_LINES.test(F.name) || !F.end) return;
+                        if (!L.prevEnd || F.end > L.prevEnd) L.prevEnd = F.end;
+                        L.prevSlip = Math.max(L.prevSlip, F.endSlip);
+                    });
+                }
+                lines.set(lineName, L);
+            }
+            const slot = slotOf(r, i);
+            if (slot !== L.slot) { // next route position
+                if (L.slot !== undefined) { L.prevEnd = L.slotEnd; L.prevSlip = L.slotSlip ?? 0; }
+                L.slot = slot; L.slotEnd = null; L.slotSlip = null;
+            }
+            const pStart = r.start_date, pEnd = r.end_date;
+            const pr = r.progress || {};
+            const done = !!(pr.completed && pr.completion_date);
+            let projStart, projEnd;
+            if (done) {
+                projEnd = pr.completion_date;
+                projStart = pr.actual_start_date || null;
+            } else {
+                if (pr.actual_start_date) {
+                    projStart = pr.actual_start_date;
+                } else {
+                    projStart = pStart;
+                    if (L.prevEnd) { const after = _fcNextWork(L.prevEnd); if (after > projStart) projStart = after; }
+                    if (projStart < today) projStart = today;
+                }
+                projStart = _fcOnOrAfterWork(projStart);
+                projEnd = _addWorkingDays(projStart, _fcSpan(pStart, pEnd) - 1);
+                if (projEnd < today) projEnd = _fcOnOrAfterWork(today);
+            }
+            const slip = _fcSlip(pEnd, projEnd);
+            const inSlip = Math.max(0, L.prevSlip || 0);
+            const step = { row: r, line: lineName, done, projStart, projEnd, slip, added: slip - inSlip, credit: 0 };
+            steps.push(step);
+            L.steps.push(step);
+            byRowId.set(String(r.id), step);
+            if (!L.slotEnd || projEnd > L.slotEnd) L.slotEnd = projEnd;
+            if (L.slotSlip === null || slip > L.slotSlip) L.slotSlip = slip;
+            if (!L.end || projEnd >= L.end) { L.end = projEnd; }
+            L.endSlip = L.slotSlip;
+        });
+
+        const plannedFinish = list.reduce((m, r) => (r.end_date > m ? r.end_date : m), '');
+        const projFinish = steps.reduce((m, st) => (st.projEnd > m ? st.projEnd : m), '');
+        const finishSlip = _fcSlip(plannedFinish, projFinish);
+
+        // How much of each station's added slip still reaches the finish:
+        // capped by the smallest slip on its path to the end (its own line
+        // after it, then — for a feeder line — the downstream line).
+        const downstream = [...lines.values()].filter(L => kd2 && !_FC_FEEDER_LINES.test(L.name));
+        const downstreamMin = downstream.length
+            ? Math.min(...downstream.flatMap(L => L.steps.map(st => st.slip)))
+            : Infinity;
+        lines.forEach(L => {
+            let suffixMin = Infinity;
+            for (let i = L.steps.length - 1; i >= 0; i--) {
+                const st = L.steps[i];
+                const pathMin = Math.min(suffixMin, _FC_FEEDER_LINES.test(L.name) ? downstreamMin : Infinity);
+                const carry = Math.min(st.slip, pathMin, finishSlip);
+                st.credit = finishSlip > 0 ? Math.max(0, Math.min(st.added, carry)) : 0;
+                suffixMin = Math.min(suffixMin, st.slip);
+            }
+        });
+
+        const r0 = list[0];
+        units.push({
+            key, steps, plannedFinish, projFinish, finishSlip,
+            battalion: r0.battalion_code || '',
+            vehicle: _getVehicleType(r0.vehicle || r0.vehicle_type) || r0.vehicle || '',
+            unitNo: r0.vehicle_no || r0.unit_label || '',
+        });
+    });
+
+    const plannedDelivery = units.reduce((m, u) => (u.plannedFinish > m ? u.plannedFinish : m), '') || null;
+    const expectedDelivery = units.reduce((m, u) => (u.projFinish > m ? u.projFinish : m), '') || null;
+    return { units, byRowId, plannedDelivery, expectedDelivery, deliverySlip: _fcSlip(plannedDelivery, expectedDelivery) };
+}
+
+/* Forecast cache — recomputed only when the rows or their dates change. */
+let _fcCache = null;
+function getPlanForecast(rows = currentData) {
+    const today = todayStr();
+    let sig = today + '#' + rows.length;
+    for (const r of rows) {
+        const pr = r.progress || {};
+        sig += `|${r.id}:${r.start_date}:${r.end_date}:${pr.completion_date || ''}:${pr.actual_start_date || ''}:${pr.completed ? 1 : 0}`;
+    }
+    if (_fcCache && _fcCache.rows === rows && _fcCache.sig === sig) return _fcCache.result;
+    const result = planForecast(rows, today);
+    _fcCache = { rows, sig, result };
+    return result;
 }
 
 function _updateDeliveryCard(data) {
@@ -4304,17 +5317,25 @@ function _updateDeliveryCard(data) {
         return;
     }
 
-    // Delivery delay = worst single-task delay (that bottleneck cascades to delivery)
-    const totalDelay = data.reduce((max, r) => Math.max(max, delayDays(r)), 0);
-
-    // Expected delivery = planned end shifted by the worst delay in working days
-    const expectedDelivery = _addWorkingDays(plannedDelivery, totalDelay);
+    // F200: process-order forecast (see planForecast). F100 keeps its own rule.
+    const isF100 = data.some(r => r.module === 'gun' || r.module === 'vehicle');
+    const fc = isF100 ? null : getPlanForecast(data);
+    let totalDelay, expectedDelivery;
+    if (fc && fc.expectedDelivery) {
+        plannedDelivery = fc.plannedDelivery || plannedDelivery;
+        totalDelay = Math.max(0, fc.deliverySlip);
+        expectedDelivery = fc.expectedDelivery;
+    } else {
+        // Delivery delay = worst single-task delay
+        totalDelay = data.reduce((max, r) => Math.max(max, delayDays(r)), 0);
+        expectedDelivery = _addWorkingDays(plannedDelivery, totalDelay);
+    }
 
     plannedEl.textContent  = _fmtDeliveryDate(plannedDelivery);
     expectedEl.textContent = _fmtDeliveryDate(expectedDelivery);
 
     if (totalDelay > 0) {
-        deltaEl.textContent = `+${totalDelay} wd`;
+        deltaEl.textContent = _t('+{n} wd', { n: totalDelay });
         deltaEl.className = 'delivery-delta delivery-delta--late';
         deltaEl.style.display = '';
     } else {
@@ -4324,22 +5345,27 @@ function _updateDeliveryCard(data) {
     const card = document.querySelector('.card-delivery');
     if (card) {
         card.style.cursor = 'pointer';
-        card.title = 'Click to see delay breakdown';
-        card.onclick = () => _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, totalDelay);
+        card.title = _t('Click to see delay breakdown');
+        card.onclick = () => _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, totalDelay, fc);
     }
 }
 
-function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, totalDelay) {
+function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, totalDelay, fc = null) {
     const stationOf = r => r.process_station || r.station_name || r.process_name || r.part_name || '(Unknown)';
     const unitOf = r => [r.battalion_code, r.vehicle_no || r.unit_label || (r.serial_number != null ? `#${r.serial_number}` : '')].filter(Boolean).join(' ');
 
-    // category → stations → delayed rows
+    // category → stations → delay. With the process-order forecast a cause is
+    // the delay a station is adding to a unit's finish RIGHT NOW (slip the
+    // plan's later slack already absorbed doesn't count).
     const catMap = new Map();
     const causeMap = new Map(); // vtype||station → cause
     const units = new Set();
     let delayedCount = 0;
-    data.forEach(r => {
-        const d = Math.max(0, delayDays(r));
+    const forecastRows = fc
+        ? fc.units.filter(u => u.finishSlip > 0).flatMap(u => u.steps.filter(st => st.credit > 0).map(st => ({ r: st.row, d: st.credit, open: !st.done })))
+        : data.map(r => ({ r, d: Math.max(0, delayDays(r)), open: calculateStatus(r) === 'Overdue' }));
+    const lateUnits = fc ? fc.units.filter(u => u.finishSlip > 0).sort((a, b) => b.finishSlip - a.finishSlip) : [];
+    forecastRows.forEach(({ r, d, open }) => {
         if (d === 0) return;
         delayedCount++;
         const cat = getModuleCategory(r.process_station, r) || 'Other';
@@ -4353,7 +5379,7 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
         c.count++;
         c.maxDelay = Math.max(c.maxDelay, d);
         if (unit) c.units.add(unit);
-        if (calculateStatus(r) === 'Overdue') c.overdue++;
+        if (open) c.overdue++;
         if (!catMap.has(cat)) catMap.set(cat, { maxDelay: 0, delayed: 0, causes: [] });
         const cm = catMap.get(cat);
         cm.delayed++;
@@ -4388,7 +5414,9 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
                     <span class="dda-chip">${esc(c.vtype)}</span>
                     <span class="dda-chip dda-chip--muted">${esc(c.cat)}</span>
                 </div>
-                <p class="dda-cause-line">${c.count} task${c.count === 1 ? '' : 's'} late${c.overdue ? ` · <b>${c.overdue} still open</b>` : ''}${unitList(c) ? ` · ${unitList(c)}` : ''}</p>
+                <p class="dda-cause-line">${fc
+                    ? `pushing back ${c.count} unit${c.count === 1 ? '' : 's'}${c.overdue ? ` · <b>${c.overdue} not finished yet</b>` : ''}`
+                    : `${c.count} task${c.count === 1 ? '' : 's'} late${c.overdue ? ` · <b>${c.overdue} still open</b>` : ''}`}${unitList(c) ? ` · ${unitList(c)}` : ''}</p>
                 <div class="dda-bar"><span style="width:${Math.max(6, Math.round(c.maxDelay / worst * 100))}%"></span></div>
                 ${actBtns(c)}
             </div>
@@ -4400,7 +5428,7 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
             <summary>
                 ${icon('<path d="M9 6l6 6-6 6"/>')}
                 <span class="dda-cat-name">${esc(cat)}</span>
-                <span class="dda-cat-meta">${cm.delayed} late task${cm.delayed === 1 ? '' : 's'}</span>
+                <span class="dda-cat-meta">${cm.delayed} ${fc ? 'unit delay' : 'late task'}${cm.delayed === 1 ? '' : 's'}</span>
                 <span class="dda-cat-delay">+${cm.maxDelay} wd</span>
             </summary>
             <ul class="dda-cat-list">
@@ -4408,7 +5436,7 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
                     <li>
                         <span class="dda-chip">${esc(c.vtype)}</span>
                         <span class="dda-cat-station">${esc(c.station)}</span>
-                        <span class="dda-cat-count">${c.count} late</span>
+                        <span class="dda-cat-count">${c.count} ${fc ? `unit${c.count === 1 ? '' : 's'}` : 'late'}</span>
                         <span class="dda-cat-worst">+${c.maxDelay} wd</span>
                         <button type="button" class="dda-link" data-dda="table" data-station="${esc(c.station)}">Show ${icon('<path d="M5 12h14M13 6l6 6-6 6"/>')}</button>
                     </li>`).join('')}
@@ -4444,14 +5472,27 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
 
                 ${late ? `
                 <div class="dda-stats">
-                    <div><strong>${delayedCount}</strong><span>delayed tasks</span></div>
+                    ${fc
+                        ? `<div><strong>${lateUnits.length}</strong><span>units forecast late</span></div>
+                    <div><strong>${causes.length}</strong><span>stations causing it</span></div>
+                    <div><strong>${lateUnits[0] ? '+' + lateUnits[0].finishSlip : '—'}</strong><span>worst unit (wd)</span></div>`
+                        : `<div><strong>${delayedCount}</strong><span>delayed tasks</span></div>
                     <div><strong>${causes.length}</strong><span>stations affected</span></div>
-                    <div><strong>${units.size || '—'}</strong><span>units affected</span></div>
+                    <div><strong>${units.size || '—'}</strong><span>units affected</span></div>`}
                 </div>
+
+                ${lateUnits.length ? `
+                <section>
+                    <h5 class="dda-h">${icon('<path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/>')} Units furthest behind</h5>
+                    <ul class="dda-units">${lateUnits.slice(0, 6).map(u => `
+                        <li><span class="dda-chip">${esc(u.vehicle)}</span><strong>${esc([u.battalion, u.unitNo].filter(Boolean).join(' '))}</strong>
+                            <span class="dda-unit-dates">${_fmtDeliveryDate(u.plannedFinish)} → <b>${_fmtDeliveryDate(u.projFinish)}</b></span>
+                            <span class="dda-unit-delay">+${u.finishSlip} wd</span></li>`).join('')}</ul>
+                </section>` : ''}
 
                 <section>
                     <h5 class="dda-h">${icon('<circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/>')} Where to act first</h5>
-                    <p class="dda-hint">Fix these first — the top one sets the delivery date. <b>Show in Plan Table</b> filters the table to that station so you can record actual dates or add a delay reason.</p>
+                    <p class="dda-hint">${fc ? 'The delay each station is adding to unit finishes right now (delays already absorbed by the plan are left out). ' : 'Fix these first — the top one sets the delivery date. '}<b>Show in Plan Table</b> filters the table to that station so you can record actual dates or add a delay reason.</p>
                     <div class="dda-causes">${causes.slice(0, 5).map(causeCard).join('')}</div>
                 </section>
 
@@ -4461,7 +5502,9 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
                 </section>` : ''}
 
                 <p class="dda-note">${icon('<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>')}
-                    Expected end = the latest planned end, pushed back by the single worst task delay (working days, Fridays excluded). It reflects the current filters.</p>
+                    ${fc
+                        ? 'Expected end = the latest forecast unit finish. Each unit follows its process order: finished stations use their actual dates; the rest start after the stations before them (Hull and Turret in parallel, then Assembly) and take their planned duration. Working days, Fridays excluded. Reflects the current filters.'
+                        : 'Expected end = the latest planned end, pushed back by the single worst task delay (working days, Fridays excluded). It reflects the current filters.'}</p>
             </div>
         </div>`;
 
@@ -4522,6 +5565,11 @@ const _isK10K11 = v => /K1[01]/i.test(String(v));
 let _vpxLastData = null;
 let _vpxVehicleTypeFilter = null;
 let _vpxCategoryFilter = null;
+// KD2: the VPX shows ONE battalion at a time. Unit labels (M1, M2…) repeat
+// in every battalion, so a stacked table made units easy to mix up.
+// null = every battalion (used only by the Executive Report).
+const VPX_BATTALION_KEY = 'ppms_vpx_battalion';
+let _vpxBattalionFilter = (() => { try { return localStorage.getItem(VPX_BATTALION_KEY) || null; } catch { return null; } })();
 let _vpxViewMode = 'matrix'; // 'matrix' | 'station' — mirrors the Gantt's Unit/Process view switch
 
 function _getVehicleType(vehicle) {
@@ -4536,6 +5584,37 @@ function _detectVpxVehicleTypes(data) {
     const seen = new Set();
     data.forEach(t => { const vt = _getVehicleType(t.vehicle); if (vt) seen.add(vt); });
     return ['K9', 'K10', 'K11'].filter(t => seen.has(t));
+}
+
+function _detectVpxBattalions(data) {
+    return [...new Set(data.map(t => t.battalion_code || '—'))]
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+function _vpxBattalionOf(task) {
+    return task.battalion_code || '—';
+}
+
+function _renderVpxBattalionTabs(battalions) {
+    const el = document.getElementById('vpxBattalionTabs');
+    if (!el) return;
+    if (!battalions.length) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    const lock = _mainBattalionLock();
+    if (lock && battalions.length === 1) { el.innerHTML = _battalionLockHtml(lock); return; }
+    el.innerHTML = `<span class="vpx-bat-label" title="${_t('Switches the VPX only — the battalion filter decides what is loaded')}">${_t('View')}</span><span class="vpx-type-tabs vpx-bat-tabs" role="tablist" aria-label="${_t('Battalion')}">${battalions.map(b =>
+        `<button type="button" role="tab" aria-selected="${b === _vpxBattalionFilter}" class="vpx-type-tab vpx-bat-tab${b === _vpxBattalionFilter ? ' active' : ''}" data-vbat="${esc(b)}">${esc(b)}</button>`
+    ).join('')}</span>`;
+    el.querySelectorAll('.vpx-bat-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.dataset.vbat === _vpxBattalionFilter) return;
+            _vpxBattalionFilter = btn.dataset.vbat;
+            try { localStorage.setItem(VPX_BATTALION_KEY, _vpxBattalionFilter); } catch {}
+            _vpxVehicleTypeFilter = null; // re-detect for this battalion
+            _vpxCategoryFilter = null;
+            if (_vpxLastData) renderVPX(_vpxLastData);
+        });
+    });
 }
 
 function _renderVpxTypeTabs(types) {
@@ -4599,7 +5678,9 @@ function _renderVpxCategoryTabs(categories) {
  *  Single source of truth shared by renderVPX and both export functions so
  *  an export can never silently include more than what's on screen. */
 function _getVpxFilteredData(data, includeCategory = true) {
-    if (!isKD2Module() || !_vpxVehicleTypeFilter) return data;
+    if (!isKD2Module()) return data;
+    if (_vpxBattalionFilter) data = data.filter(t => _vpxBattalionOf(t) === _vpxBattalionFilter);
+    if (!_vpxVehicleTypeFilter) return data;
     let filtered = data.filter(t => _getVehicleType(t.vehicle) === _vpxVehicleTypeFilter);
     if (includeCategory && _vpxCategoryFilter) {
         const rt = getModuleRuntime?.();
@@ -4841,7 +5922,7 @@ function buildVpxRows(data) {
 
 function getVpxTitleParts() {
     const parts = [getModuleBadge()];
-    const battalion = isKD2Module() ? filterLabel('battalion', '') : '';
+    const battalion = isKD2Module() ? (_vpxBattalionFilter || filterLabel('battalion', '')) : '';
     const vehicle = filterLabel('vehicle', '');
     const unit = filterLabel('unit', '');
     const category = filterLabel('category', '');
@@ -5096,18 +6177,23 @@ function renderVPX(data) {
 
     if (!data?.length) {
         container.innerHTML = `<div class="vpx-empty">${meta.emptyMessage}</div>`;
+        _renderVpxBattalionTabs([]);
         _renderVpxTypeTabs([]);
         _renderVpxCategoryTabs([]);
         return;
     }
 
     if (isKD2Module()) {
-        const types = _detectVpxVehicleTypes(data);
+        const battalions = _detectVpxBattalions(data);
+        if (!battalions.includes(_vpxBattalionFilter)) _vpxBattalionFilter = battalions[0] || null;
+        _renderVpxBattalionTabs(battalions);
+        const inBattalion = data.filter(t => _vpxBattalionOf(t) === _vpxBattalionFilter);
+        const types = _detectVpxVehicleTypes(inBattalion);
         if (!types.includes(_vpxVehicleTypeFilter)) _vpxVehicleTypeFilter = types[0] || null;
         _renderVpxTypeTabs(types);
 
         if (_vpxVehicleTypeFilter) {
-            const byType = data.filter(t => _getVehicleType(t.vehicle) === _vpxVehicleTypeFilter);
+            const byType = inBattalion.filter(t => _getVehicleType(t.vehicle) === _vpxVehicleTypeFilter);
             const rt = getModuleRuntime?.();
             const compMap = (_vpxVehicleTypeFilter === 'K9' && rt?.getStationCategoryMap)
                 ? rt.getStationCategoryMap('K9') : null;
@@ -5119,6 +6205,7 @@ function renderVPX(data) {
         }
         data = _getVpxFilteredData(data);
     } else {
+        _renderVpxBattalionTabs([]);
         _renderVpxCategoryTabs([]);
     }
 
@@ -5347,7 +6434,7 @@ function renderVPX(data) {
             var delayIcon = fd > 0
                 ? '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5v6M6 8.5L3.5 6M6 8.5 8.5 6"/></svg>'
                 : '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.5l2.5 2.5 4.5-6"/></svg>';
-            html += '<td class="vpx-td-delay"><span class="vpx-delay-pill ' + delayPillCls + '" title="Biggest single-station delay within this component\'s own stations">'
+            html += '<td class="vpx-td-delay"><span class="vpx-delay-pill ' + delayPillCls + '" title="Forecast delay at this component\'s last station, following the process order">'
                 + delayIcon + '<span>' + (fd > 0 ? fd + 'd late' : 'On time') + '</span></span></td>';
         }
 
@@ -5357,11 +6444,45 @@ function renderVPX(data) {
     html += '</tbody></table>';
     container.innerHTML = html;
 }
+/* Charts are the most expensive view to redraw (~1–3 s for the analytics
+   set) and during editing they're usually off-screen — so they're only
+   drawn while the Analytics section is on (or near) the screen. An update
+   while they're off-screen just remembers the latest data, and they draw
+   once when scrolled into view. */
+let _chartsPendingData = null;
+let _chartsObserver = null;
+const _chartsOnScreen = new Set();
 function renderCharts(data) {
+    const sections = ['chartsSection', 'f100ChartsSection'].map(id => document.getElementById(id)).filter(Boolean);
+    if (sections.length && typeof IntersectionObserver !== 'undefined') {
+        if (!_chartsObserver) {
+            _chartsObserver = new IntersectionObserver(entries => {
+                entries.forEach(e => { if (e.isIntersecting) _chartsOnScreen.add(e.target); else _chartsOnScreen.delete(e.target); });
+                if (_chartsOnScreen.size && _chartsPendingData) {
+                    const pending = _chartsPendingData;
+                    _chartsPendingData = null;
+                    _renderChartsNow(pending);
+                }
+            }, { rootMargin: '800px 0px' });
+            sections.forEach(el => _chartsObserver.observe(el));
+        }
+        // An expanded (full-screen) chart is always on screen
+        if (!_chartsOnScreen.size && !document.querySelector('.chart-card.chart-fullscreen')) {
+            _chartsPendingData = data;
+            return;
+        }
+    }
+    _chartsPendingData = null;
+    _renderChartsNow(data);
+}
+
+function _renderChartsNow(data) {
     renderBarChart(data);
     renderLineChart(data);
     renderF100ExtraCharts(data);
     renderKD2BottleneckChart(data);
+    // Throughput, unit ranking, finish forecast, issues trend (features/charts/analytics.js)
+    if (typeof renderAnalyticsCharts === 'function') renderAnalyticsCharts(data);
     // Charts get created before the grid's layout has necessarily settled
     // (font swap, a section flipping from display:none in the same tick) —
     // resize once after this frame, then keep watching for further shifts.
@@ -5381,9 +6502,15 @@ function renderKD2BottleneckChart(data) {
     if (!isKD2Module() || !data.length) { card.style.display = 'none'; return; }
     card.style.display = '';
 
+    // Card selectors (features/charts/analytics.js): vehicle filter + metric
+    const opt = k => (typeof anOpt === 'function' ? anOpt(k) : null);
+    const vSel   = opt('bnVehicle') || 'all';
+    const metric = opt('bnMetric') || 'max';
+    const rows = vSel === 'all' ? data : data.filter(r => _getVehicleType(r.vehicle) === vSel);
+
     // Build per-(vehicle, station) delay stats — each vehicle's station is a separate entry
     const stationMap = new Map();
-    data.forEach(r => {
+    rows.forEach(r => {
         const vtype = _getVehicleType(r.vehicle) || 'Unknown';
         const name  = r.process_station || '(Unknown)';
         const key   = `${vtype}||${name}`;
@@ -5401,67 +6528,92 @@ function renderKD2BottleneckChart(data) {
     ['K9', 'K10', 'K11'].forEach(v => {
         vtypeRouteOrders[v] = _byName ? _byName.call(rt, v) : new Map();
     });
+    const routeCmp = (a, b) => {
+        if (a.vtype !== b.vtype) return a.vtype.localeCompare(b.vtype);
+        return ((vtypeRouteOrders[a.vtype]?.get(a.name)) ?? 9999) - ((vtypeRouteOrders[b.vtype]?.get(b.name)) ?? 9999);
+    };
+    const valueOf = s => metric === 'count' ? s.delayed
+        : metric === 'avg' ? (s.delayed ? Math.round(s.delaySum / s.delayed * 10) / 10 : 0)
+        : s.maxDelay;
 
-    const stations = [...stationMap.values()]
-        .map(s => {
-            const component = s.vtype === 'K9' ? (k9CatMap.get(s.name)?.component_group || null) : null;
-            return { ...s, component };
-        })
-        .sort((a, b) => {
-            // Sort by vehicle first, then by route order within vehicle
-            if (a.vtype !== b.vtype) return a.vtype.localeCompare(b.vtype);
-            const sa = (vtypeRouteOrders[a.vtype]?.get(a.name)) ?? 9999;
-            const sb = (vtypeRouteOrders[b.vtype]?.get(b.name)) ?? 9999;
-            return sa - sb;
-        })
-        .slice(0, 20);
+    const all = [...stationMap.values()].map(s => ({
+        ...s, component: s.vtype === 'K9' ? (k9CatMap.get(s.name)?.component_group || null) : null,
+    }));
+    const delayed = all.filter(s => s.delayed > 0);
+    // The worst 15 delayed stations; one vehicle is shown in process order, all vehicles worst-first
+    let stations = (delayed.length ? delayed : all)
+        .sort((a, b) => valueOf(b) - valueOf(a) || b.maxDelay - a.maxDelay)
+        .slice(0, 15);
+    if (vSel !== 'all') stations.sort(routeCmp);
 
-    const c      = themeChartColors();
-    // Label: "StationName  (Component)  [Vtype]" — component only for K9
+    const c   = themeChartColors();
+    const css = getComputedStyle(document.documentElement);
+    const tv  = (n, f) => css.getPropertyValue(n).trim() || f;
+    const hexA = (hex, a) => { const h = hex.replace('#', ''); const f = h.length === 3 ? h.split('').map(x => x + x).join('') : h; const n = parseInt(f, 16); return Number.isNaN(n) ? hex : `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; };
+    const cOver = tv('--clr-overdue', '#ef4444'), cLate = tv('--clr-late', '#f97316'), cPlan = tv('--clr-planned', '#3b82f6');
+    // Label: "StationName  (Component)  [Vtype]" — component only for K9, vehicle only when mixed
     const labels = stations.map(s => {
         let lbl = s.name;
         if (s.component) lbl += `  (${s.component})`;
-        lbl += `  [${s.vtype}]`;
+        if (vSel === 'all') lbl += `  [${s.vtype}]`;
         return lbl;
     });
-    const maxs   = stations.map(s => s.maxDelay);
-    const colors = maxs.map(v => v >= 14 ? 'rgba(239,68,68,.82)' : v >= 7 ? 'rgba(245,158,11,.82)' : v >= 1 ? 'rgba(59,130,246,.75)' : 'rgba(148,163,184,.38)');
+    const values = stations.map(valueOf);
+    const colors = stations.map(s => hexA(s.maxDelay >= 14 ? cOver : s.maxDelay >= 7 ? cLate : s.maxDelay >= 1 ? cPlan : '#94a3b8', s.maxDelay >= 1 ? 0.8 : 0.38));
 
+    const metricTxt = _t({ max: 'Worst delay per station (working days)', avg: 'Average delay of delayed tasks (working days)', count: 'Delayed tasks per station' }[metric]);
     const sub = document.getElementById('kd2BottleneckSubtitle');
-    const withDelays = stations.filter(s => s.delayed > 0).length;
-    if (sub) sub.textContent = `${withDelays} of ${stations.length} station${stations.length !== 1 ? 's' : ''} with delays · in process order`;
+    if (sub) sub.textContent = _t('{n} of {total} stations with delays', { n: delayed.length, total: all.length }) + ' · ' + _t(vSel === 'all' ? 'worst first' : 'process order');
+
+    if (typeof anSetInsight === 'function') {
+        if (!delayed.length) {
+            anSetInsight('anBnInsight', vSel === 'all'
+                ? _t('No station has delayed tasks in the current filter.')
+                : _t('No station has delayed tasks for {vehicle} in the current filter.', { vehicle: vSel }), 'good');
+        } else {
+            const w = [...delayed].sort((a, b) => b.maxDelay - a.maxDelay || b.delayed - a.delayed)[0];
+            anSetInsight('anBnInsight',
+                _t('Main bottleneck: {name} ({vehicle}) — {n} of {total} tasks delayed, worst +{worst} wd · {stations} of {all} stations have delays.', { name: w.name, vehicle: w.vtype, n: w.delayed, total: w.total, worst: w.maxDelay, stations: delayed.length, all: all.length }),
+                w.maxDelay >= 14 ? 'bad' : 'warn');
+        }
+    }
 
     _kd2BottleneckChartInst = new Chart(canvas, {
         type: 'bar',
         data: {
             labels,
             datasets: [{
-                label: 'Max Delay (days)',
-                data: maxs,
+                label: metricTxt,
+                data: values,
                 backgroundColor: colors,
-                borderRadius: 4,
+                borderRadius: 3,
                 borderWidth: 0,
+                maxBarThickness: 16,
             }],
         },
         options: {
             indexAxis: 'y',
             responsive: true,
             maintainAspectRatio: false,
+            animation: { duration: 250 },
             plugins: {
                 legend: { display: false },
                 tooltip: {
+                    backgroundColor: c.tooltipBg, borderColor: c.tooltipBdr, borderWidth: 1,
+                    titleColor: c.tooltipTtl, bodyColor: c.tooltipBdy, padding: 9,
                     callbacks: {
                         title: ctx => ctx[0].label,
                         label: ctx => {
                             const s = stations[ctx.dataIndex];
                             const lines = [];
                             if (s.maxDelay === 0) {
-                                lines.push(`  No delays  ·  ${s.total} task${s.total !== 1 ? 's' : ''}`);
+                                lines.push('  ' + _t('No delays · {n} tasks', { n: s.total }));
                             } else {
-                                lines.push(`  Max ${s.maxDelay}d delay  ·  ${s.delayed} delayed / ${s.total} total`);
+                                lines.push('  ' + _t('Worst +{n} wd · avg +{avg} wd', { n: s.maxDelay, avg: Math.round(s.delaySum / s.delayed * 10) / 10 }));
+                                lines.push('  ' + _t('{n} delayed of {total} tasks', { n: s.delayed, total: s.total }));
                             }
-                            lines.push(`  Vehicle: ${s.vtype}`);
-                            if (s.component) lines.push(`  Component: ${s.component}`);
+                            lines.push('  ' + _t('Vehicle: {v}', { v: s.vtype }));
+                            if (s.component) lines.push('  ' + _t('Component: {c}', { c: _t(s.component) }));
                             return lines;
                         },
                     },
@@ -5470,13 +6622,15 @@ function renderKD2BottleneckChart(data) {
             scales: {
                 x: {
                     beginAtZero: true,
-                    ticks: { color: c.text, font: { family: 'Inter', size: 10 }, callback: v => v + 'd' },
+                    ticks: { color: c.text, font: { family: 'Inter', size: 10 }, precision: 0, callback: v => metric === 'count' ? v : v + 'd' },
                     grid: { color: c.grid },
-                    title: { display: true, text: 'Max Delay (days, worst delayed task per station)', color: c.text, font: { family: 'Inter', size: 10 } },
+                    border: { display: false },
+                    title: { display: true, text: metricTxt, color: c.axisLabel, font: { family: 'Inter', size: 10 } },
                 },
                 y: {
-                    ticks: { color: c.text, font: { family: 'Inter', size: 10 } },
+                    ticks: { color: c.text, font: { family: 'Inter', size: 9 }, autoSkip: false },
                     grid: { display: false },
+                    border: { display: false },
                 },
             },
         },
@@ -5794,7 +6948,8 @@ function _resizeAllCharts() {
     if (_resizeAllChartsTimer) clearTimeout(_resizeAllChartsTimer);
     _resizeAllChartsTimer = setTimeout(() => {
         _resizeAllChartsTimer = null;
-        [barChartInst, lineChartInst, _f100ChartStatus, _f100ChartStep, _f100ChartVtype, _kd2BottleneckChartInst]
+        [barChartInst, lineChartInst, _f100ChartStatus, _f100ChartStep, _f100ChartVtype, _kd2BottleneckChartInst,
+            ...(typeof anChartInstances === 'function' ? anChartInstances() : [])]
             .forEach(c => { try { c?.resize(); } catch {} });
     }, 60);
 }
@@ -5858,7 +7013,7 @@ function updateChartHeadings(grouping) {
 
     if (barTitle) barTitle.textContent = 'Status Breakdown';
     if (barSubtitle) {
-        barSubtitle.textContent = `Planned · Completed · Late Completion · Overdue by ${groupingLabel}`;
+        barSubtitle.textContent = `Completed · Late · In progress · Planned · Overdue by ${groupingLabel}`;
     }
     if (lineTitle) lineTitle.textContent = 'Cumulative Progress';
     if (lineSubtitle) {
@@ -5869,97 +7024,127 @@ function updateChartHeadings(grouping) {
 }
 
 function renderBarChart(data) {
-    const grouping = getChartGrouping(data);
+    // "Group by" selector on the card overrides the automatic grouping
+    const grouping = (typeof anStatusGrouping === 'function' && anStatusGrouping(data)) || getChartGrouping(data);
     const labels = grouping.labels;
     updateChartHeadings(grouping.keyLabel);
 
-    const counts = labels.map(label => {
-        const rows = data.filter(row => grouping.valueFor(row) === label);
-        return {
-            planned: rows.filter(r => calculateStatus(r) === 'Planned').length,
-            completed: rows.filter(r => calculateStatus(r) === 'Completed').length,
-            late: rows.filter(r => calculateStatus(r) === 'Late Completion').length,
-            overdue: rows.filter(r => calculateStatus(r) === 'Overdue').length,
-        };
+    const STATUSES = [
+        ['Completed',       '--clr-completed', '#22c55e'],
+        ['Late Completion', '--clr-late',      '#f97316'],
+        ['In Progress',     null,              '#f59e0b'],
+        ['Planned',         '--clr-planned',   '#3b82f6'],
+        ['Overdue',         '--clr-overdue',   '#ef4444'],
+    ];
+    const index = new Map(labels.map((l, i) => [l, i]));
+    const counts = STATUSES.map(() => labels.map(() => 0));
+    data.forEach(r => {
+        const i = index.get(grouping.valueFor(r));
+        if (i == null) return;
+        const s = STATUSES.findIndex(([name]) => name === calculateStatus(r));
+        if (s >= 0) counts[s][i]++;
     });
 
+    const css = getComputedStyle(document.documentElement);
+    const hexA = (hex, a) => { const h = hex.replace('#', ''); const f = h.length === 3 ? h.split('').map(x => x + x).join('') : h; const n = parseInt(f, 16); return Number.isNaN(n) ? hex : `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; };
+    const base = chartOptions(isKD2Module() ? 'Plan Blocks' : 'Status Count');
     const cfg = {
         type: 'bar',
         data: {
             labels: labels.length ? labels : ['No Data'],
-            datasets: [
-                {
-                    label: 'Planned',
-                    data: counts.map(c => c.planned),
-                    backgroundColor: 'rgba(59,130,246,.75)',
-                    borderColor: '#3b82f6',
-                    borderWidth: 1,
-                    borderRadius: 4,
-                },
-                {
-                    label: 'Completed',
-                    data: counts.map(c => c.completed),
-                    backgroundColor: 'rgba(34,197,94,.75)',
-                    borderColor: '#22c55e',
-                    borderWidth: 1,
-                    borderRadius: 4,
-                },
-                {
-                    label: 'Late',
-                    data: counts.map(c => c.late),
-                    backgroundColor: 'rgba(59,130,246,.75)',
-                    borderColor: '#3b82f6',
-                    borderWidth: 1,
-                    borderRadius: 4,
-                },
-                {
-                    label: 'Overdue',
-                    data: counts.map(c => c.overdue),
-                    backgroundColor: 'rgba(239,68,68,.75)',
-                    borderColor: '#ef4444',
-                    borderWidth: 1,
-                    borderRadius: 4,
-                },
-            ],
+            datasets: STATUSES.map(([name, v, fallback], s) => {
+                const col = (v && css.getPropertyValue(v).trim()) || fallback;
+                return {
+                    label: name === 'Late Completion' ? 'Late' : name,
+                    data: counts[s],
+                    backgroundColor: hexA(col, 0.8),
+                    borderWidth: 0,
+                    borderRadius: 2,
+                    maxBarThickness: 34,
+                };
+            }),
         },
-        options: chartOptions(isKD2Module() ? 'Plan Blocks' : 'Status Count'),
+        options: {
+            ...base,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: { ...base.scales.x, stacked: true, grid: { display: false }, ticks: { ...base.scales.x.ticks, font: { family: 'Inter', size: labels.length > 20 ? 9 : 10 }, maxRotation: 55, autoSkip: labels.length > 30 } },
+                y: { ...base.scales.y, stacked: true, ticks: { ...base.scales.y.ticks, stepSize: undefined, precision: 0 } },
+            },
+        },
     };
 
     if (barChartInst) barChartInst.destroy();
     barChartInst = new Chart(document.getElementById('barChart'), cfg);
+
+    // Insight — where the overdue work sits
+    if (typeof anSetInsight === 'function') {
+        const noun = _t(isKD2Module() ? 'blocks' : 'tasks');
+        const total = data.length;
+        const overdue = counts[4], totalOver = overdue.reduce((a, b) => a + b, 0);
+        const done = counts[0].reduce((a, b) => a + b, 0) + counts[1].reduce((a, b) => a + b, 0);
+        if (!total) anSetInsight('anStatusInsight', _t('No {noun} in the current filter.', { noun }));
+        else if (!totalOver) anSetInsight('anStatusInsight', _t('No overdue {noun} · {pct}% of {total} {noun} complete.', { noun, pct: Math.round(done / total * 100), total: total.toLocaleString('en-GB') }), 'good');
+        else {
+            const wi = overdue.indexOf(Math.max(...overdue));
+            const where = labels.length > 1 ? ' — ' + _t('most in {name} ({n}, {pct}%)', { name: labels[wi], n: overdue[wi], pct: Math.round(overdue[wi] / totalOver * 100) }) : '';
+            anSetInsight('anStatusInsight',
+                _t('{n} overdue {noun} ({pct}% of total)', { n: totalOver.toLocaleString('en-GB'), noun, pct: Math.round(totalOver / total * 100) }) + where
+                    + ' · ' + _t('{pct}% complete', { pct: Math.round(done / total * 100) }) + '.',
+                totalOver / total > 0.1 ? 'bad' : 'warn');
+        }
+    }
 }
 
 function renderLineChart(data) {
-    // Build daily timeline between min start_date and today
+    // Build daily timeline between the first and last planned end date
     if (!data.length) {
         if (lineChartInst) lineChartInst.destroy();
         lineChartInst = null;
         updateChartHeadings(getChartGrouping(data).keyLabel);
+        if (typeof anSetInsight === 'function') anSetInsight('anCumInsight', '');
         return;
     }
 
-    const dates = data.map(r => r.end_date).sort();
-    const minDate = dates[0];
-    const maxDate = dates[dates.length - 1];
+    const isF100Row = r => r.module === 'gun' || r.module === 'vehicle';
+    const ends = data.map(r => r.end_date).filter(Boolean).sort();
+    // F100 rows store completion date directly; F200 uses progress sub-object
+    const doneDates = data.map(r => {
+        const s = calculateStatus(r);
+        const cd = isF100Row(r) ? r.actual_end_date : r.progress?.completion_date;
+        return (s === 'Completed' || s === 'Late Completion') && cd ? cd : null;
+    }).filter(Boolean).sort();
+    if (!ends.length) {
+        if (lineChartInst) lineChartInst.destroy();
+        lineChartInst = null;
+        return;
+    }
 
-    const timeline = generateDateRange(minDate, maxDate);
+    let timeline = generateDateRange(ends[0], ends[ends.length - 1]);
+    // Range selector: last N weeks up to 4 weeks ahead
+    const range = typeof anOpt === 'function' ? anOpt('cumRange') : 'all';
+    const today = todayStr();
+    if (range !== 'all') {
+        const back = new Date(today + 'T00:00:00'); back.setDate(back.getDate() - 7 * Number(range));
+        const ahead = new Date(today + 'T00:00:00'); ahead.setDate(ahead.getDate() + 28);
+        const from = localDateStr(back), to = localDateStr(ahead);
+        const zoomed = timeline.filter(d => d >= from && d <= to);
+        if (zoomed.length > 1) timeline = zoomed;
+    }
 
-    // Cumulative planned (tasks whose end_date <= date)
-    const plannedCum = timeline.map(d =>
-        data.filter(r => r.end_date <= d).length
-    );
-
-    // Cumulative actual completed (tasks completed by that date)
-    const actualCum = timeline.map(d =>
-        data.filter(r => {
-            const s = calculateStatus(r);
-            // F100 rows store completion date directly; F200 uses progress sub-object
-            const cd = (r.module === 'gun' || r.module === 'vehicle') ? r.actual_end_date : r.progress?.completion_date;
-            return (s === 'Completed' || s === 'Late Completion') && cd && cd <= d;
-        }).length
-    );
-
+    // Cumulative counts with a moving pointer over the sorted dates (one pass)
+    const cumulative = sorted => { let i = 0; return timeline.map(d => { while (i < sorted.length && sorted[i] <= d) i++; return i; }); };
+    const plannedCum = cumulative(ends);
+    const actualCum = cumulative(doneDates);
     const labels = timeline.map(d => formatDate(d));
+    const todayIdx = timeline.indexOf(today);
+
+    const css = getComputedStyle(document.documentElement);
+    const cPlan = css.getPropertyValue('--clr-planned').trim() || '#3b82f6';
+    const cDone = css.getPropertyValue('--clr-completed').trim() || '#22c55e';
+    const hexA = (hex, a) => { const h = hex.replace('#', ''); const f = h.length === 3 ? h.split('').map(x => x + x).join('') : h; const n = parseInt(f, 16); return Number.isNaN(n) ? hex : `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; };
+    const c = themeChartColors();
+    const base = chartOptions(isKD2Module() ? 'Cumulative Plan Blocks' : 'Cumulative Tasks');
 
     const cfg = {
         type: 'line',
@@ -5969,8 +7154,8 @@ function renderLineChart(data) {
                 {
                     label: 'Planned (cumulative)',
                     data: plannedCum,
-                    borderColor: '#3b82f6',
-                    backgroundColor: 'rgba(59,130,246,.08)',
+                    borderColor: cPlan,
+                    backgroundColor: hexA(cPlan, 0.08),
                     borderWidth: 2,
                     fill: true,
                     tension: .35,
@@ -5978,44 +7163,63 @@ function renderLineChart(data) {
                 },
                 {
                     label: 'Actual (cumulative)',
-                    data: actualCum,
-                    borderColor: '#22c55e',
-                    backgroundColor: 'rgba(34,197,94,.08)',
+                    // Actual stops at today — no flat line into the future
+                    data: actualCum.map((v, i) => (timeline[i] > today ? null : v)),
+                    borderColor: cDone,
+                    backgroundColor: hexA(cDone, 0.1),
                     borderWidth: 2,
                     fill: true,
                     tension: .35,
                     pointRadius: timeline.length > 30 ? 0 : 3,
-                    borderDash: [],
                 },
             ],
         },
         options: {
-            ...chartOptions(isKD2Module() ? 'Cumulative Plan Blocks' : 'Cumulative Tasks'),
+            ...base,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                ...base.plugins,
+                anMarker: { value: todayIdx >= 0 ? todayIdx : null, label: 'Today' },
+            },
             scales: {
                 x: {
-                    ticks: {
-                        color: themeChartColors().text,
-                        font: { family: 'DM Mono', size: 10 },
-                        maxTicksLimit: 10,
-                        maxRotation: 45,
-                    },
-                    grid: { color: themeChartColors().grid },
+                    ticks: { color: c.text, font: { family: 'Inter', size: 10 }, maxTicksLimit: 7, maxRotation: 0 },
+                    grid: { display: false },
+                    border: { display: false },
                 },
                 y: {
-                    ticks: {
-                        color: themeChartColors().text,
-                        font: { family: 'DM Mono', size: 11 },
-                        stepSize: 1,
-                    },
-                    grid: { color: themeChartColors().grid },
+                    ticks: { color: c.text, font: { family: 'Inter', size: 10 }, precision: 0 },
+                    grid: { color: c.grid },
+                    border: { display: false },
                     beginAtZero: true,
+                    title: base.scales.y.title,
                 },
             },
         },
+        plugins: typeof _anMarkerPlugin !== 'undefined' ? [_anMarkerPlugin] : [],
     };
 
     if (lineChartInst) lineChartInst.destroy();
     lineChartInst = new Chart(document.getElementById('lineChart'), cfg);
+
+    // Insight — where actual stands against the plan today
+    if (typeof anSetInsight === 'function') {
+        const noun = _t(isKD2Module() ? 'blocks' : 'tasks');
+        const count = (sorted, d) => { let n = 0; for (const x of sorted) { if (x > d) break; n++; } return n; };
+        const due = count(ends, today), done = count(doneDates, today);
+        const fmt = n => n.toLocaleString('en-GB');
+        if (!due) {
+            anSetInsight('anCumInsight', _t('No {noun} are due yet — first planned finish {date}', { noun, date: formatDate(ends[0]) })
+                + (done ? ' · ' + _t('{n} already done early', { n: fmt(done) }) : '') + '.', 'neutral');
+        } else if (done >= due) {
+            anSetInsight('anCumInsight', _t('On plan: {done} {noun} done vs {due} due by today ({pct}% of the plan).', { done: fmt(done), noun, due: fmt(due), pct: Math.round(done / ends.length * 100) }), 'good');
+        } else {
+            const gap = due - done;
+            anSetInsight('anCumInsight',
+                _t('{gap} {noun} behind plan: {done} done vs {due} due by today ({pct}% of due) · {whole}% of the whole plan done.', { gap: fmt(gap), noun, done: fmt(done), due: fmt(due), pct: Math.round(done / due * 100), whole: Math.round(done / ends.length * 100) }),
+                gap / due > 0.2 ? 'bad' : 'warn');
+        }
+    }
 }
 
 function chartOptions(yLabel) {
@@ -6023,13 +7227,17 @@ function chartOptions(yLabel) {
     return {
         responsive: true,
         maintainAspectRatio: false,
+        animation: { duration: 250 },
         plugins: {
             legend: {
+                position: 'bottom',
                 labels: {
                     color: c.text,
-                    font: { family: 'Inter', size: 11 },
-                    boxWidth: 12,
-                    padding: 14,
+                    font: { family: 'Inter', size: 10 },
+                    boxWidth: 8,
+                    boxHeight: 8,
+                    padding: 10,
+                    usePointStyle: true,
                 },
             },
             tooltip: {
@@ -6038,21 +7246,23 @@ function chartOptions(yLabel) {
                 borderWidth: 1,
                 titleColor: c.tooltipTtl,
                 bodyColor: c.tooltipBdy,
-                padding: 10,
+                padding: 9,
             },
         },
         scales: {
             x: {
-                ticks: { color: c.text, font: { family: 'DM Mono', size: 11 } },
+                ticks: { color: c.text, font: { family: 'Inter', size: 10 } },
                 grid: { color: c.grid },
+                border: { display: false },
             },
             y: {
                 ticks: {
                     color: c.text,
-                    font: { family: 'DM Mono', size: 11 },
+                    font: { family: 'Inter', size: 10 },
                     stepSize: 1,
                 },
                 grid: { color: c.grid },
+                border: { display: false },
                 beginAtZero: true,
                 title: {
                     display: true,
@@ -6660,6 +7870,7 @@ function openNotifDropdown() {
             const tableSection = document.getElementById('tableSection');
             if (tableSection) tableSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
             setTimeout(() => {
+                _ensureTableRowRendered(planId);
                 const tr = document.querySelector(`tr[data-plan-id="${planId}"]`);
                 if (tr) {
                     tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -6721,6 +7932,7 @@ function checkNotifJump() {
         const tableSection = document.getElementById('tableSection');
         if (tableSection) tableSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
         setTimeout(() => {
+            _ensureTableRowRendered(planId);
             const tr = document.querySelector(`tr[data-plan-id="${planId}"]`);
             if (tr) {
                 tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -6955,7 +8167,7 @@ function wireEvents() {
             handleMultiSelectMenuChange(key, e, () => {
                 if (ISSUE_FILTER_KEYS.has(key)) { loadIssuesDebounced(); return; }
                 if (key === 'vehicle') onVehicleFilterChange();
-                if (key === 'battalion' && isKD2Module()) populateUnitFilter(filterState.vehicle);
+                if (key === 'battalion' && isKD2Module()) { populateUnitFilter(filterState.vehicle); _saveBattalionPick(); _refitGanttRangeOnNextLoad(); }
                 loadDataDebounced();
             });
         });
@@ -7306,7 +8518,7 @@ function setConnStatus(state, label) {
     const el = document.getElementById('connIndicator');
     const lbl = el.querySelector('.conn-label');
     el.className = `conn-indicator ${state}`;
-    lbl.textContent = label;
+    lbl.textContent = _t(label);
 }
 
 function setTableLoading(loading) {
@@ -7361,9 +8573,9 @@ function startClock() {
     function tick() {
         const now = new Date();
         document.getElementById('headerClock').textContent =
-            now.toLocaleTimeString('en-GB', { hour12: false });
+            now.toLocaleTimeString(window.PPMSi18n?.getLocale?.() || 'en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
         document.getElementById('headerDate').textContent =
-            now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+            now.toLocaleDateString(window.PPMSi18n?.getLocale?.() || 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
     }
     tick();
     setInterval(tick, 1000);
@@ -7413,17 +8625,33 @@ function todayStr() {
     return localDateStr(new Date());
 }
 
+/* Date labels are formatted thousands of times per redraw (Gantt tooltips,
+   VPX cells, table) and toLocaleDateString rebuilds a formatter on every
+   call — reuse one formatter and remember each date's label. */
+function _cachedDateFormat(key, options) {
+    const store = _cachedDateFormat[key] || (_cachedDateFormat[key] = {
+        fmt: new Intl.DateTimeFormat('en-GB', options), memo: new Map(),
+    });
+    return isoStr => {
+        let label = store.memo.get(isoStr);
+        if (label === undefined) {
+            label = store.fmt.format(new Date(isoStr + 'T00:00:00'));
+            if (store.memo.size > 5000) store.memo.clear();
+            store.memo.set(isoStr, label);
+        }
+        return label;
+    };
+}
+
 function formatDate(isoStr) {
     if (!isoStr || isoStr === '—') return '—';
-    const d = new Date(isoStr + 'T00:00:00');
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    return _cachedDateFormat('long', { day: '2-digit', month: 'short', year: 'numeric' })(isoStr);
 }
 
 /** Short date — "01 Jan" (no year), used in VPX cells */
 function formatDateShort(isoStr) {
     if (!isoStr || isoStr === '—') return '—';
-    const d = new Date(isoStr + 'T00:00:00');
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+    return _cachedDateFormat('short', { day: '2-digit', month: 'short' })(isoStr);
 }
 
 /** Inline-editable "Actual Start" / "Completed On" date cell. A native
@@ -7684,20 +8912,72 @@ function renderThemePickerMenu() {
     `).join('');
 }
 
+let _themeChartTimer = null;
 function setTheme(theme) {
     if (!THEME_ORDER.includes(theme)) theme = 'dark';
+    const root = document.documentElement;
+    // Thousands of cells carry CSS transitions (buttons use `transition: all`);
+    // left on, a theme change animates every one of them at once and the page
+    // stalls. Switch them off for the swap, back on after the new colours paint.
+    root.classList.add('theme-switching');
     _applyThemeAttr(theme);
     localStorage.setItem(_userThemeKey(), theme);
     localStorage.setItem(THEME_KEY_BASE + '_last', theme); // anti-flash fallback
     renderThemePickerIcon();
     renderThemePickerMenu();
-    // Charts bake colors into the canvas at creation time, so they need a
-    // repaint — everything else (table/VPX/Gantt/badges) is styled through
-    // CSS custom properties and already repaints for free from the
-    // data-theme attribute change above, so a full refreshAllViews() here
-    // (table + VPX + Gantt + charts rebuild) was pure wasted work.
-    if (currentData.length) renderCharts(applyActiveFilters(currentData));
+    requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('theme-switching')));
+    // Charts bake colours into the canvas, so they need a redraw — but only
+    // after the page has repainted, so the switch itself feels instant.
+    // (Everything else is styled through CSS variables and repaints for free.)
+    clearTimeout(_themeChartTimer);
+    _themeChartTimer = setTimeout(() => {
+        const redraw = () => { if (currentData.length) renderCharts(applyActiveFilters(currentData)); };
+        if ('requestIdleCallback' in window) requestIdleCallback(redraw, { timeout: 600 }); else redraw();
+    }, 120);
 }
+
+/* ── Close any open menu when you press outside it ─────────────────
+   Each menu also closes itself on 'click', but many buttons call
+   stopPropagation(), so those handlers never hear about clicks on them
+   and the menu stayed open. This listens in the capture phase (before
+   any stopPropagation) and on pointerdown, so a press anywhere else
+   always closes it. Escape closes every open menu. ── */
+const _OUTSIDE_CLOSE_MENUS = [
+    // [menu selector, what counts as "inside" (menu + its trigger), close]
+    ['#themePickerDropdown', '#themePickerWrap', m => { m.style.display = 'none'; document.getElementById('btnThemePicker')?.setAttribute('aria-expanded', 'false'); }],
+    ['#navMoreDropdown', '#navMoreWrap', m => { m.style.display = 'none'; document.getElementById('btnNavMore')?.setAttribute('aria-expanded', 'false'); }],
+    ['#navUserMenu', '.user-zone', m => { m.hidden = true; document.getElementById('navUserChip')?.setAttribute('aria-expanded', 'false'); }],
+    ['#ganttExportMenu', '#btnGanttExportSchedule', m => { m.style.display = 'none'; document.getElementById('btnGanttExportSchedule')?.setAttribute('aria-expanded', 'false'); }],
+    ['.context-select-menu', '.context-select', m => { m.style.display = 'none'; m.closest('.context-select')?.querySelector('[data-cs-trigger]')?.setAttribute('aria-expanded', 'false'); }],
+    ['.f100-notif-dropdown', m => document.getElementById(m.classList.contains('active-users-dropdown') ? 'activeUsersWrap' : 'f100NotifWrap'), m => m.remove()],
+    ['.ms-menu', '.ms-filter, .th-filterable', m => {
+        m.hidden = true;
+        if (m.classList.contains('th-filter-menu')) _thOpenFilterField = null; // don't re-open on the next table render
+    }],
+];
+
+function _isMenuOpen(m) {
+    return !m.hidden && m.style.display !== 'none' && getComputedStyle(m).display !== 'none';
+}
+
+function _closeMenusOutside(target) {
+    for (const [menuSel, insideSel, close] of _OUTSIDE_CLOSE_MENUS) {
+        document.querySelectorAll(menuSel).forEach(m => {
+            if (!_isMenuOpen(m) || (target && m.contains(target))) return;
+            const inside = typeof insideSel === 'function' ? insideSel(m) : (m.closest(insideSel) || document.querySelector(insideSel));
+            if (target && inside?.contains(target)) return;
+            close(m);
+        });
+    }
+    // Gantt bar / lane menus keep their own open-state
+    if (document.querySelector('.gc-bar-menu-open, .gr-reorder-menu-open')
+        && !(target && target.closest?.('.gc-bar-menu, .gc-bar-menu-trigger, .gr-reorder-more, .gr-reorder-menu'))) {
+        _closeAllBarMenus();
+    }
+}
+
+document.addEventListener('pointerdown', e => _closeMenusOutside(e.target), true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') _closeMenusOutside(null); });
 
 function toggleTheme() {
     const idx = THEME_ORDER.indexOf(getCurrentTheme());
@@ -7918,21 +9198,116 @@ function setGanttRangeFromData(data) {
 // re-renders all of these together; Gantt-side edits need the same thing,
 // just without a full re-fetch since currentData is already up to date.
 function syncDataViewsAfterGanttEdit() {
-    const displayData = applyActiveFilters(currentData);
-    renderTable(applyTableSearchFilters(displayData));
-    updateSummary(displayData);
-    renderCharts(displayData);
-    renderVPX(displayData);
+    // Summary now; Plan Table and VPX redraw when they're on screen
+    _renderSecondaryViews({ includeTable: true, defer: true });
 }
 
 /* ──────────────────────────────────────────────────────────────────
    MAIN RENDER FUNCTION
    Call:  renderGantt(plansArray, 'YYYY-MM-DD', 'YYYY-MM-DD')
    ────────────────────────────────────────────────────────────────── */
-function renderGantt(plans, startDate, endDate) {
+/* A block's ⋯ menu — built only for the block whose menu is open (and
+   injected on click), not rendered hidden inside all ~1,000 blocks. */
+function _ganttBlockMenuHtml(taskId) {
+    const id = esc(String(taskId));
+    return `
+          <div class="gc-bar-menu gc-bar-menu-compact" role="menu" aria-label="Block options">
+            <div class="gc-bmc-grid">
+              <button type="button" class="gc-bmc-btn gc-bmc-up gc-bar-lane-up" data-plan-id="${id}" title="Move up" role="menuitem">
+                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11V3"/><path d="M3.5 6.5 7 3l3.5 3.5"/></svg>
+              </button>
+              <button type="button" class="gc-bmc-btn gc-bmc-dn gc-bar-lane-dn" data-plan-id="${id}" title="Move down" role="menuitem">
+                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v8"/><path d="m3.5 7.5 3.5 3.5 3.5-3.5"/></svg>
+              </button>
+              <button type="button" class="gc-bmc-btn gc-bmc-edit gc-bar-menu-edit" data-plan-id="${id}" title="Edit" role="menuitem">
+                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 11h1.8L10 5.3l-1.8-1.8L2.5 9.2V11Z"/><path d="m8.2 3.5 1.8 1.8"/></svg>
+              </button>
+              <button type="button" class="gc-bmc-btn gc-bmc-del gc-bar-menu-delete" data-plan-id="${id}" title="Delete" role="menuitem">
+                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h9"/><path d="M5.5 4V3h3v1"/><path d="M4.5 5.5v5a.75.75 0 0 0 .75.75h3.5A.75.75 0 0 0 9.5 10.5v-5"/></svg>
+              </button>
+            </div>
+          </div>`;
+}
+
+/* A block's edit-mode controls: resize handles, selection checkbox and the
+   ⋯ trigger (the ⋯ menu itself is built on click — _ganttBlockMenuHtml). */
+function _ganttBarControlsHtml(taskId, { isSelected = false, menuIsOpen = false } = {}) {
+    const task = { id: esc(String(taskId)) };
+    return `
+          <span class="gc-bar-resize gc-bar-resize-left" data-plan-id="${task.id}" data-resize-edge="start" title="Drag to change the start date">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 3 4.5 7l4 4"/></svg>
+          </span>
+          <span class="gc-bar-resize gc-bar-resize-right" data-plan-id="${task.id}" data-resize-edge="end" title="Drag to change the end date">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 3l4 4-4 4"/></svg>
+          </span>
+          <button type="button" class="gc-bar-select${isSelected ? ' gc-bar-select-active' : ''}" data-plan-id="${task.id}" title="Select block" aria-label="Select block" aria-pressed="${isSelected ? 'true' : 'false'}"></button>
+          <button type="button" class="gc-bar-menu-trigger" data-plan-id="${task.id}" title="Block options" aria-label="Block options" aria-expanded="${menuIsOpen ? 'true' : 'false'}">
+            <span class="gc-bar-menu-trigger-dots" aria-hidden="true">
+              <span class="gc-bar-menu-trigger-dot"></span>
+              <span class="gc-bar-menu-trigger-dot"></span>
+              <span class="gc-bar-menu-trigger-dot"></span>
+            </span>
+          </button>
+          ${menuIsOpen ? _ganttBlockMenuHtml(task.id) : ''}`;
+}
+
+/* Build a block's edit controls the first time it's hovered (or selected). */
+let _ganttOnResizePointerDown = null; // set by wireGanttDragEdit
+/** One pointerdown handler per element — re-wiring replaces, never stacks
+ *  (a patched Gantt keeps most of its bars between renders). */
+function _wirePointerDown(el, fn) {
+    if (el._ppmsPointerDown) el.removeEventListener('pointerdown', el._ppmsPointerDown);
+    el._ppmsPointerDown = fn;
+    el.addEventListener('pointerdown', fn);
+}
+function _ensureGanttBarControls(bar) {
+    if (!bar || !bar.dataset.lazyControls || !_ganttEditMode) return;
+    delete bar.dataset.lazyControls;
+    const id = bar.dataset.planId;
+    bar.insertAdjacentHTML('beforeend', _ganttBarControlsHtml(id, {
+        isSelected: _selectedGanttPlanIds.has(String(id)),
+        menuIsOpen: String(_openGanttBlockMenuPlanId) === String(id),
+    }));
+    if (_ganttOnResizePointerDown) {
+        bar.querySelectorAll('.gc-bar-resize').forEach(h => _wirePointerDown(h, _ganttOnResizePointerDown));
+    }
+}
+function _ganttLazyControlsHandler(e) {
+    const bar = e.target.closest?.('.gc-bar[data-lazy-controls]');
+    if (bar) _ensureGanttBarControls(bar);
+}
+
+/* What the Gantt last painted, row by row. A live update from a co-editor
+   (renderGantt(..., { patch: true })) rebuilds the row HTML as usual but
+   only swaps the rows whose HTML changed; the header, the other rows and
+   the scroll position stay as they are. Anything that changes the layout
+   (rows added/removed, date range, view, day width) falls back to a full
+   redraw automatically. */
+let _ganttLastPaint = null;
+
+/** Line + position of every station of a vehicle (cached per draw cycle). */
+const _ganttLineOrderCache = new Map();
+function _ganttLineOrderFor(vehicle) {
+    if (!_ganttLineOrderCache.has(vehicle)) {
+        _ganttLineOrderCache.set(vehicle, getModuleRuntime()?.getStationOrderByCode?.(vehicle) || new Map());
+        setTimeout(() => _ganttLineOrderCache.delete(vehicle), 0);
+    }
+    return _ganttLineOrderCache.get(vehicle);
+}
+const GANTT_STATUS_ICON = { complete: '✓', early: '✓', 'late-complete': '✓', progress: '▶', late: '!' };
+const GANTT_STATUS_LABEL = {
+    complete: 'Completed', early: 'Completed early', 'late-complete': 'Completed late',
+    progress: 'In progress', late: 'Overdue', planned: 'Planned',
+};
+let _ganttPatchStats = null; // last paint: rows / rows replaced (for checking)
+const GANTT_ROW_MARK = '\u0001';
+
+function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
     const inner = document.getElementById('ganttInner');
     if (!inner) return;
     const previousGanttScroll = saveGanttScrollPos();
+    const prevPaint = _ganttLastPaint;
+    _ganttLastPaint = null; // set again only after a full body paint
 
     if (!startDate || !endDate || startDate > endDate) {
         inner.innerHTML = `
@@ -7966,7 +9341,7 @@ function renderGantt(plans, startDate, endDate) {
         return {
             date: d,
             dayNum: dt.getDate(),
-            month: dt.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }),
+            month: dt.toLocaleDateString(window.PPMSi18n?.getLocale?.() || 'en-GB', { month: 'short', year: 'numeric' }),
             isoWeek: getISOWeek(d),
             isSat: dow === 6,
             isToday: d === today,
@@ -8086,6 +9461,13 @@ function renderGantt(plans, startDate, endDate) {
     // row per active station of every vehicle in scope, straight from the
     // station config (Manage Processes / Flow), same as Unit View already
     // does from the unit registry above.
+    // K10 + K11 together: toggle on, both vehicles in scope, not reordering the route
+    const _vehiclesInScope = isKd2ProcessView
+        ? new Set([...(effectiveVehicleSetG ? [...effectiveVehicleSetG] : filterOptions.vehicle.map(o => o.value)), ...visible.map(p => p.vehicle)])
+        : new Set();
+    const _combineAvailable = isKd2ProcessView && _vehiclesInScope.has('K10') && _vehiclesInScope.has('K11');
+    _ganttCombineInEffect = _combineAvailable && _ganttCombineK1011 && !(_ganttEditMode && _ganttReorderMode);
+    _syncGanttCombineButton(_combineAvailable);
     if (isKd2ProcessView) {
         const vehiclesToSeed = effectiveVehicleSetG
             ? [...effectiveVehicleSetG]
@@ -8101,14 +9483,17 @@ function renderGantt(plans, startDate, endDate) {
             // source of truth for seeding means a station with an unresolved
             // category still gets a row (just without the category tag on
             // it) instead of no row at all.
-            const stationNames = getModuleRuntime()?.getActiveStationNames?.(vehicle);
+            // Reorder route mode also lists processes hidden or deleted in this
+            // plan version (greyed) so they can be shown / restored.
+            const stationNames = getModuleRuntime()?.getActiveStationNames?.(vehicle, { includeHidden: _ganttEditMode && _ganttReorderMode });
             if (!stationNames) return;
+            const seedGroup = _ganttCombinedGroupOf(vehicle);
             stationNames.forEach(stationName => {
-                ensureGroupLane(vehicle, stationName);
-                laneMetaMap[laneMetaKey(vehicle, stationName)] = {
+                ensureGroupLane(seedGroup, stationName);
+                laneMetaMap[laneMetaKey(seedGroup, stationName)] = {
                     battalion_id: null,
                     battalion_code: '',
-                    vehicle_type: vehicle,
+                    vehicle_type: seedGroup === GANTT_COMBINED_KEY ? '' : vehicle,
                     unit_serial: null,
                     unit_label: '',
                 };
@@ -8119,7 +9504,7 @@ function renderGantt(plans, startDate, endDate) {
         const groupKey = isF100ProcessView
             ? (p.part_name || '—')
             : isKd2ProcessView
-                ? (p.vehicle || '—')
+                ? _ganttCombinedGroupOf(p.vehicle || '—')
                 : (isKD2Module() || isF100KD2Module() ? (p.battalion_code || '—') : p.vehicle);
         const laneKey = isF100ProcessView
             ? `${p.step_number != null ? p.step_number + ' ' : ''}${p.process_name || '—'}`
@@ -8133,7 +9518,7 @@ function renderGantt(plans, startDate, endDate) {
         laneMetaMap[laneMetaKey(groupKey, laneKey)] = {
             battalion_id: p.battalion_id ?? null,
             battalion_code: p.battalion_code || '',
-            vehicle_type: p.vehicle_type || p.vehicle || '',
+            vehicle_type: groupKey === GANTT_COMBINED_KEY ? '' : (p.vehicle_type || p.vehicle || ''),
             unit_serial: isF100KD2Module() ? (p.serial_number ?? null) : (p.unit_serial ?? null),
             unit_label: p.unit_label || p.vehicle_no || '',
         };
@@ -8175,7 +9560,7 @@ function renderGantt(plans, startDate, endDate) {
             if (!_kd2UnitCompMap[unitKey]) _kd2UnitCompMap[unitKey] = { done: 0, total: 0 };
             _kd2UnitCompMap[unitKey].total++;
             if (done) _kd2UnitCompMap[unitKey].done++;
-            const statKey = r.process_station ? `${r.vehicle}||${r.process_station}` : '';
+            const statKey = r.process_station ? `${_ganttCombinedGroupOf(r.vehicle)}||${r.process_station}` : '';
             if (statKey) {
                 if (!_kd2StatCompMap[statKey]) _kd2StatCompMap[statKey] = { done: 0, total: 0 };
                 _kd2StatCompMap[statKey].total++;
@@ -8226,7 +9611,7 @@ function renderGantt(plans, startDate, endDate) {
     // ── 3. Header HTML ─────────────────────────────────────────────
     let mHtml = `<div class="gh-corner" style="width:${GANTT_LABEL_W}px;height:28px"></div>`;
     let wHtml = `<div class="gh-corner" style="width:${GANTT_LABEL_W}px;height:22px"></div>`;
-    let dHtml = `<div class="gh-corner gh-corner-label" style="width:${GANTT_LABEL_W}px;height:28px">${isF100ProcessView ? 'Part / Process' : isF100KD2Module() ? 'Battalion / Vehicle / Unit' : isKd2ProcessView ? 'Vehicle / Station' : isKD2Module() ? 'Battalion / Vehicle / Unit' : 'Vehicle / Unit'}</div>`;
+    let dHtml = `<div class="gh-corner gh-corner-label" style="width:${GANTT_LABEL_W}px;height:28px">${_t(isF100ProcessView ? 'Part / Process' : isF100KD2Module() ? 'Battalion / Vehicle / Unit' : isKd2ProcessView ? 'Vehicle / Station' : isKD2Module() ? 'Battalion / Vehicle / Unit' : 'Vehicle / Unit')}</div>`;
 
     let runMonth = '', runMonthSpan = 0;
     let runWeek = -1, runWeekSpan = 0;
@@ -8265,10 +9650,20 @@ function renderGantt(plans, startDate, endDate) {
     mHtml += `<div class="gh-month" style="width:${runMonthSpan * GANTT_DAY_W}px">${runMonth}</div>`;
     wHtml += `<div class="gh-week"  style="width:${runWeekSpan * GANTT_DAY_W}px">FW${runWeek}</div>`;
 
-    // ── 4. Background day cells (shared template per row) ─────────
-    const bgCells = dayMeta.map(dm =>
+    // ── 4. Background day grid ─────────────────────────────────────
+    // Drawn by CSS (.gantt-grid-css: day lines + Saturday shading + hover
+    // column as background layers of each row) instead of one <div> per day
+    // per row — that was ~44,000 empty elements on a year-long plan, the
+    // bulk of every redraw and of the memory that crashed co-editors' tabs.
+    // Works because Fridays are hidden, so Saturdays repeat every 6 columns;
+    // any other pattern falls back to the per-day cells.
+    const _satIdx = dayMeta.findIndex(dm => dm.isSat);
+    const _gridCss = dayMeta.every((dm, i) => dm.isSat === (_satIdx >= 0 && i >= _satIdx ? (i - _satIdx) % 6 === 0 : false))
+        && (_satIdx < 0 || _satIdx < 6);
+    const bgCells = _gridCss ? '' : dayMeta.map(dm =>
         `<div class="gc-cell${dm.isSat ? ' gc-cell-sat' : ''}" data-gantt-date="${dm.date}" style="width:${GANTT_DAY_W}px"></div>`
     ).join('');
+    _ganttDaysList = days;
 
     // ── 5. Special zone bands ──────────────────────────────────────
     // Zones are injected into every row's track div (left relative to track start,
@@ -8299,14 +9694,23 @@ function renderGantt(plans, startDate, endDate) {
 
     // ── 6. Body rows ───────────────────────────────────────────────
     let bodyHtml = '';
+    const ROW = GANTT_ROW_MARK; // marks where each body row starts
 
     groupKeys.forEach(groupKey => {
         // Line-grouped station order (Hull → Turret → downstream categories) for
         // the KD2 process view — the single source of truth for both lane sort
         // order and the block separators below. Sorting by route_sequence alone
         // interleaves the parallel Hull and Turret lines.
+        // Combined K10 + K11: both vehicles' station rows (same names, same order)
+        const _mergeVehicleMaps = getter => {
+            const m = new Map();
+            for (const v of GANTT_COMBINED_VEHICLES) {
+                (getModuleRuntime()?.[getter]?.(v) || new Map()).forEach((val, k) => { if (!m.has(k)) m.set(k, val); });
+            }
+            return m;
+        };
         const _laneOrder = isKd2ProcessView
-            ? (getModuleRuntime()?.getStationLaneOrder?.(groupKey) || new Map())
+            ? (groupKey === GANTT_COMBINED_KEY ? _mergeVehicleMaps('getStationLaneOrder') : (getModuleRuntime()?.getStationLaneOrder?.(groupKey) || new Map()))
             : null;
         const unitKeys = Object.keys(groups[groupKey]).sort((a, b) => {
             if (isF100ProcessView) return naturalSort(a, b);
@@ -8325,7 +9729,7 @@ function renderGantt(plans, startDate, endDate) {
         });
 
         // Vehicle group header row
-        bodyHtml += `
+        bodyHtml += ROW + `
       <div class="gr gr-group" style="height:${GANTT_GRP_H}px">
         <div class="gr-label gr-group-label" style="width:${GANTT_LABEL_W}px">
           <svg class="gr-label-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -8348,12 +9752,12 @@ function renderGantt(plans, startDate, endDate) {
 
         // For KD2 process view: build a station→category map for this vehicle (groupKey)
         const _kd2CatMap = isKd2ProcessView
-            ? (getModuleRuntime()?.getStationCategoryMap?.(groupKey) || new Map())
+            ? (groupKey === GANTT_COMBINED_KEY ? _mergeVehicleMaps('getStationCategoryMap') : (getModuleRuntime()?.getStationCategoryMap?.(groupKey) || new Map()))
             : null;
 
         vehicleSections.forEach(section => {
             if (!isKd2ProcessView && !isF100ProcessView && (isKD2Module() || isF100KD2Module()) && section.units.length) {
-                bodyHtml += `
+                bodyHtml += ROW + `
       <div class="gr gr-subgroup" style="height:${Math.max(30, GANTT_GRP_H - 8)}px">
         <div class="gr-label gr-subgroup-label" style="width:${GANTT_LABEL_W}px">
           <span class="gr-subgroup-badge">${esc(section.vehicle)}</span>
@@ -8373,13 +9777,13 @@ function renderGantt(plans, startDate, endDate) {
                 if (lineLabel) {
                     if (lineLabel !== _prevLineLabel) {
                         _prevLineLabel = lineLabel;
-                        bodyHtml += `
+                        bodyHtml += ROW + `
       <div class="gr gr-process-cat-sep" style="min-height:34px">
         <div class="gr-label gr-process-cat-label" style="width:${GANTT_LABEL_W}px;align-items:center;flex-wrap:wrap;line-height:1.3">
           <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" style="width:10px;height:10px;flex-shrink:0;opacity:.7">
             <path d="M3 4h8M3 7h8M3 10h8" stroke-dasharray="2 1.5"/>
           </svg>
-          ${esc(lineLabel)}
+          ${esc(_t(lineLabel))}
         </div>
         <div class="gr-track gr-process-cat-track" style="width:${totalW}px">${trackZonesHtml}${bgCells}</div>
       </div>`;
@@ -8388,6 +9792,7 @@ function renderGantt(plans, startDate, endDate) {
             }
             const tasks = groups[groupKey][unit] || [];
             const _kd2ReorderRow = isKd2ProcessView && _ganttEditMode && _ganttReorderMode;
+            const _rowVis = _kd2ReorderRow ? (getModuleRuntime()?.getRowVisibility?.(groupKey, unit) || 'visible') : 'visible';
             const _rowLine = (isKd2ProcessView && _laneOrder) ? (_laneOrder.get(unit)?.line || '') : '';
             const laneVehicle = isF100ProcessView ? groupKey : isKd2ProcessView ? groupKey : ((isKD2Module() || isF100KD2Module()) ? unit.split('||')[0] : groupKey);
             const laneUnit    = isF100ProcessView ? unit    : isKd2ProcessView ? unit    : ((isKD2Module() || isF100KD2Module()) ? unit.split('||').slice(1).join('||') : unit);
@@ -8403,14 +9808,47 @@ function renderGantt(plans, startDate, endDate) {
             const laneMeta = laneMetaMap[laneMetaKey(groupKey, unit)] || {};
 
             // ── Lane assignment for overlapping bars ─────────────────────
-            const positioned = buildPositionedGanttLaneTasks(tasks, startDate, endDate);
-            const numLanes = positioned.length
-                ? Math.max(...positioned.map(item => item.lane)) + 1
-                : 1;
+            // KD2 Unit view: each line (Hull / Turret / Assembly, or Structure /
+            // Assembly) gets its own band of sub-rows, so a vehicle reads as its
+            // sequences instead of one mixed pile of blocks.
             const BAR_H = 22;   // px — bar height per lane
             const BAR_GAP = 6;    // px — gap between lanes
             const LANE_H = BAR_H + BAR_GAP;
+            let positioned, lineSections = null;
+            if (isKD2Module() && !isKd2ProcessView && tasks.length) {
+                const order = _ganttLineOrderFor(laneVehicle);
+                const byLine = new Map();
+                tasks.forEach(t => {
+                    const info = order.get(t.station_code);
+                    const line = info?.line || 'Other';
+                    const rank = info ? Math.floor(info.sortKey / 1000000) : 99;
+                    if (!byLine.has(line)) byLine.set(line, { line, rank, tasks: [] });
+                    byLine.get(line).tasks.push(t);
+                });
+                positioned = [];
+                lineSections = [];
+                let offset = 0;
+                [...byLine.values()].sort((a, b) => a.rank - b.rank).forEach(sec => {
+                    const pos = buildPositionedGanttLaneTasks(sec.tasks, startDate, endDate);
+                    const n = pos.length ? Math.max(...pos.map(it => it.lane)) + 1 : 1;
+                    pos.forEach(it => positioned.push({ ...it, lane: it.lane + offset }));
+                    lineSections.push({ line: sec.line, start: offset, lanes: n });
+                    offset += n;
+                });
+            } else {
+                positioned = buildPositionedGanttLaneTasks(tasks, startDate, endDate);
+            }
+            const numLanes = lineSections
+                ? Math.max(1, lineSections.reduce((n, sec) => n + sec.lanes, 0))
+                : (positioned.length ? Math.max(...positioned.map(item => item.lane)) + 1 : 1);
             const rowH = Math.max(GANTT_ROW_H, numLanes * LANE_H + BAR_GAP * 2);
+            const lineShort = l => (/^Assembly/i.test(l) ? 'Assembly' : l);
+            const lineTagsHtml = lineSections && lineSections.length > 1
+                ? `<div class="gr-line-tags">${lineSections.map(sec => `<span class="gr-line-tag gr-line-${esc(lineShort(sec.line).toLowerCase())}" style="top:${BAR_GAP + sec.start * LANE_H}px;height:${sec.lanes * LANE_H}px" title="${esc(_t(sec.line))}">${esc(_t(lineShort(sec.line)))}</span>`).join('')}</div>`
+                : '';
+            const lineBandsHtml = lineSections && lineSections.length > 1
+                ? lineSections.map((sec, i) => `<div class="gr-line-band${i % 2 ? ' gr-line-band-alt' : ''}" style="top:${BAR_GAP / 2 + sec.start * LANE_H}px;height:${sec.lanes * LANE_H}px"></div>`).join('')
+                : '';
 
             // ── Build bar HTML ───────────────────────────────────────────
             const bars = positioned.map(({ task, si, ei, lane }) => {
@@ -8425,6 +9863,9 @@ function renderGantt(plans, startDate, endDate) {
                 const actualStart = task.progress?.actual_start_date || null;
 
                 let extraCls = ` gc-bar-state-${highlightState}`;
+                if (highlightState !== 'planned' && width >= 34) extraCls += ' gc-bar-has-st';
+                const vehMark = groupKey === GANTT_COMBINED_KEY && task.vehicle === 'K11'
+                    ? '<span class="gc-bar-veh-mark" aria-hidden="true"></span>' : '';
                 if (status === 'Overdue') extraCls += ' gc-bar-overdue';
 
                 let actualStartMarker = '';
@@ -8432,87 +9873,38 @@ function renderGantt(plans, startDate, endDate) {
                     const aIdx = dayIndex[actualStart];
                     const tickLeft = (aIdx - si) * GANTT_DAY_W;
                     const tickColor = actualStart > task.start_date ? '#ef4444' : '#22c55e';
-                    actualStartMarker = `<div class="gc-actual-start-tick" style="left:${tickLeft}px;border-color:${tickColor}" title="Actual start: ${formatDate(actualStart)}"></div>`;
+                    actualStartMarker = `<div class="gc-actual-start-tick" style="left:${tickLeft}px;border-color:${tickColor}"></div>`;
                 }
 
-                const _tipUnitComp = isF100KD2Module() && !isF100ProcessView
-                    ? unitCompMap[`${task.battalion_code}||${task.vehicle_type}||${task.serial_number}`] || null
-                    : null;
-                const tip = isF100KD2Module()
-                    ? [
-                        `${task.battalion_code || '—'}`,
-                        task.vehicle_type ? `Vehicle      : ${task.vehicle_type} #${task.serial_number ?? '?'}` : '',
-                        task.unit_label ? `Unit Label   : ${task.unit_label}` : '',
-                        task.unit_code  ? `Unit Code    : ${task.unit_code}` : '',
-                        task.unit_name  ? `Unit Name    : ${task.unit_name}` : '',
-                        `Part         : ${task.part_name || '—'}`,
-                        `Process      : #${task.step_number} ${task.process_name || task.process_station}`,
-                        task.manufacturer ? `Manufacturer : ${task.manufacturer}` : '',
-                        `Planned      : ${formatDate(task.planned_start_date)} → ${formatDate(task.planned_end_date)}`,
-                        task.actual_start_date ? `Actual Start : ${formatDate(task.actual_start_date)}` : '',
-                        task.actual_end_date   ? `Actual End   : ${formatDate(task.actual_end_date)}` : '',
-                        _tipUnitComp ? `Progress     : ${_tipUnitComp.done}/${_tipUnitComp.total} steps (${_tipUnitComp.pct}%)` : '',
-                        Array.isArray(task.comments) && task.comments.length ? `Comments     : ${task.comments.length}` : '',
-                        `Status       : ${status}`,
-                    ].filter(Boolean).join('\n')
-                    : [
-                        isKD2Module() ? `${task.battalion_code || '—'}  ${task.vehicle}  ${task.vehicle_no}` : `${task.vehicle}  ${task.vehicle_no}`,
-                        `Station      : ${task.process_station}`,
-                        isKD2Module() ? `Work Center  : ${getRowCode(task)}` : '',
-                        `Planned      : ${formatDate(task.start_date)} → ${formatDate(task.end_date)}`,
-                        actualStart ? `Actual Start : ${formatDate(actualStart)}` : '',
-                        task.progress?.completion_date ? `Completed    : ${formatDate(task.progress.completion_date)}` : '',
-                        `Status       : ${status}`,
-                        task.remark ? `Remark       : ${task.remark}` : '',
-                    ].filter(Boolean).join('\n');
+                // Status badge (✓ / ▶ / !) — readable on any station colour
+                const stBadge = highlightState !== 'planned' && width >= 34
+                    ? `<span class="gc-bar-st gc-st-${highlightState}" aria-hidden="true">${GANTT_STATUS_ICON[highlightState] || ''}</span>` : '';
 
                 const menuIsOpen = _openGanttBlockMenuPlanId === task.id;
                 const isSelected = _selectedGanttPlanIds.has(String(task.id));
-                const blockMenu = _ganttEditMode ? `
-          <button type="button" class="gc-bar-select${isSelected ? ' gc-bar-select-active' : ''}" data-plan-id="${task.id}" title="Select block" aria-label="Select block" aria-pressed="${isSelected ? 'true' : 'false'}"></button>
-          <button type="button" class="gc-bar-menu-trigger" data-plan-id="${task.id}" title="Block options" aria-label="Block options" aria-expanded="${menuIsOpen ? 'true' : 'false'}">
-            <span class="gc-bar-menu-trigger-dots" aria-hidden="true">
-              <span class="gc-bar-menu-trigger-dot"></span>
-              <span class="gc-bar-menu-trigger-dot"></span>
-              <span class="gc-bar-menu-trigger-dot"></span>
-            </span>
-          </button>
-          <div class="gc-bar-menu gc-bar-menu-compact" role="menu" aria-label="Block options">
-            <div class="gc-bmc-grid">
-              <button type="button" class="gc-bmc-btn gc-bmc-up gc-bar-lane-up" data-plan-id="${task.id}" title="Move up" role="menuitem">
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11V3"/><path d="M3.5 6.5 7 3l3.5 3.5"/></svg>
-              </button>
-              <button type="button" class="gc-bmc-btn gc-bmc-dn gc-bar-lane-dn" data-plan-id="${task.id}" title="Move down" role="menuitem">
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v8"/><path d="m3.5 7.5 3.5 3.5 3.5-3.5"/></svg>
-              </button>
-              <button type="button" class="gc-bmc-btn gc-bmc-edit gc-bar-menu-edit" data-plan-id="${task.id}" title="Edit" role="menuitem">
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 11h1.8L10 5.3l-1.8-1.8L2.5 9.2V11Z"/><path d="m8.2 3.5 1.8 1.8"/></svg>
-              </button>
-              <button type="button" class="gc-bmc-btn gc-bmc-del gc-bar-menu-delete" data-plan-id="${task.id}" title="Delete" role="menuitem">
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h9"/><path d="M5.5 4V3h3v1"/><path d="M4.5 5.5v5a.75.75 0 0 0 .75.75h3.5A.75.75 0 0 0 9.5 10.5v-5"/></svg>
-              </button>
-            </div>
-          </div>` : '';
+                // Edit controls (checkbox, ⋯, resize handles) are built only for
+                // selected blocks and the one whose menu is open; every other
+                // block gets them on first hover (_ensureGanttBarControls) —
+                // ~12 elements x ~1,000 blocks less on every edit-mode redraw.
+                const eagerControls = _ganttEditMode && (isSelected || menuIsOpen);
+                const blockMenu = eagerControls ? _ganttBarControlsHtml(task.id, { isSelected, menuIsOpen }) : '';
                 return `<div class="gc-bar${extraCls}${menuIsOpen ? ' gc-bar-menu-open' : ''}${isSelected ? ' gc-bar-selected' : ''}"
-          data-plan-id="${task.id}"
-          style="left:${left}px;width:${width}px;height:${BAR_H}px;top:${topPx}px;transform:none;background:${color}"
-          title="${esc(tip)}">
-          ${actualStartMarker}
-          <span class="gc-bar-text">${esc(isF100ProcessView ? `${task.vehicle_type || '—'} #${task.serial_number ?? task.vehicle_no}` : isF100KD2Module() ? `${task.part_name || ''} · ${task.process_station}` : isKd2ProcessView ? `${task.battalion_code || '—'} · ${task.vehicle_no}` : isKD2Module() ? `${getRowCode(task)} · ${task.process_station}` : task.process_station)}</span>
-          ${_ganttEditMode ? `
-          <span class="gc-bar-resize gc-bar-resize-left" data-plan-id="${task.id}" data-resize-edge="start" title="Drag to change the start date">
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 3 4.5 7l4 4"/></svg>
-          </span>
-          <span class="gc-bar-resize gc-bar-resize-right" data-plan-id="${task.id}" data-resize-edge="end" title="Drag to change the end date">
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 3l4 4-4 4"/></svg>
-          </span>` : ''}
+          data-plan-id="${task.id}"${_ganttEditMode && !eagerControls ? ' data-lazy-controls="1"' : ''}
+          style="left:${left}px;width:${width}px;height:${BAR_H}px;top:${topPx}px;transform:none;background:${color}">
+          ${actualStartMarker}${vehMark}${stBadge}
+          <span class="gc-bar-text">${esc(isF100ProcessView ? `${task.vehicle_type || '—'} #${task.serial_number ?? task.vehicle_no}` : isF100KD2Module() ? `${task.part_name || ''} · ${task.process_station}` : isKd2ProcessView ? (groupKey === GANTT_COMBINED_KEY ? `${task.battalion_code || '—'} · ${task.vehicle} ${task.vehicle_no}` : `${task.battalion_code || '—'} · ${task.vehicle_no}`) : isKD2Module() ? `${getRowCode(task)} · ${task.process_station}` : task.process_station)}</span>
+
           ${blockMenu}
         </div>`;
             }).join('');
 
             const rowMenuOpen = _ganttEditMode && positioned.some(item => String(item.task.id) === _openGanttBlockMenuPlanId);
             const anchorTask = positioned[0]?.task || null;
-            const laneSelected = anchorTask
+            // Only needed for the "Select lane / Clear lane" button (edit mode,
+            // Select lane on, something selected). It scans the whole plan per
+            // row, so running it on every redraw (143 rows x ~1,000 blocks)
+            // was most of the Gantt's redraw time.
+            const laneSelected = anchorTask && _ganttEditMode && _ganttSelectLaneMode && _selectedGanttPlanIds.size
                 ? currentData.filter(row => sameGanttRowLane(row, anchorTask)).every(row => _selectedGanttPlanIds.has(String(row.id)))
                 : false;
             const _f100UnitComp = (isF100KD2Module() && !isF100ProcessView)
@@ -8529,12 +9921,14 @@ function renderGantt(plans, startDate, endDate) {
             const _kd2PctHtml = _kd2PctComp
                 ? `<div class="gr-unit-pct-row"><div class="gr-unit-pct-bar-wrap"><div class="gr-unit-pct-bar-fill" style="width:${_kd2PctComp.pct}%"></div></div><span class="gr-unit-pct-text">${_kd2PctComp.done}/${_kd2PctComp.total} (${_kd2PctComp.pct}%)</span></div>`
                 : '';
-            bodyHtml += `
-        <div class="gr${rowMenuOpen ? ' gc-row-menu-open' : ''}" style="height:${rowH}px">
-          <div class="gr-label gr-unit-label" style="width:${GANTT_LABEL_W}px">
+            bodyHtml += ROW + `
+        <div class="gr${rowMenuOpen ? ' gc-row-menu-open' : ''}${_rowVis !== 'visible' ? ` gr-lane-${_rowVis}` : ''}" style="height:${rowH}px">
+          <div class="gr-label gr-unit-label${lineTagsHtml ? ' gr-has-line-tags' : ''}" style="width:${GANTT_LABEL_W}px">
+            ${lineTagsHtml}
             <div class="gr-unit-info">
               ${isKD2Module() && !isKd2ProcessView && groupKey ? `<span class="gr-unit-ctx">${esc(laneVehicle)} · ${esc(groupKey)}</span>` : ''}
               ${isKd2ProcessView && _stationWC ? `<span class="gr-unit-ctx">${esc(_stationWC)}</span>` : ''}
+              ${_rowVis !== 'visible' ? `<span class="gr-lane-state-badge">${_rowVis === 'hidden' ? 'Hidden' : 'Deleted from plan'}</span>` : ''}
               <span class="gr-unit-name">${esc(isF100ProcessView ? laneUnit : isF100KD2Module() ? (() => { const t0 = tasks[0]; const uCode = t0?.unit_code || ''; const uName = t0?.unit_name || ''; return uCode && uName ? `${uCode} · ${uName}` : uCode || uName || `${laneVehicle} #${laneUnit}`; })() : isKd2ProcessView ? laneUnit : isKD2Module() ? unitLabel(laneVehicle, laneUnit, groupKey) : unitLabel(laneVehicle, laneUnit))}</span>
               ${(!isKd2ProcessView && _stationWC) ? `<span class="gr-unit-wc">${esc(_stationWC)}</span>` : ''}
               ${_f100PctHtml}
@@ -8555,10 +9949,21 @@ function renderGantt(plans, startDate, endDate) {
                     <span class="gc-bar-menu-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M7 2v10M2 7h10"/></svg></span>
                     <span class="gc-bar-menu-copy"><span class="gc-bar-menu-label">Add process</span></span>
                   </button>
+                  ${_rowVis === 'removed' ? `
+                  <button type="button" class="gc-bar-menu-item" data-kd2-reorder="restore" role="menuitem">
+                    <span class="gc-bar-menu-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7a4.5 4.5 0 1 0 1.3-3.2"/><path d="M2.5 2v2.5H5"/></svg></span>
+                    <span class="gc-bar-menu-copy"><span class="gc-bar-menu-label">Restore to plan</span><span class="gc-bar-menu-hint">Bring the (empty) process back</span></span>
+                  </button>` : `
+                  <button type="button" class="gc-bar-menu-item" data-kd2-reorder="${_rowVis === 'hidden' ? 'show' : 'hide'}" role="menuitem">
+                    <span class="gc-bar-menu-icon">${_rowVis === 'hidden'
+                        ? '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1 7s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4z"/><circle cx="7" cy="7" r="1.8"/></svg>'
+                        : '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2l10 10"/><path d="M5.6 3.2A6.4 6.4 0 0 1 7 3c3.8 0 6 4 6 4a10.6 10.6 0 0 1-1.7 2.1M3.4 4.6A10.6 10.6 0 0 0 1 7s2.2 4 6 4a6.2 6.2 0 0 0 2.4-.5"/></svg>'}</span>
+                    <span class="gc-bar-menu-copy"><span class="gc-bar-menu-label">${_rowVis === 'hidden' ? 'Show in plan' : 'Hide from plan'}</span><span class="gc-bar-menu-hint">${_rowVis === 'hidden' ? 'Back in Gantt, VPX, table and charts' : 'Keeps its blocks; hidden everywhere'}</span></span>
+                  </button>
                   <button type="button" class="gc-bar-menu-item gc-bar-menu-danger" data-kd2-reorder="remove" role="menuitem">
                     <span class="gc-bar-menu-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h9"/><path d="M5.5 4V3h3v1"/><path d="M4.5 5.5v5a.75.75 0 0 0 .75.75h3.5A.75.75 0 0 0 9.5 10.5v-5"/></svg></span>
-                    <span class="gc-bar-menu-copy"><span class="gc-bar-menu-label">Remove</span></span>
-                  </button>
+                    <span class="gc-bar-menu-copy"><span class="gc-bar-menu-label">Delete from plan</span><span class="gc-bar-menu-hint">Deletes its blocks in this plan version</span></span>
+                  </button>`}
                 </div>
               </div>
             </div>` : ''}
@@ -8568,12 +9973,13 @@ function renderGantt(plans, startDate, endDate) {
             data-kd2-lane-key="${esc(unit)}"
             data-battalion-id="${esc(laneMeta.battalion_id ?? '')}"
             data-battalion-code="${esc(laneMeta.battalion_code || groupKey || '')}"
-            data-vehicle-type="${esc(laneMeta.vehicle_type || laneVehicle || '')}"
+            data-vehicle-type="${esc(groupKey === GANTT_COMBINED_KEY ? '' : (laneMeta.vehicle_type || laneVehicle || ''))}"
             data-unit-serial="${esc(laneMeta.unit_serial ?? '')}"
             data-unit-label="${esc(laneMeta.unit_label || laneUnit || '')}"
-            data-gantt-days="${esc(days.join(','))}">
+            data-gantt-days="1">
             ${trackZonesHtml}
             ${bgCells}
+            ${lineBandsHtml}
             ${bars}
           </div>
         </div>`;
@@ -8582,16 +9988,46 @@ function renderGantt(plans, startDate, endDate) {
     });
 
     // ── 7. Assemble ────────────────────────────────────────────────
-    clearGanttHoverGuide();
-    inner.innerHTML = `
-    <div class="gantt-wrap" style="min-width:${innerW}px">
-      <div class="gantt-head">
+    const bodyRows = bodyHtml.split(ROW).slice(1);
+    const headHtml = `
         <div class="gh-row gh-row-month">${mHtml}</div>
         <div class="gh-row gh-row-week">${wHtml}</div>
-        <div class="gh-row gh-row-day">${dHtml}</div>
+        <div class="gh-row gh-row-day">${dHtml}</div>`;
+    const paintKey = `${innerW}|${_gridCss}|${_ganttEditMode}|${_ganttReorderMode}`;
+    let patched = false;
+    if (patch && prevPaint && prevPaint.inner === inner && prevPaint.key === paintKey
+        && prevPaint.head === headHtml && prevPaint.rows.length === bodyRows.length) {
+        const bodyEl = inner.querySelector('.gantt-wrap > .gantt-body');
+        const changed = [];
+        bodyRows.forEach((html, i) => { if (html !== prevPaint.rows[i]) changed.push(i); });
+        if (bodyEl && bodyEl.children.length === bodyRows.length
+            && changed.length <= Math.max(12, bodyRows.length * 0.4)) {
+            const tpl = document.createElement('template');
+            const oldEls = [...bodyEl.children];
+            changed.forEach(i => {
+                tpl.innerHTML = bodyRows[i];
+                const el = tpl.content.firstElementChild;
+                if (el) oldEls[i].replaceWith(el);
+            });
+            if (_ganttHoverRowEl && !_ganttHoverRowEl.isConnected) _ganttHoverRowEl = null;
+            patched = true;
+            _ganttPatchStats = { rows: bodyRows.length, replaced: changed.length };
+        }
+    }
+    if (!patched) {
+        clearGanttHoverGuide();
+        inner.innerHTML = `
+    <div class="gantt-wrap" style="min-width:${innerW}px">
+      <div class="gantt-head">${headHtml}
       </div>
-      <div class="gantt-body">${bodyHtml}</div>
+      <div class="gantt-body">${bodyRows.join('')}</div>
     </div>`;
+        _ganttPatchStats = { rows: bodyRows.length, replaced: 'all' };
+    }
+    _ganttLastPaint = { inner, key: paintKey, head: headHtml, rows: bodyRows };
+    inner.classList.toggle('gantt-grid-css', _gridCss);
+    inner.style.setProperty('--gd-w', GANTT_DAY_W + 'px');
+    inner.style.setProperty('--gd-sat-x', _satIdx >= 0 ? (_satIdx * GANTT_DAY_W) + 'px' : '-99999px');
     wireGanttHoverGuide();
 
     // ── 8. Legend ──────────────────────────────────────────────────
@@ -8620,7 +10056,9 @@ function renderGantt(plans, startDate, endDate) {
     if (zoneKeyEl) zoneKeyEl.style.display = specialZones.length ? 'flex' : 'none';
 
     // ── 10. Preserve viewport after edits/reloads ──────────────────
-    if (_ganttHasRenderedOnce && previousGanttScroll) {
+    if (patched) {
+        // Header and other rows untouched — the scroll position never moved
+    } else if (_ganttHasRenderedOnce && previousGanttScroll) {
         restoreGanttScrollPos(previousGanttScroll);
     } else if (dayIndex[today] !== undefined) {
         const scrollRoot = document.getElementById('ganttScrollRoot');
@@ -8651,6 +10089,11 @@ function wireGanttExportMenu() {
         const menu = document.getElementById('ganttExportMenu');
         if (!menu) return;
         const open = menu.style.display !== 'none';
+        const combinedOpt = document.getElementById('ganttExportCombinedOpt');
+        if (combinedOpt) {
+            const vts = new Set(currentData.map(r => r.vehicle || r.vehicle_type));
+            combinedOpt.hidden = !(isKD2Module() && vts.has('K10') && vts.has('K11'));
+        }
         menu.style.display = open ? 'none' : '';
         e.currentTarget.setAttribute('aria-expanded', open ? 'false' : 'true');
         e.stopPropagation();
@@ -8743,11 +10186,14 @@ async function exportGanttSchedule(exportView = 'process') {
         if (!visible.length) { showToast('No tasks fall in the selected date range.', 'error'); return; }
 
         // ── 4. Build groups (same logic as renderGantt) ───────────
-        const isProcessView = exportView === 'process';
+        // "process-combined": Process view with K10 and K11 as one plan
+        const combineK1011 = exportView === 'process-combined' && isKD2Module();
+        const isProcessView = exportView === 'process' || combineK1011;
+        const exportGroupOf = v => (combineK1011 && GANTT_COMBINED_VEHICLES.has(v) ? GANTT_COMBINED_KEY : v);
         const groups = {};
         visible.forEach(p => {
             const groupKey = isProcessView
-                ? (p.vehicle || '—')
+                ? exportGroupOf(p.vehicle || '—')
                 : (isKD2Module() || isF100KD2Module() ? (p.battalion_code || '—') : p.vehicle);
             const laneKey = isProcessView
                 ? (p.process_station || '—')
@@ -8815,7 +10261,7 @@ async function exportGanttSchedule(exportView = 'process') {
         let r = 1;
 
         // ── Row 1: Title ──────────────────────────────────────────
-        const viewLabel   = isProcessView ? 'Process View' : 'Unit View';
+        const viewLabel   = combineK1011 ? 'Process View · K10 + K11 together' : isProcessView ? 'Process View' : 'Unit View';
         const moduleLabel = isKD2Module() ? 'KD2' : isF100KD2Module() ? 'F100-KD2' : 'Assembly';
         ws.getRow(r).height = 24;
         ws.mergeCells(r, 1, r, numDays + LC);
@@ -8983,7 +10429,9 @@ async function exportGanttSchedule(exportView = 'process') {
                         const txtArgb = statusTextArgb(task);
                         const barLen  = ei - si + 1;
                         const barText = isProcessView
-                            ? `#${task.unit_serial ?? '?'}`
+                            ? (combineK1011 && GANTT_COMBINED_VEHICLES.has(task.vehicle)
+                                ? `${task.vehicle} #${task.unit_serial ?? '?'}`
+                                : `#${task.unit_serial ?? '?'}`)
                             : (task.process_station || '');
 
                         for (let di = si; di <= ei; di++) {
@@ -9036,12 +10484,14 @@ async function exportGanttSchedule(exportView = 'process') {
             // _exportLaneOrder groups by physical/logical line (Hull, Turret,
             // then downstream categories) — sorting by raw route_sequence alone
             // interleaves the parallel Hull and Turret lines.
-            const _exportCatMap = (isProcessView && isKD2Module())
-                ? (getModuleRuntime()?.getStationCategoryMap?.(groupKey) || new Map())
-                : null;
-            const _exportLaneOrder = (isProcessView && isKD2Module())
-                ? (getModuleRuntime()?.getStationLaneOrder?.(groupKey) || new Map())
-                : null;
+            const _exportMap = getter => {
+                if (groupKey !== GANTT_COMBINED_KEY) return getModuleRuntime()?.[getter]?.(groupKey) || new Map();
+                const m = new Map();
+                GANTT_COMBINED_VEHICLES.forEach(v => (getModuleRuntime()?.[getter]?.(v) || new Map()).forEach((val, k) => { if (!m.has(k)) m.set(k, val); }));
+                return m;
+            };
+            const _exportCatMap = (isProcessView && isKD2Module()) ? _exportMap('getStationCategoryMap') : null;
+            const _exportLaneOrder = (isProcessView && isKD2Module()) ? _exportMap('getStationLaneOrder') : null;
             // Group header row
             ws.getRow(r).height = 18;
             ws.mergeCells(r, 1, r, numDays + LC);
@@ -9162,7 +10612,7 @@ async function exportGanttSchedule(exportView = 'process') {
             { type: 'gap' },
             { type: 'section', text: 'TASK BARS' },
             { type: 'item',    label: 'Bar fill',       desc: 'White — no station color in the export; status is shown via text color only' },
-            { type: 'item',    label: 'Bar text',       desc: isProcessView ? 'Shows vehicle number (#1, #2 …) — unit serial in the current battalion' : 'Shows process station name (unit view)' },
+            { type: 'item',    label: 'Bar text',       desc: combineK1011 ? 'Shows vehicle and number (K10 #1, K11 #2 …) in the K10 + K11 section; #1, #2 … elsewhere' : isProcessView ? 'Shows vehicle number (#1, #2 …) — unit serial in the current battalion' : 'Shows process station name (unit view)' },
             { type: 'item',    label: 'Bar border',     desc: 'Thick black outer border marks the full span of the task (start → end). No inner lines.' },
             { type: 'item',    label: 'Multiple rows',  desc: 'When two tasks overlap on the same station/unit, each gets its own sub-row (lane)' },
             { type: 'gap' },
@@ -11936,12 +13386,16 @@ function _showGenericPreview({ title, kind, src, html, sheets, onDownload }) {
  *  vehicle can (and usually will) show a different Delay on each of its
  *  component tabs. */
 function _vpxProjectRow(vehicleRow, orderedCols, displayCols = orderedCols) {
-    let carriedDelay = 0;
-    let maxDelay = 0;
+    // Dates and delay come from the process-order forecast (planForecast),
+    // computed on the full loaded plan so each unit's chain is complete.
+    // The Delay is this component's forecast slip at its LAST station — not
+    // the biggest slip ever seen, which kept long-absorbed delays forever.
+    const fc = getPlanForecast(currentData);
     const today = todayStr();
     const colId = c => `${c.code}||${c.name}||${c.group}`;
     const cellById = new Map();
     const blank = { planned: null, actual: null, projected: false, late: false, overdue: false };
+    let lastStep = null;
     orderedCols.forEach(col => {
         const cid = colId(col);
         const key = col.resolve(vehicleRow.vehicle);
@@ -11949,39 +13403,24 @@ function _vpxProjectRow(vehicleRow, orderedCols, displayCols = orderedCols) {
         if (!task) { cellById.set(cid, blank); return; }
 
         const plannedEnd = task.end_date || null;
+        const step = fc.byRowId.get(String(task.id)) || null;
+        if (step) lastStep = step;
         const actualEnd = task.progress?.completion_date || null;
 
         if (actualEnd) {
-            // Real data: this station's own actual-vs-planned slip becomes
-            // the carried delay for every station after it.
-            const delay = plannedEnd ? daysBetween(plannedEnd, actualEnd) : 0;
-            carriedDelay = delay;
-            if (delay > maxDelay) maxDelay = delay;
-            cellById.set(cid, { planned: plannedEnd, actual: actualEnd, projected: false, late: delay > 0, overdue: false });
+            const slip = step ? step.slip : (plannedEnd ? daysBetween(plannedEnd, actualEnd) : 0);
+            cellById.set(cid, { planned: plannedEnd, actual: actualEnd, projected: false, late: slip > 0, overdue: false });
         } else if (plannedEnd && today > plannedEnd) {
-            // Overdue and no actual data of its own. Two signals exist here:
-            // the delay carried in from upstream, and this station's own
-            // current lateness — it's unfinished and already past its own
-            // planned end, which is a real, present-tense fact (not a
-            // forecast the way re-deriving today-vs-planned at every future
-            // station was). Take whichever is bigger, e.g. so an earlier
-            // station finishing EARLY (a negative carried delay) can't mask
-            // this station genuinely sitting overdue right now. Using the
-            // max (never a fresh replace) also keeps the carry monotonic
-            // for whatever comes after.
-            const ownDelay = daysBetween(plannedEnd, today);
-            const effectiveDelay = Math.max(carriedDelay, ownDelay);
-            const expected = effectiveDelay > 0 ? _addWorkingDays(plannedEnd, effectiveDelay) : plannedEnd;
-            carriedDelay = effectiveDelay;
-            if (effectiveDelay > maxDelay) maxDelay = effectiveDelay;
-            cellById.set(cid, { planned: plannedEnd, actual: null, projected: false, late: effectiveDelay > 0, overdue: true, expected });
+            // Unfinished past its planned end — red, with its forecast finish
+            const expected = step ? step.projEnd : today;
+            cellById.set(cid, { planned: plannedEnd, actual: null, projected: false, late: true, overdue: true, expected });
         } else {
-            const projectedDate = (plannedEnd && carriedDelay > 0) ? _addWorkingDays(plannedEnd, carriedDelay) : plannedEnd;
+            const projectedDate = step ? step.projEnd : plannedEnd;
             cellById.set(cid, { planned: plannedEnd, actual: projectedDate, projected: !!plannedEnd, late: false, overdue: false });
         }
     });
     const cells = displayCols.map(col => cellById.get(colId(col)) || blank);
-    return { cells, finalDelay: maxDelay };
+    return { cells, finalDelay: lastStep ? Math.max(0, lastStep.slip) : 0 };
 }
 
 function _vpxStationReportData() {
@@ -12004,6 +13443,7 @@ function _vpxStationReportData() {
     const allCols = activeCols;
 
     const titleParts = [getModuleBadge()];
+    if (_vpxBattalionFilter) titleParts.push(_vpxBattalionFilter);
     if (_vpxVehicleTypeFilter) titleParts.push(_vpxVehicleTypeFilter);
     if (_vpxCategoryFilter) titleParts.push(_vpxCategoryFilter);
     titleParts.push('Station Report');
@@ -12116,10 +13556,11 @@ function _addVpxStationReportSheet(wb, built, sheetName, categoryForReason = _vp
     const thickBord = side => ({ style: 'medium', color: { argb: 'FF475569' } });
 
     let excelRowIdx = 6;
+    const multiBattalion = new Set(rows.map(r => r.battalion_code || '')).size > 1;
     rows.forEach(row => {
         const { cells, finalDelay } = _vpxProjectRow(row, allCols, activeCols);
         const code = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
-        const label = `${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
+        const label = `${multiBattalion ? (row.battalion_code || '—') + ' · ' : ''}${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
         const planRowN = excelRowIdx;
         const actualRowN = excelRowIdx + 1;
 
@@ -12331,10 +13772,11 @@ function _drawVpxStationReportTable(doc, built, title, categoryForReason = _vpxC
     const cellFlags = []; // parallel to body — {projected,late,real} per station cell, per row
     const vehicleBlockStartRows = []; // body row index where each vehicle's Plan row starts
 
+    const multiBattalion = new Set(rows.map(r => r.battalion_code || '')).size > 1;
     rows.forEach(row => {
         const { cells, finalDelay } = _vpxProjectRow(row, allCols, activeCols);
         const code = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
-        const label = `${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
+        const label = `${multiBattalion ? (row.battalion_code || '—') + ' · ' : ''}${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
         const delayReason = getDelayReason(row.vehicle, row.vehicle_no, categoryForReason, row.battalion_code);
 
         vehicleBlockStartRows.push(body.length);
@@ -12522,6 +13964,14 @@ const MM_PER_PT = 25.4 / 72;
 const PT_PER_MM = 72 / 25.4;
 
 const _execHex = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+/** Print-friendly: a colour mixed toward white (amt 0..1), as #rrggbb. */
+const _execTint = (hex, amt = 0.84) => '#' + _execHex(hex).map(v => Math.round(v + (255 - v) * amt).toString(16).padStart(2, '0')).join('');
+/** Station-group colour for print: pale tint fill, full colour for text and rule. */
+function _execGroupColors(label) {
+    const c = VPX_REPORT_GRP_COLOR[label] || { bg: 'FF334155' };
+    const base = '#' + c.bg.slice(2);
+    return { base, tint: _execTint(base, 0.86) };
+}
 
 /** Colours + text for one VPX cell, shared by PDF and Word. */
 function _execCellSpec(c, planRow) {
@@ -12623,8 +14073,10 @@ function _execCoverSummary() {
     const total = data.length;
     let plannedDelivery = null;
     data.forEach(r => { const e = r.end_date || r.planned_end_date; if (e && (!plannedDelivery || e > plannedDelivery)) plannedDelivery = e; });
-    const worst = data.reduce((m, r) => Math.max(m, delayDays(r)), 0);
-    const expected = plannedDelivery ? _addWorkingDays(plannedDelivery, worst) : null;
+    // Same process-order forecast as the delivery card
+    const fc = getPlanForecast(data);
+    const worst = fc.expectedDelivery ? Math.max(0, fc.deliverySlip) : data.reduce((m, r) => Math.max(m, delayDays(r)), 0);
+    const expected = fc.expectedDelivery || (plannedDelivery ? _addWorkingDays(plannedDelivery, worst) : null);
     const version = _activeVersionInfo('kd2');
     return {
         total, completed, late, overdue, inProgress,
@@ -12657,19 +14109,18 @@ function _execWordSegmentHtml(model, L) {
     const grpPt = (L.rowH * PT_PER_MM).toFixed(2) + 'pt';
     const stPt = ((L.headH - L.rowH) * PT_PER_MM).toFixed(2) + 'pt';
     const trH = h => `height:${h};mso-height-rule:exactly;page-break-inside:avoid`;
-    const grp = label => {
-        const c = VPX_REPORT_GRP_COLOR[label] || { bg: 'FF334155', fg: 'FFffffff' };
-        return `background:#${c.bg.slice(2)};color:#${c.fg.slice(2)}`;
-    };
+    // Print-friendly: pale tints + coloured text/rules instead of solid fills
+    const grp = label => { const g = _execGroupColors(label); return `background:${g.tint};color:${g.base};border-top:1.5pt solid ${g.base}`; };
+    const HEAD = 'background:#e2e8f0;color:#0f172a';
     const nameF = +(F * 0.85).toFixed(2);
     const s = model.stats;
 
     let h = `<table style="width:100%;border-collapse:collapse;margin:0 0 4pt;mso-table-lspace:0;mso-table-rspace:0"><tr>
-        <td style="background:#1e3a8a;padding:6pt 10pt;border:none">
-            <p style="margin:0;font-family:Calibri,Arial;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#bfdbfe">VPX STATION REPORT</p>
-            <p style="margin:0;font-family:Calibri,Arial;font-size:15pt;font-weight:bold;color:#ffffff">${esc(model.vtype)} · ${esc(model.cat)}</p></td>
-        <td style="background:#1e3a8a;padding:6pt 10pt;border:none;text-align:right;vertical-align:bottom">
-            <p style="margin:0;font-family:Calibri,Arial;font-size:7.5pt;color:#dbeafe">${esc(L.meta)}</p></td></tr></table>`;
+        <td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a">
+            <p style="margin:0;font-family:Calibri,Arial;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#1e3a8a">VPX STATION REPORT</p>
+            <p style="margin:0;font-family:Calibri,Arial;font-size:15pt;font-weight:bold;color:#0f172a">${esc(model.vtype)} · ${esc(model.cat)}</p></td>
+        <td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a;text-align:right;vertical-align:bottom">
+            <p style="margin:0;font-family:Calibri,Arial;font-size:7.5pt;color:#64748b">${esc(L.meta)}</p></td></tr></table>`;
     const chip = (label, value, color = '#0f172a') =>
         `<td style="padding:2pt 8pt 2pt 0;border:none;font-family:Calibri,Arial;font-size:7.5pt;color:#64748b;white-space:nowrap">${label} <b style="font-size:9pt;color:${color}">${value}</b></td>`;
     h += `<table style="width:${pt(L.W)};border-collapse:collapse;margin:0 0 4pt"><tr>
@@ -12681,14 +14132,14 @@ function _execWordSegmentHtml(model, L) {
 
     h += `<table style="width:${pt(L.W)};table-layout:fixed;border-collapse:collapse">`;
     h += `<col style="width:${pt(L.w.unit)}"><col style="width:${pt(L.w.tag)}">${model.cols.map(() => `<col style="width:${pt(L.colW)}">`).join('')}<col style="width:${pt(L.w.delay)}"><col style="width:${pt(L.w.reason)}">`;
-    h += `<tr style="${trH(grpPt)}"><td rowspan="2" style="${TH};width:${cw.unit};background:#0f172a;color:#fff">Unit</td><td rowspan="2" style="${TH};width:${cw.tag};background:#0f172a;color:#fff"></td>`
+    h += `<tr style="${trH(grpPt)}"><td rowspan="2" style="${TH};width:${cw.unit};${HEAD}">Unit</td><td rowspan="2" style="${TH};width:${cw.tag};${HEAD}"></td>`
         + model.groups.map(g => `<td colspan="${g.span}" style="${TH};${grp(g.label)}">${esc(_execClip(g.label, L.colW * g.span, F))}</td>`).join('')
-        + `<td rowspan="2" style="${TH};width:${cw.delay};background:#0f172a;color:#fff">Delay</td><td rowspan="2" style="${TH};width:${cw.reason};background:#0f172a;color:#fff">Delay reason (${esc(model.cat)})</td></tr>`;
-    h += `<tr style="${trH(stPt)}">${model.cols.map(c => `<td style="${TH};width:${cw.st};background:#f1f5f9;color:#0f172a">${esc(c.code)}${c.name && c.name !== c.code ? `<br><span style="font-size:${nameF}pt;font-weight:normal;color:#475569">${esc(_execClip(c.name, L.colW, nameF, 2))}</span>` : ''}</td>`).join('')}</tr>`;
+        + `<td rowspan="2" style="${TH};width:${cw.delay};${HEAD}">Delay</td><td rowspan="2" style="${TH};width:${cw.reason};${HEAD}">Delay reason (${esc(model.cat)})</td></tr>`;
+    h += `<tr style="${trH(stPt)}">${model.cols.map(c => `<td style="${TH};width:${cw.st};background:#f8fafc;color:#0f172a">${esc(c.code)}${c.name && c.name !== c.code ? `<br><span style="font-size:${nameF}pt;font-weight:normal;color:#475569">${esc(_execClip(c.name, L.colW, nameF, 2))}</span>` : ''}</td>`).join('')}</tr>`;
 
     model.units.forEach((u, i) => {
         const zebra = i % 2 ? '#f8fafc' : '#ffffff';
-        h += `<tr style="${trH(rowPt)}"><td rowspan="2" style="${TH};width:${cw.unit};background:#334155;color:#fff;white-space:nowrap">${esc(u.line1)}${u.line2 ? `<br><span style="font-weight:normal;color:#cbd5e1">${esc(u.line2)}</span>` : ''}</td>`
+        h += `<tr style="${trH(rowPt)}"><td rowspan="2" style="${TH};width:${cw.unit};background:#f1f5f9;color:#0f172a;white-space:nowrap">${esc(u.line1)}${u.line2 ? `<br><span style="font-weight:normal;color:#475569">${esc(u.line2)}</span>` : ''}</td>`
             + `<td style="${base};width:${cw.tag};color:#94a3b8;font-style:italic;background:${zebra}">Plan</td>`
             + u.cells.map(c => { const x = _execCellSpec(c, true); return `<td style="${base};width:${cw.st};white-space:nowrap;background:${x.bg};color:${x.color}">${esc(x.text)}</td>`; }).join('')
             + `<td rowspan="2" style="${TH};width:${cw.delay};color:${u.finalDelay > 0 ? '#b91c1c' : '#15803d'};background:${zebra}">${u.finalDelay > 0 ? '+' + u.finalDelay + 'd' : '0d'}</td>`
@@ -12714,8 +14165,9 @@ function _execWordSegmentHtml(model, L) {
  *  wrong tab selected. Segments with no data are skipped, same as the
  *  single-tab export's own empty-state handling. */
 function _collectVpxExecutiveSegments() {
-    const savedType = _vpxVehicleTypeFilter, savedCat = _vpxCategoryFilter;
+    const savedType = _vpxVehicleTypeFilter, savedCat = _vpxCategoryFilter, savedBat = _vpxBattalionFilter;
     const segments = [];
+    _vpxBattalionFilter = null; // the Executive Report covers every battalion
     try {
         const rt = getModuleRuntime?.();
         for (const vtype of ['K9', 'K10', 'K11']) {
@@ -12732,6 +14184,7 @@ function _collectVpxExecutiveSegments() {
     } finally {
         _vpxVehicleTypeFilter = savedType;
         _vpxCategoryFilter = savedCat;
+        _vpxBattalionFilter = savedBat;
     }
     return segments;
 }
@@ -12744,20 +14197,604 @@ function _buildIssueStatusReportRowsAllTime() {
     return buildIssueReportRows('status_report', { period: 'all_time', moduleScope: 'current', statuses: [], categories: [] });
 }
 
+/* ─── Executive Report — Production Insights ─────────────────────
+   One page (PDF / Word) or sheet (Excel) between the station report and
+   the issues report. Every figure comes from the same data and the same
+   process-order forecast (planForecast) as the dashboard, at the moment
+   the report is generated; the "Key observations" are written from them.
+   Switched off with the menu's "Include production insights" toggle. */
+function _execIncludeInsights() {
+    return _execParts().insights;
+}
+/** The four parts of the Executive Report, as ticked in its menu
+ *  (all on when the menu isn't there). */
+function _execParts() {
+    const on = id => { const el = document.getElementById(id); return !el || el.checked; };
+    return {
+        cover: on('execIncCover'),
+        stations: on('execIncStations'),
+        insights: on('execIncludeInsights'),
+        issues: on('execIncIssues'),
+    };
+}
+function _execNothingSelected(parts) {
+    if (parts.cover || parts.stations || parts.insights || parts.issues) return false;
+    showToast('Choose at least one part to include in the Executive Report.', 'error');
+    return true;
+}
+/** One line for the cover saying what this copy of the report holds. */
+function _execCoverBlurb(parts) {
+    const bits = [];
+    if (parts.stations) bits.push('VPX station status for every vehicle and component');
+    if (parts.insights) bits.push('production insights');
+    if (parts.issues) bits.push('the Production Issues status report');
+    const list = bits.length > 1 ? bits.slice(0, -1).join(', ') + ' and ' + bits[bits.length - 1] : (bits[0] || 'a summary of the plan');
+    return `Production Planning & Monitoring System — ${list}.`;
+}
+
+/** Saturday that starts the work week containing `iso` (Fridays are off). */
+function _execWeekStart(iso) {
+    const d = new Date(iso + 'T00:00:00');
+    d.setDate(d.getDate() - ((d.getDay() + 1) % 7));
+    return localDateStr(d);
+}
+function _execShiftDays(iso, n) {
+    const d = new Date(iso + 'T00:00:00');
+    d.setDate(d.getDate() + n);
+    return localDateStr(d);
+}
+
+function _execInsightsModel(issueRows) {
+    const data = applyActiveFilters(currentData);
+    const today = todayStr();
+    const fc = getPlanForecast(data);
+    const cover = _execCoverSummary();
+    const fmt = n => Number(n).toLocaleString('en-GB');
+    const short = iso => (iso ? formatDateShort(iso) : '—');
+    const unitName = u => [u.vehicle, u.battalion, u.unitNo].filter(Boolean).join(' ');
+
+    // ── Status counts ──
+    const status = { Completed: 0, 'Late Completion': 0, 'In Progress': 0, Overdue: 0, Planned: 0 };
+    data.forEach(r => { const s = calculateStatus(r); status[s] = (status[s] || 0) + 1; });
+    const total = data.length;
+    const done = status.Completed + status['Late Completion'];
+    const onTimeRate = done ? Math.round(status.Completed / done * 100) : 0;
+
+    // ── Units and causes (forecast) ──
+    const units = fc.units;
+    const lateUnits = units.filter(u => u.finishSlip > 0).sort((a, b) => b.finishSlip - a.finishSlip);
+    const mainCause = u => {
+        const st = u.steps.reduce((best, s) => (s.credit > (best?.credit || 0) ? s : best), null);
+        return st ? (st.row.process_station || st.row.station_code || '') : '';
+    };
+    const topUnits = lateUnits.slice(0, 5).map(u => ({
+        name: unitName(u), planned: u.plannedFinish, forecast: u.projFinish, slip: u.finishSlip, cause: mainCause(u),
+    }));
+
+    const causeMap = new Map();
+    lateUnits.forEach(u => u.steps.forEach(s => {
+        if (!(s.credit > 0)) return;
+        const vtype = u.vehicle || '—';
+        const station = s.row.process_station || s.row.station_code || '(Unknown)';
+        const key = `${vtype}||${station}`;
+        if (!causeMap.has(key)) {
+            causeMap.set(key, { station, vtype, cat: getModuleCategory(s.row.process_station, s.row) || 'Other', units: new Set(), open: 0, adds: 0, total: 0 });
+            causeMap.get(key).unitKeys = causeMap.get(key).units;
+        }
+        const c = causeMap.get(key);
+        c.units.add(u.key);
+        if (!s.done) c.open++;
+        c.adds = Math.max(c.adds, s.credit);
+        c.total += s.credit;
+    }));
+    const causes = [...causeMap.values()]
+        .map(c => ({ ...c, units: c.units.size, unitKeys: c.unitKeys }))
+        .sort((a, b) => b.adds - a.adds || b.units - a.units);
+
+    // ── Progress by vehicle type ──
+    const byVehicle = ['K9', 'K10', 'K11'].map(vt => {
+        const rows = data.filter(r => (_getVehicleType(r.vehicle || r.vehicle_type) || r.vehicle) === vt);
+        if (!rows.length) return null;
+        const vUnits = units.filter(u => u.vehicle === vt);
+        const vDone = rows.filter(r => { const s = calculateStatus(r); return s === 'Completed' || s === 'Late Completion'; }).length;
+        const due = rows.filter(r => r.end_date && r.end_date <= today).length;
+        const worst = vUnits.reduce((m, u) => Math.max(m, u.finishSlip), 0);
+        const finish = vUnits.reduce((m, u) => (u.projFinish > m ? u.projFinish : m), '');
+        return {
+            vtype: vt, units: vUnits.length, total: rows.length,
+            donePct: Math.round(vDone / rows.length * 100), expectedPct: Math.round(due / rows.length * 100),
+            worst, finish, late: vUnits.filter(u => u.finishSlip > 0).length,
+        };
+    }).filter(Boolean);
+
+    // ── Weekly pace (last 8 complete work weeks) ──
+    const items = data.map(r => {
+        const s = calculateStatus(r);
+        const isDone = s === 'Completed' || s === 'Late Completion';
+        return { end: r.end_date, done: isDone ? (r.progress?.completion_date || r.end_date) : null };
+    }).filter(x => x.end);
+    const thisWeek = _execWeekStart(today);
+    const weeks = Array.from({ length: 8 }, (_, i) => _execShiftDays(thisWeek, -7 * (8 - i)));
+    const inWeek = (iso, w) => iso && iso >= w && iso <= _execShiftDays(w, 6);
+    const pace = weeks.map(w => ({
+        week: w, label: 'FW' + String(getISOWeek(w)).padStart(2, '0'),
+        planned: items.filter(x => inWeek(x.end, w)).length,
+        completed: items.filter(x => inWeek(x.done, w)).length,
+    }));
+    const last4 = pace.slice(-4);
+    const p4 = last4.reduce((s, w) => s + w.planned, 0);
+    const d4 = last4.reduce((s, w) => s + w.completed, 0);
+    const backlogAt = iso => items.filter(x => x.end < iso && !(x.done && x.done <= iso)).length;
+    const backlogNow = backlogAt(today);
+    const backlogThen = backlogAt(_execShiftDays(thisWeek, -28));
+
+    // ── Production issues (all time, this module) ──
+    const doneSt = ['resolved', 'closed'];
+    const isOpen = r => !doneSt.includes(r.status);
+    const catLabel = r => ISSUE_CATEGORY_LABELS[r.category] || r.category || 'Other';
+    const since12 = _execShiftDays(today, -84);
+    const dayOf = ts => (ts ? localDateStr(new Date(ts)) : null);
+    const resolvedRows = issueRows.filter(r => doneSt.includes(r.status) && r.resolved_at && r.created_at);
+    const avgResolve = resolvedRows.length
+        ? Math.round(resolvedRows.reduce((s, r) => s + (new Date(r.resolved_at) - new Date(r.created_at)) / 864e5, 0) / resolvedRows.length * 10) / 10
+        : null;
+    const openRows = issueRows.filter(isOpen);
+    const openByCat = {};
+    openRows.forEach(r => { openByCat[catLabel(r)] = (openByCat[catLabel(r)] || 0) + 1; });
+    const topOpenCat = Object.entries(openByCat).sort((a, b) => b[1] - a[1])[0] || null;
+    const critical = openRows.filter(r => r.priority === 'critical' || r.priority === 'high');
+    const oldestCritical = critical.reduce((m, r) => {
+        const age = r.created_at ? Math.floor((Date.now() - new Date(r.created_at)) / 864e5) : 0;
+        return Math.max(m, age);
+    }, 0);
+    const issues = {
+        open: issueRows.filter(r => r.status === 'open').length,
+        inProgress: issueRows.filter(r => r.status === 'in_progress').length,
+        resolved: issueRows.filter(r => doneSt.includes(r.status)).length,
+        critical: critical.length,
+        opened12: issueRows.filter(r => (dayOf(r.created_at) || '') >= since12).length,
+        resolved12: resolvedRows.filter(r => (dayOf(r.resolved_at) || '') >= since12).length,
+        avgResolve, topOpenCat, oldestCritical, total: issueRows.length,
+    };
+
+    // ── Verdict ──
+    const slip = Math.max(0, fc.deliverySlip || 0);
+    const top = causes[0];
+    const verdict = fc.expectedDelivery
+        ? (slip > 0
+            ? `Delivery is forecast for ${formatDate(fc.expectedDelivery)} — ${slip} working day${slip === 1 ? '' : 's'} after the planned ${formatDate(fc.plannedDelivery)}. ${lateUnits.length} of ${units.length} unit${units.length === 1 ? ' is' : 's are'} forecast to finish late${top ? `; the biggest cause is ${top.station} on ${top.vtype}` : ''}.`
+            : `Delivery is on track for ${formatDate(fc.plannedDelivery)}; no unit is forecast to finish late.`)
+        : 'Not enough plan data in the current filters to forecast delivery.';
+
+    // ── Key observations (written from the figures above) ──
+    const obs = [];
+    if (slip > 0) {
+        obs.push(`Delivery is forecast ${slip} working days late. The delay comes from work still ahead on the late units, not from stations already finished.`);
+    } else if (fc.expectedDelivery) {
+        obs.push(`Delivery is on track: every unit is forecast to finish on or before its planned date.`);
+    }
+    const vWorst = byVehicle.filter(v => v.late > 0).sort((a, b) => b.late - a.late || b.worst - a.worst)[0];
+    if (vWorst && lateUnits.length) {
+        obs.push(`${vWorst.vtype} accounts for ${vWorst.late} of the ${lateUnits.length} late units (worst +${vWorst.worst} wd); it is ${vWorst.donePct}% complete against ${vWorst.expectedPct}% expected by today.`);
+    }
+    if (causes.length) {
+        // Area adding the most delay = largest total delay credited to its stations;
+        // units are counted once each, however many of its stations they pass
+        const cats = {};
+        causes.forEach(c => {
+            const k = cats[c.cat] || (cats[c.cat] = { delay: 0, units: new Set(), stations: [] });
+            k.delay += c.total;
+            c.unitKeys.forEach(u => k.units.add(u));
+            k.stations.push(c);
+        });
+        const [catName, cat] = Object.entries(cats).sort((a, b) => b[1].delay - a[1].delay)[0];
+        const names = cat.stations.sort((a, b) => b.adds - a.adds).slice(0, 3).map(c => c.station);
+        obs.push(`${catName} stations add the most delay — ${names.join(', ')} — affecting ${cat.units.size} of the ${lateUnits.length} late units.`);
+    }
+    if (p4 || d4) {
+        const rate = p4 ? Math.round(d4 / p4 * 100) : 100;
+        const diff = backlogNow - backlogThen;
+        obs.push(`In the last 4 weeks ${fmt(d4)} blocks were completed against ${fmt(p4)} planned (${rate}%); unfinished past-due blocks ${diff === 0 ? `held at ${fmt(backlogNow)}` : `${diff > 0 ? 'grew' : 'fell'} by ${fmt(Math.abs(diff))} to ${fmt(backlogNow)}`}.`);
+    }
+    if (issues.total) {
+        obs.push(issues.opened12 > issues.resolved12
+            ? `Issues are opening faster than they are resolved (${issues.opened12} vs ${issues.resolved12} in 12 weeks), with ${issues.critical} critical / high still open.`
+            : `Issues are being resolved at least as fast as they are opened (${issues.resolved12} resolved vs ${issues.opened12} opened in 12 weeks).`);
+        if (topOpenCat) {
+            const linked = top && (top.cat.toLowerCase().split(/\s+/).some(w => w.length > 3 && topOpenCat[0].toLowerCase().includes(w)));
+            obs.push(linked
+                ? `${topOpenCat[0]} has the most open issues (${topOpenCat[1]}) — the same area as the top delay cause.`
+                : `${topOpenCat[0]} has the most open issues (${topOpenCat[1]}).`);
+        }
+        if (oldestCritical > 14) obs.push(`The oldest open critical / high issue has been open for ${oldestCritical} days.`);
+    }
+
+    return {
+        cover, verdict, late: slip > 0, slip,
+        plannedDelivery: fc.plannedDelivery, expectedDelivery: fc.expectedDelivery,
+        kpis: [
+            { label: 'Completion', value: `${total ? Math.round(done / total * 100) : 0}%`, sub: `${fmt(done)} of ${fmt(total)} blocks`, tone: 'warn' },
+            { label: 'On-time rate', value: `${onTimeRate}%`, sub: `${fmt(status.Completed)} of ${fmt(done)} done on time`, tone: onTimeRate >= 80 ? 'ok' : 'warn' },
+            { label: 'Overdue', value: fmt(status.Overdue), sub: 'blocks past planned end', tone: status.Overdue ? 'bad' : 'ok' },
+            { label: 'In progress', value: fmt(status['In Progress']), sub: 'blocks started', tone: 'info' },
+            { label: 'Units late', value: `${lateUnits.length} / ${units.length}`, sub: lateUnits[0] ? `worst +${lateUnits[0].finishSlip} wd (${unitName(lateUnits[0])})` : 'none forecast late', tone: lateUnits.length ? 'bad' : 'ok' },
+            { label: 'Open issues', value: fmt(issues.open + issues.inProgress), sub: `${issues.critical} critical / high`, tone: issues.critical ? 'bad' : 'ok' },
+        ],
+        topUnits, causes: causes.slice(0, 5), byVehicle, pace,
+        paceLine: (p4 || d4) ? `Last 4 weeks: ${fmt(Math.round(d4 / 4))} blocks/week completed vs ${fmt(Math.round(p4 / 4))} planned (${p4 ? Math.round(d4 / p4 * 100) : 100}%) · unfinished past-due blocks ${backlogNow - backlogThen >= 0 ? '+' : ''}${backlogNow - backlogThen} (now ${fmt(backlogNow)}).` : 'No blocks planned or completed in the last 4 weeks.',
+        issues, observations: obs.slice(0, 6), short,
+    };
+}
+
+const EXEC_TONE = { bad: [185, 28, 28], warn: [180, 83, 9], ok: [21, 128, 61], info: [37, 99, 235] };
+const EXEC_TONE_HEX = { bad: '#b91c1c', warn: '#b45309', ok: '#15803d', info: '#2563eb' };
+
+/** PDF: Production Insights on two A4 landscape pages —
+ *  1 "Where we stand"  (verdict, key figures, observations, progress, pace)
+ *  2 "Where to act"    (units behind, stations adding delay, issues).
+ *  Returns the first page's number. */
+function _execDrawInsightsPdf(doc, ins, band, meta) {
+    const M = EXEC_MARGIN, W = 297, H = 210;
+    const CW = W - 2 * M;
+    const NAVY = [30, 58, 138], INK = [15, 23, 42], MUTED = [100, 116, 139], SOFT = [71, 85, 105], RULE = [226, 232, 240];
+
+    // Section title: navy caps, grey caption under it, thin rule across the column
+    const section = (x, y, w, title, sub) => {
+        doc.setFillColor(...NAVY); doc.rect(x, y - 3, 1.1, sub ? 7.6 : 3.8, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8.2); doc.setTextColor(...NAVY);
+        doc.text(title.toUpperCase(), x + 3, y, { charSpace: 0.3 });
+        if (sub) {
+            doc.setFont('helvetica', 'normal'); doc.setFontSize(6.9); doc.setTextColor(...MUTED);
+            doc.text(sub, x + 3, y + 4);
+        }
+        const ry = y + (sub ? 6.4 : 2.4);
+        doc.setDrawColor(...RULE); doc.setLineWidth(0.3); doc.line(x, ry, x + w, ry);
+        return ry + 2.2;
+    };
+    const table = (x, w, startY, head, body, colStyles, extra = {}) => {
+        doc.autoTable({
+            startY, margin: { left: x, right: W - x - w, bottom: EXEC_FOOTER_H }, tableWidth: w,
+            head: [head], body, theme: 'plain', pageBreak: 'avoid', rowPageBreak: 'avoid',
+            styles: { font: 'helvetica', fontSize: 7.6, cellPadding: { top: 1.7, bottom: 1.7, left: 1.6, right: 1.6 }, textColor: INK, lineColor: RULE, lineWidth: { bottom: 0.2 }, valign: 'middle' },
+            headStyles: { fontStyle: 'bold', textColor: MUTED, fontSize: 6.8, fillColor: [248, 250, 252], lineWidth: { bottom: 0.35 }, lineColor: [203, 213, 225] },
+            columnStyles: colStyles,
+            ...extra,
+        });
+        return doc.lastAutoTable.finalY;
+    };
+    const toneText = slip => ({ textColor: slip >= 20 ? EXEC_TONE.bad : EXEC_TONE.warn, fontStyle: 'bold' });
+    const swatch = (x, y, rgb, label) => {
+        doc.setFillColor(...rgb); doc.rect(x, y - 2.3, 2.6, 2.6, 'F');
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6.6); doc.setTextColor(...SOFT);
+        doc.text(label, x + 3.6, y);
+        return x + 3.6 + doc.getTextWidth(label) + 5;
+    };
+    const asOf = () => {
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6.4); doc.setTextColor(148, 163, 184);
+        doc.text('Figures follow the process-order forecast used across PPMS · working days (wd) exclude Fridays · as of ' + formatDate(todayStr()), M, H - EXEC_FOOTER_H - 1.5);
+    };
+
+    // ════════ Page 1 — Where we stand ════════
+    doc.addPage('a4', 'landscape');
+    const firstPage = doc.internal.getCurrentPageInfo().pageNumber;
+    band(W, 'Production Insights · 1 of 2', 'Where we stand', meta);
+
+    // Verdict
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.6);
+    const vLines = doc.splitTextToSize(ins.verdict, CW - 12);
+    const vH = 6 + vLines.length * 4.4;
+    doc.setFillColor(...(ins.late ? [255, 245, 245] : [240, 253, 244]));
+    doc.setDrawColor(...(ins.late ? [252, 165, 165] : [134, 239, 172])); doc.setLineWidth(0.3);
+    doc.rect(M, 23, CW, vH, 'FD');
+    doc.setFillColor(...(ins.late ? EXEC_TONE.bad : EXEC_TONE.ok)); doc.rect(M, 23, 1.8, vH, 'F');
+    doc.setTextColor(...INK);
+    doc.text(vLines, M + 6, 23 + 5.6);
+    let y = 23 + vH + 5;
+
+    // Key figures — six tiles
+    const gapT = 4, tw = (CW - 5 * gapT) / 6, th = 22;
+    ins.kpis.forEach((k, i) => {
+        const x = M + i * (tw + gapT);
+        doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.3); doc.roundedRect(x, y, tw, th, 1.5, 1.5, 'S');
+        doc.setFillColor(...(EXEC_TONE[k.tone] || EXEC_TONE.info)); doc.rect(x + 0.4, y + 0.3, tw - 0.8, 1.1, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(6.6); doc.setTextColor(...MUTED);
+        doc.text(k.label.toUpperCase(), x + 3.5, y + 6.4, { charSpace: 0.25 });
+        doc.setFontSize(String(k.value).length > 7 ? 14 : 17); doc.setTextColor(...INK);
+        doc.text(String(k.value), x + 3.5, y + 14);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6.6); doc.setTextColor(...SOFT);
+        doc.text(doc.splitTextToSize(k.sub, tw - 6)[0], x + 3.5, y + 18.8);
+    });
+    y += th + 8;
+
+    // Two columns: observations (left) · progress + pace (right)
+    const gap = 10, lw = Math.round(CW * 0.5), rw = CW - lw - gap;
+    const lx = M, rx = M + lw + gap;
+
+    // Left — key observations, numbered, with room between them
+    let yl = section(lx, y, lw, 'Key observations', 'What the figures on these two pages say');
+    yl += 2;
+    ins.observations.forEach((o, i) => {
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8.4);
+        const lines = doc.splitTextToSize(o, lw - 10);
+        doc.setFillColor(239, 246, 255); doc.circle(lx + 2.6, yl - 1.1, 2.6, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(7.2); doc.setTextColor(...NAVY);
+        doc.text(String(i + 1), lx + 2.6, yl + 0.1, { align: 'center' });
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8.4); doc.setTextColor(...INK);
+        doc.text(lines, lx + 8, yl);
+        yl += lines.length * 3.9 + 3.4;
+    });
+
+    // Right — progress by vehicle
+    let yr = section(rx, y, rw, 'Progress by vehicle', 'Blocks done vs expected by today · forecast finish');
+    const barCol = 2;
+    yr = table(rx, rw, yr, ['Vehicle', 'Units', 'Progress', 'Done', 'Late units', 'Finish'],
+        ins.byVehicle.map(v => [v.vtype, String(v.units), '', `${v.donePct}%`,
+            v.late ? { content: `${v.late} of ${v.units}`, styles: { textColor: EXEC_TONE.bad } } : { content: 'none', styles: { textColor: EXEC_TONE.ok } },
+            v.worst > 0 ? { content: `+${v.worst} wd`, styles: toneText(v.worst) } : { content: 'on time', styles: { textColor: EXEC_TONE.ok } }]),
+        { 0: { cellWidth: 15, fontStyle: 'bold' }, 1: { cellWidth: 11, halign: 'right' }, 3: { cellWidth: 12, halign: 'right' }, 4: { cellWidth: 18, halign: 'right' }, 5: { cellWidth: 17, halign: 'right' } },
+        {
+            didDrawCell: d => {
+                if (d.section !== 'body' || d.column.index !== barCol) return;
+                const v = ins.byVehicle[d.row.index];
+                if (!v) return;
+                const bx = d.cell.x + 2, bw = d.cell.width - 4, by = d.cell.y + d.cell.height / 2 - 1.3;
+                doc.setFillColor(226, 232, 240); doc.rect(bx, by, bw, 2.6, 'F');
+                doc.setFillColor(37, 99, 235); doc.rect(bx, by, bw * Math.min(1, v.donePct / 100), 2.6, 'F');
+                doc.setDrawColor(...INK); doc.setLineWidth(0.55);
+                const ex = bx + bw * Math.min(1, v.expectedPct / 100);
+                doc.line(ex, by - 1, ex, by + 3.6);
+            },
+        });
+    {
+        let lx2 = swatch(rx, yr + 4.6, [37, 99, 235], 'done');
+        doc.setDrawColor(...INK); doc.setLineWidth(0.55); doc.line(lx2, yr + 2, lx2, yr + 5.2);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6.6); doc.setTextColor(...SOFT);
+        doc.text('expected by today', lx2 + 1.8, yr + 4.6);
+    }
+    yr += 12;
+
+    // Right — weekly pace chart
+    yr = section(rx, yr, rw, 'Weekly pace', 'Blocks planned to finish vs blocks completed · last 8 weeks');
+    const chT = yr + 4, chH = 30, chB = chT + chH;
+    const maxV = Math.max(1, ...ins.pace.map(p => Math.max(p.planned, p.completed)));
+    const slot = rw / ins.pace.length;
+    doc.setDrawColor(...RULE); doc.setLineWidth(0.15);
+    [0.5, 1].forEach(f => doc.line(rx, chB - chH * f, rx + rw, chB - chH * f));
+    doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.3); doc.line(rx, chB, rx + rw, chB);
+    ins.pace.forEach((p, i) => {
+        const x = rx + i * slot + slot * 0.16, bw = slot * 0.32;
+        const hp = chH * p.planned / maxV, hc = chH * p.completed / maxV;
+        doc.setFillColor(191, 219, 254); doc.rect(x, chB - hp, bw, hp, 'F');
+        doc.setFillColor(34, 197, 94); doc.rect(x + bw + 0.6, chB - hc, bw, hc, 'F');
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6.2); doc.setTextColor(...MUTED);
+        doc.text(p.label, rx + i * slot + slot / 2, chB + 3.6, { align: 'center' });
+        doc.setFontSize(5.8); doc.setTextColor(...SOFT);
+        if (p.planned) doc.text(String(p.planned), x + bw / 2, chB - hp - 0.9, { align: 'center' });
+        if (p.completed) doc.text(String(p.completed), x + bw * 1.5 + 0.6, chB - hc - 0.9, { align: 'center' });
+    });
+    let ly = chB + 9;
+    let sx = swatch(rx, ly, [191, 219, 254], 'planned');
+    swatch(sx, ly, [34, 197, 94], 'completed');
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.4); doc.setTextColor(...INK);
+    doc.text(doc.splitTextToSize(ins.paceLine, rw), rx, ly + 5.5);
+    asOf();
+
+    // ════════ Page 2 — Where to act ════════
+    doc.addPage('a4', 'landscape');
+    band(W, 'Production Insights · 2 of 2', 'Where to act', meta);
+    y = 27;
+    const lw2 = Math.round(CW * 0.6), rw2 = CW - lw2 - gap, rx2 = M + lw2 + gap;
+
+    // Left — units furthest behind, then stations adding delay
+    let y1 = section(M, y, lw2, 'Units furthest behind', 'Forecast finish against the plan · the station adding most of the delay');
+    y1 = table(M, lw2, y1, ['Unit', 'Planned finish', 'Forecast finish', 'Delay', 'Main cause'],
+        ins.topUnits.length
+            ? ins.topUnits.map(u => [{ content: u.name, styles: { fontStyle: 'bold' } }, ins.short(u.planned), ins.short(u.forecast), { content: `+${u.slip} wd`, styles: toneText(u.slip) }, u.cause || '—'])
+            : [[{ content: 'No unit is forecast to finish late.', colSpan: 5, styles: { textColor: EXEC_TONE.ok } }]],
+        { 0: { cellWidth: 38 }, 1: { cellWidth: 24 }, 2: { cellWidth: 24 }, 3: { cellWidth: 18, halign: 'right' } });
+    y1 += 10;
+    y1 = section(M, y1, lw2, 'Where to act first', 'Stations pushing unit finishes back right now, largest delay first');
+    table(M, lw2, y1, ['Station', 'Vehicle', 'Units pushed back', 'Not finished', 'Delay added'],
+        ins.causes.length
+            ? ins.causes.map(c => [{ content: c.station, styles: { fontStyle: 'bold' } }, c.vtype, String(c.units), c.open ? String(c.open) : '—', { content: `+${c.adds} wd`, styles: toneText(c.adds) }])
+            : [[{ content: 'Nothing is adding delay right now.', colSpan: 5, styles: { textColor: EXEC_TONE.ok } }]],
+        { 1: { cellWidth: 18 }, 2: { cellWidth: 28, halign: 'right' }, 3: { cellWidth: 24, halign: 'right' }, 4: { cellWidth: 22, halign: 'right' } });
+
+    // Right — production issues
+    let y3 = section(rx2, y, rw2, 'Production issues', 'All time, this module');
+    const iss = ins.issues;
+    const bw3 = (rw2 - 2 * 3) / 3;
+    [['Open', iss.open, [239, 246, 255], INK], ['In progress', iss.inProgress, [239, 246, 255], INK], ['Resolved', iss.resolved, [240, 253, 244], [21, 128, 61]]].forEach(([label, val, bg, fg], i) => {
+        const bx = rx2 + i * (bw3 + 3);
+        doc.setFillColor(...bg); doc.roundedRect(bx, y3, bw3, 15, 1.2, 1.2, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...fg); doc.text(String(val), bx + 3.5, y3 + 8.6);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6.8); doc.setTextColor(...SOFT); doc.text(label, bx + 3.5, y3 + 12.8);
+    });
+    y3 += 20;
+    table(rx2, rw2, y3, ['', ''], [
+        ['Critical / high still open', { content: String(iss.critical), styles: { textColor: iss.critical ? EXEC_TONE.bad : EXEC_TONE.ok, fontStyle: 'bold' } }],
+        ['Opened in the last 12 weeks', String(iss.opened12)],
+        ['Resolved in the last 12 weeks', { content: String(iss.resolved12), styles: { textColor: iss.resolved12 >= iss.opened12 ? EXEC_TONE.ok : EXEC_TONE.warn } }],
+        ['Average time to resolve', iss.avgResolve == null ? '—' : `${iss.avgResolve} days`],
+        ['Most open category', iss.topOpenCat ? `${iss.topOpenCat[0]} (${iss.topOpenCat[1]})` : '—'],
+        ['Oldest open critical / high', iss.critical ? `${iss.oldestCritical} days` : '—'],
+    ], { 1: { halign: 'right', cellWidth: 38 } }, { showHead: 'never' });
+    asOf();
+    return firstPage;
+}
+
+/** Word: Production Insights as two A4 landscape sections, same layout as the PDF. */
+function _execInsightsWordHtml(ins, meta, sectionBreak = '') {
+    const H = (s, sub) => `<p style="margin:10pt 0 ${sub ? 0 : 3}pt;font-size:8.5pt;font-weight:bold;letter-spacing:0.5pt;color:#1e3a8a;border-left:2.5pt solid #1e3a8a;padding-left:4pt">${s.toUpperCase()}</p>${sub ? `<p style="margin:0 0 3pt;padding-left:6.5pt;font-size:7pt;color:#64748b">${sub}</p>` : ''}`;
+    const td = 'padding:3pt 4pt;border-bottom:0.5pt solid #e2e8f0;font-size:8pt';
+    const th = 'padding:3pt 4pt;border-bottom:0.75pt solid #cbd5e1;background:#f8fafc;font-size:7pt;color:#64748b;font-weight:bold';
+    const tone = slip => `color:${slip >= 20 ? '#b91c1c' : '#b45309'};font-weight:bold`;
+    const tbl = (head, rows) => `<table style="width:100%;border-collapse:collapse"><tr>${head.map(h => `<td style="${th}">${h}</td>`).join('')}</tr>${rows}</table>`;
+    const header = (part, title) => `<table style="width:100%;border-collapse:collapse;margin:0 0 6pt"><tr><td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a">
+            <p style="margin:0;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#1e3a8a">PRODUCTION INSIGHTS · ${part}</p>
+            <p style="margin:0;font-size:15pt;font-weight:bold;color:#0f172a">${title}</p></td>
+            <td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a;text-align:right;vertical-align:bottom"><p style="margin:0;font-size:7.5pt;color:#64748b">${esc(meta)}</p></td></tr></table>`;
+    const foot = `<p style="margin:8pt 0 0;font-size:6.5pt;color:#94a3b8">Figures follow the process-order forecast used across PPMS · working days (wd) exclude Fridays · as of ${esc(formatDate(todayStr()))}</p>`;
+    const iss = ins.issues;
+
+    const kpis = ins.kpis.map(k => `<td style="width:16.6%;padding:5pt 7pt;border:0.75pt solid #cbd5e1;border-top:2.5pt solid ${EXEC_TONE_HEX[k.tone] || EXEC_TONE_HEX.info};vertical-align:top">
+        <p style="margin:0;font-size:6.5pt;color:#64748b;font-weight:bold;letter-spacing:0.4pt">${esc(k.label.toUpperCase())}</p>
+        <p style="margin:2pt 0;font-size:16pt;font-weight:bold;color:#0f172a">${esc(String(k.value))}</p>
+        <p style="margin:0;font-size:6.5pt;color:#475569">${esc(k.sub)}</p></td>`).join('');
+    const obs = ins.observations.map((o, i) => `<p style="margin:0 0 6pt;font-size:8.6pt;color:#0f172a"><b style="color:#1e3a8a">${i + 1}.</b>&nbsp; ${esc(o)}</p>`).join('');
+    const vehRows = ins.byVehicle.map(v => `<tr><td style="${td};font-weight:bold">${v.vtype}</td><td style="${td};text-align:right">${v.units}</td><td style="${td};text-align:right">${v.donePct}%</td><td style="${td};text-align:right">${v.expectedPct}%</td><td style="${td};text-align:right;color:${v.late ? '#b91c1c' : '#15803d'}">${v.late ? `${v.late} of ${v.units}` : 'none'}</td><td style="${td};text-align:right;${v.worst > 0 ? tone(v.worst) : 'color:#15803d'}">${v.worst > 0 ? `+${v.worst} wd` : 'on time'}</td></tr>`).join('');
+    const paceRows = ins.pace.map(p => `<tr><td style="${td}">${p.label}</td><td style="${td};text-align:right">${p.planned}</td><td style="${td};text-align:right">${p.completed}</td></tr>`).join('');
+    const unitsRows = ins.topUnits.length ? ins.topUnits.map(u => `<tr><td style="${td};font-weight:bold">${esc(u.name)}</td><td style="${td}">${esc(ins.short(u.planned))}</td><td style="${td}">${esc(ins.short(u.forecast))}</td><td style="${td};text-align:right;${tone(u.slip)}">+${u.slip} wd</td><td style="${td}">${esc(u.cause || '—')}</td></tr>`).join('')
+        : `<tr><td colspan="5" style="${td};color:#15803d">No unit is forecast to finish late.</td></tr>`;
+    const causeRows = ins.causes.length ? ins.causes.map(c => `<tr><td style="${td};font-weight:bold">${esc(c.station)}</td><td style="${td}">${esc(c.vtype)}</td><td style="${td};text-align:right">${c.units}</td><td style="${td};text-align:right">${c.open || '—'}</td><td style="${td};text-align:right;${tone(c.adds)}">+${c.adds} wd</td></tr>`).join('')
+        : `<tr><td colspan="5" style="${td};color:#15803d">Nothing is adding delay right now.</td></tr>`;
+    const metric = (l, v, color) => `<tr><td style="${td}">${l}</td><td style="${td};text-align:right;font-weight:bold${color ? ';color:' + color : ''}">${v}</td></tr>`;
+
+    const page1 = `${header('1 OF 2', 'Where we stand')}
+        <table style="width:100%;border-collapse:collapse;margin:0 0 6pt"><tr><td style="padding:6pt 10pt;border:0.75pt solid ${ins.late ? '#fca5a5' : '#86efac'};border-left:4pt solid ${ins.late ? '#b91c1c' : '#15803d'};background:${ins.late ? '#fff5f5' : '#f0fdf4'};font-size:9.5pt;color:#0f172a">${esc(ins.verdict)}</td></tr></table>
+        <table style="width:100%;border-collapse:separate;border-spacing:4pt 0;margin:0 0 4pt"><tr>${kpis}</tr></table>
+        <table style="width:100%;border-collapse:collapse"><tr>
+            <td style="width:50%;vertical-align:top;padding-right:14pt;border:none">${H('Key observations', 'What the figures on these two pages say')}${obs}</td>
+            <td style="width:50%;vertical-align:top;border:none">
+                ${H('Progress by vehicle', 'Blocks done vs expected by today · forecast finish')}${tbl(['Vehicle', 'Units', 'Done', 'Expected', 'Late units', 'Finish'], vehRows)}
+                ${H('Weekly pace', 'Planned to finish vs completed · last 8 weeks')}${tbl(['Week', 'Planned', 'Completed'], paceRows)}
+                <p style="margin:4pt 0 0;font-size:8pt;color:#0f172a">${esc(ins.paceLine)}</p>
+            </td></tr></table>${foot}`;
+    const page2 = `${header('2 OF 2', 'Where to act')}
+        <table style="width:100%;border-collapse:collapse"><tr>
+            <td style="width:60%;vertical-align:top;padding-right:14pt;border:none">
+                ${H('Units furthest behind', 'Forecast finish against the plan · the station adding most of the delay')}${tbl(['Unit', 'Planned finish', 'Forecast finish', 'Delay', 'Main cause'], unitsRows)}
+                ${H('Where to act first', 'Stations pushing unit finishes back right now, largest delay first')}${tbl(['Station', 'Vehicle', 'Units pushed back', 'Not finished', 'Delay added'], causeRows)}
+            </td>
+            <td style="width:40%;vertical-align:top;border:none">
+                ${H('Production issues', 'All time, this module')}
+                <table style="width:100%;border-collapse:separate;border-spacing:3pt"><tr>
+                    ${[['Open', iss.open, '#eff6ff', '#0f172a'], ['In progress', iss.inProgress, '#eff6ff', '#0f172a'], ['Resolved', iss.resolved, '#f0fdf4', '#15803d']].map(([l, v, bg, fg]) => `<td style="background:${bg};padding:5pt 7pt"><p style="margin:0;font-size:15pt;font-weight:bold;color:${fg}">${v}</p><p style="margin:0;font-size:7pt;color:#475569">${l}</p></td>`).join('')}
+                </tr></table>
+                <table style="width:100%;border-collapse:collapse">
+                    ${metric('Critical / high still open', iss.critical, iss.critical ? '#b91c1c' : '#15803d')}
+                    ${metric('Opened in the last 12 weeks', iss.opened12)}
+                    ${metric('Resolved in the last 12 weeks', iss.resolved12, iss.resolved12 >= iss.opened12 ? '#15803d' : '#b45309')}
+                    ${metric('Average time to resolve', iss.avgResolve == null ? '—' : iss.avgResolve + ' days')}
+                    ${metric('Most open category', iss.topOpenCat ? `${esc(iss.topOpenCat[0])} (${iss.topOpenCat[1]})` : '—')}
+                    ${metric('Oldest open critical / high', iss.critical ? iss.oldestCritical + ' days' : '—')}
+                </table>
+            </td></tr></table>${foot}`;
+    return `<div class="ExecA4">${page1}</div>${sectionBreak}<div class="ExecA4">${page2}</div>`;
+}
+
+/** Excel: an "Insights" sheet with the same sections, one under the other. */
+function _addExecInsightsSheet(wb, ins) {
+    const ws = wb.addWorksheet('Insights', { views: [{ showGridLines: false }] });
+    ws.columns = [{ width: 34 }, { width: 16 }, { width: 16 }, { width: 14 }, { width: 26 }, { width: 14 }];
+    const navy = 'FF1E3A8A', grey = 'FF64748B';
+    const title = (text, size = 13) => { const r = ws.addRow([text]); r.font = { bold: true, size, color: { argb: navy } }; return r; };
+    const head = cells => { const r = ws.addRow(cells); r.font = { bold: true, color: { argb: grey } }; r.eachCell(c => { c.border = { bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } } }; }); return r; };
+    const blank = () => ws.addRow([]);
+
+    title('Production Insights', 16);
+    ws.addRow([`As of ${formatDate(todayStr())}`]).font = { color: { argb: grey } };
+    blank();
+    const v = ws.addRow([ins.verdict]);
+    ws.mergeCells(`A${v.number}:F${v.number}`);
+    v.getCell(1).alignment = { wrapText: true, vertical: 'middle' };
+    v.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ins.late ? 'FFFFF5F5' : 'FFF0FDF4' } };
+    v.height = 34;
+    blank();
+
+    title('Key figures');
+    head(['Measure', 'Value', 'Detail']);
+    ins.kpis.forEach(k => ws.addRow([k.label, k.value, k.sub]));
+    blank();
+
+    title('Key observations');
+    ins.observations.forEach((o, i) => {
+        const r = ws.addRow([`${i + 1}. ${o}`]);
+        ws.mergeCells(`A${r.number}:F${r.number}`);
+        r.getCell(1).alignment = { wrapText: true, vertical: 'top' };
+        r.height = 30;
+    });
+    blank();
+
+    title('Units furthest behind');
+    head(['Unit', 'Planned finish', 'Forecast finish', 'Delay (wd)', 'Main cause']);
+    ins.topUnits.forEach(u => ws.addRow([u.name, formatDate(u.planned), formatDate(u.forecast), u.slip, u.cause || '—']));
+    if (!ins.topUnits.length) ws.addRow(['No unit is forecast to finish late.']);
+    blank();
+
+    title('Where to act first');
+    head(['Station', 'Vehicle', 'Units pushed back', 'Not finished', 'Delay added (wd)']);
+    ins.causes.forEach(c => ws.addRow([c.station, c.vtype, c.units, c.open, c.adds]));
+    if (!ins.causes.length) ws.addRow(['Nothing is adding delay right now.']);
+    blank();
+
+    title('Progress by vehicle');
+    head(['Vehicle', 'Units', 'Done %', 'Expected by today %', 'Worst unit delay (wd)', 'Forecast finish']);
+    ins.byVehicle.forEach(x => ws.addRow([x.vtype, x.units, x.donePct, x.expectedPct, x.worst, x.finish ? formatDate(x.finish) : '—']));
+    blank();
+
+    title('Weekly pace (last 8 weeks)');
+    head(['Week', 'Planned', 'Completed']);
+    ins.pace.forEach(p => ws.addRow([`${p.label} (from ${formatDate(p.week)})`, p.planned, p.completed]));
+    ws.addRow([ins.paceLine]).font = { italic: true };
+    blank();
+
+    title('Production issues (all time)');
+    head(['Measure', 'Value']);
+    const iss = ins.issues;
+    [['Open', iss.open], ['In progress', iss.inProgress], ['Resolved / closed', iss.resolved], ['Critical / high still open', iss.critical],
+     ['Opened in the last 12 weeks', iss.opened12], ['Resolved in the last 12 weeks', iss.resolved12],
+     ['Average time to resolve (days)', iss.avgResolve ?? '—'], ['Most open category', iss.topOpenCat ? `${iss.topOpenCat[0]} (${iss.topOpenCat[1]})` : '—']]
+        .forEach(r => ws.addRow(r));
+    return ws;
+}
+
+/** Excel: the cover as a "Summary" sheet — at a glance + contents. */
+function _addExecSummarySheet(wb, parts, segments, issueRows) {
+    const cover = _execCoverSummary();
+    const ws = wb.addWorksheet('Summary', { views: [{ showGridLines: false }] });
+    ws.columns = [{ width: 34 }, { width: 22 }, { width: 46 }];
+    const navy = 'FF1E3A8A', grey = 'FF64748B';
+    const t = ws.addRow(['Executive Report']); t.font = { bold: true, size: 18, color: { argb: 'FF0F172A' } };
+    const sub = ws.addRow([_execCoverBlurb(parts)]); sub.font = { color: { argb: grey } };
+    ws.mergeCells(`A${sub.number}:C${sub.number}`);
+    ws.addRow([]);
+    [['Module', cover.module], ['Plan version', cover.version || '—'], ['Generated', cover.generated]].forEach(([k, v]) => {
+        const r = ws.addRow([k, v]); r.getCell(1).font = { color: { argb: grey } }; r.getCell(2).font = { bold: true };
+    });
+    ws.addRow([]);
+    ws.addRow(['At a glance']).font = { bold: true, size: 13, color: { argb: navy } };
+    [['Complete', `${cover.pct}%`], ['Planned tasks', cover.total], ['In progress', cover.inProgress], ['Overdue', cover.overdue],
+     ['Planned delivery', cover.plannedDelivery], ['Expected delivery', cover.expectedDelivery]].forEach(([k, v]) => {
+        const r = ws.addRow([k, v]); r.getCell(2).font = { bold: true };
+        r.getCell(2).alignment = { horizontal: 'left' };
+    });
+    ws.addRow([]);
+    ws.addRow(['Contents']).font = { bold: true, size: 13, color: { argb: navy } };
+    const line = (name, detail) => { const r = ws.addRow([name, '', detail]); r.getCell(1).font = { bold: true }; r.getCell(3).font = { color: { argb: grey } }; };
+    segments.forEach(seg => line(`VPX Station Report — ${seg.vtype} · ${seg.cat}`, `sheet "${`${seg.vtype} - ${seg.cat}`.slice(0, 31)}"`));
+    if (parts.insights) line('Production Insights', 'sheet "Insights"');
+    if (parts.issues) line('Production Issues Status Report', `${issueRows.length} issues · sheet "Issues Status Report"`);
+    return ws;
+}
+
 async function exportExecutiveReportExcel(preview) {
     if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (!isKD2Module()) { showToast('Executive Report is only available for the F200-KD2 module.', 'error'); return; }
     if (typeof ExcelJS === 'undefined') { showToast('ExcelJS not loaded yet — please wait a moment and try again.', 'error'); return; }
     showToast('Preparing Executive Report…', 'info');
 
-    const segments = _collectVpxExecutiveSegments();
+    const parts = _execParts();
+    if (_execNothingSelected(parts)) return;
+    const segments = parts.stations ? _collectVpxExecutiveSegments() : [];
     const issueRows = await _buildIssueStatusReportRowsAllTime();
-    if (!segments.length && !issueRows.length) { showToast('No data available for the Executive Report.', 'error'); return; }
+    if (!parts.cover && !segments.length && !parts.insights && !parts.issues) { showToast('No data available for the Executive Report.', 'error'); return; }
     const title = 'Executive Report';
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'PPMS';
     wb.created = new Date();
+    if (parts.cover) _addExecSummarySheet(wb, parts, segments, issueRows);
     const usedNames = new Set();
     segments.forEach(seg => {
         let name = `${seg.vtype} - ${seg.cat}`.slice(0, 31);
@@ -12766,8 +14803,9 @@ async function exportExecutiveReportExcel(preview) {
         usedNames.add(name);
         _addVpxStationReportSheet(wb, seg, name, seg.cat);
     });
-    _addIssueStatusReportSheet(wb, issueRows, 'Issues Status Report', 'Production Issues Status Report — All Time');
-    _addStationReportKeySheet(wb, title);
+    if (parts.insights) _addExecInsightsSheet(wb, _execInsightsModel(issueRows));
+    if (parts.issues) _addIssueStatusReportSheet(wb, issueRows, 'Issues Status Report', 'Production Issues Status Report — All Time');
+    if (segments.length) _addStationReportKeySheet(wb, title);
 
     const now = localDateStr(new Date());
     const doDownload = async () => {
@@ -12793,29 +14831,37 @@ async function exportExecutiveReportPDF(preview) {
     if (!window.jspdf) { showToast('PDF library not loaded — please refresh.', 'error'); return; }
     showToast('Preparing Executive Report…', 'info');
 
-    const segments = _collectVpxExecutiveSegments();
+    const parts = _execParts();
+    if (_execNothingSelected(parts)) return;
+    const segments = parts.stations ? _collectVpxExecutiveSegments() : [];
     const issueRows = await _buildIssueStatusReportRowsAllTime();
-    if (!segments.length && !issueRows.length) { showToast('No data available for the Executive Report.', 'error'); return; }
+    if (!parts.cover && !segments.length && !parts.insights && !parts.issues) { showToast('No data available for the Executive Report.', 'error'); return; }
     const title = 'Executive Report';
     const cover = _execCoverSummary();
     const meta = [cover.module, cover.version, `Generated ${cover.generated}`].filter(Boolean).join('  ·  ');
     const models = segments.map(_execSegmentModel);
     const layouts = models.map(_execSegmentLayout);
+    const insights = parts.insights ? _execInsightsModel(issueRows) : null;
+    const INSIGHT_PAGES = 2;
 
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    const hasOutline = !!doc.outline?.add;
+    // Bookmarks are added at the end, once we know whether page 1 (the
+    // cover) stays — without a cover it is dropped and every page moves up.
+    const outline = [];
+    const hasOutline = { add: (t, n) => outline.push([t, n]) };
     const M = EXEC_MARGIN;
 
+    // Print-friendly title: coloured text + a thin rule, no solid band
     const band = (pageW, label, heading, right) => {
-        doc.setFillColor(30, 58, 138);
-        doc.rect(0, 0, pageW, 20, 'F');
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(191, 219, 254);
-        doc.text(label.toUpperCase(), M, 7.5, { charSpace: 0.4 });
-        doc.setFontSize(15); doc.setTextColor(255, 255, 255);
-        doc.text(heading, M, 15);
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(219, 234, 254);
-        doc.text(right, pageW - M, 15, { align: 'right' });
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(30, 58, 138);
+        doc.text(label.toUpperCase(), M, 8.5, { charSpace: 0.4 });
+        doc.setFontSize(15); doc.setTextColor(15, 23, 42);
+        doc.text(heading, M, 15.5);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(100, 116, 139);
+        doc.text(right, pageW - M, 15.5, { align: 'right' });
+        doc.setDrawColor(30, 58, 138); doc.setLineWidth(0.6);
+        doc.line(M, 18.5, pageW - M, 18.5);
     };
     const chip = (x, y, label, value, rgb = [15, 23, 42]) => {
         doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
@@ -12823,8 +14869,8 @@ async function exportExecutiveReportPDF(preview) {
         doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
         const vw = doc.getTextWidth(String(value));
         const w = lw + vw + 5;
-        doc.setFillColor(241, 245, 249); doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.2);
-        doc.roundedRect(x, y - 4, w, 6, 1.2, 1.2, 'FD');
+        doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.25);
+        doc.roundedRect(x, y - 4, w, 6, 1.2, 1.2, 'S');
         doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 116, 139);
         doc.text(label, x + 2.5, y);
         doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...rgb);
@@ -12845,21 +14891,22 @@ async function exportExecutiveReportPDF(preview) {
         });
     };
 
-    // ── Cover ──
-    {
+    // ── Cover ── (always drawn on page 1; removed at the end when not wanted)
+    if (parts.cover) {
         const W = 297, H = 210;
-        doc.setFillColor(30, 58, 138); doc.rect(0, 0, 105, H, 'F');
-        doc.setFillColor(37, 99, 235); doc.rect(105, 0, 2, H, 'F');
-        doc.setTextColor(191, 219, 254); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+        // Print-friendly cover: white page, one slim brand bar + a divider line
+        doc.setFillColor(30, 58, 138); doc.rect(0, 0, 3, H, 'F');
+        doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.4); doc.line(108, 18, 108, H - 18);
+        doc.setTextColor(30, 58, 138); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
         doc.text('PPMS', 14, 30, { charSpace: 1.5 });
-        doc.setTextColor(255, 255, 255); doc.setFontSize(28);
+        doc.setTextColor(15, 23, 42); doc.setFontSize(28);
         doc.text(['Executive', 'Report'], 14, 50);
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(219, 234, 254);
-        doc.text(doc.splitTextToSize('Production Planning & Monitoring System — VPX station status for every vehicle and component, plus the Production Issues status report.', 78), 14, 74);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(71, 85, 105);
+        doc.text(doc.splitTextToSize(_execCoverBlurb(parts), 78), 14, 74);
         doc.setFontSize(8.5);
         [['Module', cover.module], ['Plan version', cover.version || '—'], ['Generated', cover.generated]].forEach(([k, v], i) => {
-            doc.setTextColor(147, 197, 253); doc.text(k.toUpperCase(), 14, 150 + i * 14, { charSpace: 0.3 });
-            doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.text(String(v), 14, 155.5 + i * 14);
+            doc.setTextColor(100, 116, 139); doc.text(k.toUpperCase(), 14, 150 + i * 14, { charSpace: 0.3 });
+            doc.setTextColor(15, 23, 42); doc.setFont('helvetica', 'bold'); doc.text(String(v), 14, 155.5 + i * 14);
             doc.setFont('helvetica', 'normal');
         });
 
@@ -12877,8 +14924,8 @@ async function exportExecutiveReportPDF(preview) {
         doc.text('At a glance', tx, 26);
         tiles.forEach(([label, value, rgb], i) => {
             const x = tx + (i % 3) * (tw + 6), y = 32 + Math.floor(i / 3) * (th + 6);
-            doc.setFillColor(248, 250, 252); doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.3);
-            doc.roundedRect(x, y, tw, th, 2, 2, 'FD');
+            doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.3);
+            doc.roundedRect(x, y, tw, th, 2, 2, 'S');
             doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 116, 139);
             doc.text(label.toUpperCase(), x + 4, y + 7, { charSpace: 0.2 });
             doc.setFont('helvetica', 'bold'); doc.setFontSize(String(value).length > 8 ? 12 : 17); doc.setTextColor(...rgb);
@@ -12890,7 +14937,8 @@ async function exportExecutiveReportPDF(preview) {
         doc.setTextColor(15, 23, 42); doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
         doc.text('Contents', tx, y); y += 7;
         const entries = models.map((m, i) => [`VPX Station Report — ${m.vtype} · ${m.cat}`, `${m.stats.units} units · ${m.stats.stations} stations`, i + 2]);
-        entries.push(['Production Issues Status Report', `${issueRows.length} issues · all time`, models.length + 2]);
+        if (insights) entries.push(['Production Insights', 'Where we stand · where to act (2 pages)', models.length + 2]);
+        if (parts.issues) entries.push(['Production Issues Status Report', `${issueRows.length} issues · all time`, models.length + 2 + (insights ? INSIGHT_PAGES : 0)]);
         doc.setFontSize(8.5);
         entries.forEach(([name, sub, page]) => {
             doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 23, 42); doc.text(name, tx, y);
@@ -12899,7 +14947,7 @@ async function exportExecutiveReportPDF(preview) {
             doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.2); doc.line(tx, y + 2, W - 14, y + 2);
             y += 7;
         });
-        if (hasOutline) { try { doc.outline.add(null, 'Cover', { pageNumber: 1 }); } catch {} }
+        hasOutline.add('Cover', 1);
     }
 
     // ── One page per VPX segment, sized so the table always fits ──
@@ -12919,23 +14967,21 @@ async function exportExecutiveReportPDF(preview) {
         legend(L.page.w - M, 27);
 
         const F = L.font, nameF = +(F * 0.85).toFixed(2);
-        const grp = label => {
-            const c = VPX_REPORT_GRP_COLOR[label] || { bg: 'FF334155', fg: 'FFffffff' };
-            return { fillColor: _execHex('#' + c.bg.slice(2)), textColor: _execHex('#' + c.fg.slice(2)) };
-        };
-        const dark = { fillColor: [15, 23, 42], textColor: [255, 255, 255] };
+        // Print-friendly: pale group tints with coloured text; light grey header cells
+        const grp = label => { const g = _execGroupColors(label); return { fillColor: _execHex(g.tint), textColor: _execHex(g.base) }; };
+        const dark = { fillColor: [226, 232, 240], textColor: [15, 23, 42] };
         const head = [
             [{ content: 'Unit', rowSpan: 2, styles: dark }, { content: '', rowSpan: 2, styles: dark },
              ...m.groups.map(g => ({ content: _execClip(g.label, L.colW * g.span, F), colSpan: g.span, styles: grp(g.label) })),
              { content: 'Delay', rowSpan: 2, styles: dark }, { content: `Delay reason (${m.cat})`, rowSpan: 2, styles: dark }],
             m.cols.map(c => ({ content: c.name && c.name !== c.code ? `${c.code}\n${_execClip(c.name, L.colW, nameF, 2)}` : c.code,
-                styles: { fillColor: [241, 245, 249], textColor: [15, 23, 42] } })),
+                styles: { fillColor: [248, 250, 252], textColor: [15, 23, 42] } })),
         ];
         const body = [];
         m.units.forEach((u, ui) => {
             const zebra = ui % 2 ? [248, 250, 252] : [255, 255, 255];
             body.push([
-                { content: u.line2 ? `${u.line1}\n${u.line2}` : u.line1, rowSpan: 2, styles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontStyle: 'bold' } },
+                { content: u.line2 ? `${u.line1}\n${u.line2}` : u.line1, rowSpan: 2, styles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold' } },
                 { content: 'Plan', styles: { textColor: [148, 163, 184], fontStyle: 'italic', fillColor: zebra } },
                 ...u.cells.map(c => { const x = _execCellSpec(c, true); return { content: x.text, styles: { fillColor: _execHex(x.bg), textColor: _execHex(x.color) } }; }),
                 { content: u.finalDelay > 0 ? `+${u.finalDelay}d` : '0d', rowSpan: 2, styles: { fontStyle: 'bold', textColor: u.finalDelay > 0 ? [185, 28, 28] : [21, 128, 61], fillColor: zebra } },
@@ -12976,7 +15022,7 @@ async function exportExecutiveReportPDF(preview) {
             const t = doc.lastAutoTable || {};
             const ok = last === pageNo && (t.startPageNumber ?? pageNo) === pageNo;
             if (ok) {
-                if (hasOutline) { try { doc.outline.add(null, `${m.vtype} · ${m.cat}`, { pageNumber: pageNo }); } catch {} }
+                hasOutline.add(`${m.vtype} · ${m.cat}`, pageNo);
                 break;
             }
             const next = _execSegmentLayout(m, { maxFont: L.font - 0.25 });
@@ -12986,10 +15032,17 @@ async function exportExecutiveReportPDF(preview) {
         }
     });
 
+    // ── Production Insights (two pages, between progress and issues) ──
+    if (insights) {
+        const insightsPage = _execDrawInsightsPdf(doc, insights, band, meta);
+        hasOutline.add('Production Insights', insightsPage);
+    }
+
     // ── Production Issues Status Report (list — may run over several pages) ──
+    if (parts.issues) {
     doc.addPage('a4', 'landscape');
     const issuesStart = doc.internal.getCurrentPageInfo().pageNumber;
-    if (hasOutline) { try { doc.outline.add(null, 'Production Issues Status Report', { pageNumber: issuesStart }); } catch {} }
+    hasOutline.add('Production Issues Status Report', issuesStart);
     band(297, 'Production Issues', 'Status Report — All Time', meta);
     {
         let x = M;
@@ -13007,16 +15060,22 @@ async function exportExecutiveReportPDF(preview) {
             ]),
             theme: 'grid', rowPageBreak: 'avoid',
             styles: { font: 'helvetica', fontSize: 7, cellPadding: 1.6, lineColor: [226, 232, 240], lineWidth: 0.15, textColor: [30, 41, 59], valign: 'top' },
-            headStyles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontStyle: 'bold' },
+            headStyles: { fillColor: [226, 232, 240], textColor: [15, 23, 42], fontStyle: 'bold', lineColor: [148, 163, 184] },
             alternateRowStyles: { fillColor: [248, 250, 252] },
             columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 34, fontStyle: 'bold' }, 2: { cellWidth: 17 }, 6: { cellWidth: 21 }, 7: { cellWidth: 21 }, 8: { cellWidth: 20 } },
             didDrawPage: data => { if (data.pageNumber > 1) band(297, 'Production Issues', 'Status Report — All Time (continued)', meta); },
         });
     }
+    }
+
+    // No cover wanted: drop the blank first page; everything moves up one
+    const shift = parts.cover ? 0 : 1;
+    if (shift && doc.internal.getNumberOfPages() > 1) doc.deletePage(1);
+    if (doc.outline?.add) outline.forEach(([t, n]) => { try { doc.outline.add(null, t, { pageNumber: n - shift }); } catch {} });
 
     // ── Footer on every page except the cover ──
     const total = doc.internal.getNumberOfPages();
-    for (let p = 2; p <= total; p++) {
+    for (let p = parts.cover ? 2 : 1; p <= total; p++) {
         doc.setPage(p);
         const mb = doc.internal.getPageInfo(p).pageContext.mediaBox;
         const w = (mb.topRightX - mb.bottomLeftX) * MM_PER_PT, h = (mb.topRightY - mb.bottomLeftY) * MM_PER_PT;
@@ -13040,15 +15099,18 @@ async function exportExecutiveReportWord(preview) {
     if (!isKD2Module()) { showToast('Executive Report is only available for the F200-KD2 module.', 'error'); return; }
     showToast('Preparing Executive Report…', 'info');
 
-    const segments = _collectVpxExecutiveSegments();
+    const parts = _execParts();
+    if (_execNothingSelected(parts)) return;
+    const segments = parts.stations ? _collectVpxExecutiveSegments() : [];
     const issueRows = await _buildIssueStatusReportRowsAllTime();
-    if (!segments.length && !issueRows.length) { showToast('No data available for the Executive Report.', 'error'); return; }
+    if (!parts.cover && !segments.length && !parts.insights && !parts.issues) { showToast('No data available for the Executive Report.', 'error'); return; }
 
     const cover = _execCoverSummary();
     const meta = [cover.module, cover.version, `Generated ${cover.generated}`].filter(Boolean).join('  ·  ');
     const models = segments.map(_execSegmentModel);
     const layouts = models.map(m => ({ ..._execSegmentLayout(m, { word: true }), meta }));
-    const { body, style } = _execWordDocument(cover, models, layouts, issueRows, meta);
+    const insights = parts.insights ? _execInsightsModel(issueRows) : null;
+    const { body, style } = _execWordDocument(cover, models, layouts, issueRows, meta, insights, parts);
 
     const now = localDateStr(new Date());
     exportHtmlAsWord(`executive_report_${now}.doc`, 'Executive Report', body, preview, { style });
@@ -13056,7 +15118,7 @@ async function exportExecutiveReportWord(preview) {
 
 /** Word document body + page-setup styles. Each page is its own Word
  *  section, so every VPX page can have its own paper size (A4 or A3). */
-function _execWordDocument(cover, models, layouts, issueRows, meta) {
+function _execWordDocument(cover, models, layouts, issueRows, meta, insights = null, parts = { cover: true, stations: true, insights: !!insights, issues: true }) {
     const mPt = (EXEC_MARGIN * PT_PER_MM).toFixed(1) + 'pt';
     const pageCss = (name, page) => `@page ${name} { size: ${(page.w * PT_PER_MM).toFixed(1)}pt ${(page.h * PT_PER_MM).toFixed(1)}pt; mso-page-orientation: landscape; margin: ${mPt}; }
         div.${name} { page: ${name}; }`;
@@ -13071,17 +15133,18 @@ function _execWordDocument(cover, models, layouts, issueRows, meta) {
     const divFor = page => page.key === 'a3' ? 'ExecA3' : 'ExecA4';
 
     // Cover
-    const tile = (label, value, color = '#0f172a') => `<td style="width:33%;padding:8pt 10pt;border:0.75pt solid #e2e8f0;background:#f8fafc;vertical-align:top">
+    const tile = (label, value, color = '#0f172a') => `<td style="width:33%;padding:8pt 10pt;border:0.75pt solid #cbd5e1;background:#ffffff;vertical-align:top">
         <p style="margin:0;font-size:7pt;color:#64748b;letter-spacing:0.5pt">${label.toUpperCase()}</p>
         <p style="margin:2pt 0 0;font-size:17pt;font-weight:bold;color:${color}">${esc(String(value))}</p></td>`;
-    let body = `<div class="ExecA4">
+    const sections = [];
+    if (parts.cover) sections.push(`<div class="ExecA4">
         <table style="width:100%;border-collapse:collapse"><tr style="height:470pt">
-        <td style="width:34%;background:#1e3a8a;padding:24pt 18pt;vertical-align:top;border:none">
-            <p style="margin:0;font-size:9pt;font-weight:bold;letter-spacing:2pt;color:#bfdbfe">PPMS</p>
-            <p style="margin:10pt 0 0;font-size:30pt;font-weight:bold;line-height:32pt;color:#ffffff">Executive<br>Report</p>
-            <p style="margin:12pt 0 60pt;font-size:9.5pt;color:#dbeafe">Production Planning &amp; Monitoring System — VPX station status for every vehicle and component, plus the Production Issues status report.</p>
+        <td style="width:34%;padding:24pt 18pt;vertical-align:top;border:none;border-left:6pt solid #1e3a8a;border-right:0.75pt solid #e2e8f0">
+            <p style="margin:0;font-size:9pt;font-weight:bold;letter-spacing:2pt;color:#1e3a8a">PPMS</p>
+            <p style="margin:10pt 0 0;font-size:30pt;font-weight:bold;line-height:32pt;color:#0f172a">Executive<br>Report</p>
+            <p style="margin:12pt 0 60pt;font-size:9.5pt;color:#475569">${esc(_execCoverBlurb(parts))}</p>
             ${[['Module', cover.module], ['Plan version', cover.version || '—'], ['Generated', cover.generated]].map(([k, v]) =>
-                `<p style="margin:10pt 0 0;font-size:7.5pt;letter-spacing:0.5pt;color:#93c5fd">${k.toUpperCase()}</p><p style="margin:0;font-size:10pt;font-weight:bold;color:#ffffff">${esc(v)}</p>`).join('')}
+                `<p style="margin:10pt 0 0;font-size:7.5pt;letter-spacing:0.5pt;color:#64748b">${k.toUpperCase()}</p><p style="margin:0;font-size:10pt;font-weight:bold;color:#0f172a">${esc(v)}</p>`).join('')}
         </td>
         <td style="padding:18pt 0 0 20pt;vertical-align:top;border:none">
             <p style="margin:0 0 6pt;font-size:12pt;font-weight:bold;color:#0f172a">At a glance</p>
@@ -13093,29 +15156,34 @@ function _execWordDocument(cover, models, layouts, issueRows, meta) {
             <table style="width:100%;border-collapse:collapse">
                 ${models.map(m => `<tr><td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:9pt;font-weight:bold;color:#0f172a">VPX Station Report — ${esc(m.vtype)} · ${esc(m.cat)}</td>
                     <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">${m.stats.units} units · ${m.stats.stations} stations</td></tr>`).join('')}
-                <tr><td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:9pt;font-weight:bold;color:#0f172a">Production Issues Status Report</td>
-                    <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">${issueRows.length} issues · all time</td></tr>
+                ${insights ? `<tr><td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:9pt;font-weight:bold;color:#0f172a">Production Insights</td>
+                    <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">Where we stand · where to act (2 pages)</td></tr>` : ''}
+                ${parts.issues ? `<tr><td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:9pt;font-weight:bold;color:#0f172a">Production Issues Status Report</td>
+                    <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">${issueRows.length} issues · all time</td></tr>` : ''}
             </table>
             <p style="margin:10pt 0 0;font-size:7.5pt;color:#94a3b8">Each VPX report fits on one page: all stations and units, sized automatically (A4, or A3 for very large segments).</p>
-        </td></tr></table></div>`;
+        </td></tr></table></div>`);
 
     // One section per VPX segment
     models.forEach((m, i) => {
-        body += sectionBreak + `<div class="${divFor(layouts[i].page)}">${_execWordSegmentHtml(m, layouts[i])}</div>`;
+        sections.push(`<div class="${divFor(layouts[i].page)}">${_execWordSegmentHtml(m, layouts[i])}</div>`);
     });
+
+    // Production Insights (between progress and issues) — two sections
+    if (insights) sections.push(_execInsightsWordHtml(insights, meta, sectionBreak));
 
     // Issues
     const statusLabel = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Closed' };
     const td = 'padding:2pt 3pt;border:0.5pt solid #e2e8f0;font-size:7.5pt;vertical-align:top';
-    body += sectionBreak + `<div class="ExecA4">
-        <table style="width:100%;border-collapse:collapse;margin:0 0 6pt"><tr><td style="background:#1e3a8a;padding:6pt 10pt;border:none">
-            <p style="margin:0;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#bfdbfe">PRODUCTION ISSUES</p>
-            <p style="margin:0;font-size:15pt;font-weight:bold;color:#ffffff">Status Report — All Time</p></td>
-            <td style="background:#1e3a8a;padding:6pt 10pt;border:none;text-align:right;vertical-align:bottom"><p style="margin:0;font-size:7.5pt;color:#dbeafe">${esc(meta)}</p></td></tr></table>
+    if (parts.issues) sections.push(`<div class="ExecA4">
+        <table style="width:100%;border-collapse:collapse;margin:0 0 6pt"><tr><td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a">
+            <p style="margin:0;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#1e3a8a">PRODUCTION ISSUES</p>
+            <p style="margin:0;font-size:15pt;font-weight:bold;color:#0f172a">Status Report — All Time</p></td>
+            <td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a;text-align:right;vertical-align:bottom"><p style="margin:0;font-size:7.5pt;color:#64748b">${esc(meta)}</p></td></tr></table>
         <p style="margin:0 0 6pt;font-size:8pt;color:#475569"><b>${issueRows.length}</b> issues &nbsp;·&nbsp; ${_categoryCounts(issueRows).map(([l, c]) => `${esc(l)} <b>${c}</b>`).join(' &nbsp;·&nbsp; ')}</p>
         <table style="width:100%;border-collapse:collapse">
             <thead style="display:table-header-group"><tr style="mso-yfti-firstrow:yes">${['Category', 'Title', 'Status', 'Issue / Problem', 'Proposed Solution', 'Action Taken', 'Reported', 'Resolved', 'PIC']
-                .map(hd => `<td style="${td};background:#1e3a8a;color:#ffffff;font-weight:bold">${hd}</td>`).join('')}</tr></thead>
+                .map(hd => `<td style="${td};background:#e2e8f0;color:#0f172a;font-weight:bold;border-bottom:1pt solid #64748b">${hd}</td>`).join('')}</tr></thead>
             ${issueRows.map((r, i) => `<tr style="page-break-inside:avoid;background:${i % 2 ? '#f8fafc' : '#ffffff'}">
                 <td style="${td}">${esc(ISSUE_CATEGORY_LABELS[r.category] || r.category || '—')}</td>
                 <td style="${td};font-weight:bold">${esc(r.title || '')}</td>
@@ -13126,8 +15194,9 @@ function _execWordDocument(cover, models, layouts, issueRows, meta) {
                 <td style="${td};white-space:nowrap">${esc(formatIssueDate(r.created_at))}</td>
                 <td style="${td};white-space:nowrap">${r.resolved_at ? esc(formatIssueDate(r.resolved_at)) : '—'}</td>
                 <td style="${td}">${esc(r.person_in_charge || '—')}</td></tr>`).join('')}
-        </table></div>`;
+        </table></div>`);
 
+    const body = sections.join(sectionBreak);
     return { body, style };
 }
 
@@ -13169,16 +15238,58 @@ function wireVpxReportModal() {
 /* ─── Executive Report modal — combined VPX Station Report (every
    vehicle/component segment) + all-time Issues Status Report. Always
    previews before download, per how this report is meant to be used. ── */
+/** Scope line + live snapshot in the Executive Report menu. */
+function _fillExecReportMenu() {
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    const cover = _execCoverSummary();
+    set('execScopeModule', cover.module);
+    set('execScopeVersion', cover.version || '—');
+    const tf = document.querySelector('#fxTimeSeg [aria-pressed="true"], #fxTimeSeg .is-active')?.textContent?.trim();
+    const activeFilters = document.querySelectorAll('#fxChips .fx-chip').length;
+    set('execScopeFilters', `${tf || 'All time'}${activeFilters ? ` · ${activeFilters} filter${activeFilters === 1 ? '' : 's'}` : ' · All units'}`);
+    set('execSnapDelivery', cover.expectedDelivery);
+    const delta = document.getElementById('execSnapDeliveryDelta');
+    if (delta) {
+        delta.textContent = cover.worst > 0 ? `+${cover.worst} wd vs ${cover.plannedDelivery}` : `on time · planned ${cover.plannedDelivery}`;
+        delta.className = cover.worst > 0 ? 'xr-bad' : 'xr-ok';
+    }
+    set('execSnapPct', `${cover.pct}%`);
+    set('execSnapPctSub', `${(cover.completed + cover.late).toLocaleString('en-GB')} of ${cover.total.toLocaleString('en-GB')} blocks`);
+    const ov = document.getElementById('issueOvOpen')?.textContent, ip = document.getElementById('issueOvInProgress')?.textContent;
+    const crit = document.getElementById('issueOvCritical')?.textContent;
+    const openN = (parseInt(ov, 10) || 0) + (parseInt(ip, 10) || 0);
+    set('execSnapIssues', ov != null ? String(openN) : '—');
+    const issSub = document.getElementById('execSnapIssuesSub');
+    if (issSub) { issSub.textContent = crit != null ? `${crit} critical / high` : 'open issues'; issSub.className = parseInt(crit, 10) ? 'xr-bad' : 'xr-ok'; }
+}
+
 function wireExecReportModal() {
     const overlay = document.getElementById('execReportModalOverlay');
     if (!overlay) return;
     const close = () => { overlay.style.display = 'none'; };
 
     document.getElementById('btnExecReport')?.addEventListener('click', () => {
+        _fillExecReportMenu();
         overlay.style.display = 'flex';
     });
     document.getElementById('execReportModalClose')?.addEventListener('click', close);
     document.getElementById('execReportModalCancel')?.addEventListener('click', close);
+    // Each part is a switch: renumber what's in, and block the formats when nothing is
+    const syncParts = () => {
+        let n = 0;
+        overlay.querySelectorAll('.xr-opt').forEach(row => {
+            const on = row.querySelector('input[type="checkbox"]')?.checked;
+            row.classList.toggle('is-off', !on);
+            const num = row.querySelector('.xr-num');
+            if (num) num.textContent = on ? String(++n) : '–';
+        });
+        const none = n === 0;
+        overlay.querySelectorAll('.xr-fmt-btn').forEach(btn => { btn.disabled = none; });
+        const hint = document.getElementById('execPartsHint');
+        if (hint) hint.hidden = !none;
+    };
+    overlay.querySelectorAll('.xr-opt input[type="checkbox"]').forEach(cb => cb.addEventListener('change', syncParts));
+    syncParts();
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
     // Always previews (never a silent direct download) — the modal stays
@@ -13203,7 +15314,7 @@ function openVpxDelayReasonModal(vehicle, vehicleNo, category, battalion) {
     }
 
     const titleEl = document.getElementById('vpxDelayReasonModalTitle');
-    if (titleEl) titleEl.textContent = `Delay Reason — ${vehicle} ${vehicleNo} (${category})`;
+    if (titleEl) titleEl.textContent = `Delay Reason — ${battalion ? battalion + ' · ' : ''}${vehicle} ${vehicleNo} (${category})`;
     const textEl = document.getElementById('vpxDelayReasonText');
     if (textEl) textEl.value = entry.reasons?.[category] || '';
 
@@ -14334,7 +16445,7 @@ async function renderPlanVersionsTable() {
         <td>${v.created_at ? new Date(v.created_at).toLocaleDateString() : '—'}</td>
         <td>${esc(v.created_by || '—')}</td>
         <td>
-          ${v.id === activeId ? '' : `<button class="btn btn-xs btn-ghost" onclick="setActivePlanVersionFromDialog(${v.id})">Set Active</button>`}
+          ${v.id === activeId || v.status === 'archived' ? '' : `<button class="btn btn-xs btn-ghost" onclick="setActivePlanVersionFromDialog(${v.id})">Set Active</button>`}
           <button class="btn btn-xs btn-ghost" onclick="renamePlanVersionFromDialog(${v.id})">Rename</button>
           <button class="btn btn-xs ${v.status === 'archived' ? 'btn-ghost' : 'btn-danger'}" onclick="togglePlanVersionArchive(${v.id}, '${v.status}')">${v.status === 'archived' ? 'Restore' : 'Archive'}</button>
           ${!v.is_baseline && isMasterAdmin() ? `<button class="btn btn-xs btn-danger" onclick="deletePlanVersionFromDialog(${v.id}, '${esc(v.name).replace(/'/g, "\\'")}')">Delete</button>` : ''}
@@ -14405,7 +16516,7 @@ async function togglePlanVersionArchive(versionId, currentStatus) {
         await window.PlanVersions.setStatus(db, versionId, nextStatus, auditLog);
         showToast(nextStatus === 'archived' ? 'Plan version archived.' : 'Plan version restored.', 'success');
         if (nextStatus === 'archived' && wasActive) {
-            // Fall back to whichever active version is left (or the baseline).
+            // Fall back to whichever active version is left (PlanVersions picks it if none is stored).
             const left = window.PlanVersions.getVersions(moduleId).find(v => v.status === 'active' && v.id !== versionId);
             window.PlanVersions.setActiveId(moduleId, left ? left.id : null);
             window.location.reload();
@@ -15019,10 +17130,12 @@ async function loadIssuesOverview() {
     try {
         const { data, error } = await _selectAllPages(db
             .from('production_issues')
-            .select('status, priority')
+            .select('status, priority, category, created_at, resolved_at')
             .eq('module', getActiveModuleId())
             .order('id'));
         if (error) throw error;
+        // Same rows feed the Analytics "Issues Trend" chart
+        if (typeof anSetIssues === 'function') anSetIssues(data || []);
 
         let open = 0, inProgress = 0, resolved = 0, critical = 0;
         (data || []).forEach(r => {
@@ -16999,8 +19112,8 @@ function startIssueNotifSync() {
         .on('broadcast', { event: 'issue:new' }, ({ payload }) => {
             const sameModule = !payload?.module || payload.module === getActiveModuleId();
             if (!sameModule) return;
-            // Always reload the table
-            loadIssues(true).catch(() => {});
+            // Always reload the table (once the tab is shown)
+            _whenVisible(_reloadIssuesQuietly);
             // Only store notification for changes by others
             if (payload?.by === u.email) return;
             const reporter = payload?.reporter || 'Someone';
@@ -17014,7 +19127,7 @@ function startIssueNotifSync() {
         .on('broadcast', { event: 'issue:updated' }, ({ payload }) => {
             const sameModule = !payload?.module || payload.module === getActiveModuleId();
             if (!sameModule) return;
-            loadIssues(true).catch(() => {});
+            _whenVisible(_reloadIssuesQuietly);
             if (payload?.by !== u.email && payload?.issueId) {
                 _storeIssueNotification(payload.issueId, payload.module || getActiveModuleId(),
                     payload.title || '', payload.category || '', payload.reporter || 'Someone',
@@ -17026,7 +19139,7 @@ function startIssueNotifSync() {
             const sameModule = !payload?.module || payload.module === getActiveModuleId();
             if (!sameModule) return;
             // Silent table refresh — no notification stored
-            loadIssues(true).catch(() => {});
+            _whenVisible(_reloadIssuesQuietly);
         })
         .subscribe();
 }
@@ -17088,6 +19201,7 @@ let _issuesPollLastCheck  = null;   // ISO string — updated each poll cycle
 
 async function _issuesPollCheck() {
     if (!db) return;
+    if (document.hidden) { _whenVisible(_issuesPollCheck); return; } // catch up when shown
     const u = getCurrentUser();
     if (!u) return;
 
@@ -17105,7 +19219,7 @@ async function _issuesPollCheck() {
         if (error || !data?.length) return;
 
         // Reload the table for the current user no matter what changed
-        loadIssues(true).catch(() => {});
+        _reloadIssuesQuietly();
 
         // Notify only for changes by others
         const byOthers = data.filter(r => r.reporter_email !== u.email);
@@ -17256,6 +19370,7 @@ async function _broadcastAuditEvent(action, table, recId, user, createdAt, versi
 async function _auditNotifCatchup() {
     const u = getCurrentUser();
     if (!u || !db) return;
+    if (document.hidden) { _whenVisible(_auditNotifCatchup); return; } // broadcasts still land; poll when shown
     try {
         const since = _auditNotifGetSeen();
         let { data, error } = await db.from('planning_audit_log')
@@ -17294,6 +19409,7 @@ function startAuditNotifSync() {
     _auditNotifChannel = db.channel('ppms-audit-notif')
         .on('broadcast', { event: 'audit:new' }, ({ payload }) => {
             if (!payload || payload.user_email === u.email) return;
+            _noteForeignPlanEdit(payload); // lets the realtime reload name the real editor
             if (AUDIT_NOTIF_EXCLUDED_ACTIONS.has(payload.action)) return;
             _storeAuditNotification(payload);
             _auditNotifMarkSeen(payload.created_at);
@@ -17318,6 +19434,8 @@ function startAuditNotifPoll() {
    ================================================================ */
 
 let _ganttEditMode = false;
+let _ganttDragActive = 0; // when the current bar drag started (0 = none)
+let _ganttDaysList = [];    // the Gantt's visible day columns (set by renderGantt)
 let _ganttSatAllowed = false;
 let _ganttSatAsked = false;
 let _ganttMoveMode = 'single';
@@ -17380,7 +19498,7 @@ function isGanttFullscreen() {
 
 function syncGanttFullscreenButtons() {
     const active = isGanttFullscreen();
-    const label = active ? 'Exit Full Screen' : 'Full Screen';
+    const label = active ? _t('Exit Full Screen') : _t('Full Screen');
     const host = getGanttCardHost();
     if (host) host.classList.toggle('is-fullscreen', active);
     [
@@ -17442,7 +19560,7 @@ function isVpxFullscreen() {
 
 function syncVpxFullscreenButtons() {
     const active = isVpxFullscreen();
-    const label = active ? 'Exit Full Screen' : 'Full Screen';
+    const label = active ? _t('Exit Full Screen') : _t('Full Screen');
     const host = getVpxCardHost();
     if (host) host.classList.toggle('is-fullscreen', active);
     [
@@ -17518,7 +19636,7 @@ function toggleTableFullscreen() {
     ['btnTableFullscreen', 'btnTableFullscreenLabel'].forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
-        if (id.endsWith('Label')) el.textContent = isFs ? 'Exit Full Screen' : 'Full Screen';
+        if (id.endsWith('Label')) el.textContent = isFs ? _t('Exit Full Screen') : _t('Full Screen');
         else el.setAttribute('aria-pressed', String(isFs));
     });
 }
@@ -17558,7 +19676,7 @@ function syncGanttLegendUi() {
         btn.disabled = !hasContent;
         btn.setAttribute('aria-expanded', hasContent && _ganttLegendOpen ? 'true' : 'false');
     }
-    if (label) label.textContent = hasContent && _ganttLegendOpen ? 'Hide Legend' : 'Show Legend';
+    if (label) label.textContent = hasContent && _ganttLegendOpen ? _t('Hide Legend') : _t('Show Legend');
 }
 
 function clearGanttHoverGuide() {
@@ -17572,6 +19690,7 @@ function clearGanttHoverGuide() {
         });
         _ganttHoverDate = '';
     }
+    document.getElementById('ganttInner')?.classList.remove('has-hover-col');
 }
 
 function syncGanttHoverGuide(rowEl, dateStr) {
@@ -17588,15 +19707,23 @@ function syncGanttHoverGuide(rowEl, dateStr) {
         }
         _ganttHoverDate = dateStr || '';
         if (_ganttHoverDate) {
+            // Header day (+ per-day cells in the fallback layout)
             document.querySelectorAll(`[data-gantt-date="${_ganttHoverDate}"]`).forEach(node => {
                 node.classList.add('gantt-hover-col');
             });
+        }
+        // Body column highlight for the CSS grid — a single variable
+        const inner = document.getElementById('ganttInner');
+        const idx = _ganttHoverDate ? _ganttDaysList.indexOf(_ganttHoverDate) : -1;
+        if (inner) {
+            inner.classList.toggle('has-hover-col', idx >= 0);
+            if (idx >= 0) inner.style.setProperty('--gh-x', (idx * GANTT_DAY_W) + 'px');
         }
     }
 }
 
 function resolveGanttHoverDate(track, clientX) {
-    const days = String(track?.dataset?.ganttDays || '').split(',').filter(Boolean);
+    const days = _ganttDaysList;
     if (!days.length) return '';
     const rect = track.getBoundingClientRect();
     if (!rect.width) return '';
@@ -17672,14 +19799,14 @@ function _syncUndoButtons() {
     if (btnU) {
         btnU.disabled = _undoStack.length === 0;
         btnU.setAttribute('title', _undoStack.length
-            ? 'Undo last move (' + _undoStack.length + ' in history)'
-            : 'Nothing to undo');
+            ? _t('Undo last move ({n} in history)', { n: _undoStack.length })
+            : _t('Nothing to undo'));
     }
     if (btnR) {
         btnR.disabled = _redoStack.length === 0;
         btnR.setAttribute('title', _redoStack.length
-            ? 'Redo (' + _redoStack.length + ' available)'
-            : 'Nothing to redo');
+            ? _t('Redo ({n} available)', { n: _redoStack.length })
+            : _t('Nothing to redo'));
     }
 }
 
@@ -17698,6 +19825,7 @@ function _syncSelectedBlockUi() {
         const id = bar.dataset.planId;
         const selected = _selectedGanttPlanIds.has(id);
         bar.classList.toggle('gc-bar-selected', selected);
+        if (selected) _ensureGanttBarControls(bar);
         const btn = bar.querySelector('.gc-bar-select');
         if (btn) {
             btn.classList.toggle('gc-bar-select-active', selected);
@@ -17709,9 +19837,11 @@ function _syncSelectedBlockUi() {
     const delBtn = document.getElementById('btnDeleteSelectedBlocks');
     const selStrip = document.getElementById('ganttSelStrip');
     if (countEl) countEl.textContent = String(count);
+    const nounEl = document.getElementById('ganttSelectedNoun');
+    if (nounEl) nounEl.textContent = count === 1 ? _t('block') : _t('blocks');
     if (delBtn) {
         delBtn.disabled = count === 0;
-        delBtn.textContent = count > 0 ? `Delete ${count} block${count === 1 ? '' : 's'}` : 'Delete selected';
+        delBtn.textContent = count > 0 ? _t(count === 1 ? 'Delete {n} block' : 'Delete {n} blocks', { n: count }) : _t('Delete selected');
     }
     if (selStrip) selStrip.hidden = count === 0;
     document.querySelectorAll('[data-gantt-lane-select]').forEach(btn => {
@@ -17762,6 +19892,7 @@ function syncGanttModuleEditControls() {
     const planBtn = document.getElementById('gmtPlan');
     const fromBlockBtn = document.getElementById('gmtFromBlock');
     const fromBlockLaneBtn = document.getElementById('gmtFromBlockLane');
+    const laterGroup = document.getElementById('gmtGroupLater');
     const visualAddShell = document.getElementById('ganttVisualAddShell');
     const viewToggleWrap = document.getElementById('ganttViewToggleWrap');
     const templateBtn = document.getElementById('btnF100AddTemplate');
@@ -17801,7 +19932,14 @@ function syncGanttModuleEditControls() {
     if (templateBtn) templateBtn.style.display = isF100 ? '' : 'none';
     if (planBtn) planBtn.style.display = isKd2 ? 'none' : '';
     if (fromBlockBtn) fromBlockBtn.style.display = isKd2 ? '' : 'none';
+    const lineGroup = document.getElementById('gmtGroupLine');
+    if (lineGroup) lineGroup.style.display = isKd2 ? '' : 'none';
+    if (!isKd2 && (_ganttMoveMode === 'line-from' || _ganttMoveMode === 'line-all')) _ganttMoveMode = 'single';
+    const fromDateBtn = document.getElementById('gmtFromDate');
+    if (fromDateBtn) fromDateBtn.style.display = isKd2 ? '' : 'none';
+    if (!isKd2 && _ganttMoveMode === 'from-date') _ganttMoveMode = 'single';
     if (fromBlockLaneBtn) fromBlockLaneBtn.style.display = isKd2ProcessView ? '' : 'none';
+    if (laterGroup) laterGroup.style.display = isKd2 ? '' : 'none';
     if (viewToggleWrap) viewToggleWrap.style.display = isKd2 ? '' : 'none';
     // Saturdays / No-work Days live in the Options popover; No-work Days is KD2-only.
     if (satWrap) satWrap.style.display = isKd2 ? 'none' : '';
@@ -17809,6 +19947,7 @@ function syncGanttModuleEditControls() {
 
     if (isKd2 && _ganttMoveMode === 'plan') _ganttMoveMode = 'single';
     if (!isKd2 && _ganttMoveMode === 'from-block') _ganttMoveMode = 'single';
+    if (!isKd2 && (_ganttMoveMode === 'unit-after' || _ganttMoveMode === 'from-block-after')) _ganttMoveMode = 'single';
     if (!isKd2ProcessView && _ganttMoveMode === 'from-block-lane') _ganttMoveMode = 'from-block';
     if (!isKd2) _ganttSelectLaneMode = false;
     const moveToggle = document.getElementById('ganttMoveToggle');
@@ -17817,6 +19956,14 @@ function syncGanttModuleEditControls() {
             btn.classList.toggle('gmt-active', btn.dataset.mode === _ganttMoveMode);
         });
     }
+    _syncGanttMoveHint();
+    // A move card whose options are all unavailable here is hidden entirely
+    document.querySelectorAll('#ganttMoveToggle .gmt-card').forEach(card => {
+        if (card.id === 'gmtGroupLater' || card.id === 'gmtGroupLine') return; // shown/hidden as a whole above
+        card.hidden = ![...card.querySelectorAll('.gmt-btn')].some(b => b.style.display !== 'none');
+    });
+    const copyPlanBtn = document.getElementById('btnGanttCopyPlan');
+    if (copyPlanBtn) copyPlanBtn.style.display = isKd2 && typeof getModuleRuntime()?.openCopyPlanModal === 'function' ? '' : 'none';
     const laneBtn = document.getElementById('gmtSelectLane');
     if (laneBtn) {
         laneBtn.style.display = isKd2 ? '' : 'none';
@@ -17825,7 +19972,7 @@ function syncGanttModuleEditControls() {
     }
 
     const scopeLabel = document.getElementById('ganttReorderScope');
-    if (scopeLabel) scopeLabel.textContent = 'Route order · this version';
+    if (scopeLabel) scopeLabel.textContent = _t('Route order · this version');
 
     document.body.classList.toggle('gantt-reorder-active', _ganttEditMode && _ganttReorderMode);
 }
@@ -17851,7 +19998,7 @@ function setGanttEditMode(on) {
         if (pop) { pop.hidden = true; document.getElementById('btnGanttOptions')?.setAttribute('aria-expanded', 'false'); }
         if (isF100KD2Module()) cancelF100Placement();
     }
-    document.getElementById('ganttEditBar').style.display = on ? 'flex' : 'none';
+    document.getElementById('ganttEditBar').style.display = on ? '' : 'none'; // layout: gantt.css (grid)
     document.getElementById('btnGanttEdit').style.display = (on || !canEditPlan()) ? 'none' : '';
     // Sync undo button states whenever edit mode changes
     _syncUndoButtons();
@@ -18098,17 +20245,18 @@ async function _applyDateChanges(changes) {
 async function savePlanChanges(changes) {
     if (!changes.length) return;
     markLocalSave();
-    showToast(`Saving ${changes.length} block${changes.length > 1 ? 's' : ''}…`, 'info');
+    showToast(_t(changes.length > 1 ? 'Saving {n} blocks…' : 'Saving {n} block…', { n: changes.length }), 'info');
 
     try {
         await _applyDateChanges(changes);
+        markLocalSave(); // echoes keep arriving after a long multi-block save
 
         await auditLog('UPDATE', getModulePlanTable(), 'batch-move',
             { count: changes.length, ids: changes.map(c => c.id) },
             { count: changes.length, sample: { id: changes[0].id, newStart: changes[0].newStart } }
         );
 
-        showToast(`${changes.length} block${changes.length > 1 ? 's' : ''} rescheduled ✓`, 'success');
+        showToast(_t(changes.length > 1 ? '{n} blocks rescheduled ✓' : '{n} block rescheduled ✓', { n: changes.length }), 'success');
         if (_ganttEditMode) {
             if (changes.length === 1) {
                 const c = changes[0];
@@ -18162,7 +20310,9 @@ async function undoGantt() {
 
     showToast(`Undoing ${inverse.length} block move${inverse.length > 1 ? 's' : ''}…`, 'info');
     try {
+        markLocalSave();
         await _applyDateChanges(inverse);
+        markLocalSave();
         await auditLog('UPDATE', getModulePlanTable(), 'undo',
             { count: inverse.length }, { count: inverse.length, sample: { id: inverse[0].id, newStart: inverse[0].newStart } });
 
@@ -18201,7 +20351,9 @@ async function redoGantt() {
 
     showToast(`Redoing ${changes.length} block move${changes.length > 1 ? 's' : ''}…`, 'info');
     try {
+        markLocalSave();
         await _applyDateChanges(changes);
+        markLocalSave();
         await auditLog('UPDATE', getModulePlanTable(), 'redo',
             { count: changes.length }, { count: changes.length, sample: { id: changes[0].id, newStart: changes[0].newStart } });
 
@@ -18223,12 +20375,13 @@ async function redoGantt() {
  * Finds all .gc-bar[data-plan-id] elements and attaches pointer-drag handlers.
  */
 function wireGanttDragEdit(dayIndex, days) {
+    _ganttOnResizePointerDown = null; // never reuse a handler from an older render
     if (!_ganttEditMode || _ganttReorderMode) return;
 
     const bars = document.querySelectorAll('.gc-bar[data-plan-id]');
     bars.forEach(bar => {
         bar.style.cursor = 'grab';
-        bar.addEventListener('pointerdown', onBarPointerDown);
+        _wirePointerDown(bar, onBarPointerDown);
     });
 
     function onBarPointerDown(e) {
@@ -18246,9 +20399,17 @@ function wireGanttDragEdit(dayIndex, days) {
         const previewMoveSet = _ganttMoveMode === 'lane'
             ? currentData.filter(row => samePlanLane(row, task))
             : _ganttMoveMode === 'from-block-lane'
-                ? getKd2ForwardMoveRowsByStation(task, currentData)
+                ? (_ganttCombinedGroupOf(task.vehicle) === GANTT_COMBINED_KEY ? _kd2CombinedStationQueue(task, currentData) : getKd2ForwardMoveRowsByStation(task, currentData))
+                : _ganttMoveMode === 'unit-after'
+                ? getKd2UnitAndAfterRows(task, currentData)
+                : _ganttMoveMode === 'from-block-after'
+                ? getKd2FromProcessAfterRows(task, currentData)
+                : _ganttMoveMode === 'from-date'
+                ? currentData.filter(row => samePlanLane(row, task) && (row.start_date || '') >= (task.start_date || ''))
+                : (_ganttMoveMode === 'line-from' || _ganttMoveMode === 'line-all')
+                ? kd2RowsSameLine(task, currentData.filter(row => samePlanLane(row, task)), { fromAnchor: _ganttMoveMode === 'line-from' })
                 : _ganttMoveMode === 'from-block'
-                    ? (isF100KD2Module() ? getF100ForwardMoveRows(task, currentData) : getKd2ForwardMoveRows(task, currentData))
+                    ? (isF100KD2Module() ? getF100ForwardMoveRows(task, currentData) : kd2RowsFromProcessOn(task, currentData.filter(row => samePlanLane(row, task))))
                     : _selectedGanttPlanIds.has(planId) && _selectedGanttPlanIds.size > 1 && _ganttMoveMode === 'single'
                         ? currentData.filter(row => _selectedGanttPlanIds.has(String(row.id)))
                         : [task];
@@ -18269,6 +20430,7 @@ function wireGanttDragEdit(dayIndex, days) {
         const startX = e.clientX;
         let deltaPx = 0;
         let deltaDays = 0;
+        _ganttDragActive = Date.now(); // live updates from co-editors wait until the drop
 
         function onMove(ev) {
             deltaPx = ev.clientX - startX;
@@ -18280,6 +20442,7 @@ function wireGanttDragEdit(dayIndex, days) {
         }
 
         async function onUp() {
+            _ganttDragActive = 0;
             bar.releasePointerCapture(e.pointerId);
             bar.removeEventListener('pointermove', onMove);
             bar.removeEventListener('pointerup', onUp);
@@ -18314,7 +20477,7 @@ function wireGanttDragEdit(dayIndex, days) {
 
             const gsEl = document.getElementById('ganttStart');
             const geEl = document.getElementById('ganttEnd');
-            renderGantt(currentData, gsEl?.value, geEl?.value);
+            renderGantt(applyActiveFilters(currentData), gsEl?.value, geEl?.value, { patch: true });
             syncDataViewsAfterGanttEdit();
         }
 
@@ -18325,8 +20488,9 @@ function wireGanttDragEdit(dayIndex, days) {
     // ── Edge resize — drag a bar's left/right edge to change only its start
     // or only its end date, directly, without opening the Edit modal. ──
     document.querySelectorAll('.gc-bar-resize').forEach(handle => {
-        handle.addEventListener('pointerdown', onResizePointerDown);
+        _wirePointerDown(handle, onResizePointerDown);
     });
+    _ganttOnResizePointerDown = onResizePointerDown;
 
     function onResizePointerDown(e) {
         if (!_ganttEditMode) return;
@@ -18396,7 +20560,7 @@ function wireGanttDragEdit(dayIndex, days) {
 
             const gsEl = document.getElementById('ganttStart');
             const geEl = document.getElementById('ganttEnd');
-            renderGantt(currentData, gsEl?.value, geEl?.value);
+            renderGantt(applyActiveFilters(currentData), gsEl?.value, geEl?.value, { patch: true });
             syncDataViewsAfterGanttEdit();
         }
 
@@ -18443,6 +20607,7 @@ wireGanttControls = function () {
         if (!btn) return;
         _ganttMoveMode = btn.dataset.mode;
         this.querySelectorAll('.gmt-btn').forEach(b => b.classList.toggle('gmt-active', b === btn));
+        _syncGanttMoveHint();
     });
     document.getElementById('gmtSelectLane')?.addEventListener('click', () => {
         setGanttLaneSelectMode(!_ganttSelectLaneMode);
@@ -18515,8 +20680,8 @@ wireGanttControls = function () {
 /* ── Patch renderGantt to pass data-plan-id on bars and wire drag ── */
 /* ── Extend renderGantt: wire drag handles + re-apply edit class ── */
 const _origRenderGantt = renderGantt;
-renderGantt = function (plans, startDate, endDate) {
-    _origRenderGantt(plans, startDate, endDate);
+renderGantt = function (plans, startDate, endDate, opts) {
+    _origRenderGantt(plans, startDate, endDate, opts);
 
     // data-plan-id is now baked directly into each bar's HTML, so no
     // post-render tagging is needed.  We only need to attach drag handlers.
@@ -18820,6 +20985,9 @@ function wireBarDeleteButtons() {
     // Remove any existing delegated listener before re-adding (avoids duplicates)
     inner.removeEventListener('click', _ganttBarClickHandler);
     inner.addEventListener('click', _ganttBarClickHandler);
+    // Edit controls are built on first hover (_ensureGanttBarControls)
+    inner.removeEventListener('pointerover', _ganttLazyControlsHandler);
+    inner.addEventListener('pointerover', _ganttLazyControlsHandler);
 
     // Click-outside: close any open bar menu when clicking anywhere outside a bar
     document.removeEventListener('click', _ganttClickOutsideHandler);
@@ -18852,22 +21020,47 @@ async function handleKd2ReorderClick(btn) {
         rt.openProcessModal?.(vehicle);
         return;
     }
-    if (action === 'remove') {
+    // Per-plan-version visibility (migration 59): Hide keeps the blocks but
+    // leaves the process out of every view; Delete removes its blocks and the
+    // process from this version; the catalog and other versions never change.
+    if (action === 'hide' || action === 'show' || action === 'remove' || action === 'restore') {
         _closeAllBarMenus();
         const codes = (box.dataset.stationCodes || '').split(',').filter(Boolean);
         if (!codes.length) { showToast('No station is bound to this row.', 'error'); return; }
+        if (!rt.setStationsVisibility) { showToast('Please reload the page to use this option.', 'error'); return; }
         try {
-            for (const code of codes) {
-                // In a plan version, remove only from this version; otherwise
-                // retire the catalog station.
-                const handled = await rt.removeStationFromVersion?.(vehicle, code);
-                if (!handled) await rt.deleteProcessStation?.(vehicle, code);
+            let ok = false;
+            if (action === 'remove') {
+                ok = await rt.deleteStationsFromVersion(vehicle, codes, rowKey);
+                if (ok) {
+                    const drop = new Set(codes);
+                    currentData = currentData.filter(r => !((r.vehicle || r.vehicle_type) === vehicle && drop.has(r.station_code)));
+                    showToast(`"${rowKey}" deleted from this plan version.`, 'success');
+                    _broadcastEditActivity(`deleted ${rowKey} from the ${vehicle} plan`);
+                }
+            } else {
+                const vis = action === 'hide' ? 'hidden' : 'visible';
+                ok = await rt.setStationsVisibility(vehicle, codes, vis);
+                if (ok && action === 'hide') {
+                    const drop = new Set(codes);
+                    currentData = currentData.filter(r => !((r.vehicle || r.vehicle_type) === vehicle && drop.has(r.station_code)));
+                }
+                if (ok && action === 'show') {
+                    // Its blocks were left out of the loaded plan — fetch them back
+                    await loadData();
+                }
+                if (ok) {
+                    const msg = { hide: `"${rowKey}" hidden from this plan version.`, show: `"${rowKey}" is shown again.`, restore: `"${rowKey}" restored to this plan version.` }[action];
+                    showToast(msg, 'success');
+                    _broadcastEditActivity({ hide: `hid ${rowKey}`, show: `showed ${rowKey}`, restore: `restored ${rowKey}` }[action] + ` in the ${vehicle} plan`);
+                }
             }
-            resetKd2LaneOrderCache();
-            refreshAllViews();
-            _broadcastEditActivity(`removed ${rowKey} from the ${vehicle} route`);
+            if (ok) {
+                resetKd2LaneOrderCache();
+                refreshAllViews();
+            }
         } catch (err) {
-            showToast('Remove failed: ' + (err.message || err), 'error');
+            showToast('Update failed: ' + (err.message || err), 'error');
         }
         return;
     }
@@ -18961,7 +21154,7 @@ function _ganttBarClickHandler(e) {
     const placementTrack = e.target.closest('.gr-track[data-kd2-track="true"]');
     const clickedBar = e.target.closest('.gc-bar');
     if (placementTrack && !clickedBar && !_ganttReorderMode) {
-        const days = String(placementTrack.dataset.ganttDays || '').split(',').filter(Boolean);
+        const days = _ganttDaysList;
         if (days.length) {
             const rect = placementTrack.getBoundingClientRect();
             const offset = Math.max(0, Math.min(rect.width - 1, e.clientX - rect.left));
@@ -19023,6 +21216,7 @@ function _ganttBarClickHandler(e) {
         document.querySelectorAll('.gc-bar-menu-open').forEach(bar => bar.classList.remove('gc-bar-menu-open', 'gc-bar-menu-below'));
         document.querySelectorAll('.gc-row-menu-open').forEach(row => row.classList.remove('gc-row-menu-open'));
         const bar = menuTrigger.closest('.gc-bar');
+        if (bar && !bar.querySelector('.gc-bar-menu')) bar.insertAdjacentHTML('beforeend', _ganttBlockMenuHtml(menuTrigger.dataset.planId));
         if (bar) bar.classList.add('gc-bar-menu-open');
         const row = menuTrigger.closest('.gr');
         if (row) row.classList.add('gc-row-menu-open');

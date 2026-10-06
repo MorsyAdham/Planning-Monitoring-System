@@ -23,12 +23,16 @@
     <link rel="stylesheet" href="styles/components/tables.css" />
     <link rel="stylesheet" href="styles/components/modals.css" />
     <link rel="stylesheet" href="styles/components/toasts.css" />
+    <link rel="stylesheet" href="styles/components/hover-card.css" />
     <link rel="stylesheet" href="styles/features/shell.css" />
     <link rel="stylesheet" href="styles/features/filters.css" />
     <link rel="stylesheet" href="styles/features/summary.css" />
     <link rel="stylesheet" href="styles/features/charts.css" />
+    <link rel="stylesheet" href="styles/features/update-notice.css" />
+    <link rel="stylesheet" href="styles/features/tour.css" />
     <link rel="stylesheet" href="styles/features/vpx.css" />
     <link rel="stylesheet" href="styles/features/gantt.css" />
+    <link rel="stylesheet" href="styles/features/i18n.css" />
     <link rel="stylesheet" href="styles/features/admin.css" />
     <link rel="stylesheet" href="styles/features/kd2.css" />
     <link rel="stylesheet" href="styles/features/issues.css" />
@@ -37,6 +41,21 @@
     <link rel="stylesheet" href="styles/features/delivery-analysis.css" />
     <link rel="stylesheet" href="styles/features/assistant.css" />
     <link rel="stylesheet" href="styles/themes/crimson.css" />
+    <!-- Running version (stamped by tools/deploy.sh) — must load before the app modules -->
+    <script src="scripts/core/build-info.js"></script>
+    <script>
+        // Interface language: set direction before the loading screen paints (core/i18n.js does the rest)
+        (function () {
+            try {
+                var l = localStorage.getItem('ppms_lang');
+                if (l === 'ar' || l === 'ko') {
+                    document.documentElement.lang = l;
+                    document.documentElement.classList.add('lang-' + l);
+                    if (l === 'ar') document.documentElement.dir = 'rtl';
+                }
+            } catch (e) { }
+        })();
+    </script>
     <script>
         (function () {
             try {
@@ -59,7 +78,7 @@
     </script>
 </head>
 <body>
-    <div id="appLoader" class="app-loader" role="status" aria-live="polite" aria-label="Loading">
+    <div id="appLoader" class="app-loader" role="status" aria-live="polite" aria-label="Loading" data-i18n-label="Loading">
         <div class="app-loader-grid"></div>
         <div class="app-loader-scanline"></div>
         <div class="app-loader-vignette"></div>
@@ -67,10 +86,10 @@
         <div class="app-loader-corner app-loader-corner--tr"></div>
         <div class="app-loader-corner app-loader-corner--bl"></div>
         <div class="app-loader-corner app-loader-corner--br"></div>
-        <div class="app-loader-tag app-loader-tag--tl">MODULE // <span id="appLoaderModule">—</span></div>
+        <div class="app-loader-tag app-loader-tag--tl"><span data-i18n="MODULE">MODULE</span> // <span id="appLoaderModule">—</span></div>
         <div class="app-loader-tag app-loader-tag--tr" id="appLoaderClock">00:00:00</div>
-        <div class="app-loader-tag app-loader-tag--bl">SEC-CLR // AUTHORIZED</div>
-        <div class="app-loader-tag app-loader-tag--br">LINK STATUS: <span id="appLoaderLink">HANDSHAKE</span></div>
+        <div class="app-loader-tag app-loader-tag--bl" data-i18n="SEC-CLR // AUTHORIZED">SEC-CLR // AUTHORIZED</div>
+        <div class="app-loader-tag app-loader-tag--br"><span data-i18n="LINK STATUS:">LINK STATUS:</span> <span id="appLoaderLink" data-i18n="HANDSHAKE">HANDSHAKE</span></div>
 
         <div class="app-loader-inner">
             <div class="app-loader-core">
@@ -82,15 +101,15 @@
                 <div class="app-loader-mark">PPMS</div>
             </div>
 
-            <div class="app-loader-welcome" id="appLoaderWelcome">SYSTEMS ONLINE</div>
-            <div class="app-loader-sub">Production Planning &amp; Monitoring System</div>
+            <div class="app-loader-welcome" id="appLoaderWelcome" data-i18n="SYSTEMS ONLINE">SYSTEMS ONLINE</div>
+            <div class="app-loader-sub" data-i18n="Production Planning & Monitoring System">Production Planning &amp; Monitoring System</div>
 
             <div class="app-loader-bar-track">
                 <div class="app-loader-bar-fill" id="appLoaderFill"></div>
                 <div class="app-loader-bar-ticks"></div>
             </div>
             <div class="app-loader-statusrow">
-                <span class="app-loader-status" id="appLoaderStatus"><span id="appLoaderStatusText">Connecting&hellip;</span><span class="app-loader-cursor">&#9608;</span></span>
+                <span class="app-loader-status" id="appLoaderStatus"><span id="appLoaderStatusText" data-i18n="Connecting…">Connecting&hellip;</span><span class="app-loader-cursor">&#9608;</span></span>
                 <span class="app-loader-pct" id="appLoaderPct">0%</span>
             </div>
         </div>

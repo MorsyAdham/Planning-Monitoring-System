@@ -1,1 +1,248 @@
 /* Gantt ownership. */
+
+/* ─── KD2 process view: processes hidden / deleted in this plan version
+   (shown only in Edit → Reorder route, so they can be shown / restored) ── */
+.gr-reorder-more-menu { width: 220px; }
+.gr.gr-lane-hidden > .gr-label,
+.gr.gr-lane-removed > .gr-label { opacity: .62; }
+.gr.gr-lane-hidden > .gr-track {
+    background-image: repeating-linear-gradient(135deg, rgba(127, 127, 127, .09) 0 6px, transparent 6px 12px);
+}
+.gr.gr-lane-removed > .gr-track {
+    background-image: repeating-linear-gradient(135deg, rgba(239, 68, 68, .08) 0 6px, transparent 6px 12px);
+}
+.gr.gr-lane-removed .gr-unit-name { text-decoration: line-through; text-decoration-color: var(--clr-overdue); }
+.gr-lane-state-badge {
+    align-self: flex-start;
+    padding: 1px 6px;
+    border: 1px dashed var(--clr-border);
+    border-radius: 999px;
+    font-size: .58rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--clr-text-muted);
+}
+.gr-lane-removed .gr-lane-state-badge { border-color: var(--clr-overdue); color: var(--clr-overdue); }
+
+/* ─── Day grid drawn by CSS (replaces one .gc-cell per day per row) ───
+   Three background layers on each row, behind its blocks:
+     1. hover column  (--gh-x, colour --gh-c set on hover)
+     2. day lines     (every --gd-w)
+     3. Saturdays     (every 6 columns from --gd-sat-x; Fridays are hidden) */
+#ganttInner.gantt-grid-css .gr-track::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+        linear-gradient(var(--gh-c, transparent), var(--gh-c, transparent)),
+        linear-gradient(to right, transparent calc(var(--gd-w) - 1px), var(--gantt-grid-line, var(--clr-border-soft)) calc(var(--gd-w) - 1px)),
+        linear-gradient(to right, var(--gantt-sat-bg, rgba(59, 130, 246, .06)) var(--gd-w), transparent var(--gd-w));
+    background-size: var(--gd-w) 100%, var(--gd-w) 100%, calc(var(--gd-w) * 6) 100%;
+    background-position: var(--gh-x, -99999px) 0, 0 0, var(--gd-sat-x, -99999px) 0;
+    background-repeat: no-repeat, repeat-x, repeat-x;
+}
+#ganttInner.gantt-grid-css.has-hover-col { --gh-c: rgba(79, 142, 247, .09); }
+#ganttInner.gantt-grid-css.has-hover-col .gr.gantt-hover-row { --gh-c: rgba(79, 142, 247, .13); }
+
+[data-theme="light"] #ganttInner.gantt-grid-css { --gantt-grid-line: #e2e8f0; --gantt-sat-bg: rgba(59, 130, 246, .07); }
+[data-theme="light"] #ganttInner.gantt-grid-css.has-hover-col { --gh-c: rgba(37, 99, 235, .07); }
+[data-theme="light"] #ganttInner.gantt-grid-css.has-hover-col .gr.gantt-hover-row { --gh-c: rgba(37, 99, 235, .1); }
+[data-theme="crimson"] #ganttInner.gantt-grid-css.has-hover-col,
+[data-theme="crimson"] #ganttInner.gantt-grid-css.has-hover-col .gr.gantt-hover-row { --gh-c: rgba(139, 13, 26, .12); }
+
+/* Edit-mode block controls show while the pointer is over the block (they
+   are also built on first hover). A selected block keeps its ticked checkbox
+   and the block whose ⋯ menu is open keeps its trigger. */
+#ganttInner .gc-bar > .gc-bar-select,
+#ganttInner .gc-bar > .gc-bar-menu-trigger {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .12s ease;
+}
+#ganttInner .gc-bar:hover > .gc-bar-select,
+#ganttInner .gc-bar:hover > .gc-bar-menu-trigger,
+#ganttInner .gc-bar:has(:focus-visible) > .gc-bar-select,
+#ganttInner .gc-bar:has(:focus-visible) > .gc-bar-menu-trigger,
+#ganttInner .gc-bar.gc-bar-selected > .gc-bar-select,
+#ganttInner .gc-bar.gc-bar-menu-open > .gc-bar-menu-trigger {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* ── Reschedule: grouped "Drag moves" options + explanation ─────── */
+.gantt-move-toggle.gmt-grouped { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; border: none; border-radius: 0; overflow: visible; }
+.gmt-grouped > .gmt-btn,
+.gmt-grouped .gmt-group { border: 1px solid var(--clr-border); border-radius: var(--radius-sm); overflow: hidden; }
+.gmt-grouped > .gmt-btn + .gmt-btn { border-left: 1px solid var(--clr-border); }
+.gmt-grouped .gmt-group { display: inline-flex; align-items: stretch; }
+.gmt-grouped .gmt-group[style*="display: none"] { display: none !important; }
+.gmt-group-label { display: flex; align-items: center; padding: 0 9px; font-size: .64rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--clr-text-muted); background: var(--clr-surface); border-right: 1px solid var(--clr-border); white-space: nowrap; }
+.gmt-grouped .gmt-group .gmt-btn + .gmt-btn { border-left: 1px solid var(--clr-border); }
+.gmt-hint { flex-basis: 100%; font-size: .72rem; color: var(--clr-text-muted); line-height: 1.35; padding-left: 2px; }
+#ganttCtxReschedule { flex-wrap: wrap; row-gap: 6px; }
+[data-theme="light"] .gmt-grouped > .gmt-btn,
+[data-theme="light"] .gmt-grouped .gmt-group { border-color: #cbd5e1; }
+[data-theme="light"] .gmt-group-label { background: #f1f5f9; border-color: #cbd5e1; color: #64748b; }
+
+/* Bars carry no filter at rest — a filter on every bar made the browser keep
+   ~2,000 separate layers (slow layout, heavy GPU memory). Hover only. */
+#ganttInner .gc-bar { filter: none; }
+#ganttInner .gc-bar:hover { filter: brightness(1.15); }
+
+/* Rows scrolled out of view skip layout and painting (the browser draws them
+   when they come into view). Rows with an open menu, the hovered row and the
+   category separators (whose height follows their text) always draw. */
+#ganttInner .gantt-body > .gr:not(.gr-process-cat-sep) { content-visibility: auto; }
+#ganttInner .gantt-body > .gr.gc-row-menu-open,
+#ganttInner .gantt-body > .gr:hover { content-visibility: visible; }
+
+/* Battalion chips in the Gantt header (shortcut to the Battalion filter) */
+.gantt-bat-picker { margin-top: 8px; }
+.gantt-bat-picker .vpx-bat-tab:disabled { cursor: default; opacity: .85; }
+
+/* K10 + K11 together: a compact switch beside the Unit / Process control */
+.gantt-view-row { display: flex; align-items: center; gap: 8px; }
+.gantt-combine { display: inline-flex; align-items: center; gap: 9px; padding: 3px 5px 3px 11px; min-height: 31px; border-radius: 10px; border: 1px solid rgba(255,255,255,.07); background: rgba(0,0,0,.32); color: var(--clr-text-muted); cursor: pointer; font: 700 .7rem var(--ff-body); letter-spacing: .06em; transition: border-color .15s, color .15s, background .15s; }
+.gantt-combine[hidden] { display: none; }
+.gantt-combine:hover { color: var(--clr-text); border-color: rgba(79,142,247,.45); }
+.gantt-combine:focus-visible { outline: 2px solid var(--clr-accent); outline-offset: 2px; }
+.gantt-combine-label { display: inline-flex; align-items: baseline; gap: 3px; }
+.gantt-combine-label i { font-style: normal; font-weight: 500; opacity: .7; }
+.gantt-combine-switch { position: relative; width: 28px; height: 16px; border-radius: 999px; background: rgba(255,255,255,.14); transition: background .15s; flex: none; }
+.gantt-combine-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.35); transition: transform .15s; }
+.gantt-combine.is-on { color: #fff; border-color: rgba(79,142,247,.55); background: rgba(79,142,247,.16); }
+.gantt-combine.is-on .gantt-combine-switch { background: var(--clr-accent); box-shadow: 0 1px 6px rgba(79,142,247,.45); }
+.gantt-combine.is-on .gantt-combine-switch::after { transform: translateX(12px); }
+[data-theme="light"] .gantt-combine { background: rgba(0,0,0,.06); border-color: rgba(0,0,0,.1); color: #64748b; }
+[data-theme="light"] .gantt-combine-switch { background: #cbd5e1; }
+[data-theme="light"] .gantt-combine.is-on { background: rgba(37,99,235,.08); border-color: #2563eb; color: #1d4ed8; }
+[data-theme="light"] .gantt-combine.is-on .gantt-combine-switch { background: #2563eb; }
+#ganttInner .gc-bar-veh-mark { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: rgba(255,255,255,.9); border-radius: 5px 0 0 5px; pointer-events: none; }
+
+/* ── Edit bar layout ──────────────────────────────────────────────
+   Row 1: Editing · task switch ............ undo/redo · options · Done
+   Row 2: the chosen task's options in their own panel (+ explanation)
+   Row 3: selection strip (when blocks are selected) */
+#ganttEditBar {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+        "badge tasks . right"
+        "ctx ctx ctx ctx";
+    align-items: center;
+    gap: 10px 12px;
+    padding: 10px 12px;
+}
+#ganttEditBar .gantt-edit-badge { grid-area: badge; }
+#ganttEditBar .gantt-mode-seg { grid-area: tasks; }
+#ganttEditBar .gantt-edit-right { grid-area: right; justify-self: end; gap: 6px; }
+#ganttEditBar > .gantt-edit-spacer { display: none; }
+#ganttEditBar .gantt-edit-right #btnGanttEditDone { margin-left: 6px; min-width: 76px; }
+#ganttEditBar .gantt-sel-strip { grid-column: 1 / -1; margin-top: 0; }
+#ganttEditBar .gantt-sel-strip[hidden] { display: none; }
+#ganttEditBar .gantt-ctx {
+    grid-area: ctx;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, .06);
+    border-left: 1px solid rgba(255, 255, 255, .06);
+    border-radius: 10px;
+    background: rgba(0, 0, 0, .18);
+}
+#ganttEditBar .gantt-ctx[hidden] { display: none; }
+#ganttEditBar .gantt-ctx-label { min-width: 84px; }
+#ganttEditBar #gmtSelectLane { margin-left: auto; }
+#ganttEditBar .gmt-hint { padding-left: 94px; }
+#ganttEditBar .gantt-ctx-hint { flex: 1 1 260px; }
+[data-theme="light"] #ganttEditBar .gantt-ctx { background: rgba(255, 255, 255, .55); border-color: rgba(0, 0, 0, .08); }
+@media (max-width: 900px) {
+    #ganttEditBar {
+        grid-template-columns: auto minmax(0, 1fr);
+        grid-template-areas: "badge right" "tasks tasks" "ctx ctx";
+    }
+    #ganttEditBar .gmt-hint { padding-left: 0; }
+    #ganttEditBar #gmtSelectLane { margin-left: 0; }
+}
+
+.gantt-export-opt[hidden] { display: none; }
+
+/* ── Edit bar v2: titled cards for the move options, labelled actions ── */
+#ganttEditBar { gap: 12px 14px; padding: 12px 14px; border-radius: 12px; }
+#ganttEditBar .gantt-edit-badge { padding: 5px 11px; border-radius: 8px; font-size: .74rem; }
+#ganttEditBar .gantt-edit-right .btn { display: inline-flex; align-items: center; gap: 6px; }
+#ganttEditBar .gx-btn-text { font-size: .74rem; font-weight: 600; }
+#ganttEditBar .gantt-undo-group { display: inline-flex; gap: 4px; padding-right: 8px; margin-right: 2px; border-right: 1px solid var(--clr-border); }
+#ganttEditBar .gantt-ctx { flex-direction: column; align-items: stretch; gap: 10px; padding: 12px 14px; }
+.gx-ctx-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.gx-ctx-title { font-size: .7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--clr-text-muted); }
+#ganttEditBar #gmtSelectLane { margin-left: 0; border: 1px solid var(--clr-border); border-radius: 8px; }
+.gantt-move-toggle.gmt-cards { display: flex; flex-wrap: wrap; gap: 8px; border: none; overflow: visible; }
+.gmt-cards .gmt-card { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; border: 1px solid var(--clr-border); border-radius: 10px; background: var(--clr-surface); min-width: 0; }
+.gmt-cards .gmt-card[hidden] { display: none; }
+.gmt-card-title { font-size: .62rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--clr-text-muted); }
+.gmt-card-opts { display: flex; gap: 4px; flex-wrap: wrap; }
+.gmt-cards .gmt-btn { border: 1px solid transparent; border-radius: 7px; padding: 6px 11px; background: var(--clr-surface-2); font-size: .76rem; }
+.gmt-cards .gmt-btn + .gmt-btn { border-left: 1px solid transparent; }
+.gmt-cards .gmt-btn:hover { border-color: rgba(245, 158, 11, .45); }
+.gmt-cards .gmt-btn.gmt-active { background: rgba(245, 158, 11, .18); border-color: rgba(245, 158, 11, .6); color: #fbbf24; }
+.gx-hint { display: flex; align-items: flex-start; gap: 7px; font-size: .74rem; line-height: 1.4; color: var(--clr-text-muted); }
+.gx-hint svg { width: 13px; height: 13px; flex: none; margin-top: 2px; opacity: .8; }
+.gx-hint b { color: var(--clr-text); font-weight: 600; }
+#ganttEditBar .gx-hint .gmt-hint { padding-left: 0; flex-basis: auto; }
+.gx-add-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+[data-theme="light"] .gmt-cards .gmt-card { background: #fff; border-color: #e2e8f0; }
+[data-theme="light"] .gmt-cards .gmt-btn { background: #f8fafc; }
+[data-theme="light"] .gmt-cards .gmt-btn.gmt-active { background: #fffbeb; border-color: #d97706; color: #b45309; }
+@media (max-width: 900px) {
+    #ganttEditBar .gx-btn-text { display: none; }
+}
+
+/* ── Block status: badge + ring that reads on any station colour ─── */
+#ganttInner .gc-bar-state-complete      { --gc-bar-shadow: inset 0 0 0 2px #22c55e, inset 0 0 0 3.5px rgba(2,6,23,.55), 0 0 0 1px rgba(34,197,94,.45); }
+#ganttInner .gc-bar-state-early         { --gc-bar-shadow: inset 0 0 0 2px #c084fc, inset 0 0 0 3.5px rgba(2,6,23,.55), 0 0 0 1px rgba(192,132,252,.5); }
+#ganttInner .gc-bar-state-late-complete { --gc-bar-shadow: inset 0 0 0 2px #60a5fa, inset 0 0 0 3.5px rgba(2,6,23,.55), 0 0 0 1px rgba(96,165,250,.5); }
+#ganttInner .gc-bar-state-progress      { --gc-bar-shadow: inset 0 0 0 2px #fbbf24, inset 0 0 0 3.5px rgba(2,6,23,.55), 0 0 0 1px rgba(251,191,36,.5); }
+#ganttInner .gc-bar-state-late          { --gc-bar-shadow: inset 0 0 0 2px #f87171, inset 0 0 0 3.5px rgba(2,6,23,.55), 0 0 0 1px rgba(239,68,68,.55); }
+.gc-bar-st { position: absolute !important; right: 3px; top: 50%; transform: translateY(-50%); z-index: 3 !important; width: 15px; height: 15px; border-radius: 50%; display: inline-grid; place-items: center; font: 800 9px/1 var(--ff-body, sans-serif); color: #fff; box-shadow: 0 0 0 1.5px rgba(2,6,23,.75); pointer-events: none; }
+.gc-st-complete { background: #16a34a; }
+.gc-st-early { background: #9333ea; }
+.gc-st-late-complete { background: #2563eb; }
+.gc-st-progress { background: #d97706; font-size: 7px; padding-left: 1px; }
+.gc-st-late { background: #dc2626; }
+#ganttInner .gc-bar-has-st .gc-bar-text { padding-right: 16px; }
+
+/* Key strip above the Gantt: Holiday / FAT on the left, block status on the right */
+.gantt-keys-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 24px; padding: 7px 24px; border-bottom: 1px solid var(--clr-border-soft); background: var(--clr-surface-2); }
+.gantt-keys-row .gantt-zone-key { padding: 0; border: none; background: none; }
+.gantt-status-key { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-left: auto; font-size: .72rem; color: var(--clr-text-muted); }
+.gsk-title { font-size: .64rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding-right: 10px; border-right: 1px solid var(--clr-border); }
+.gsk-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.gsk-item .gc-bar-st { position: static !important; transform: none; }
+.gsk-item em { font-style: normal; opacity: .75; }
+.gsk-planned { width: 15px; height: 15px; border-radius: 4px; background: var(--clr-surface); border: 1px dashed var(--clr-border); }
+.gantt-card:fullscreen .gantt-keys-row { padding-left: 28px; padding-right: 28px; }
+@media (max-width: 900px) { .gantt-keys-row { padding: 7px 14px; } .gantt-status-key { margin-left: 0; } }
+
+/* ── Unit view: one band per line (Hull / Turret / Assembly …) ─── */
+#ganttInner .gr-line-band { position: absolute; left: 0; right: 0; pointer-events: none; border-top: 1px dashed rgba(148,163,184,.18); }
+#ganttInner .gr-line-band:first-of-type { border-top: none; }
+#ganttInner .gr-line-band-alt { background: rgba(148,163,184,.05); }
+/* the label is position: sticky already — that anchors the line tags */
+.gr-unit-label.gr-has-line-tags .gr-unit-info { padding-right: 62px; }
+.gr-line-tags { position: absolute; top: 0; right: 6px; bottom: 0; width: 56px; pointer-events: none; }
+.gr-line-tag { position: absolute; right: 0; width: 56px; display: flex; align-items: center; justify-content: flex-end; font-size: .58rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--clr-text-muted); border-right: 2px solid rgba(148,163,184,.4); padding-right: 5px; box-sizing: border-box; }
+.gr-line-hull { border-right-color: #3b82f6; }
+.gr-line-turret { border-right-color: #a855f7; }
+.gr-line-structure { border-right-color: #3b82f6; }
+.gr-line-assembly { border-right-color: #10b981; }
+
+/* Hover card: styles/components/hover-card.css (shared by the whole app) */
+
+/* Sticky row labels are opaque, so bars scrolled underneath never show through */
+#ganttInner .gr-unit-label { background-image: linear-gradient(var(--clr-surface), var(--clr-surface)); background-color: var(--clr-bg, #0b1120); }

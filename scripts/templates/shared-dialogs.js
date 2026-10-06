@@ -1132,9 +1132,9 @@ export function renderSharedDialogs() {
                                 <span class="kd2-create-mode-btn-title">Block</span>
                                 <span class="kd2-create-mode-btn-desc">Add one station block to the live plan</span>
                             </button>
-                            <button type="button" class="kd2-create-mode-btn" data-mode="template">
-                                <span class="kd2-create-mode-btn-title">Template</span>
-                                <span class="kd2-create-mode-btn-desc">Edit the reusable route template</span>
+                            <button type="button" class="kd2-create-mode-btn" data-mode="copy">
+                                <span class="kd2-create-mode-btn-title">From a planned unit</span>
+                                <span class="kd2-create-mode-btn-desc">Copy a unit's full sequence to other units</span>
                             </button>
                         </div>
                     </div>
@@ -1214,6 +1214,80 @@ export function renderSharedDialogs() {
                 <div class="modal-footer">
                     <button class="btn btn-primary" id="btnKd2PlanCreateSave">Add to KD2 Plan</button>
                     <button class="btn btn-ghost" id="btnKd2PlanCreateCancel">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-overlay" id="kd2CopyPlanOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="kd2CopyPlanTitle">
+            <div class="modal kd2-cp-modal">
+                <div class="modal-header">
+                    <div>
+                        <h4 class="modal-title" id="kd2CopyPlanTitle">Plan units from a planned unit</h4>
+                        <p class="kd2-cp-sub">A unit that is already planned is the template: every process, its order, duration and start day are copied exactly. Only new blocks are added. The process order is never changed.</p>
+                    </div>
+                    <button class="modal-close" id="kd2CopyPlanClose" aria-label="Close">&#x2715;</button>
+                </div>
+                <div class="modal-body kd2-cp-body">
+                    <section class="kd2-cp-col">
+                        <h5 class="kd2-modal-section-title"><span class="kd2-modal-section-num">1</span>Template — the reference unit</h5>
+                        <div class="kd2-cp-fields">
+                            <div class="form-group">
+                                <label class="form-label" for="kd2CopyPlanVehicle">Vehicle</label>
+                                <select id="kd2CopyPlanVehicle" class="filter-control">
+                                    <option value="K9">K9</option>
+                                    <option value="K10">K10</option>
+                                    <option value="K11">K11</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="kd2CopyPlanRefBattalion">Battalion</label>
+                                <select id="kd2CopyPlanRefBattalion" class="filter-control"></select>
+                            </div>
+                            <div class="form-group kd2-cp-wide">
+                                <label class="form-label" for="kd2CopyPlanRefUnit">Reference unit</label>
+                                <select id="kd2CopyPlanRefUnit" class="filter-control"></select>
+                            </div>
+                        </div>
+                        <div class="kd2-cp-chips" id="kd2CopyPlanRefStats"></div>
+                        <div class="kd2-cp-refview" id="kd2CopyPlanRefView"></div>
+                        <p class="kd2-cp-note">Bars show each process's start day and duration in working days (Fridays and no-work days excluded). To change the template, edit the reference unit in the Gantt.</p>
+                    </section>
+                    <section class="kd2-cp-col">
+                        <h5 class="kd2-modal-section-title"><span class="kd2-modal-section-num">2</span>Units to plan</h5>
+                        <div class="kd2-cp-fields">
+                            <div class="form-group">
+                                <label class="form-label" for="kd2CopyPlanTargetBattalion">Battalion</label>
+                                <select id="kd2CopyPlanTargetBattalion" class="filter-control"></select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="kd2CopyPlanFirstStart">First unit starts</label>
+                                <input type="date" id="kd2CopyPlanFirstStart" class="filter-control" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="kd2CopyPlanEvery">Next unit every</label>
+                                <div class="kd2-cp-every"><input type="number" id="kd2CopyPlanEvery" class="filter-control" min="0" step="1" value="5" /><span>working days</span></div>
+                            </div>
+                            <div class="form-group kd2-cp-actions">
+                                <button type="button" class="btn btn-ghost btn-sm" id="btnKd2CopyPlanAll">Tick all free units</button>
+                                <button type="button" class="btn btn-outline btn-sm" id="btnKd2CopyPlanFill">Fill start dates</button>
+                            </div>
+                        </div>
+                        <div class="kd2-cp-units">
+                            <table>
+                                <thead><tr><th></th><th>Unit</th><th>Status</th><th>Start</th><th>Finish</th></tr></thead>
+                                <tbody id="kd2CopyPlanUnits"></tbody>
+                            </table>
+                        </div>
+                        <h5 class="kd2-modal-section-title kd2-cp-preview-title"><span class="kd2-modal-section-num">3</span>Preview</h5>
+                        <div class="kd2-cp-timeline" id="kd2CopyPlanTimeline"></div>
+                    </section>
+                    <div class="ab-error" id="kd2CopyPlanError" style="display:none"></div>
+                </div>
+                <div class="modal-footer kd2-cp-foot">
+                    <div class="kd2-cp-summary" id="kd2CopyPlanSummary"></div>
+                    <button class="btn btn-ghost" id="btnKd2CopyPlanCancel">Cancel</button>
+                    <button class="btn btn-primary" id="btnKd2CopyPlanSave" disabled>Add to the plan</button>
                 </div>
             </div>
         </div>
@@ -1824,44 +1898,48 @@ export function renderSharedDialogs() {
         <!-- ═══════════════════════════════════ EXECUTIVE REPORT MODAL -->
         <div class="modal-overlay" id="execReportModalOverlay" style="display:none;" role="dialog" aria-modal="true"
             aria-labelledby="execReportModalTitle">
-            <div class="modal report-modal">
-                <div class="modal-header">
-                    <h4 class="modal-title" id="execReportModalTitle">Executive Report</h4>
+            <div class="modal report-modal xr-modal">
+                <div class="xr-head">
+                    <span class="xr-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z"/><path d="M14 3v6h6M8 17v-3M12 17v-6M16 17v-4"/></svg></span>
+                    <div class="xr-head-text">
+                        <h4 class="modal-title" id="execReportModalTitle">Executive Report</h4>
+                        <p>One document for management — progress, insights and issues</p>
+                    </div>
                     <button class="modal-close" id="execReportModalClose" aria-label="Close">&#x2715;</button>
                 </div>
-                <div class="modal-body">
-                    <p class="exec-report-desc">
-                        Combines the VPX Station Report for every vehicle and component — K9 (Hull, Turret,
-                        Assembly), then K10 (Structure, Assembly), then K11 (Structure, Assembly) — followed by
-                        the Production Issues Status Report (all time, every status and category), in one document.
-                        You'll see a preview before anything downloads.
-                    </p>
+                <div class="modal-body xr-body">
+                    <div class="xr-scope">
+                        <span>Module <b id="execScopeModule">—</b></span>
+                        <span>Plan <b id="execScopeVersion">—</b></span>
+                        <span>Filters <b id="execScopeFilters">All time</b></span>
+                    </div>
+                    <div class="xr-snap">
+                        <div><small>Forecast delivery</small><strong id="execSnapDelivery">—</strong><em id="execSnapDeliveryDelta"></em></div>
+                        <div><small>Completion</small><strong id="execSnapPct">—</strong><em id="execSnapPctSub"></em></div>
+                        <div><small>Open issues</small><strong id="execSnapIssues">—</strong><em id="execSnapIssuesSub"></em></div>
+                    </div>
+                    <div class="xr-inside">
+                        <h5>What's inside <span>switch off any part you don't need</span></h5>
+                        <div class="xr-opts">
+                            <label class="xr-opt"><span class="xr-num">1</span><span class="xr-opt-text"><strong>Cover summary</strong><span>Progress, status split, delivery forecast and contents</span></span><input type="checkbox" id="execIncCover" checked /><span class="xr-switch" aria-hidden="true"></span></label>
+                            <label class="xr-opt"><span class="xr-num">2</span><span class="xr-opt-text"><strong>Station report</strong><span>K9 Hull · Turret · Assembly, then K10 and K11 Structure · Assembly — one page per table</span></span><input type="checkbox" id="execIncStations" checked /><span class="xr-switch" aria-hidden="true"></span></label>
+                            <label class="xr-opt"><span class="xr-num">3</span><span class="xr-opt-text"><strong>Production insights</strong><span>Two pages: where we stand, and where to act</span></span><input type="checkbox" id="execIncludeInsights" checked /><span class="xr-switch" aria-hidden="true"></span></label>
+                            <label class="xr-opt"><span class="xr-num">4</span><span class="xr-opt-text"><strong>Production issues status report</strong><span>All time, every status and category</span></span><input type="checkbox" id="execIncIssues" checked /><span class="xr-switch" aria-hidden="true"></span></label>
+                        </div>
+                        <p class="xr-parts-hint" id="execPartsHint" hidden>Switch on at least one part to create the report.</p>
+                    </div>
+                    <div class="xr-formats">
+                        <h5>Choose a format</h5>
+                        <div class="xr-fmt">
+                            <button type="button" class="xr-fmt-btn xr-pdf" id="btnExecReportPDF"><span class="xr-fmt-t"><i>PDF</i>PDF</span><small>Best for printing and email</small><span class="xr-go">Preview →</span></button>
+                            <button type="button" class="xr-fmt-btn xr-doc" id="btnExecReportWord"><span class="xr-fmt-t"><i>DOC</i>Word</span><small>Editable document</small><span class="xr-go">Preview →</span></button>
+                            <button type="button" class="xr-fmt-btn xr-xls" id="btnExecReportExcel"><span class="xr-fmt-t"><i>XLS</i>Excel</span><small>Tables, one sheet per section</small><span class="xr-go">Preview →</span></button>
+                        </div>
+                    </div>
                 </div>
-                <div class="modal-footer">
-                    <button class="btn btn-report-pdf" id="btnExecReportPDF">
-                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M4 4h8l4 4v10H4V4z" />
-                            <path d="M12 4v4h4" />
-                            <path d="M7 13h6M7 10h3" />
-                        </svg>
-                        Preview PDF
-                    </button>
-                    <button class="btn btn-report-excel" id="btnExecReportExcel">
-                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="2" y="3" width="16" height="14" rx="2" />
-                            <path d="M6 7l3 3-3 3M11 13h4" />
-                        </svg>
-                        Preview Excel
-                    </button>
-                    <button class="btn btn-ghost" id="btnExecReportWord">
-                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M4 3h9l3 3v11H4z" />
-                            <path d="M13 3v3h3" />
-                            <path d="M6.5 10l1 5 1.5-4 1.5 4 1-5" />
-                        </svg>
-                        Preview Word
-                    </button>
-                    <button class="btn btn-ghost" id="execReportModalCancel">Cancel</button>
+                <div class="modal-footer xr-foot">
+                    <span>You'll see a preview before anything downloads.</span>
+                    <button class="btn btn-ghost" id="execReportModalCancel">Close</button>
                 </div>
             </div>
         </div>
@@ -1922,10 +2000,10 @@ export function renderSharedDialogs() {
                     <h4 class="modal-title" id="genericPreviewModalTitle">Preview</h4>
                     <button class="modal-close" id="genericPreviewModalClose" aria-label="Close">&#x2715;</button>
                 </div>
-                <div class="report-preview-tabs" id="genericPreviewTabs" hidden></div>
+                <div class="report-preview-tabs" id="genericPreviewTabs" translate="no" hidden></div>
                 <div class="modal-body report-preview-modal-body">
                     <iframe id="genericPreviewFrame" class="report-preview-frame" hidden></iframe>
-                    <div id="genericPreviewHtml" class="report-preview-html" hidden></div>
+                    <div id="genericPreviewHtml" class="report-preview-html" translate="no" hidden></div>
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-primary" id="genericPreviewDownload">Download</button>

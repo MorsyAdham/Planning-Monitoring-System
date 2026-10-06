@@ -1,6 +1,8 @@
 import { bootstrapPage, exposeCoreGlobals, loadRuntimeScripts } from '../core/app-bootstrap.js';
 import { CDN_SCRIPTS, ROUTES } from '../core/config.js';
-import { byId } from '../core/dom.js';
+import { byId, loadClassicScript } from '../core/dom.js';
+import { _t, registerChartTranslation } from '../core/i18n.js';
+import { registerChartHoverCard } from '../core/hover-card.js';
 import { canEditPlan, canWrite, getCurrentUser, isPlanner, isMasterAdmin } from '../core/guards.js';
 import { installToastGlobal } from '../core/notifications.js';
 import { applyTheme, applyStoredTheme, clearSession, toggleTheme } from '../core/session.js';
@@ -18,6 +20,8 @@ import { renderModalRegistry } from '../templates/modal-registry.js';
 import { renderHelp, wireHelp } from '../features/help/index.js';
 import { renderAssistant, wireAssistant } from '../features/assistant/index.js';
 import { wireFilterUI } from '../features/filters/behavior.js';
+import { wireUpdateNotice } from '../features/update-notice/index.js';
+import { wireTour } from '../features/tour/index.js';
 
 function renderIndexPage() {
     return [
@@ -37,6 +41,68 @@ function renderIndexPage() {
     ].join('\n');
 }
 
+/* ── Export libraries on first use ──────────────────────────────
+   jsPDF, autoTable, SheetJS and ExcelJS (~2.5 MB of script) are only
+   needed to export or import. They load the first time someone points
+   at or clicks an export / report / import / template control; that
+   first click waits for them and then runs as normal. */
+const EXPORT_LIBS = [CDN_SCRIPTS.jspdf, CDN_SCRIPTS.jspdfAutoTable, CDN_SCRIPTS.xlsx, CDN_SCRIPTS.excelJs];
+const EXPORT_TRIGGER = 'button, a, [role="button"], [onclick], [data-export-view], .report-type-card';
+const EXPORT_HINT = /export|pdf|excel|xlsx|word|template|import|download|report(?!er)/i;
+let exportLibsPromise = null;
+
+function exportLibsReady() {
+    return !!(window.jspdf?.jsPDF?.API?.autoTable && window.XLSX && window.ExcelJS);
+}
+
+function loadExportLibs() {
+    if (!exportLibsPromise) {
+        exportLibsPromise = (async () => {
+            for (const lib of EXPORT_LIBS) await loadClassicScript(lib.src, lib);
+        })().catch(err => { exportLibsPromise = null; throw err; });
+    }
+    return exportLibsPromise;
+}
+
+function exportTriggerOf(target) {
+    const el = target?.closest?.(EXPORT_TRIGGER);
+    if (!el || el.disabled) return null;
+    const hint = `${el.id} ${el.getAttribute('onclick') || ''} ${el.hasAttribute('data-export-view') ? 'export' : ''}`;
+    return EXPORT_HINT.test(hint) ? el : null;
+}
+
+function wireLazyExportLibs() {
+    window.PPMSExportLibs = { load: loadExportLibs, ready: exportLibsReady };
+    const passing = new WeakSet();
+    // Pointing at a control starts the download early
+    document.addEventListener('pointerover', e => {
+        if (exportLibsPromise || exportLibsReady()) return;
+        if (exportTriggerOf(e.target)) loadExportLibs().catch(() => {});
+    }, { passive: true });
+    // The first click waits for the libraries, then is replayed
+    document.addEventListener('click', async e => {
+        if (exportLibsReady()) return;
+        const el = exportTriggerOf(e.target);
+        if (!el) return;
+        if (passing.has(el)) { passing.delete(el); return; }
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (el.dataset.ppmsLibWait) return;
+        el.dataset.ppmsLibWait = '1';
+        const slow = setTimeout(() => window.showToast?.(_t('Preparing export tools…'), 'info'), 400);
+        try {
+            await loadExportLibs();
+        } catch (err) {
+            console.warn(err);
+            window.showToast?.(_t('Could not load the export tools — check the connection and try again.'), 'error');
+        }
+        clearTimeout(slow);
+        delete el.dataset.ppmsLibWait;
+        passing.add(el); // replay once even if loading failed (the feature shows its own message)
+        el.click();
+    }, true);
+}
+
 function populateShellSessionState() {
     const user = getCurrentUser();
     if (!user) return;
@@ -53,10 +119,10 @@ function populateShellSessionState() {
     const role = byId('navRoleBadge');
     if (role) {
         const labels = {
-            master_admin: 'Master Admin',
-            operator: 'Operator',
-            planner: 'Planner',
-            viewer: 'Viewer',
+            master_admin: _t('Master Admin'),
+            operator: _t('Operator'),
+            planner: _t('Planner'),
+            viewer: _t('Viewer'),
         };
         // 'admin' is the legacy value for 'operator' (pre-migration 46).
         const normRole = user.role === 'admin' ? 'operator' : (user.role || 'viewer');
@@ -108,23 +174,26 @@ async function initPage() {
         getCurrentUser,
     });
 
+    wireLazyExportLibs();
+    await loadClassicScript(CDN_SCRIPTS.supabase.src, CDN_SCRIPTS.supabase);
+    await loadClassicScript(CDN_SCRIPTS.chartJs.src, CDN_SCRIPTS.chartJs);
+    // Before any chart is drawn: tooltips in the hover-card style, text in the user's language
+    registerChartHoverCard(window.Chart);
+    registerChartTranslation(window.Chart);
     await loadRuntimeScripts([
-        CDN_SCRIPTS.supabase,
-        CDN_SCRIPTS.chartJs,
-        CDN_SCRIPTS.jspdf,
-        CDN_SCRIPTS.jspdfAutoTable,
-        CDN_SCRIPTS.xlsx,
-        CDN_SCRIPTS.excelJs,
         { src: 'scripts/core/custom-select.js' },
         { src: 'scripts/core/plan-versions.js' },
         { src: 'scripts/gantt-module.js' },
         { src: 'scripts/kd2.js' },
         { src: 'scripts/app.js' },
+        { src: 'scripts/features/charts/analytics.js' },
     ]);
 
     wireFilterUI();
     wireHelp();
     wireAssistant();
+    wireUpdateNotice();
+    wireTour();
 }
 
 initPage().catch(error => {
