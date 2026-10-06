@@ -186,7 +186,8 @@
                             <div class="gmt-card gmt-group">
                                 <span class="gmt-card-title">This vehicle</span>
                                 <div class="gmt-card-opts">
-                                    <button class="gmt-btn" id="gmtFromBlock" data-mode="from-block" style="display:none">From this process on</button>
+                                    <button class="gmt-btn" id="gmtFromBlock" data-mode="from-block" style="display:none" title="The rest of this line (e.g. Hull), then Assembly">From this process on</button>
+                                    <button class="gmt-btn" id="gmtFromDate" data-mode="from-date" style="display:none" title="Every block of this vehicle starting on or after it — all lines">From this date on</button>
                                     <button class="gmt-btn" id="gmtLane" data-mode="lane">All processes</button>
                                 </div>
                             </div>
@@ -319,6 +320,15 @@
             </div>
         </div>
         <div class="gantt-legend" id="ganttLegend"></div>
+        <div class="gantt-status-key" id="ganttStatusKey" aria-label="Block status key">
+            <span class="gsk-title">Status</span>
+            <span class="gsk-item"><span class="gc-bar-st gc-st-complete">✓</span>Completed</span>
+            <span class="gsk-item"><span class="gc-bar-st gc-st-early">✓</span>Completed early</span>
+            <span class="gsk-item"><span class="gc-bar-st gc-st-late-complete">✓</span>Completed late</span>
+            <span class="gsk-item"><span class="gc-bar-st gc-st-progress">▶</span>In progress</span>
+            <span class="gsk-item"><span class="gc-bar-st gc-st-late">!</span>Overdue <em>(striped)</em></span>
+            <span class="gsk-item"><span class="gsk-planned"></span>Planned</span>
+        </div>
         <div class="gantt-zone-key" id="ganttZoneKey" style="display:none">
             <span class="gantt-zone-key-item gantt-zone-key-holiday">
                 <span class="gantt-zone-key-swatch"></span>Holiday

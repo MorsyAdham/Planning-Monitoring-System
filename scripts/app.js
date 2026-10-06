@@ -926,6 +926,105 @@ document.addEventListener('click', e => {
     renderGantt(applyActiveFilters(currentData), gs?.value, ge?.value);
 });
 
+/* ── Gantt hover card ───────────────────────────────────────────────
+   Replaces the plain browser tooltip: what the block is, its status,
+   planned / actual dates, delay and forecast, laid out as a small card. */
+let _ganttTipEl = null, _ganttTipId = null, _ganttTipRaf = 0;
+function _ganttTipFmt(iso) {
+    if (!iso) return '—';
+    return new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' });
+}
+function _ganttTipWd(a, b) {
+    if (!a || !b || b < a) return '';
+    const n = daysBetween(a, b) + (new Date(a + 'T00:00:00').getDay() === 5 ? 0 : 1);
+    return `${n} wd`;
+}
+function _ganttTipHtml(task) {
+    const st = ganttHighlightState(task);
+    const row = (k, v, cls = '') => v ? `<div class="gtip-row${cls ? ' ' + cls : ''}"><span>${k}</span><b>${v}</b></div>` : '';
+    const f100 = isF100KD2Module();
+    const plannedS = f100 ? task.planned_start_date : task.start_date;
+    const plannedE = f100 ? task.planned_end_date : task.end_date;
+    const actualS = f100 ? task.actual_start_date : task.progress?.actual_start_date;
+    const doneOn = f100 ? task.actual_end_date : task.progress?.completion_date;
+    let title, sub, extra = '';
+    if (f100) {
+        title = `#${task.step_number ?? ''} ${task.process_name || task.process_station || ''}`;
+        sub = [task.battalion_code, task.vehicle_type ? `${task.vehicle_type} #${task.serial_number ?? '?'}` : '', task.part_name].filter(Boolean).join(' · ');
+        extra = row('Manufacturer', esc(task.manufacturer || ''));
+    } else {
+        title = task.process_station || task.station_code || '';
+        const code = isKD2Module() ? getUnitCode(task.vehicle, task.vehicle_no, task.battalion_code) : '';
+        sub = [isKD2Module() ? task.battalion_code : '', `${task.vehicle || ''} ${task.vehicle_no || ''}`.trim(), code].filter(Boolean).join(' · ');
+        if (isKD2Module()) {
+            const line = _ganttLineOrderFor(task.vehicle || task.vehicle_type).get(task.station_code)?.line;
+            extra = row('Line', esc(line || '')) + row('Work center', esc(getRowCode(task) || ''));
+        }
+    }
+    let delayHtml = '';
+    const d = typeof delayDays === 'function' ? delayDays(task) : 0;
+    if (st === 'late-complete' || st === 'late') delayHtml = row(st === 'late' ? 'Overdue by' : 'Finished late by', `${d > 0 ? d : '—'} wd`, 'gtip-bad');
+    else if (st === 'early') delayHtml = row('Finished', 'early', 'gtip-good');
+    if (!f100 && isKD2Module() && st !== 'complete' && st !== 'early' && st !== 'late-complete') {
+        try {
+            const step = getPlanForecast(applyActiveFilters(currentData)).byRowId?.get(task.id);
+            if (step?.projEnd && step.projEnd > plannedE) delayHtml += row('Expected finish', `${_ganttTipFmt(step.projEnd)} <i>(+${_fcSlip(plannedE, step.projEnd)} wd)</i>`, 'gtip-bad');
+        } catch {}
+    }
+    const comments = Array.isArray(task.comments) ? task.comments.length : 0;
+    return `<div class="gtip-head"><span class="gtip-title">${esc(title)}</span><span class="gtip-pill gtip-${st}">${GANTT_STATUS_ICON[st] ? GANTT_STATUS_ICON[st] + ' ' : ''}${GANTT_STATUS_LABEL[st] || ''}</span></div>`
+        + (sub ? `<div class="gtip-sub">${esc(sub)}</div>` : '')
+        + `<div class="gtip-grid">`
+        + row('Planned', `${_ganttTipFmt(plannedS)} → ${_ganttTipFmt(plannedE)} <i>${_ganttTipWd(plannedS, plannedE)}</i>`)
+        + row('Actual start', actualS ? _ganttTipFmt(actualS) : '')
+        + row('Completed', doneOn ? _ganttTipFmt(doneOn) : '')
+        + delayHtml + extra
+        + row('Remark', esc(task.remark || ''))
+        + row('Comments', comments ? String(comments) : '')
+        + `</div>`
+        + (_ganttEditMode ? `<div class="gtip-foot">Drag to move · drag an edge to resize · ⋯ for more</div>` : '');
+}
+function _ganttHideTip() {
+    _ganttTipId = null;
+    if (_ganttTipEl) _ganttTipEl.hidden = true;
+}
+function _ganttPlaceTip(x, y) {
+    const el = _ganttTipEl;
+    if (!el) return;
+    const pad = 14, w = el.offsetWidth, h = el.offsetHeight;
+    let left = x + pad, top = y + pad;
+    if (left + w > window.innerWidth - 8) left = x - w - pad;
+    if (top + h > window.innerHeight - 8) top = y - h - pad;
+    el.style.left = Math.max(8, left) + 'px';
+    el.style.top = Math.max(8, top) + 'px';
+}
+document.addEventListener('pointermove', e => {
+    if (e.pointerType === 'touch') return;
+    const bar = e.target.closest?.('#ganttInner .gc-bar');
+    if (!bar || _ganttDragActive || e.buttons || e.target.closest('.gc-bar-menu, .gc-bar-menu-trigger, .gc-bar-select, .gc-bar-resize')) { if (_ganttTipId) _ganttHideTip(); return; }
+    const id = bar.dataset.planId;
+    if (!_ganttTipEl) {
+        _ganttTipEl = document.createElement('div');
+        _ganttTipEl.className = 'gantt-tip';
+        _ganttTipEl.setAttribute('role', 'tooltip');
+        _ganttTipEl.hidden = true;
+    }
+    const host = document.fullscreenElement || document.body;
+    if (_ganttTipEl.parentNode !== host) host.appendChild(_ganttTipEl);
+    if (_ganttTipId !== id) {
+        const task = currentData.find(r => String(r.id) === id);
+        if (!task) { _ganttHideTip(); return; }
+        _ganttTipId = id;
+        _ganttTipEl.innerHTML = _ganttTipHtml(task);
+        _ganttTipEl.hidden = false;
+    }
+    const x = e.clientX, y = e.clientY;
+    cancelAnimationFrame(_ganttTipRaf);
+    _ganttTipRaf = requestAnimationFrame(() => _ganttPlaceTip(x, y));
+}, { passive: true });
+document.addEventListener('pointerdown', _ganttHideTip, true);
+document.addEventListener('scroll', () => { if (_ganttTipId) _ganttHideTip(); }, true);
+
 function sameGanttRowLane(a, b) {
     if (!a || !b) return false;
     const inProcessView = getModuleRuntime()?.currentTimelineViewMode?.() === 'process';
@@ -1128,6 +1227,7 @@ function kd2RowsFromProcessOn(anchor, rows = []) {
 const GANTT_MOVE_HINTS = {
     single: 'Moves only the block you drag (or every selected block, if several are selected).',
     'from-block': 'Moves the process you drag and every process after it on this vehicle — the rest of its line (e.g. Hull), then Assembly. The parallel line (Turret) stays.',
+    'from-date': 'Moves every block of this vehicle that starts on or after the one you drag — all lines (Hull, Turret and Assembly) together.',
     lane: 'Moves every process of the vehicle you drag.',
     'from-block-after': 'Moves the process you drag and every process after it (rest of its line, then Assembly) — on this vehicle and on every later vehicle of the same battalion and type.',
     'unit-after': 'Moves every process of this vehicle and of every later vehicle of the same battalion and type.',
@@ -1234,6 +1334,13 @@ async function resolveGanttMoveSet(task) {
             if (stationRows.length) return getKd2ForwardMoveRowsByStation(task, stationRows);
         }
         return getKd2ForwardMoveRowsByStation(task, currentData);
+    }
+    if (_ganttMoveMode === 'from-date' && isKD2Module()) {
+        const laneRows = await fetchKd2LaneRowsForGantt(task);
+        const rows = laneRows.length ? laneRows : currentData.filter(row => samePlanLane(row, task));
+        const from = task.start_date || task.planned_start_date || '';
+        const picked = rows.filter(r => (r.start_date || r.planned_start_date || '') >= from);
+        return picked.length ? picked : [task];
     }
     if (_ganttMoveMode === 'from-block') {
         if (isF100KD2Module()) {
@@ -9161,6 +9268,21 @@ function _ganttLazyControlsHandler(e) {
    (rows added/removed, date range, view, day width) falls back to a full
    redraw automatically. */
 let _ganttLastPaint = null;
+
+/** Line + position of every station of a vehicle (cached per draw cycle). */
+const _ganttLineOrderCache = new Map();
+function _ganttLineOrderFor(vehicle) {
+    if (!_ganttLineOrderCache.has(vehicle)) {
+        _ganttLineOrderCache.set(vehicle, getModuleRuntime()?.getStationOrderByCode?.(vehicle) || new Map());
+        setTimeout(() => _ganttLineOrderCache.delete(vehicle), 0);
+    }
+    return _ganttLineOrderCache.get(vehicle);
+}
+const GANTT_STATUS_ICON = { complete: '✓', early: '✓', 'late-complete': '✓', progress: '▶', late: '!' };
+const GANTT_STATUS_LABEL = {
+    complete: 'Completed', early: 'Completed early', 'late-complete': 'Completed late',
+    progress: 'In progress', late: 'Overdue', planned: 'Planned',
+};
 let _ganttPatchStats = null; // last paint: rows / rows replaced (for checking)
 const GANTT_ROW_MARK = '\u0001';
 
@@ -9670,14 +9792,47 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
             const laneMeta = laneMetaMap[laneMetaKey(groupKey, unit)] || {};
 
             // ── Lane assignment for overlapping bars ─────────────────────
-            const positioned = buildPositionedGanttLaneTasks(tasks, startDate, endDate);
-            const numLanes = positioned.length
-                ? Math.max(...positioned.map(item => item.lane)) + 1
-                : 1;
+            // KD2 Unit view: each line (Hull / Turret / Assembly, or Structure /
+            // Assembly) gets its own band of sub-rows, so a vehicle reads as its
+            // sequences instead of one mixed pile of blocks.
             const BAR_H = 22;   // px — bar height per lane
             const BAR_GAP = 6;    // px — gap between lanes
             const LANE_H = BAR_H + BAR_GAP;
+            let positioned, lineSections = null;
+            if (isKD2Module() && !isKd2ProcessView && tasks.length) {
+                const order = _ganttLineOrderFor(laneVehicle);
+                const byLine = new Map();
+                tasks.forEach(t => {
+                    const info = order.get(t.station_code);
+                    const line = info?.line || 'Other';
+                    const rank = info ? Math.floor(info.sortKey / 1000000) : 99;
+                    if (!byLine.has(line)) byLine.set(line, { line, rank, tasks: [] });
+                    byLine.get(line).tasks.push(t);
+                });
+                positioned = [];
+                lineSections = [];
+                let offset = 0;
+                [...byLine.values()].sort((a, b) => a.rank - b.rank).forEach(sec => {
+                    const pos = buildPositionedGanttLaneTasks(sec.tasks, startDate, endDate);
+                    const n = pos.length ? Math.max(...pos.map(it => it.lane)) + 1 : 1;
+                    pos.forEach(it => positioned.push({ ...it, lane: it.lane + offset }));
+                    lineSections.push({ line: sec.line, start: offset, lanes: n });
+                    offset += n;
+                });
+            } else {
+                positioned = buildPositionedGanttLaneTasks(tasks, startDate, endDate);
+            }
+            const numLanes = lineSections
+                ? Math.max(1, lineSections.reduce((n, sec) => n + sec.lanes, 0))
+                : (positioned.length ? Math.max(...positioned.map(item => item.lane)) + 1 : 1);
             const rowH = Math.max(GANTT_ROW_H, numLanes * LANE_H + BAR_GAP * 2);
+            const lineShort = l => (/^Assembly/i.test(l) ? 'Assembly' : l);
+            const lineTagsHtml = lineSections && lineSections.length > 1
+                ? `<div class="gr-line-tags">${lineSections.map(sec => `<span class="gr-line-tag gr-line-${esc(lineShort(sec.line).toLowerCase())}" style="top:${BAR_GAP + sec.start * LANE_H}px;height:${sec.lanes * LANE_H}px" title="${esc(sec.line)}">${esc(lineShort(sec.line))}</span>`).join('')}</div>`
+                : '';
+            const lineBandsHtml = lineSections && lineSections.length > 1
+                ? lineSections.map((sec, i) => `<div class="gr-line-band${i % 2 ? ' gr-line-band-alt' : ''}" style="top:${BAR_GAP / 2 + sec.start * LANE_H}px;height:${sec.lanes * LANE_H}px"></div>`).join('')
+                : '';
 
             // ── Build bar HTML ───────────────────────────────────────────
             const bars = positioned.map(({ task, si, ei, lane }) => {
@@ -9692,6 +9847,7 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
                 const actualStart = task.progress?.actual_start_date || null;
 
                 let extraCls = ` gc-bar-state-${highlightState}`;
+                if (highlightState !== 'planned' && width >= 34) extraCls += ' gc-bar-has-st';
                 const vehMark = groupKey === GANTT_COMBINED_KEY && task.vehicle === 'K11'
                     ? '<span class="gc-bar-veh-mark" aria-hidden="true"></span>' : '';
                 if (status === 'Overdue') extraCls += ' gc-bar-overdue';
@@ -9701,39 +9857,12 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
                     const aIdx = dayIndex[actualStart];
                     const tickLeft = (aIdx - si) * GANTT_DAY_W;
                     const tickColor = actualStart > task.start_date ? '#ef4444' : '#22c55e';
-                    actualStartMarker = `<div class="gc-actual-start-tick" style="left:${tickLeft}px;border-color:${tickColor}" title="Actual start: ${formatDate(actualStart)}"></div>`;
+                    actualStartMarker = `<div class="gc-actual-start-tick" style="left:${tickLeft}px;border-color:${tickColor}"></div>`;
                 }
 
-                const _tipUnitComp = isF100KD2Module() && !isF100ProcessView
-                    ? unitCompMap[`${task.battalion_code}||${task.vehicle_type}||${task.serial_number}`] || null
-                    : null;
-                const tip = isF100KD2Module()
-                    ? [
-                        `${task.battalion_code || '—'}`,
-                        task.vehicle_type ? `Vehicle      : ${task.vehicle_type} #${task.serial_number ?? '?'}` : '',
-                        task.unit_label ? `Unit Label   : ${task.unit_label}` : '',
-                        task.unit_code  ? `Unit Code    : ${task.unit_code}` : '',
-                        task.unit_name  ? `Unit Name    : ${task.unit_name}` : '',
-                        `Part         : ${task.part_name || '—'}`,
-                        `Process      : #${task.step_number} ${task.process_name || task.process_station}`,
-                        task.manufacturer ? `Manufacturer : ${task.manufacturer}` : '',
-                        `Planned      : ${formatDate(task.planned_start_date)} → ${formatDate(task.planned_end_date)}`,
-                        task.actual_start_date ? `Actual Start : ${formatDate(task.actual_start_date)}` : '',
-                        task.actual_end_date   ? `Actual End   : ${formatDate(task.actual_end_date)}` : '',
-                        _tipUnitComp ? `Progress     : ${_tipUnitComp.done}/${_tipUnitComp.total} steps (${_tipUnitComp.pct}%)` : '',
-                        Array.isArray(task.comments) && task.comments.length ? `Comments     : ${task.comments.length}` : '',
-                        `Status       : ${status}`,
-                    ].filter(Boolean).join('\n')
-                    : [
-                        isKD2Module() ? `${task.battalion_code || '—'}  ${task.vehicle}  ${task.vehicle_no}` : `${task.vehicle}  ${task.vehicle_no}`,
-                        `Station      : ${task.process_station}`,
-                        isKD2Module() ? `Work Center  : ${getRowCode(task)}` : '',
-                        `Planned      : ${formatDate(task.start_date)} → ${formatDate(task.end_date)}`,
-                        actualStart ? `Actual Start : ${formatDate(actualStart)}` : '',
-                        task.progress?.completion_date ? `Completed    : ${formatDate(task.progress.completion_date)}` : '',
-                        `Status       : ${status}`,
-                        task.remark ? `Remark       : ${task.remark}` : '',
-                    ].filter(Boolean).join('\n');
+                // Status badge (✓ / ▶ / !) — readable on any station colour
+                const stBadge = highlightState !== 'planned' && width >= 34
+                    ? `<span class="gc-bar-st gc-st-${highlightState}" aria-hidden="true">${GANTT_STATUS_ICON[highlightState] || ''}</span>` : '';
 
                 const menuIsOpen = _openGanttBlockMenuPlanId === task.id;
                 const isSelected = _selectedGanttPlanIds.has(String(task.id));
@@ -9745,9 +9874,8 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
                 const blockMenu = eagerControls ? _ganttBarControlsHtml(task.id, { isSelected, menuIsOpen }) : '';
                 return `<div class="gc-bar${extraCls}${menuIsOpen ? ' gc-bar-menu-open' : ''}${isSelected ? ' gc-bar-selected' : ''}"
           data-plan-id="${task.id}"${_ganttEditMode && !eagerControls ? ' data-lazy-controls="1"' : ''}
-          style="left:${left}px;width:${width}px;height:${BAR_H}px;top:${topPx}px;transform:none;background:${color}"
-          title="${esc(tip)}">
-          ${actualStartMarker}${vehMark}
+          style="left:${left}px;width:${width}px;height:${BAR_H}px;top:${topPx}px;transform:none;background:${color}">
+          ${actualStartMarker}${vehMark}${stBadge}
           <span class="gc-bar-text">${esc(isF100ProcessView ? `${task.vehicle_type || '—'} #${task.serial_number ?? task.vehicle_no}` : isF100KD2Module() ? `${task.part_name || ''} · ${task.process_station}` : isKd2ProcessView ? (groupKey === GANTT_COMBINED_KEY ? `${task.battalion_code || '—'} · ${task.vehicle} ${task.vehicle_no}` : `${task.battalion_code || '—'} · ${task.vehicle_no}`) : isKD2Module() ? `${getRowCode(task)} · ${task.process_station}` : task.process_station)}</span>
 
           ${blockMenu}
@@ -9779,7 +9907,8 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
                 : '';
             bodyHtml += ROW + `
         <div class="gr${rowMenuOpen ? ' gc-row-menu-open' : ''}${_rowVis !== 'visible' ? ` gr-lane-${_rowVis}` : ''}" style="height:${rowH}px">
-          <div class="gr-label gr-unit-label" style="width:${GANTT_LABEL_W}px">
+          <div class="gr-label gr-unit-label${lineTagsHtml ? ' gr-has-line-tags' : ''}" style="width:${GANTT_LABEL_W}px">
+            ${lineTagsHtml}
             <div class="gr-unit-info">
               ${isKD2Module() && !isKd2ProcessView && groupKey ? `<span class="gr-unit-ctx">${esc(laneVehicle)} · ${esc(groupKey)}</span>` : ''}
               ${isKd2ProcessView && _stationWC ? `<span class="gr-unit-ctx">${esc(_stationWC)}</span>` : ''}
@@ -9834,6 +9963,7 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
             data-gantt-days="1">
             ${trackZonesHtml}
             ${bgCells}
+            ${lineBandsHtml}
             ${bars}
           </div>
         </div>`;
@@ -19786,6 +19916,9 @@ function syncGanttModuleEditControls() {
     if (templateBtn) templateBtn.style.display = isF100 ? '' : 'none';
     if (planBtn) planBtn.style.display = isKd2 ? 'none' : '';
     if (fromBlockBtn) fromBlockBtn.style.display = isKd2 ? '' : 'none';
+    const fromDateBtn = document.getElementById('gmtFromDate');
+    if (fromDateBtn) fromDateBtn.style.display = isKd2 ? '' : 'none';
+    if (!isKd2 && _ganttMoveMode === 'from-date') _ganttMoveMode = 'single';
     if (fromBlockLaneBtn) fromBlockLaneBtn.style.display = isKd2ProcessView ? '' : 'none';
     if (laterGroup) laterGroup.style.display = isKd2 ? '' : 'none';
     if (viewToggleWrap) viewToggleWrap.style.display = isKd2 ? '' : 'none';
@@ -20252,6 +20385,8 @@ function wireGanttDragEdit(dayIndex, days) {
                 ? getKd2UnitAndAfterRows(task, currentData)
                 : _ganttMoveMode === 'from-block-after'
                 ? getKd2FromProcessAfterRows(task, currentData)
+                : _ganttMoveMode === 'from-date'
+                ? currentData.filter(row => samePlanLane(row, task) && (row.start_date || '') >= (task.start_date || ''))
                 : _ganttMoveMode === 'from-block'
                     ? (isF100KD2Module() ? getF100ForwardMoveRows(task, currentData) : kd2RowsFromProcessOn(task, currentData.filter(row => samePlanLane(row, task))))
                     : _selectedGanttPlanIds.has(planId) && _selectedGanttPlanIds.size > 1 && _ganttMoveMode === 'single'

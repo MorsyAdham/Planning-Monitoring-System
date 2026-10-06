@@ -202,3 +202,60 @@
 @media (max-width: 900px) {
     #ganttEditBar .gx-btn-text { display: none; }
 }
+
+/* ── Block status: badge + ring that reads on any station colour ─── */
+#ganttInner .gc-bar-state-complete      { --gc-bar-shadow: inset 0 0 0 2px #22c55e, inset 0 0 0 3.5px rgba(2,6,23,.55), 0 0 0 1px rgba(34,197,94,.45); }
+#ganttInner .gc-bar-state-early         { --gc-bar-shadow: inset 0 0 0 2px #c084fc, inset 0 0 0 3.5px rgba(2,6,23,.55), 0 0 0 1px rgba(192,132,252,.5); }
+#ganttInner .gc-bar-state-late-complete { --gc-bar-shadow: inset 0 0 0 2px #60a5fa, inset 0 0 0 3.5px rgba(2,6,23,.55), 0 0 0 1px rgba(96,165,250,.5); }
+#ganttInner .gc-bar-state-progress      { --gc-bar-shadow: inset 0 0 0 2px #fbbf24, inset 0 0 0 3.5px rgba(2,6,23,.55), 0 0 0 1px rgba(251,191,36,.5); }
+#ganttInner .gc-bar-state-late          { --gc-bar-shadow: inset 0 0 0 2px #f87171, inset 0 0 0 3.5px rgba(2,6,23,.55), 0 0 0 1px rgba(239,68,68,.55); }
+.gc-bar-st { position: absolute !important; right: 3px; top: 50%; transform: translateY(-50%); z-index: 3 !important; width: 15px; height: 15px; border-radius: 50%; display: inline-grid; place-items: center; font: 800 9px/1 var(--ff-body, sans-serif); color: #fff; box-shadow: 0 0 0 1.5px rgba(2,6,23,.75); pointer-events: none; }
+.gc-st-complete { background: #16a34a; }
+.gc-st-early { background: #9333ea; }
+.gc-st-late-complete { background: #2563eb; }
+.gc-st-progress { background: #d97706; font-size: 7px; padding-left: 1px; }
+.gc-st-late { background: #dc2626; }
+#ganttInner .gc-bar-has-st .gc-bar-text { padding-right: 16px; }
+
+/* Status key above the Gantt */
+.gantt-status-key { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 6px 2px 8px; font-size: .72rem; color: var(--clr-text-muted); }
+.gsk-title { font-size: .64rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.gsk-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.gsk-item .gc-bar-st { position: static !important; transform: none; }
+.gsk-item em { font-style: normal; opacity: .75; }
+.gsk-planned { width: 15px; height: 15px; border-radius: 4px; background: var(--clr-surface-2); border: 1px dashed var(--clr-border); }
+
+/* ── Unit view: one band per line (Hull / Turret / Assembly …) ─── */
+#ganttInner .gr-line-band { position: absolute; left: 0; right: 0; pointer-events: none; border-top: 1px dashed rgba(148,163,184,.18); }
+#ganttInner .gr-line-band:first-of-type { border-top: none; }
+#ganttInner .gr-line-band-alt { background: rgba(148,163,184,.05); }
+/* the label is position: sticky already — that anchors the line tags */
+.gr-unit-label.gr-has-line-tags .gr-unit-info { padding-right: 62px; }
+.gr-line-tags { position: absolute; top: 0; right: 6px; bottom: 0; width: 56px; pointer-events: none; }
+.gr-line-tag { position: absolute; right: 0; width: 56px; display: flex; align-items: center; justify-content: flex-end; font-size: .58rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--clr-text-muted); border-right: 2px solid rgba(148,163,184,.4); padding-right: 5px; box-sizing: border-box; }
+.gr-line-hull { border-right-color: #3b82f6; }
+.gr-line-turret { border-right-color: #a855f7; }
+.gr-line-structure { border-right-color: #3b82f6; }
+.gr-line-assembly { border-right-color: #10b981; }
+
+/* ── Hover card ─── */
+.gantt-tip { position: fixed; z-index: 10050; width: 290px; padding: 10px 12px 9px; border-radius: 10px; background: color-mix(in srgb, var(--clr-surface) 96%, #000 4%); border: 1px solid var(--clr-border); box-shadow: 0 14px 34px rgba(0,0,0,.45); color: var(--clr-text); font-size: .76rem; pointer-events: none; }
+.gantt-tip[hidden] { display: none; }
+.gtip-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.gtip-title { font-weight: 700; font-size: .84rem; line-height: 1.25; }
+.gtip-pill { flex: none; padding: 2px 8px; border-radius: 999px; font-size: .66rem; font-weight: 700; color: #fff; white-space: nowrap; }
+.gtip-complete { background: #16a34a; } .gtip-early { background: #9333ea; } .gtip-late-complete { background: #2563eb; }
+.gtip-progress { background: #d97706; } .gtip-late { background: #dc2626; } .gtip-planned { background: #475569; }
+.gtip-sub { margin-top: 2px; color: var(--clr-text-muted); font-size: .72rem; }
+.gtip-grid { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--clr-border); display: grid; gap: 4px; }
+.gtip-row { display: grid; grid-template-columns: 96px 1fr; gap: 8px; align-items: baseline; }
+.gtip-row span { color: var(--clr-text-muted); font-size: .7rem; }
+.gtip-row b { font-weight: 600; }
+.gtip-row i { font-style: normal; color: var(--clr-text-muted); font-weight: 500; margin-left: 4px; }
+.gtip-bad b { color: #f87171; } .gtip-good b { color: #4ade80; }
+.gtip-foot { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--clr-border); font-size: .66rem; color: var(--clr-text-muted); }
+[data-theme="light"] .gantt-tip { background: #fff; box-shadow: 0 14px 34px rgba(15,23,42,.18); }
+[data-theme="light"] .gtip-bad b { color: #dc2626; } [data-theme="light"] .gtip-good b { color: #16a34a; }
+
+/* Sticky row labels are opaque, so bars scrolled underneath never show through */
+#ganttInner .gr-unit-label { background-image: linear-gradient(var(--clr-surface), var(--clr-surface)); background-color: var(--clr-bg, #0b1120); }
