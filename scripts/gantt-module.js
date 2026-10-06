@@ -191,6 +191,13 @@
                                     <button class="gmt-btn" id="gmtLane" data-mode="lane">All processes</button>
                                 </div>
                             </div>
+                            <div class="gmt-card gmt-group" id="gmtGroupLine" style="display:none">
+                                <span class="gmt-card-title">This component only</span>
+                                <div class="gmt-card-opts">
+                                    <button class="gmt-btn" id="gmtLineFrom" data-mode="line-from" title="This process and the later ones of the same component (Hull, Turret or Assembly) — nothing else moves">From this process on</button>
+                                    <button class="gmt-btn" id="gmtLineAll" data-mode="line-all" title="Every block of this component on this vehicle — nothing else moves">Whole component</button>
+                                </div>
+                            </div>
                             <div class="gmt-card gmt-group" id="gmtGroupLater" style="display:none">
                                 <span class="gmt-card-title">This + later vehicles</span>
                                 <div class="gmt-card-opts">

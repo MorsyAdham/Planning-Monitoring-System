@@ -1197,6 +1197,22 @@ function getKd2FromProcessAfterRows(anchor, rows = []) {
     return kd2RowsFromProcessOn(anchor, getKd2UnitAndAfterRows(anchor, rows));
 }
 
+// "This component only": blocks of the dragged block's own line (Hull, Turret,
+// Structure or Assembly) on this vehicle — from it on, or the whole line.
+// No other line moves, not even the downstream Assembly.
+function kd2RowsSameLine(anchor, rows = [], { fromAnchor = true } = {}) {
+    if (!anchor) return [];
+    const vt = anchor.vehicle_type || anchor.vehicle;
+    const order = getModuleRuntime()?.getStationOrderByCode?.(vt) || new Map();
+    const a = order.get(anchor.station_code);
+    if (!a) return [anchor];
+    const picked = rows.filter(r => {
+        const o = order.get(r.station_code);
+        return o && o.line === a.line && (!fromAnchor || o.sortKey >= a.sortKey);
+    });
+    return picked.length ? picked : [anchor];
+}
+
 // "From this process on", line-aware: the dragged process and the ones after
 // it on the SAME line (e.g. Hull), plus the whole downstream line (Assembly &
 // Processing & Testing), which follows every feeder line. The parallel feeder
@@ -1228,6 +1244,8 @@ const GANTT_MOVE_HINTS = {
     single: 'Moves only the block you drag (or every selected block, if several are selected).',
     'from-block': 'Moves the process you drag and every process after it on this vehicle — the rest of its line (e.g. Hull), then Assembly. The parallel line (Turret) stays.',
     'from-date': 'Moves every block of this vehicle that starts on or after the one you drag — all lines (Hull, Turret and Assembly) together.',
+    'line-from': 'Moves the process you drag and the later processes of the same component only (Hull, Turret or Assembly). No other component moves.',
+    'line-all': 'Moves every block of the component you drag (its whole Hull, Turret or Assembly sequence) on this vehicle. No other component moves.',
     lane: 'Moves every process of the vehicle you drag.',
     'from-block-after': 'Moves the process you drag and every process after it (rest of its line, then Assembly) — on this vehicle and on every later vehicle of the same battalion and type.',
     'unit-after': 'Moves every process of this vehicle and of every later vehicle of the same battalion and type.',
@@ -1334,6 +1352,11 @@ async function resolveGanttMoveSet(task) {
             if (stationRows.length) return getKd2ForwardMoveRowsByStation(task, stationRows);
         }
         return getKd2ForwardMoveRowsByStation(task, currentData);
+    }
+    if ((_ganttMoveMode === 'line-from' || _ganttMoveMode === 'line-all') && isKD2Module()) {
+        const laneRows = await fetchKd2LaneRowsForGantt(task);
+        const rows = laneRows.length ? laneRows : currentData.filter(row => samePlanLane(row, task));
+        return kd2RowsSameLine(task, rows, { fromAnchor: _ganttMoveMode === 'line-from' });
     }
     if (_ganttMoveMode === 'from-date' && isKD2Module()) {
         const laneRows = await fetchKd2LaneRowsForGantt(task);
@@ -19916,6 +19939,9 @@ function syncGanttModuleEditControls() {
     if (templateBtn) templateBtn.style.display = isF100 ? '' : 'none';
     if (planBtn) planBtn.style.display = isKd2 ? 'none' : '';
     if (fromBlockBtn) fromBlockBtn.style.display = isKd2 ? '' : 'none';
+    const lineGroup = document.getElementById('gmtGroupLine');
+    if (lineGroup) lineGroup.style.display = isKd2 ? '' : 'none';
+    if (!isKd2 && (_ganttMoveMode === 'line-from' || _ganttMoveMode === 'line-all')) _ganttMoveMode = 'single';
     const fromDateBtn = document.getElementById('gmtFromDate');
     if (fromDateBtn) fromDateBtn.style.display = isKd2 ? '' : 'none';
     if (!isKd2 && _ganttMoveMode === 'from-date') _ganttMoveMode = 'single';
@@ -19940,7 +19966,7 @@ function syncGanttModuleEditControls() {
     _syncGanttMoveHint();
     // A move card whose options are all unavailable here is hidden entirely
     document.querySelectorAll('#ganttMoveToggle .gmt-card').forEach(card => {
-        if (card.id === 'gmtGroupLater') return; // shown/hidden as a whole above
+        if (card.id === 'gmtGroupLater' || card.id === 'gmtGroupLine') return; // shown/hidden as a whole above
         card.hidden = ![...card.querySelectorAll('.gmt-btn')].some(b => b.style.display !== 'none');
     });
     const copyPlanBtn = document.getElementById('btnGanttCopyPlan');
@@ -20387,6 +20413,8 @@ function wireGanttDragEdit(dayIndex, days) {
                 ? getKd2FromProcessAfterRows(task, currentData)
                 : _ganttMoveMode === 'from-date'
                 ? currentData.filter(row => samePlanLane(row, task) && (row.start_date || '') >= (task.start_date || ''))
+                : (_ganttMoveMode === 'line-from' || _ganttMoveMode === 'line-all')
+                ? kd2RowsSameLine(task, currentData.filter(row => samePlanLane(row, task)), { fromAnchor: _ganttMoveMode === 'line-from' })
                 : _ganttMoveMode === 'from-block'
                     ? (isF100KD2Module() ? getF100ForwardMoveRows(task, currentData) : kd2RowsFromProcessOn(task, currentData.filter(row => samePlanLane(row, task))))
                     : _selectedGanttPlanIds.has(planId) && _selectedGanttPlanIds.size > 1 && _ganttMoveMode === 'single'

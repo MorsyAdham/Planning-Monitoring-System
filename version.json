@@ -1,8 +1,8 @@
 {
- "version": "v152-c2057d8",
- "label": "v152",
- "deployedAt": "2026-10-06T05:49:23.303Z",
- "notes": "Unit view by line, clearer statuses, hover card",
+ "version": "v153-24c6df6",
+ "label": "v153",
+ "deployedAt": "2026-10-06T06:12:34.732Z",
+ "notes": "Move only one component (Hull, Turret or Assembly)",
  "files": [
   "index.html",
   "login.html",
