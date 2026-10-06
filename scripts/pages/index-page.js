@@ -22,6 +22,8 @@ import { renderAssistant, wireAssistant } from '../features/assistant/index.js';
 import { wireFilterUI } from '../features/filters/behavior.js';
 import { wireUpdateNotice } from '../features/update-notice/index.js';
 import { wireTour } from '../features/tour/index.js';
+import { wireAuditLog } from '../features/admin/audit-log/index.js';
+import { wireUserManagement } from '../features/admin/user-management/index.js';
 
 function renderIndexPage() {
     return [
@@ -194,6 +196,8 @@ async function initPage() {
     wireAssistant();
     wireUpdateNotice();
     wireTour();
+    wireAuditLog();
+    wireUserManagement();
 }
 
 initPage().catch(error => {

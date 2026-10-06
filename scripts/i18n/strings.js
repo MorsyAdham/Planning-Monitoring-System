@@ -13,11 +13,6 @@ export default {
   "ko": "새 버전을 사용할 수 있습니다",
   "ar": "يتوفر إصدار أحدث"
  },
- "Active users": {
-  "area": "Header & menus",
-  "ko": "접속 중인 사용자",
-  "ar": "المستخدمون النشطون"
- },
  "Analytics": {
   "area": "Header & menus",
   "ko": "분석",
@@ -188,11 +183,6 @@ export default {
   "ko": "새 비밀번호",
   "ar": "كلمة المرور الجديدة"
  },
- "New password must be at least 6 characters.": {
-  "area": "Header & menus",
-  "ko": "새 비밀번호는 6자 이상이어야 합니다.",
-  "ar": "يجب ألا تقل كلمة المرور الجديدة عن 6 أحرف."
- },
  "No options": {
   "area": "Header & menus",
   "ko": "옵션 없음",
@@ -222,11 +212,6 @@ export default {
   "area": "Header & menus",
   "ko": "계획 표",
   "ar": "جدول الخطة"
- },
- "Plan version": {
-  "area": "Header & menus",
-  "ko": "계획 버전",
-  "ar": "إصدار الخطة"
  },
  "Planner": {
   "area": "Header & menus",
@@ -515,7 +500,7 @@ export default {
  },
  "Vehicle Parts": {
   "area": "Filter bar",
-  "ko": "차량 부품",
+  "ko": "장비 부품",
   "ar": "قطع المركبة"
  },
  "Week": {
@@ -785,12 +770,12 @@ export default {
  },
  "Every block of this component on this vehicle — nothing else moves": {
   "area": "Gantt",
-  "ko": "이 차량에서 이 구성품의 모든 블록 — 다른 것은 이동하지 않습니다",
+  "ko": "이 장비에서 이 구성품의 모든 블록 — 다른 것은 이동하지 않습니다",
   "ar": "كل بلوكات هذا المكوّن في هذه المركبة — لا يتحرّك شيء آخر"
  },
  "Every block of this vehicle starting on or after it — all lines": {
   "area": "Gantt",
-  "ko": "이 블록 이후에 시작하는 이 차량의 모든 블록 — 모든 라인",
+  "ko": "이 블록 이후에 시작하는 이 장비의 모든 블록 — 모든 라인",
   "ar": "كل بلوكات هذه المركبة التي تبدأ عنده أو بعده — جميع الخطوط"
  },
  "Export Schedule": {
@@ -885,22 +870,22 @@ export default {
  },
  "Moves every block of the component you drag (its whole Hull, Turret or Assembly sequence) on this vehicle. No other component moves.": {
   "area": "Gantt",
-  "ko": "이 차량에서 드래그한 구성품의 모든 블록(차체, 포탑 또는 조립 전체 순서)을 이동합니다. 다른 구성품은 이동하지 않습니다.",
+  "ko": "이 장비에서 드래그한 구성품의 모든 블록(차체, 포탑 또는 조립 전체 순서)을 이동합니다. 다른 구성품은 이동하지 않습니다.",
   "ar": "ينقل كل بلوكات المكوّن الذي تسحبه (تسلسل الهيكل أو البرج أو التجميع بالكامل) في هذه المركبة. لا يتحرّك أي مكوّن آخر."
  },
  "Moves every block of this vehicle that starts on or after the one you drag — all lines (Hull, Turret and Assembly) together.": {
   "area": "Gantt",
-  "ko": "드래그한 블록 이후에 시작하는 이 차량의 모든 블록을 이동합니다 — 모든 라인(차체, 포탑, 조립)을 함께.",
+  "ko": "드래그한 블록 이후에 시작하는 이 장비의 모든 블록을 이동합니다 — 모든 라인(차체, 포탑, 조립)을 함께.",
   "ar": "ينقل كل بلوكات هذه المركبة التي تبدأ عند البلوك المسحوب أو بعده — جميع الخطوط (الهيكل والبرج والتجميع) معًا."
  },
  "Moves every process of the vehicle you drag.": {
   "area": "Gantt",
-  "ko": "드래그한 차량의 모든 공정을 이동합니다.",
+  "ko": "드래그한 장비의 모든 공정을 이동합니다.",
   "ar": "ينقل كل عمليات المركبة التي تسحبها."
  },
  "Moves every process of this vehicle and of every later vehicle of the same battalion and type.": {
   "area": "Gantt",
-  "ko": "이 차량과 같은 대대·같은 차종의 이후 모든 차량의 모든 공정을 이동합니다.",
+  "ko": "이 장비와 같은 대대·같은 차종의 이후 모든 장비의 모든 공정을 이동합니다.",
   "ar": "ينقل كل عمليات هذه المركبة وكل مركبة لاحقة من الكتيبة والنوع نفسيهما."
  },
  "Moves only the block you drag (or every selected block, if several are selected).": {
@@ -910,12 +895,12 @@ export default {
  },
  "Moves the process you drag and every process after it (rest of its line, then Assembly) — on this vehicle and on every later vehicle of the same battalion and type.": {
   "area": "Gantt",
-  "ko": "드래그한 공정과 그 이후의 모든 공정(해당 라인의 나머지, 그다음 조립)을 이동합니다 — 이 차량과 같은 대대·같은 차종의 이후 모든 차량에서.",
+  "ko": "드래그한 공정과 그 이후의 모든 공정(해당 라인의 나머지, 그다음 조립)을 이동합니다 — 이 장비와 같은 대대·같은 차종의 이후 모든 장비에서.",
   "ar": "ينقل العملية التي تسحبها وكل العمليات بعدها (باقي خطها، ثم التجميع) — في هذه المركبة وفي كل مركبة لاحقة من الكتيبة والنوع نفسيهما."
  },
  "Moves the process you drag and every process after it on this vehicle — the rest of its line (e.g. Hull), then Assembly. The parallel line (Turret) stays.": {
   "area": "Gantt",
-  "ko": "드래그한 공정과 이 차량에서 그 이후의 모든 공정을 이동합니다 — 해당 라인(예: 차체)의 나머지, 그다음 조립. 병행 라인(포탑)은 그대로입니다.",
+  "ko": "드래그한 공정과 이 장비에서 그 이후의 모든 공정을 이동합니다 — 해당 라인(예: 차체)의 나머지, 그다음 조립. 병행 라인(포탑)은 그대로입니다.",
   "ar": "ينقل العملية التي تسحبها وكل العمليات بعدها في هذه المركبة — باقي خطها (مثل الهيكل)، ثم التجميع. يبقى الخط الموازي (البرج) كما هو."
  },
  "Moves the process you drag and the later processes of the same component only (Hull, Turret or Assembly). No other component moves.": {
@@ -925,7 +910,7 @@ export default {
  },
  "Moves this block and every block queued after it at the same station, across all vehicles.": {
   "area": "Gantt",
-  "ko": "이 블록과 같은 스테이션에서 그 뒤에 대기 중인 모든 블록을 모든 차량에 걸쳐 이동합니다.",
+  "ko": "이 블록과 같은 스테이션에서 그 뒤에 대기 중인 모든 블록을 모든 장비에 걸쳐 이동합니다.",
   "ar": "ينقل هذا البلوك وكل البلوكات التي تليه في المحطة نفسها، لجميع المركبات."
  },
  "No-work Days": {
@@ -980,7 +965,7 @@ export default {
  },
  "Process view with K10 and K11 as one plan — both vehicles' blocks on the same station rows": {
   "area": "Gantt",
-  "ko": "K10과 K11을 하나의 계획으로 보는 공정 보기 — 두 차량의 블록이 같은 스테이션 행에 표시됩니다",
+  "ko": "K10과 K11을 하나의 계획으로 보는 공정 보기 — 두 장비의 블록이 같은 스테이션 행에 표시됩니다",
   "ar": "عرض العمليات مع K10 وK11 كخطة واحدة — بلوكات المركبتين على صفوف المحطات نفسها"
  },
  "Process View · K10 + K11 together": {
@@ -1045,7 +1030,7 @@ export default {
  },
  "Show K10 and K11 as one plan — both vehicles' blocks on the same station rows": {
   "area": "Gantt",
-  "ko": "K10과 K11을 하나의 계획으로 표시 — 두 차량의 블록이 같은 스테이션 행에 표시됩니다",
+  "ko": "K10과 K11을 하나의 계획으로 표시 — 두 장비의 블록이 같은 스테이션 행에 표시됩니다",
   "ar": "عرض K10 وK11 كخطة واحدة — بلوكات المركبتين على صفوف المحطات نفسها"
  },
  "Station": {
@@ -1070,7 +1055,7 @@ export default {
  },
  "This + later vehicles": {
   "area": "Gantt",
-  "ko": "이 차량 + 이후 차량",
+  "ko": "이 장비 + 이후 장비",
   "ar": "هذه المركبة + المركبات اللاحقة"
  },
  "This component only": {
@@ -1090,7 +1075,7 @@ export default {
  },
  "This vehicle": {
   "area": "Gantt",
-  "ko": "이 차량",
+  "ko": "이 장비",
   "ar": "هذه المركبة"
  },
  "Timeline-based plan vs actual · hover bars for task detail": {
@@ -1125,7 +1110,7 @@ export default {
  },
  "Vehicle": {
   "area": "Gantt",
-  "ko": "차량",
+  "ko": "장비",
   "ar": "المركبة"
  },
  "Visual Placement": {
@@ -1155,13 +1140,38 @@ export default {
  },
  "{a} — pick a unit or station, then click a row and date · {b} — exact dates · {c} — a whole vehicle's sequence to other units": {
   "area": "Gantt",
-  "ko": "{a} — 유닛 또는 스테이션을 고른 뒤 행과 날짜를 클릭 · {b} — 정확한 날짜 입력 · {c} — 차량 한 대의 전체 순서를 다른 유닛에 적용",
+  "ko": "{a} — 유닛 또는 스테이션을 고른 뒤 행과 날짜를 클릭 · {b} — 정확한 날짜 입력 · {c} — 장비 한 대의 전체 순서를 다른 유닛에 적용",
   "ar": "{a} — اختر وحدة أو محطة، ثم انقر على صف وتاريخ · {b} — تواريخ دقيقة · {c} — تسلسل مركبة كاملة إلى وحدات أخرى"
+ },
+ "(you)": {
+  "area": "Gantt / shared",
+  "ko": "(나)",
+  "ar": "(أنت)"
  },
  "+{n} wd": {
   "area": "Gantt / shared",
   "ko": "+{n} 근무일",
   "ar": "+{n} يوم عمل"
+ },
+ "Active": {
+  "area": "Gantt / shared",
+  "ko": "사용 중",
+  "ar": "نشط"
+ },
+ "active": {
+  "area": "Gantt / shared",
+  "ko": "활동 중",
+  "ar": "نشط"
+ },
+ "Active users": {
+  "area": "Gantt / shared",
+  "ko": "접속 중인 사용자",
+  "ar": "المستخدمون النشطون"
+ },
+ "Activity": {
+  "area": "Gantt / shared",
+  "ko": "활동",
+  "ar": "النشاط"
  },
  "All": {
   "area": "Gantt / shared",
@@ -1183,6 +1193,16 @@ export default {
   "ko": "조립 계획 · 일별 간트 보기",
   "ar": "خطة التجميع · عرض جانت اليومي"
  },
+ "Away": {
+  "area": "Gantt / shared",
+  "ko": "백그라운드",
+  "ar": "بعيد"
+ },
+ "away": {
+  "area": "Gantt / shared",
+  "ko": "백그라운드",
+  "ar": "بعيد"
+ },
  "Battalion": {
   "area": "Gantt / shared",
   "ko": "대대",
@@ -1190,7 +1210,7 @@ export default {
  },
  "Battalion / Vehicle / Unit": {
   "area": "Gantt / shared",
-  "ko": "대대 / 차량 / 유닛",
+  "ko": "대대 / 장비 / 유닛",
   "ar": "الكتيبة / المركبة / الوحدة"
  },
  "Battalion Plan · Daily Gantt View": {
@@ -1253,6 +1273,26 @@ export default {
   "ko": "간트 편집",
   "ar": "تعديل جانت"
  },
+ "Editing": {
+  "area": "Gantt / shared",
+  "ko": "편집 중",
+  "ar": "يعدّل"
+ },
+ "editing": {
+  "area": "Gantt / shared",
+  "ko": "편집 중",
+  "ar": "يعدّل"
+ },
+ "Editing the plan": {
+  "area": "Gantt / shared",
+  "ko": "계획 편집",
+  "ar": "تعديل الخطة"
+ },
+ "Everything this user did, in the audit log": {
+  "area": "Gantt / shared",
+  "ko": "감사 로그에서 이 사용자의 모든 활동 보기",
+  "ar": "كل ما فعله هذا المستخدم في سجل التدقيق"
+ },
  "Executive Summary battalion": {
   "area": "Gantt / shared",
   "ko": "경영 요약 대대",
@@ -1287,6 +1327,26 @@ export default {
   "area": "Gantt / shared",
   "ko": "차체",
   "ar": "الهيكل"
+ },
+ "Idle": {
+  "area": "Gantt / shared",
+  "ko": "자리 비움",
+  "ar": "خامل"
+ },
+ "idle": {
+  "area": "Gantt / shared",
+  "ko": "자리 비움",
+  "ar": "خامل"
+ },
+ "just now": {
+  "area": "Gantt / shared",
+  "ko": "방금",
+  "ar": "الآن"
+ },
+ "Live — updates as people come and go. Idle = no activity for 5 min · Away = PPMS is in a background tab.": {
+  "area": "Gantt / shared",
+  "ko": "실시간 — 사용자가 들어오고 나갈 때마다 갱신됩니다. 자리 비움 = 5분간 활동 없음 · 백그라운드 = PPMS가 백그라운드 탭에 있음.",
+  "ar": "مباشر — يتحدّث مع دخول المستخدمين وخروجهم. خامل = لا نشاط منذ 5 دقائق · بعيد = PPMS في تبويب بالخلفية."
  },
  "Load all battalions": {
   "area": "Gantt / shared",
@@ -1323,6 +1383,16 @@ export default {
   "ko": "현재 필터에서 지연 작업이 있는 스테이션이 없습니다.",
   "ar": "لا توجد محطة بها مهام متأخرة ضمن الفلتر الحالي."
  },
+ "No users match \"{a}\".": {
+  "area": "Gantt / shared",
+  "ko": "\"{a}\"와 일치하는 사용자가 없습니다.",
+  "ar": "لا يوجد مستخدمون يطابقون \"{a}\"."
+ },
+ "No users online": {
+  "area": "Gantt / shared",
+  "ko": "접속 중인 사용자가 없습니다",
+  "ar": "لا يوجد مستخدمون متصلون"
+ },
  "No {noun} are due yet — first planned finish {date}": {
   "area": "Gantt / shared",
   "ko": "아직 기한이 된 {noun}이(가) 없습니다 — 첫 계획 완료 {date}",
@@ -1343,10 +1413,20 @@ export default {
   "ko": "취소할 작업이 없습니다",
   "ar": "لا شيء للتراجع عنه"
  },
+ "older version": {
+  "area": "Gantt / shared",
+  "ko": "이전 버전",
+  "ar": "إصدار أقدم"
+ },
  "On plan: {done} {noun} done vs {due} due by today ({pct}% of the plan).": {
   "area": "Gantt / shared",
   "ko": "계획대로: 오늘까지 기한 {due}개 대비 {noun} {done}개 완료 (계획의 {pct}%).",
   "ar": "وفق الخطة: أُنجز {done} من {noun} مقابل {due} مستحقة حتى اليوم ({pct}% من الخطة)."
+ },
+ "Open in User Management": {
+  "area": "Gantt / shared",
+  "ko": "사용자 관리에서 열기",
+  "ar": "فتح في إدارة المستخدمين"
  },
  "Other": {
   "area": "Gantt / shared",
@@ -1370,7 +1450,7 @@ export default {
  },
  "Process view: show K10 and K11 as one plan — both vehicles' blocks on the same station rows (K11 blocks have a white left edge)": {
   "area": "Gantt / shared",
-  "ko": "공정 보기: K10과 K11을 하나의 계획으로 표시 — 두 차량의 블록이 같은 스테이션 행에 표시됩니다 (K11 블록은 왼쪽 가장자리가 흰색)",
+  "ko": "공정 보기: K10과 K11을 하나의 계획으로 표시 — 두 장비의 블록이 같은 스테이션 행에 표시됩니다 (K11 블록은 왼쪽 가장자리가 흰색)",
   "ar": "عرض العمليات: عرض K10 وK11 كخطة واحدة — بلوكات المركبتين على صفوف المحطات نفسها (بلوكات K11 لها حافة يسرى بيضاء)"
  },
  "Production Gantt": {
@@ -1403,10 +1483,25 @@ export default {
   "ko": "블록 {n}개 저장 중…",
   "ar": "جارٍ حفظ {n} بلوك…"
  },
+ "Search name, email or role…": {
+  "area": "Gantt / shared",
+  "ko": "이름, 이메일 또는 역할 검색…",
+  "ar": "ابحث بالاسم أو البريد الإلكتروني أو الدور…"
+ },
+ "Search users": {
+  "area": "Gantt / shared",
+  "ko": "사용자 검색",
+  "ar": "البحث عن مستخدمين"
+ },
  "SECURE": {
   "area": "Gantt / shared",
   "ko": "보안 연결",
   "ar": "آمن"
+ },
+ "session {d}": {
+  "area": "Gantt / shared",
+  "ko": "세션 {d}",
+  "ar": "الجلسة {d}"
  },
  "Set by the battalion filter (top filter bar / Gantt) — only this battalion is loaded": {
   "area": "Gantt / shared",
@@ -1415,12 +1510,12 @@ export default {
  },
  "Shifting 1 vehicle ({b} blocks)…": {
   "area": "Gantt / shared",
-  "ko": "차량 1대 이동 중 (블록 {b}개)…",
+  "ko": "장비 1대 이동 중 (블록 {b}개)…",
   "ar": "جارٍ نقل مركبة واحدة ({b} بلوك)…"
  },
  "Shifting {n} vehicles ({b} blocks)…": {
   "area": "Gantt / shared",
-  "ko": "차량 {n}대 이동 중 (블록 {b}개)…",
+  "ko": "장비 {n}대 이동 중 (블록 {b}개)…",
   "ar": "جارٍ نقل {n} مركبات ({b} بلوك)…"
  },
  "Show Legend": {
@@ -1430,8 +1525,18 @@ export default {
  },
  "Shown separately while Reorder route is on (the route order is per vehicle)": {
   "area": "Gantt / shared",
-  "ko": "공정 순서 변경 중에는 따로 표시됩니다 (공정 순서는 차량별)",
+  "ko": "공정 순서 변경 중에는 따로 표시됩니다 (공정 순서는 장비별)",
   "ar": "يُعرضان منفصلين أثناء إعادة ترتيب المسار (ترتيب المسار لكل مركبة)"
+ },
+ "Sign-in time not recorded": {
+  "area": "Gantt / shared",
+  "ko": "로그인 시각 기록 없음",
+  "ar": "وقت تسجيل الدخول غير مسجّل"
+ },
+ "Signed in {time}": {
+  "area": "Gantt / shared",
+  "ko": "{time} 로그인",
+  "ar": "سجّل الدخول {time}"
  },
  "Structure": {
   "area": "Gantt / shared",
@@ -1448,6 +1553,16 @@ export default {
   "ko": "이 섹션만 전환합니다 — 불러올 데이터는 대대 필터가 결정합니다",
   "ar": "يغيّر هذا القسم فقط — فلتر الكتيبة هو الذي يحدّد ما يتم تحميله"
  },
+ "This person is on an older PPMS version — they should load the latest version (blinking version badge) to show where they are and to log their exports.": {
+  "area": "Gantt / shared",
+  "ko": "이 사용자는 이전 PPMS 버전을 사용 중입니다 — 위치 표시와 내보내기 기록을 위해 최신 버전을 불러와야 합니다(깜박이는 버전 배지).",
+  "ar": "هذا المستخدم على إصدار أقدم من PPMS — عليه تحميل أحدث إصدار (شارة الإصدار الوامضة) لإظهار مكانه وتسجيل عمليات التصدير."
+ },
+ "this visit {d}": {
+  "area": "Gantt / shared",
+  "ko": "이번 접속 {d}",
+  "ar": "هذه الزيارة {d}"
+ },
  "Turret": {
   "area": "Gantt / shared",
   "ko": "포탑",
@@ -1458,19 +1573,24 @@ export default {
   "ko": "마지막 이동 취소 (기록 {n}개)",
   "ar": "التراجع عن آخر نقل ({n} في السجل)"
  },
+ "User": {
+  "area": "Gantt / shared",
+  "ko": "사용자",
+  "ar": "المستخدم"
+ },
  "Vehicle / Station": {
   "area": "Gantt / shared",
-  "ko": "차량 / 스테이션",
+  "ko": "장비 / 스테이션",
   "ar": "المركبة / المحطة"
  },
  "Vehicle / Unit": {
   "area": "Gantt / shared",
-  "ko": "차량 / 유닛",
+  "ko": "장비 / 유닛",
   "ar": "المركبة / الوحدة"
  },
  "Vehicle: {v}": {
   "area": "Gantt / shared",
-  "ko": "차량: {v}",
+  "ko": "장비: {v}",
   "ar": "المركبة: {v}"
  },
  "View": {
@@ -1503,10 +1623,25 @@ export default {
   "ko": "이 계획을 편집 중입니다",
   "ar": "أنت تعدّل هذه الخطة"
  },
+ "{d} d {h} h": {
+  "area": "Gantt / shared",
+  "ko": "{d}일 {h}시간",
+  "ar": "{d} ي {h} س"
+ },
  "{gap} {noun} behind plan: {done} done vs {due} due by today ({pct}% of due) · {whole}% of the whole plan done.": {
   "area": "Gantt / shared",
   "ko": "계획보다 {noun} {gap}개 뒤처짐: 오늘까지 기한 {due}개 대비 {done}개 완료 (기한 대비 {pct}%) · 전체 계획의 {whole}% 완료.",
   "ar": "متأخر عن الخطة بـ{gap} {noun}: أُنجز {done} مقابل {due} مستحقة حتى اليوم ({pct}% من المستحق) · أُنجز {whole}% من الخطة كاملة."
+ },
+ "{h} h": {
+  "area": "Gantt / shared",
+  "ko": "{h}시간",
+  "ar": "{h} س"
+ },
+ "{h} h {m} min": {
+  "area": "Gantt / shared",
+  "ko": "{h}시간 {m}분",
+  "ar": "{h} س {m} د"
  },
  "{names} are editing this plan": {
   "area": "Gantt / shared",
@@ -1537,6 +1672,11 @@ export default {
   "area": "Gantt / shared",
   "ko": "작업 {total}개 중 {n}개 지연",
   "ar": "{n} متأخرة من {total} مهمة"
+ },
+ "{n} min": {
+  "area": "Gantt / shared",
+  "ko": "{n}분",
+  "ar": "{n} د"
  },
  "{n} of {total} stations with delays": {
   "area": "Gantt / shared",
@@ -1618,11 +1758,6 @@ export default {
   "ko": "(알 수 없음)",
   "ar": "(غير معروف)"
  },
- "(you)": {
-  "area": "Screens & messages",
-  "ko": "(나)",
-  "ar": "(أنت)"
- },
  "+ Add Block": {
   "area": "Screens & messages",
   "ko": "+ 블록 추가",
@@ -1635,7 +1770,7 @@ export default {
  },
  "+ New Vehicle…": {
   "area": "Screens & messages",
-  "ko": "+ 새 차량…",
+  "ko": "+ 새 장비…",
   "ar": "+ مركبة جديدة…"
  },
  "+{a} wd": {
@@ -1667,11 +1802,6 @@ export default {
   "area": "Screens & messages",
   "ko": "작업",
   "ar": "إجراءات"
- },
- "Active": {
-  "area": "Screens & messages",
-  "ko": "사용 중",
-  "ar": "نشط"
  },
  "Active Users": {
   "area": "Screens & messages",
@@ -1745,13 +1875,8 @@ export default {
  },
  "Add this vehicle in Unit Codes first to attach a delay reason.": {
   "area": "Screens & messages",
-  "ko": "지연 사유를 입력하려면 먼저 유닛 코드에 이 차량을 추가하세요.",
+  "ko": "지연 사유를 입력하려면 먼저 유닛 코드에 이 장비를 추가하세요.",
   "ar": "أضف هذه المركبة في رموز الوحدات أولًا لإضافة سبب التأخير."
- },
- "After": {
-  "area": "Screens & messages",
-  "ko": "변경 후",
-  "ar": "بعد"
  },
  "All fields (battalion, vehicle type, serial, part, start date) are required.": {
   "area": "Screens & messages",
@@ -1825,23 +1950,18 @@ export default {
  },
  "Battalion · Vehicle · Unit": {
   "area": "Screens & messages",
-  "ko": "대대 · 차량 · 유닛",
+  "ko": "대대 · 장비 · 유닛",
   "ar": "الكتيبة · المركبة · الوحدة"
  },
  "Battalion, vehicle, unit name, and code are required.": {
   "area": "Screens & messages",
-  "ko": "대대, 차량, 유닛 이름, 코드는 필수입니다.",
+  "ko": "대대, 장비, 유닛 이름, 코드는 필수입니다.",
   "ar": "الكتيبة والمركبة واسم الوحدة والرمز حقول مطلوبة."
  },
  "Battalion-by-station planned vs actual": {
   "area": "Screens & messages",
   "ko": "대대·스테이션별 계획 대비 실적",
   "ar": "المخطّط مقابل الفعلي حسب الكتيبة والمحطة"
- },
- "Before": {
-  "area": "Screens & messages",
-  "ko": "변경 전",
-  "ar": "قبل"
  },
  "block delete": {
   "area": "Screens & messages",
@@ -1890,7 +2010,7 @@ export default {
  },
  "By Vehicle Report": {
   "area": "Screens & messages",
-  "ko": "차량별 보고서",
+  "ko": "장비별 보고서",
   "ar": "تقرير حسب المركبة"
  },
  "By Vehicle Type": {
@@ -2118,11 +2238,6 @@ export default {
   "ko": "지연된 작업",
   "ar": "المهام المتأخرة"
  },
- "Delete": {
-  "area": "Screens & messages",
-  "ko": "삭제",
-  "ar": "حذف"
- },
  "Delete \"{a}\" ({b}) from \"{c}\"?": {
   "area": "Screens & messages",
   "ko": "\"{c}\"에서 \"{a}\" ({b})을(를) 삭제할까요?",
@@ -2142,11 +2257,6 @@ export default {
   "area": "Screens & messages",
   "ko": "주기 {a}를 삭제할까요? 되돌릴 수 없습니다.",
   "ar": "حذف الدورة {a}؟ لا يمكن التراجع عن ذلك."
- },
- "Delete failed:": {
-  "area": "Screens & messages",
-  "ko": "삭제 실패:",
-  "ar": "فشل الحذف:"
  },
  "Delete from plan": {
   "area": "Screens & messages",
@@ -2238,11 +2348,6 @@ export default {
   "ko": "드래그하여 시작일 변경",
   "ar": "اسحب لتغيير تاريخ البدء"
  },
- "Edit": {
-  "area": "Screens & messages",
-  "ko": "편집",
-  "ar": "تعديل"
- },
  "Edit Issue": {
   "area": "Screens & messages",
   "ko": "이슈 편집",
@@ -2293,11 +2398,6 @@ export default {
   "ko": "유닛 코드를 불러오는 중 오류가 발생했습니다.",
   "ar": "خطأ في تحميل رموز الوحدات."
  },
- "Error loading users.": {
-  "area": "Screens & messages",
-  "ko": "사용자를 불러오는 중 오류가 발생했습니다.",
-  "ar": "خطأ في تحميل المستخدمين."
- },
  "Error saving comment:": {
   "area": "Screens & messages",
   "ko": "댓글 저장 오류:",
@@ -2343,11 +2443,6 @@ export default {
   "ko": "오류:",
   "ar": "خطأ:"
  },
- "Error: {a}": {
-  "area": "Screens & messages",
-  "ko": "오류: {a}",
-  "ar": "خطأ: {a}"
- },
  "Excel export failed:": {
   "area": "Screens & messages",
   "ko": "Excel 내보내기 실패:",
@@ -2367,16 +2462,6 @@ export default {
   "area": "Screens & messages",
   "ko": "Excel 내보내기 완료 — {a}행",
   "ar": "تم تصدير Excel — {a} صف"
- },
- "Excel exported.": {
-  "area": "Screens & messages",
-  "ko": "Excel을 내보냈습니다.",
-  "ar": "تم تصدير Excel."
- },
- "Excel library not loaded — please refresh.": {
-  "area": "Screens & messages",
-  "ko": "Excel 라이브러리를 불러오지 못했습니다 — 새로고침하세요.",
-  "ar": "لم يتم تحميل مكتبة Excel — حدّث الصفحة."
  },
  "ExcelJS not loaded yet — please wait a moment and try again.": {
   "area": "Screens & messages",
@@ -2427,11 +2512,6 @@ export default {
   "area": "Screens & messages",
   "ko": "예상 종료",
   "ar": "الانتهاء المتوقّع"
- },
- "Export failed:": {
-  "area": "Screens & messages",
-  "ko": "내보내기 실패:",
-  "ar": "فشل التصدير:"
  },
  "F100 Part Manufacturing Progress": {
   "area": "Screens & messages",
@@ -2508,11 +2588,6 @@ export default {
   "ko": "실패:",
   "ar": "فشل:"
  },
- "Field": {
-  "area": "Screens & messages",
-  "ko": "필드",
-  "ar": "الحقل"
- },
  "Filter the Plan Table to this station — update dates or add a delay reason there": {
   "area": "Screens & messages",
   "ko": "계획 표를 이 스테이션으로 필터링 — 거기서 날짜를 수정하거나 지연 사유를 추가하세요",
@@ -2568,11 +2643,6 @@ export default {
   "ko": "숨기기",
   "ar": "إخفاء"
  },
- "Hide changes": {
-  "area": "Screens & messages",
-  "ko": "변경 내용 숨기기",
-  "ar": "إخفاء التغييرات"
- },
  "High": {
   "area": "Screens & messages",
   "ko": "높음",
@@ -2617,11 +2687,6 @@ export default {
   "area": "Screens & messages",
   "ko": "잘못된 대대입니다.",
   "ar": "كتيبة غير صالحة."
- },
- "Issue": {
-  "area": "Screens & messages",
-  "ko": "이슈",
-  "ar": "المشكلة"
  },
  "Issue #{a}": {
   "area": "Screens & messages",
@@ -2695,7 +2760,7 @@ export default {
  },
  "Lane is missing vehicle unit details. Ensure the lane has existing data.": {
   "area": "Screens & messages",
-  "ko": "이 행에 차량 유닛 정보가 없습니다. 기존 데이터가 있는 행인지 확인하세요.",
+  "ko": "이 행에 장비 유닛 정보가 없습니다. 기존 데이터가 있는 행인지 확인하세요.",
   "ar": "هذا الصف يفتقد بيانات وحدة المركبة. تأكّد من أن الصف يحتوي على بيانات موجودة."
  },
  "Late Completions": {
@@ -2737,11 +2802,6 @@ export default {
   "area": "Screens & messages",
   "ko": "데이터 불러오는 중…",
   "ar": "جارٍ تحميل البيانات…"
- },
- "Loading…": {
-  "area": "Screens & messages",
-  "ko": "불러오는 중…",
-  "ar": "جارٍ التحميل…"
  },
  "Low": {
   "area": "Screens & messages",
@@ -2797,11 +2857,6 @@ export default {
   "area": "Screens & messages",
   "ko": "위로 이동",
   "ar": "نقل للأعلى"
- },
- "Name and email are required.": {
-  "area": "Screens & messages",
-  "ko": "이름과 이메일은 필수입니다.",
-  "ar": "الاسم والبريد الإلكتروني مطلوبان."
  },
  "New issue": {
   "area": "Screens & messages",
@@ -2887,11 +2942,6 @@ export default {
   "area": "Screens & messages",
   "ko": "F100 유닛 코드가 아직 없습니다. \"추가 / 코드 편집\"을 눌러 시작하세요.",
   "ar": "لا توجد رموز وحدات F100 بعد. انقر \"إضافة / تعديل رمز\" للبدء."
- },
- "No field data recorded": {
-  "area": "Screens & messages",
-  "ko": "기록된 필드 데이터가 없습니다",
-  "ar": "لا توجد بيانات حقول مسجّلة"
  },
  "No issues in the report — tick at least one issue.": {
   "area": "Screens & messages",
@@ -3028,16 +3078,6 @@ export default {
   "ko": "읽지 않은 알림이 없습니다",
   "ar": "لا توجد إشعارات غير مقروءة"
  },
- "No users match \"{a}\".": {
-  "area": "Screens & messages",
-  "ko": "\"{a}\"와 일치하는 사용자가 없습니다.",
-  "ar": "لا يوجد مستخدمون يطابقون \"{a}\"."
- },
- "No users online": {
-  "area": "Screens & messages",
-  "ko": "접속 중인 사용자가 없습니다",
-  "ar": "لا يوجد مستخدمون متصلون"
- },
  "No valid rows found. Check format.": {
   "area": "Screens & messages",
   "ko": "올바른 행이 없습니다. 형식을 확인하세요.",
@@ -3050,7 +3090,7 @@ export default {
  },
  "No vehicle units found in the current data.": {
   "area": "Screens & messages",
-  "ko": "현재 데이터에 차량 유닛이 없습니다.",
+  "ko": "현재 데이터에 장비 유닛이 없습니다.",
   "ar": "لا توجد وحدات مركبات في البيانات الحالية."
  },
  "No X-ray cycles recorded yet.": {
@@ -3228,11 +3268,6 @@ export default {
   "ko": "합격",
   "ar": "ناجح"
  },
- "Password is required for new users.": {
-  "area": "Screens & messages",
-  "ko": "새 사용자는 비밀번호가 필요합니다.",
-  "ar": "كلمة المرور مطلوبة للمستخدمين الجدد."
- },
  "Password updated.": {
   "area": "Screens & messages",
   "ko": "비밀번호를 변경했습니다.",
@@ -3258,20 +3293,10 @@ export default {
   "ko": "PDF 내보내기 완료 — {a}행",
   "ar": "تم تصدير PDF — {a} صف"
  },
- "PDF exported.": {
-  "area": "Screens & messages",
-  "ko": "PDF를 내보냈습니다.",
-  "ar": "تم تصدير PDF."
- },
  "PDF library not loaded — please refresh and try again.": {
   "area": "Screens & messages",
   "ko": "PDF 라이브러리를 불러오지 못했습니다 — 새로고침 후 다시 시도하세요.",
   "ar": "لم يتم تحميل مكتبة PDF — حدّث الصفحة وحاول مرة أخرى."
- },
- "PDF library not loaded — please refresh.": {
-  "area": "Screens & messages",
-  "ko": "PDF 라이브러리를 불러오지 못했습니다 — 새로고침하세요.",
-  "ar": "لم يتم تحميل مكتبة PDF — حدّث الصفحة."
  },
  "Permanently delete \"{a}\"? This deletes every plan row in this revision and cannot be undone.": {
   "area": "Screens & messages",
@@ -3365,7 +3390,7 @@ export default {
  },
  "Please enter a name for the new vehicle.": {
   "area": "Screens & messages",
-  "ko": "새 차량의 이름을 입력하세요.",
+  "ko": "새 장비의 이름을 입력하세요.",
   "ar": "يرجى إدخال اسم للمركبة الجديدة."
  },
  "Please fill in all required fields with a valid duration.": {
@@ -3388,20 +3413,10 @@ export default {
   "ko": "올바른 시작일과 기간(최소 1일)을 지정하세요.",
   "ar": "يرجى تحديد تاريخ بدء ومدة صالحين (يوم واحد على الأقل)."
  },
- "Preparing Excel export…": {
-  "area": "Screens & messages",
-  "ko": "Excel 내보내기 준비 중…",
-  "ar": "جارٍ تجهيز تصدير Excel…"
- },
  "Preparing Executive Report…": {
   "area": "Screens & messages",
   "ko": "경영 보고서 준비 중…",
   "ar": "جارٍ تجهيز التقرير التنفيذي…"
- },
- "Preparing PDF export…": {
-  "area": "Screens & messages",
-  "ko": "PDF 내보내기 준비 중…",
-  "ar": "جارٍ تجهيز تصدير PDF…"
  },
  "Preparing Word export…": {
   "area": "Screens & messages",
@@ -3470,7 +3485,7 @@ export default {
  },
  "Qty/Vehicle": {
   "area": "Screens & messages",
-  "ko": "차량당 수량",
+  "ko": "장비당 수량",
   "ar": "الكمية/المركبة"
  },
  "Quality": {
@@ -3983,21 +3998,6 @@ export default {
   "ko": "수정 실패:",
   "ar": "فشل التحديث:"
  },
- "User \"{a}\" deleted.": {
-  "area": "Screens & messages",
-  "ko": "사용자 \"{a}\"를 삭제했습니다.",
-  "ar": "تم حذف المستخدم \"{a}\"."
- },
- "User created.": {
-  "area": "Screens & messages",
-  "ko": "사용자를 만들었습니다.",
-  "ar": "تم إنشاء المستخدم."
- },
- "User updated.": {
-  "area": "Screens & messages",
-  "ko": "사용자 정보를 수정했습니다.",
-  "ar": "تم تحديث المستخدم."
- },
  "Vehicle type is required.": {
   "area": "Screens & messages",
   "ko": "차종은 필수입니다.",
@@ -4005,23 +4005,18 @@ export default {
  },
  "Vehicle Unit": {
   "area": "Screens & messages",
-  "ko": "차량 유닛",
+  "ko": "장비 유닛",
   "ar": "وحدة المركبة"
  },
  "Vehicle · Unit": {
   "area": "Screens & messages",
-  "ko": "차량 · 유닛",
+  "ko": "장비 · 유닛",
   "ar": "المركبة · الوحدة"
  },
  "Vehicles": {
   "area": "Screens & messages",
-  "ko": "차량",
+  "ko": "장비",
   "ar": "المركبات"
- },
- "View changes": {
-  "area": "Screens & messages",
-  "ko": "변경 내용 보기",
-  "ar": "عرض التغييرات"
  },
  "View on Schedule": {
   "area": "Screens & messages",
@@ -4252,11 +4247,6 @@ export default {
   "area": "Screens & messages",
   "ko": "{a}근무일 지연",
   "ar": "متأخر {a} يوم عمل"
- },
- "{a} · Logged in {b}{c}": {
-  "area": "Screens & messages",
-  "ko": "{a} · {b}{c} 로그인",
-  "ar": "{a} · سجّل الدخول {b}{c}"
  },
  "{a} · Saved {b}": {
   "area": "Screens & messages",
@@ -4692,11 +4682,6 @@ export default {
   "area": "Analytics",
   "ko": "이번 주",
   "ar": "هذا الأسبوع"
- },
- "Today": {
-  "area": "Analytics",
-  "ko": "오늘",
-  "ar": "اليوم"
  },
  "Uncategorised": {
   "area": "Analytics",
@@ -5160,7 +5145,7 @@ export default {
  },
  "Added at the end of each selected vehicle's route — reorder later by editing category_sequence directly if it needs to sit somewhere else.": {
   "area": "Dialogs",
-  "ko": "선택한 각 차량 경로의 끝에 추가됩니다 — 다른 위치에 두어야 하면 나중에 category_sequence를 직접 편집해 순서를 바꾸세요.",
+  "ko": "선택한 각 장비 경로의 끝에 추가됩니다 — 다른 위치에 두어야 하면 나중에 category_sequence를 직접 편집해 순서를 바꾸세요.",
   "ar": "تُضاف في نهاية مسار كل مركبة مختارة — أعد ترتيبها لاحقًا بتعديل category_sequence مباشرة إذا لزم وضعها في مكان آخر."
  },
  "Adding categories needs database update 57 — ask the administrator to run it.": {
@@ -5177,11 +5162,6 @@ export default {
   "area": "Dialogs",
   "ko": "전체 이슈",
   "ar": "كل المشكلات"
- },
- "All modules": {
-  "area": "Dialogs",
-  "ko": "전체 모듈",
-  "ar": "كل الوحدات"
  },
  "All priorities": {
   "area": "Dialogs",
@@ -5208,14 +5188,9 @@ export default {
   "ko": "전체 기간, 모든 상태와 분류",
   "ar": "كل الفترات، كل الحالات والفئات"
  },
- "All Users": {
-  "area": "Dialogs",
-  "ko": "전체 사용자",
-  "ar": "كل المستخدمين"
- },
  "All Vehicles": {
   "area": "Dialogs",
-  "ko": "전체 차량",
+  "ko": "전체 장비",
   "ar": "كل المركبات"
  },
  "Applies To": {
@@ -5305,7 +5280,7 @@ export default {
  },
  "By Vehicle": {
   "area": "Dialogs",
-  "ko": "차량별",
+  "ko": "장비별",
   "ar": "حسب المركبة"
  },
  "Can export Excel & PDF reports": {
@@ -5342,11 +5317,6 @@ export default {
   "area": "Dialogs",
   "ko": "보고서 선택",
   "ar": "اختر التقرير"
- },
- "Click to load audit log": {
-  "area": "Dialogs",
-  "ko": "클릭하여 감사 로그 불러오기",
-  "ar": "انقر لتحميل سجل التدقيق"
  },
  "Closed Issues": {
   "area": "Dialogs",
@@ -5415,7 +5385,7 @@ export default {
  },
  "Current vehicle filter only": {
   "area": "Dialogs",
-  "ko": "현재 차량 필터만",
+  "ko": "현재 장비 필터만",
   "ar": "فلتر المركبة الحالي فقط"
  },
  "Cycle": {
@@ -5427,11 +5397,6 @@ export default {
   "area": "Dialogs",
   "ko": "일간",
   "ar": "يومي"
- },
- "Date / Time": {
-  "area": "Dialogs",
-  "ko": "날짜 / 시간",
-  "ar": "التاريخ / الوقت"
  },
  "Date Range": {
   "area": "Dialogs",
@@ -5553,11 +5518,6 @@ export default {
   "ko": "이메일",
   "ar": "البريد الإلكتروني"
  },
- "Email already exists.": {
-  "area": "Dialogs",
-  "ko": "이미 사용 중인 이메일입니다.",
-  "ar": "البريد الإلكتروني موجود بالفعل."
- },
  "End Date": {
   "area": "Dialogs",
   "ko": "종료일",
@@ -5567,11 +5527,6 @@ export default {
   "area": "Dialogs",
   "ko": "메모를 입력하세요…",
   "ar": "أدخل أي ملاحظات…"
- },
- "Export": {
-  "area": "Dialogs",
-  "ko": "내보내기",
-  "ar": "تصدير"
  },
  "Export Excel": {
   "area": "Dialogs",
@@ -5598,20 +5553,10 @@ export default {
   "ko": "F100 계획",
   "ar": "خطة F100"
  },
- "F100 Plans": {
-  "area": "Dialogs",
-  "ko": "F100 계획들",
-  "ar": "خطط F100"
- },
  "F100 Process": {
   "area": "Dialogs",
   "ko": "F100 공정",
   "ar": "عملية F100"
- },
- "F100 Progress": {
-  "area": "Dialogs",
-  "ko": "F100 진행",
-  "ar": "تقدّم F100"
  },
  "F100 unit deleted.": {
   "area": "Dialogs",
@@ -5627,11 +5572,6 @@ export default {
   "area": "Dialogs",
   "ko": "개정판을 만들지 못했습니다.",
   "ar": "فشل إنشاء المراجعة."
- },
- "Fields Changed": {
-  "area": "Dialogs",
-  "ko": "변경된 필드",
-  "ar": "الحقول المتغيّرة"
  },
  "Fill start dates": {
   "area": "Dialogs",
@@ -5718,11 +5658,6 @@ export default {
   "ko": "진행 중 이슈",
   "ar": "المشكلات قيد التنفيذ"
  },
- "Inactive": {
-  "area": "Dialogs",
-  "ko": "비활성",
-  "ar": "غير نشط"
- },
  "Include all": {
   "area": "Dialogs",
   "ko": "모두 포함",
@@ -5737,11 +5672,6 @@ export default {
   "area": "Dialogs",
   "ko": "추가",
   "ar": "إدراج"
- },
- "IP Address": {
-  "area": "Dialogs",
-  "ko": "IP 주소",
-  "ar": "عنوان IP"
  },
  "Issue / Problem": {
   "area": "Dialogs",
@@ -5845,7 +5775,7 @@ export default {
  },
  "Load a KD2 vehicle route to edit lead times.": {
   "area": "Dialogs",
-  "ko": "리드타임을 편집하려면 KD2 차량 경로를 불러오세요.",
+  "ko": "리드타임을 편집하려면 KD2 장비 경로를 불러오세요.",
   "ar": "حمّل مسار مركبة KD2 لتعديل المهل الزمنية."
  },
  "Loading process stations…": {
@@ -5865,23 +5795,18 @@ export default {
  },
  "Main reason for this vehicle's delay": {
   "area": "Dialogs",
-  "ko": "이 차량 지연의 주요 사유",
+  "ko": "이 장비 지연의 주요 사유",
   "ar": "السبب الرئيسي لتأخير هذه المركبة"
  },
  "Manage the master list of gun and vehicle parts.": {
   "area": "Dialogs",
-  "ko": "포 및 차량 부품 마스터 목록을 관리합니다.",
+  "ko": "포 및 장비 부품 마스터 목록을 관리합니다.",
   "ar": "إدارة القائمة الرئيسية لقطع المدفع والمركبة."
  },
  "Mark as Complete": {
   "area": "Dialogs",
   "ko": "완료로 표시",
   "ar": "تحديد كمكتمل"
- },
- "Master Admin — full access & system settings": {
-  "area": "Dialogs",
-  "ko": "최고 관리자 — 전체 권한 및 시스템 설정",
-  "ar": "مسؤول رئيسي — وصول كامل وإعدادات النظام"
  },
  "Module Access": {
   "area": "Dialogs",
@@ -5930,12 +5855,12 @@ export default {
  },
  "New Unit / Vehicle No.": {
   "area": "Dialogs",
-  "ko": "새 유닛 / 차량 번호",
+  "ko": "새 유닛 / 장비 번호",
   "ar": "وحدة جديدة / رقم مركبة"
  },
  "New Vehicle Name": {
   "area": "Dialogs",
-  "ko": "새 차량 이름",
+  "ko": "새 장비 이름",
   "ar": "اسم المركبة الجديدة"
  },
  "Next issue (Right arrow)": {
@@ -6007,11 +5932,6 @@ export default {
   "area": "Dialogs",
   "ko": "미해결 이슈",
   "ar": "المشكلات المفتوحة"
- },
- "Operator — edit production data": {
-  "area": "Dialogs",
-  "ko": "운영자 — 생산 데이터 편집",
-  "ar": "مشغّل — تعديل بيانات الإنتاج"
  },
  "Optional descriptive name": {
   "area": "Dialogs",
@@ -6088,11 +6008,6 @@ export default {
   "ko": "계획되었으나 미착수",
   "ar": "مخطّط ولم يبدأ بعد"
  },
- "Planner — edit data & plan schedule": {
-  "area": "Dialogs",
-  "ko": "계획 담당자 — 데이터 및 계획 일정 편집",
-  "ar": "مخطِّط — تعديل البيانات وجدول الخطة"
- },
  "pre-filled from the current view": {
   "area": "Dialogs",
   "ko": "현재 보기 기준으로 미리 채워짐",
@@ -6162,11 +6077,6 @@ export default {
   "area": "Dialogs",
   "ko": "기록",
   "ar": "السجل"
- },
- "Record ID": {
-  "area": "Dialogs",
-  "ko": "기록 ID",
-  "ar": "معرّف السجل"
  },
  "Reference unit": {
   "area": "Dialogs",
@@ -6273,11 +6183,6 @@ export default {
   "ko": "역할",
   "ar": "الدور"
  },
- "Save failed.": {
-  "area": "Dialogs",
-  "ko": "저장에 실패했습니다.",
-  "ar": "فشل الحفظ."
- },
  "Save Inputs": {
   "area": "Dialogs",
   "ko": "입력 저장",
@@ -6307,11 +6212,6 @@ export default {
   "area": "Dialogs",
   "ko": "범위: 현재 차종 및 분류 탭",
   "ar": "النطاق: تبويب نوع المركبة والفئة الحالي"
- },
- "Search name, email or role…": {
-  "area": "Dialogs",
-  "ko": "이름, 이메일 또는 역할 검색…",
-  "ar": "ابحث بالاسم أو البريد الإلكتروني أو الدور…"
  },
  "Select a type to preview count": {
   "area": "Dialogs",
@@ -6392,11 +6292,6 @@ export default {
   "area": "Dialogs",
   "ko": "보고서를 만들려면 항목을 하나 이상 켜세요.",
   "ar": "فعّل جزءًا واحدًا على الأقل لإنشاء التقرير."
- },
- "Table": {
-  "area": "Dialogs",
-  "ko": "표",
-  "ar": "جدول"
  },
  "Tables, one sheet per section": {
   "area": "Dialogs",
@@ -6495,7 +6390,7 @@ export default {
  },
  "Unit / Vehicle No.": {
   "area": "Dialogs",
-  "ko": "유닛 / 차량 번호",
+  "ko": "유닛 / 장비 번호",
   "ar": "الوحدة / رقم المركبة"
  },
  "Unit Code (Text)": {
@@ -6543,11 +6438,6 @@ export default {
   "ko": "수정",
   "ar": "تحديث"
  },
- "User": {
-  "area": "Dialogs",
-  "ko": "사용자",
-  "ar": "المستخدم"
- },
  "Users": {
   "area": "Dialogs",
   "ko": "사용자",
@@ -6572,11 +6462,6 @@ export default {
   "area": "Dialogs",
   "ko": "내보내기 전에 보기",
   "ar": "عرض قبل التصدير"
- },
- "Viewer — read only": {
-  "area": "Dialogs",
-  "ko": "조회자 — 읽기 전용",
-  "ar": "مُطّلِع — قراءة فقط"
  },
  "Week (auto)": {
   "area": "Dialogs",
@@ -6668,11 +6553,6 @@ export default {
   "ko": "{a}분",
   "ar": "{a} دقيقة"
  },
- "{a} of {b} users": {
-  "area": "Dialogs",
-  "ko": "사용자 {b}명 중 {a}명",
-  "ar": "{a} من {b} مستخدم"
- },
  "{a} removed": {
   "area": "Dialogs",
   "ko": "{a}건 제외됨",
@@ -6682,11 +6562,6 @@ export default {
   "area": "Dialogs",
   "ko": "유닛 {a}개",
   "ar": "{a} وحدة"
- },
- "{a} user{s}": {
-  "area": "Dialogs",
-  "ko": "사용자 {a}명",
-  "ar": "{a} مستخدم"
  },
  "{a} version{s}": {
   "area": "Dialogs",
@@ -6762,11 +6637,6 @@ export default {
   "area": "KD2 planning",
   "ko": "이 대대, 유닛 일련번호, 스테이션의 KD2 계획 블록이 이미 있습니다.",
   "ar": "يوجد بلوك خطة KD2 لهذه الكتيبة والرقم التسلسلي للوحدة والمحطة بالفعل."
- },
- "Action": {
-  "area": "KD2 planning",
-  "ko": "작업",
-  "ar": "إجراء"
  },
  "Add a process step or a working-day gap.": {
   "area": "KD2 planning",
@@ -6860,22 +6730,22 @@ export default {
  },
  "Battalion, vehicle, unit, and a planned start for each of {a} are required for a template.": {
   "area": "KD2 planning",
-  "ko": "템플릿에는 대대, 차량, 유닛과 {a} 각각의 계획 시작일이 필요합니다.",
+  "ko": "템플릿에는 대대, 장비, 유닛과 {a} 각각의 계획 시작일이 필요합니다.",
   "ar": "يتطلب القالب الكتيبة والمركبة والوحدة وبدءًا مخطّطًا لكل من {a}."
  },
  "Battalion, vehicle, unit, and planned start are required for a template.": {
   "area": "KD2 planning",
-  "ko": "템플릿에는 대대, 차량, 유닛, 계획 시작일이 필요합니다.",
+  "ko": "템플릿에는 대대, 장비, 유닛, 계획 시작일이 필요합니다.",
   "ar": "يتطلب القالب الكتيبة والمركبة والوحدة والبدء المخطّط."
  },
  "Battalion, vehicle, unit, station, planned start, and a valid duration are required.": {
   "area": "KD2 planning",
-  "ko": "대대, 차량, 유닛, 스테이션, 계획 시작일과 올바른 기간이 필요합니다.",
+  "ko": "대대, 장비, 유닛, 스테이션, 계획 시작일과 올바른 기간이 필요합니다.",
   "ar": "الكتيبة والمركبة والوحدة والمحطة والبدء المخطّط ومدة صالحة مطلوبة."
  },
  "Battalion, vehicle, unit, station, planned start, and duration are required.": {
   "area": "KD2 planning",
-  "ko": "대대, 차량, 유닛, 스테이션, 계획 시작일, 기간은 필수입니다.",
+  "ko": "대대, 장비, 유닛, 스테이션, 계획 시작일, 기간은 필수입니다.",
   "ar": "الكتيبة والمركبة والوحدة والمحطة والبدء المخطّط والمدة مطلوبة."
  },
  "Battalion-by-station planned vs actual · hover for details": {
@@ -7120,7 +6990,7 @@ export default {
  },
  "F200 – KD1 Vehicle Production Progress": {
   "area": "KD2 planning",
-  "ko": "F200 – KD1 차량 생산 진행",
+  "ko": "F200 – KD1 장비 생산 진행",
   "ar": "تقدّم إنتاج مركبات F200 – KD1"
  },
  "F200 – KD2 Battalion Plan Details": {
@@ -7550,7 +7420,7 @@ export default {
  },
  "No KD2 route categories were found for this vehicle.": {
   "area": "KD2 planning",
-  "ko": "이 차량의 KD2 경로 분류가 없습니다.",
+  "ko": "이 장비의 KD2 경로 분류가 없습니다.",
   "ar": "لم يتم العثور على فئات مسار KD2 لهذه المركبة."
  },
  "No KD2 route master loaded yet.": {
@@ -7590,12 +7460,12 @@ export default {
  },
  "No units are set up for this battalion and vehicle (Planning Inputs / Unit Codes).": {
   "area": "KD2 planning",
-  "ko": "이 대대와 차량에 설정된 유닛이 없습니다 (계획 입력 / 유닛 코드).",
+  "ko": "이 대대와 장비에 설정된 유닛이 없습니다 (계획 입력 / 유닛 코드).",
   "ar": "لا توجد وحدات مُعدّة لهذه الكتيبة والمركبة (مدخلات التخطيط / رموز الوحدات)."
  },
  "No units configured for this battalion and vehicle": {
   "area": "KD2 planning",
-  "ko": "이 대대와 차량에 설정된 유닛이 없습니다",
+  "ko": "이 대대와 장비에 설정된 유닛이 없습니다",
   "ar": "لا توجد وحدات مُعدّة لهذه الكتيبة والمركبة"
  },
  "No valid planning inputs were found for the selected battalion.": {
@@ -7760,7 +7630,7 @@ export default {
  },
  "Preview how the template will land on the KD2 Gantt using the selected battalion, vehicle, unit, and planned start date.": {
   "area": "KD2 planning",
-  "ko": "선택한 대대, 차량, 유닛, 계획 시작일로 템플릿이 KD2 간트에 어떻게 배치될지 미리 봅니다.",
+  "ko": "선택한 대대, 장비, 유닛, 계획 시작일로 템플릿이 KD2 간트에 어떻게 배치될지 미리 봅니다.",
   "ar": "عاين كيف سيظهر القالب على مخطط جانت KD2 باستخدام الكتيبة والمركبة والوحدة وتاريخ البدء المخطّط المحدد."
  },
  "Process Block": {
@@ -7770,7 +7640,7 @@ export default {
  },
  "Process view is locked to the {a} route. Use the vehicle filter to switch routes.": {
   "area": "KD2 planning",
-  "ko": "공정 보기는 {a} 경로로 고정됩니다. 경로를 바꾸려면 차량 필터를 사용하세요.",
+  "ko": "공정 보기는 {a} 경로로 고정됩니다. 경로를 바꾸려면 장비 필터를 사용하세요.",
   "ar": "عرض العمليات مقيّد بمسار {a}. استخدم فلتر المركبة لتبديل المسارات."
  },
  "Process view uses the {a} route order and labels each block by battalion and unit.": {
@@ -7960,7 +7830,7 @@ export default {
  },
  "Select at least one vehicle.": {
   "area": "KD2 planning",
-  "ko": "차량을 하나 이상 선택하세요.",
+  "ko": "장비를 하나 이상 선택하세요.",
   "ar": "اختر مركبة واحدة على الأقل."
  },
  "Select Lane": {
@@ -8080,7 +7950,7 @@ export default {
  },
  "The selected vehicle has no route template.": {
   "area": "KD2 planning",
-  "ko": "선택한 차량에 경로 템플릿이 없습니다.",
+  "ko": "선택한 장비에 경로 템플릿이 없습니다.",
   "ar": "لا يوجد قالب مسار للمركبة المختارة."
  },
  "This unit already has {a} template station block(s). Delete or edit existing blocks first.": {
@@ -8105,7 +7975,7 @@ export default {
  },
  "Unit view shows battalion / vehicle / unit lanes.": {
   "area": "KD2 planning",
-  "ko": "유닛 보기는 대대 / 차량 / 유닛 행을 표시합니다.",
+  "ko": "유닛 보기는 대대 / 장비 / 유닛 행을 표시합니다.",
   "ar": "يعرض عرض الوحدات صفوف الكتيبة / المركبة / الوحدة."
  },
  "Unknown lead times remain intentionally blank until confirmed.": {
@@ -8130,7 +8000,7 @@ export default {
  },
  "Uses stored battalion deadline or vehicle-level deadline, skips Friday when enabled, and only generates rows when all required lead times are confirmed.": {
   "area": "KD2 planning",
-  "ko": "저장된 대대 마감일 또는 차량별 마감일을 사용하고, 설정 시 금요일을 건너뛰며, 필요한 리드타임이 모두 확정된 경우에만 행을 생성합니다.",
+  "ko": "저장된 대대 마감일 또는 장비별 마감일을 사용하고, 설정 시 금요일을 건너뛰며, 필요한 리드타임이 모두 확정된 경우에만 행을 생성합니다.",
   "ar": "يستخدم الموعد النهائي المخزّن للكتيبة أو للمركبة، ويتخطى يوم الجمعة عند التفعيل، ولا ينشئ صفوفًا إلا عند تأكيد كل المهل الزمنية المطلوبة."
  },
  "Visual Block Palette": {
@@ -8560,7 +8430,7 @@ export default {
  },
  "<b>Process</b> shows one lane per station (who is at each station); <b>Unit</b> shows one lane per vehicle (each unit's route).": {
   "area": "Help & tour",
-  "ko": "<b>공정</b>은 스테이션마다 한 행(각 스테이션에 누가 있는지)을, <b>유닛</b>은 차량마다 한 행(각 유닛의 경로)을 보여줍니다.",
+  "ko": "<b>공정</b>은 스테이션마다 한 행(각 스테이션에 누가 있는지)을, <b>유닛</b>은 장비마다 한 행(각 유닛의 경로)을 보여줍니다.",
   "ar": "<b>العمليات</b> يعرض صفًا لكل محطة (من في كل محطة)؛ و<b>الوحدات</b> يعرض صفًا لكل مركبة (مسار كل وحدة)."
  },
  "A 2-minute walk around the screen": {
@@ -8633,11 +8503,6 @@ export default {
   "ko": "매뉴얼을 Word 문서로 다운로드",
   "ar": "تنزيل الدليل كمستند Word"
  },
- "Editing the plan": {
-  "area": "Help & tour",
-  "ko": "계획 편집",
-  "ar": "تعديل الخطة"
- },
  "End tour": {
   "area": "Help & tour",
   "ko": "투어 종료",
@@ -8705,7 +8570,7 @@ export default {
  },
  "Narrow the <b>whole page</b> at once — battalion, vehicle, unit, category, week, time frame or a search. Active filters appear as chips; click × on a chip to remove it, or <b>Reset</b> to clear them all.": {
   "area": "Help & tour",
-  "ko": "<b>페이지 전체</b>를 한 번에 좁힙니다 — 대대, 차량, 유닛, 분류, 주차, 기간 또는 검색. 적용된 필터는 칩으로 표시되며, 칩의 ×를 눌러 제거하거나 <b>초기화</b>로 모두 지울 수 있습니다.",
+  "ko": "<b>페이지 전체</b>를 한 번에 좁힙니다 — 대대, 장비, 유닛, 분류, 주차, 기간 또는 검색. 적용된 필터는 칩으로 표시되며, 칩의 ×를 눌러 제거하거나 <b>초기화</b>로 모두 지울 수 있습니다.",
   "ar": "ضيّق نطاق <b>الصفحة بالكامل</b> دفعة واحدة — الكتيبة، المركبة، الوحدة، الفئة، الأسبوع، الفترة الزمنية أو البحث. تظهر الفلاتر المفعّلة كشرائح؛ انقر × على الشريحة لإزالتها، أو <b>إعادة تعيين</b> لمسحها جميعًا."
  },
  "New comments, issues and plan changes from your colleagues collect here. Click one to jump straight to it.": {
@@ -8920,7 +8785,7 @@ export default {
  },
  "Vehicle Production Progress": {
   "area": "Help & tour",
-  "ko": "차량 생산 진행",
+  "ko": "장비 생산 진행",
   "ar": "تقدّم إنتاج المركبات"
  },
  "Welcome to PPMS": {
@@ -9188,30 +9053,245 @@ export default {
   "ko": "시스템 가동 중",
   "ar": "الأنظمة تعمل"
  },
+ "+{n} more": {
+  "area": "Administration",
+  "ko": "+{n}개 더",
+  "ar": "+{n} أخرى"
+ },
  "a block": {
   "area": "Live edits",
   "ko": "블록",
   "ar": "بلوك"
+ },
+ "a block move ({n} blocks)": {
+  "area": "Administration",
+  "ko": "블록 이동 (블록 {n}개)",
+  "ar": "نقل بلوكات ({n} بلوك)"
+ },
+ "a block that is no longer in the plan": {
+  "area": "Administration",
+  "ko": "계획에 더 이상 없는 블록",
+  "ar": "بلوكًا لم يعد في الخطة"
  },
  "a process": {
   "area": "Live edits",
   "ko": "공정",
   "ar": "عملية"
  },
+ "a unit plan to other units": {
+  "area": "Administration",
+  "ko": "유닛 계획을 다른 유닛으로",
+  "ar": "خطة وحدة إلى وحدات أخرى"
+ },
+ "a user": {
+  "area": "Administration",
+  "ko": "사용자",
+  "ar": "مستخدمًا"
+ },
+ "Access": {
+  "area": "Administration",
+  "ko": "권한",
+  "ar": "الصلاحيات"
+ },
+ "Action": {
+  "area": "Administration",
+  "ko": "작업",
+  "ar": "إجراء"
+ },
+ "Action taken": {
+  "area": "Administration",
+  "ko": "조치 내용",
+  "ar": "الإجراء المتخذ"
+ },
+ "Actual dates": {
+  "area": "Administration",
+  "ko": "실제 날짜",
+  "ar": "التواريخ الفعلية"
+ },
+ "Actual dates & notes": {
+  "area": "Administration",
+  "ko": "실제 날짜 및 메모",
+  "ar": "التواريخ الفعلية والملاحظات"
+ },
+ "Actual finish": {
+  "area": "Administration",
+  "ko": "실제 완료",
+  "ar": "الانتهاء الفعلي"
+ },
+ "Added": {
+  "area": "Administration",
+  "ko": "추가",
+  "ar": "أضاف"
+ },
+ "After": {
+  "area": "Administration",
+  "ko": "변경 후",
+  "ar": "بعد"
+ },
+ "after {n} min away": {
+  "area": "Administration",
+  "ko": "{n}분 후 복귀",
+  "ar": "بعد غياب {n} دقيقة"
+ },
+ "All actions": {
+  "area": "Administration",
+  "ko": "모든 작업",
+  "ar": "كل الإجراءات"
+ },
+ "All modules": {
+  "area": "Administration",
+  "ko": "전체 모듈",
+  "ar": "كل الوحدات"
+ },
+ "All users": {
+  "area": "Administration",
+  "ko": "전체 사용자",
+  "ar": "كل المستخدمين"
+ },
  "another user": {
   "area": "Live edits",
   "ko": "다른 사용자",
   "ar": "مستخدم آخر"
+ },
+ "Any time": {
+  "area": "Administration",
+  "ko": "전체 기간",
+  "ar": "أي وقت"
+ },
+ "Archived": {
+  "area": "Administration",
+  "ko": "보관",
+  "ar": "أرشف"
+ },
+ "At least 6 characters": {
+  "area": "Administration",
+  "ko": "6자 이상",
+  "ar": "6 أحرف على الأقل"
+ },
+ "Away (minutes)": {
+  "area": "Administration",
+  "ko": "자리 비운 시간 (분)",
+  "ar": "مدة الغياب (دقائق)"
+ },
+ "Battalion name": {
+  "area": "Administration",
+  "ko": "대대 이름",
+  "ar": "اسم الكتيبة"
+ },
+ "Battalions & planning inputs": {
+  "area": "Administration",
+  "ko": "대대 및 계획 입력",
+  "ar": "الكتائب ومدخلات التخطيط"
+ },
+ "Before": {
+  "area": "Administration",
+  "ko": "변경 전",
+  "ar": "قبل"
+ },
+ "Came back": {
+  "area": "Administration",
+  "ko": "복귀",
+  "ar": "عاد"
+ },
+ "Can export reports": {
+  "area": "Administration",
+  "ko": "보고서 내보내기 가능",
+  "ar": "يمكنه تصدير التقارير"
+ },
+ "Cannot export reports": {
+  "area": "Administration",
+  "ko": "보고서 내보내기 불가",
+  "ar": "لا يمكنه تصدير التقارير"
+ },
+ "category {name}": {
+  "area": "Administration",
+  "ko": "분류 {name}",
+  "ar": "الفئة {name}"
+ },
+ "changed": {
+  "area": "Administration",
+  "ko": "변경됨",
+  "ar": "تم تغييرها"
+ },
+ "Changed": {
+  "area": "Administration",
+  "ko": "변경",
+  "ar": "غيّر"
  },
  "changed the lead time for {a}": {
   "area": "Live edits",
   "ko": "{a}의 리드타임 변경",
   "ar": "غيّر المهلة الزمنية لـ{a}"
  },
+ "Changed the password of": {
+  "area": "Administration",
+  "ko": "비밀번호 변경:",
+  "ar": "غيّر كلمة مرور"
+ },
  "cleared the actual start for {a}": {
   "area": "Live edits",
   "ko": "{a}의 실제 시작 삭제",
   "ar": "مسح البدء الفعلي لـ{a}"
+ },
+ "Click to activate": {
+  "area": "Administration",
+  "ko": "클릭하여 활성화",
+  "ar": "انقر للتفعيل"
+ },
+ "Click to deactivate": {
+  "area": "Administration",
+  "ko": "클릭하여 비활성화",
+  "ar": "انقر للإيقاف"
+ },
+ "Completed on": {
+  "area": "Administration",
+  "ko": "완료일",
+  "ar": "تاريخ الإنجاز"
+ },
+ "Copied": {
+  "area": "Administration",
+  "ko": "복사",
+  "ar": "نسخ"
+ },
+ "Custom dates…": {
+  "area": "Administration",
+  "ko": "날짜 직접 지정…",
+  "ar": "تواريخ مخصّصة…"
+ },
+ "Date / Time": {
+  "area": "Administration",
+  "ko": "날짜 / 시간",
+  "ar": "التاريخ / الوقت"
+ },
+ "Deactivate {name}? They will not be able to sign in until you activate the account again.": {
+  "area": "Administration",
+  "ko": "{name}을(를) 비활성화할까요? 계정을 다시 활성화할 때까지 로그인할 수 없습니다.",
+  "ar": "إيقاف {name}؟ لن يتمكّن من تسجيل الدخول حتى تعيد تفعيل الحساب."
+ },
+ "Delay reason": {
+  "area": "Administration",
+  "ko": "지연 사유",
+  "ar": "سبب التأخير"
+ },
+ "Delete": {
+  "area": "Administration",
+  "ko": "삭제",
+  "ar": "حذف"
+ },
+ "Delete failed:": {
+  "area": "Administration",
+  "ko": "삭제 실패:",
+  "ar": "فشل الحذف:"
+ },
+ "Delete user \"{name}\"? This cannot be undone. Their actions stay in the audit log. To keep the account for later, set it to Inactive instead.": {
+  "area": "Administration",
+  "ko": "사용자 \"{name}\"을(를) 삭제할까요? 되돌릴 수 없습니다. 활동 기록은 감사 로그에 남습니다. 나중을 위해 계정을 유지하려면 대신 비활성으로 설정하세요.",
+  "ar": "حذف المستخدم \"{name}\"؟ لا يمكن التراجع عن ذلك. تبقى أفعاله في سجل التدقيق. للاحتفاظ بالحساب لاحقًا، اجعله غير نشط بدلًا من ذلك."
+ },
+ "Deleted": {
+  "area": "Administration",
+  "ko": "삭제",
+  "ar": "حذف"
  },
  "deleted {a}": {
   "area": "Live edits",
@@ -9228,6 +9308,21 @@ export default {
   "ko": "{b} 계획에서 {a} 삭제",
   "ar": "حذف {a} من خطة {b}"
  },
+ "Delivery deadline": {
+  "area": "Administration",
+  "ko": "납품 마감일",
+  "ar": "موعد التسليم النهائي"
+ },
+ "e.g.": {
+  "area": "Administration",
+  "ko": "예:",
+  "ar": "مثلًا"
+ },
+ "Edit": {
+  "area": "Administration",
+  "ko": "편집",
+  "ar": "تعديل"
+ },
  "edited category {a}": {
   "area": "Live edits",
   "ko": "분류 {a} 편집",
@@ -9238,15 +9333,180 @@ export default {
   "ko": "공정 {a} 편집",
   "ar": "عدّل العملية {a}"
  },
+ "Edits plan data and the plan schedule (Gantt), and manages plan versions.": {
+  "area": "Administration",
+  "ko": "계획 데이터와 계획 일정(간트)을 편집하고 계획 버전을 관리합니다.",
+  "ar": "يعدّل بيانات الخطة وجدولها (جانت) ويدير إصدارات الخطة."
+ },
+ "Email already exists.": {
+  "area": "Administration",
+  "ko": "이미 사용 중인 이메일입니다.",
+  "ar": "البريد الإلكتروني موجود بالفعل."
+ },
+ "Enter a valid email address.": {
+  "area": "Administration",
+  "ko": "올바른 이메일 주소를 입력하세요.",
+  "ar": "أدخل بريدًا إلكترونيًا صالحًا."
+ },
+ "Error loading users.": {
+  "area": "Administration",
+  "ko": "사용자를 불러오는 중 오류가 발생했습니다.",
+  "ar": "خطأ في تحميل المستخدمين."
+ },
+ "Error: {a}": {
+  "area": "Administration",
+  "ko": "오류: {a}",
+  "ar": "خطأ: {a}"
+ },
+ "Everything": {
+  "area": "Administration",
+  "ko": "전체",
+  "ar": "الكل"
+ },
+ "Excel exported.": {
+  "area": "Administration",
+  "ko": "Excel을 내보냈습니다.",
+  "ar": "تم تصدير Excel."
+ },
+ "Excel library not loaded — please refresh.": {
+  "area": "Administration",
+  "ko": "Excel 라이브러리를 불러오지 못했습니다 — 새로고침하세요.",
+  "ar": "لم يتم تحميل مكتبة Excel — حدّث الصفحة."
+ },
+ "Export": {
+  "area": "Administration",
+  "ko": "내보내기",
+  "ar": "تصدير"
+ },
+ "Export failed:": {
+  "area": "Administration",
+  "ko": "내보내기 실패:",
+  "ar": "فشل التصدير:"
+ },
+ "Exported": {
+  "area": "Administration",
+  "ko": "내보내기",
+  "ar": "صدّر"
+ },
+ "F100 part": {
+  "area": "Administration",
+  "ko": "F100 부품",
+  "ar": "قطعة F100"
+ },
+ "F100 parts & processes": {
+  "area": "Administration",
+  "ko": "F100 부품 및 공정",
+  "ar": "قطع وعمليات F100"
+ },
+ "F100 process": {
+  "area": "Administration",
+  "ko": "F100 공정",
+  "ar": "عملية F100"
+ },
+ "Field": {
+  "area": "Administration",
+  "ko": "필드",
+  "ar": "الحقل"
+ },
+ "File": {
+  "area": "Administration",
+  "ko": "파일",
+  "ar": "الملف"
+ },
+ "Filter users": {
+  "area": "Administration",
+  "ko": "사용자 필터",
+  "ar": "تصفية المستخدمين"
+ },
+ "Format": {
+  "area": "Administration",
+  "ko": "형식",
+  "ar": "التنسيق"
+ },
+ "Full access to every module, users, audit log and system settings.": {
+  "area": "Administration",
+  "ko": "모든 모듈, 사용자, 감사 로그, 시스템 설정에 대한 전체 권한.",
+  "ar": "وصول كامل إلى كل الوحدات والمستخدمين وسجل التدقيق وإعدادات النظام."
+ },
+ "Generated": {
+  "area": "Administration",
+  "ko": "생성",
+  "ar": "أنشأ"
+ },
+ "Generated / set up": {
+  "area": "Administration",
+  "ko": "생성 / 초기 설정",
+  "ar": "إنشاء / تهيئة"
+ },
+ "Give the user access to at least one module.": {
+  "area": "Administration",
+  "ko": "사용자에게 하나 이상의 모듈 접근 권한을 주세요.",
+  "ar": "امنح المستخدم الوصول إلى وحدة واحدة على الأقل."
+ },
  "hid {a} in the {b} plan": {
   "area": "Live edits",
   "ko": "{b} 계획에서 {a} 숨김",
   "ar": "أخفى {a} في خطة {b}"
  },
- "just now": {
-  "area": "Live edits",
-  "ko": "방금",
-  "ar": "الآن"
+ "Hide details": {
+  "area": "Administration",
+  "ko": "상세 숨기기",
+  "ar": "إخفاء التفاصيل"
+ },
+ "Imported": {
+  "area": "Administration",
+  "ko": "가져오기",
+  "ar": "استورد"
+ },
+ "Inactive": {
+  "area": "Administration",
+  "ko": "비활성",
+  "ar": "غير نشط"
+ },
+ "IP Address": {
+  "area": "Administration",
+  "ko": "IP 주소",
+  "ar": "عنوان IP"
+ },
+ "Issue": {
+  "area": "Administration",
+  "ko": "이슈",
+  "ar": "المشكلة"
+ },
+ "Issue category": {
+  "area": "Administration",
+  "ko": "이슈 분류",
+  "ar": "فئة المشكلة"
+ },
+ "Last 30 days": {
+  "area": "Administration",
+  "ko": "최근 30일",
+  "ar": "آخر 30 يومًا"
+ },
+ "Last sign-in": {
+  "area": "Administration",
+  "ko": "마지막 로그인",
+  "ar": "آخر تسجيل دخول"
+ },
+ "Lead time (days)": {
+  "area": "Administration",
+  "ko": "리드타임 (일)",
+  "ar": "المهلة الزمنية (أيام)"
+ },
+ "lead times for {vehicle}": {
+  "area": "Administration",
+  "ko": "{vehicle} 리드타임",
+  "ar": "المهل الزمنية لـ{vehicle}"
+ },
+ "Loading…": {
+  "area": "Administration",
+  "ko": "불러오는 중…",
+  "ar": "جارٍ التحميل…"
+ },
+ "Module access": {
+  "area": "Administration",
+  "ko": "모듈 접근 권한",
+  "ar": "الوصول إلى الوحدات"
  },
  "moved {a} after {b} in the {c} route": {
   "area": "Live edits",
@@ -9263,48 +9523,543 @@ export default {
   "ko": "{a}을(를) {b} → {c}(으)로 이동",
   "ar": "نقل {a} من {b} ← {c}"
  },
+ "Name is required.": {
+  "area": "Administration",
+  "ko": "이름은 필수입니다.",
+  "ar": "الاسم مطلوب."
+ },
+ "Never": {
+  "area": "Administration",
+  "ko": "없음",
+  "ar": "أبدًا"
+ },
+ "New password must be at least 6 characters.": {
+  "area": "Administration",
+  "ko": "새 비밀번호는 6자 이상이어야 합니다.",
+  "ar": "يجب ألا تقل كلمة المرور الجديدة عن 6 أحرف."
+ },
+ "No": {
+  "area": "Administration",
+  "ko": "아니요",
+  "ar": "لا"
+ },
+ "No field data recorded": {
+  "area": "Administration",
+  "ko": "기록된 필드 데이터가 없습니다",
+  "ar": "لا توجد بيانات حقول مسجّلة"
+ },
+ "No users in this view.": {
+  "area": "Administration",
+  "ko": "이 보기에 사용자가 없습니다.",
+  "ar": "لا يوجد مستخدمون في هذا العرض."
+ },
+ "No-work days": {
+  "area": "Administration",
+  "ko": "휴무일",
+  "ar": "أيام عدم العمل"
+ },
+ "no-work days": {
+  "area": "Administration",
+  "ko": "휴무일",
+  "ar": "أيام عدم العمل"
+ },
+ "Note": {
+  "area": "Administration",
+  "ko": "메모",
+  "ar": "ملاحظة"
+ },
+ "Nothing on this page matches the search — load more or change the filters.": {
+  "area": "Administration",
+  "ko": "이 페이지에는 검색과 일치하는 항목이 없습니다 — 더 불러오거나 필터를 바꾸세요.",
+  "ar": "لا شيء في هذه الصفحة يطابق البحث — حمّل المزيد أو غيّر الفلاتر."
+ },
+ "online {d}": {
+  "area": "Administration",
+  "ko": "접속 {d}",
+  "ar": "متصل منذ {d}"
+ },
+ "Open this in the system": {
+  "area": "Administration",
+  "ko": "시스템에서 열기",
+  "ar": "افتحه في النظام"
+ },
+ "Opened from": {
+  "area": "Administration",
+  "ko": "열린 화면",
+  "ar": "فُتح من"
+ },
+ "Opened PPMS": {
+  "area": "Administration",
+  "ko": "PPMS 열기",
+  "ar": "فتح PPMS"
+ },
+ "Part no.": {
+  "area": "Administration",
+  "ko": "부품 번호",
+  "ar": "رقم القطعة"
+ },
+ "Password is required for new users.": {
+  "area": "Administration",
+  "ko": "새 사용자는 비밀번호가 필요합니다.",
+  "ar": "كلمة المرور مطلوبة للمستخدمين الجدد."
+ },
+ "PDF exported.": {
+  "area": "Administration",
+  "ko": "PDF를 내보냈습니다.",
+  "ar": "تم تصدير PDF."
+ },
+ "PDF library not loaded — please refresh.": {
+  "area": "Administration",
+  "ko": "PDF 라이브러리를 불러오지 못했습니다 — 새로고침하세요.",
+  "ar": "لم يتم تحميل مكتبة PDF — حدّث الصفحة."
+ },
+ "Person in charge": {
+  "area": "Administration",
+  "ko": "담당자",
+  "ar": "المسؤول"
+ },
+ "Plan block": {
+  "area": "Administration",
+  "ko": "계획 블록",
+  "ar": "بلوك خطة"
+ },
+ "Plan blocks": {
+  "area": "Administration",
+  "ko": "계획 블록",
+  "ar": "بلوكات الخطة"
+ },
+ "Plan version": {
+  "area": "Administration",
+  "ko": "계획 버전",
+  "ar": "إصدار الخطة"
+ },
+ "Plan versions": {
+  "area": "Administration",
+  "ko": "계획 버전",
+  "ar": "إصدارات الخطة"
+ },
+ "Planned start": {
+  "area": "Administration",
+  "ko": "계획 시작",
+  "ar": "البدء المخطّط"
+ },
+ "planning inputs of {battalion}": {
+  "area": "Administration",
+  "ko": "{battalion} 계획 입력",
+  "ar": "مدخلات تخطيط {battalion}"
+ },
+ "Preparing Excel export…": {
+  "area": "Administration",
+  "ko": "Excel 내보내기 준비 중…",
+  "ar": "جارٍ تجهيز تصدير Excel…"
+ },
+ "Preparing PDF export…": {
+  "area": "Administration",
+  "ko": "PDF 내보내기 준비 중…",
+  "ar": "جارٍ تجهيز تصدير PDF…"
+ },
+ "Process setup": {
+  "area": "Administration",
+  "ko": "공정 설정",
+  "ar": "إعداد العمليات"
+ },
+ "Processes & routes": {
+  "area": "Administration",
+  "ko": "공정 및 경로",
+  "ar": "العمليات والمسارات"
+ },
+ "Production issues": {
+  "area": "Administration",
+  "ko": "생산 이슈",
+  "ar": "مشكلات الإنتاج"
+ },
+ "Proposed solution": {
+  "area": "Administration",
+  "ko": "제안 해결책",
+  "ar": "الحل المقترح"
+ },
+ "Read only.": {
+  "area": "Administration",
+  "ko": "읽기 전용.",
+  "ar": "قراءة فقط."
+ },
+ "Record ID": {
+  "area": "Administration",
+  "ko": "기록 ID",
+  "ar": "معرّف السجل"
+ },
+ "Recorded actuals for": {
+  "area": "Administration",
+  "ko": "실적 기록:",
+  "ar": "سجّل القيم الفعلية لـ"
+ },
+ "Records production data — actual dates, X-ray results, issues — but cannot change the schedule.": {
+  "area": "Administration",
+  "ko": "생산 데이터(실제 날짜, X-ray 결과, 이슈)를 기록하지만 일정은 변경할 수 없습니다.",
+  "ar": "يسجّل بيانات الإنتاج — التواريخ الفعلية ونتائج الأشعة السينية والمشكلات — لكن لا يمكنه تغيير الجدول."
+ },
+ "Redid": {
+  "area": "Administration",
+  "ko": "다시 실행",
+  "ar": "أعاد"
+ },
+ "Removed": {
+  "area": "Administration",
+  "ko": "제거",
+  "ar": "أزال"
+ },
+ "removed": {
+  "area": "Administration",
+  "ko": "삭제됨",
+  "ar": "أُزيل"
+ },
  "removed {a}": {
   "area": "Live edits",
   "ko": "{a} 삭제",
   "ar": "أزال {a}"
+ },
+ "Renamed": {
+  "area": "Administration",
+  "ko": "이름 변경",
+  "ar": "أعاد تسمية"
  },
  "reopened {a}": {
   "area": "Live edits",
   "ko": "{a} 다시 열기",
   "ar": "أعاد فتح {a}"
  },
+ "Reordered": {
+  "area": "Administration",
+  "ko": "순서 변경",
+  "ar": "أعاد ترتيب"
+ },
+ "Replaced": {
+  "area": "Administration",
+  "ko": "교체",
+  "ar": "استبدل"
+ },
+ "Report / export": {
+  "area": "Administration",
+  "ko": "보고서 / 내보내기",
+  "ar": "تقرير / تصدير"
+ },
+ "Reports & exports": {
+  "area": "Administration",
+  "ko": "보고서 및 내보내기",
+  "ar": "التقارير والتصدير"
+ },
+ "Rescheduled": {
+  "area": "Administration",
+  "ko": "일정 변경",
+  "ar": "أعاد جدولة"
+ },
+ "Restored": {
+  "area": "Administration",
+  "ko": "복원",
+  "ar": "استعاد"
+ },
  "restored {a} in the {b} plan": {
   "area": "Live edits",
   "ko": "{b} 계획에 {a} 복원",
   "ar": "استعاد {a} في خطة {b}"
+ },
+ "Retired": {
+  "area": "Administration",
+  "ko": "사용 중지",
+  "ar": "أوقف"
+ },
+ "Save failed.": {
+  "area": "Administration",
+  "ko": "저장에 실패했습니다.",
+  "ar": "فشل الحفظ."
+ },
+ "Saved": {
+  "area": "Administration",
+  "ko": "저장",
+  "ar": "حفظ"
+ },
+ "Search the audit log": {
+  "area": "Administration",
+  "ko": "감사 로그 검색",
+  "ar": "البحث في سجل التدقيق"
+ },
+ "Search — unit, station, user, field…": {
+  "area": "Administration",
+  "ko": "검색 — 유닛, 스테이션, 사용자, 항목…",
+  "ar": "بحث — وحدة، محطة، مستخدم، حقل…"
+ },
+ "Session": {
+  "area": "Administration",
+  "ko": "세션",
+  "ar": "جلسة"
+ },
+ "Session (already signed in)": {
+  "area": "Administration",
+  "ko": "세션 (로그인 유지)",
+  "ar": "جلسة (مسجّل للدخول مسبقًا)"
+ },
+ "Set up": {
+  "area": "Administration",
+  "ko": "초기 설정",
+  "ar": "هيّأ"
+ },
+ "Show / hide password": {
+  "area": "Administration",
+  "ko": "비밀번호 표시 / 숨기기",
+  "ar": "إظهار / إخفاء كلمة المرور"
  },
  "showed {a} in the {b} plan": {
   "area": "Live edits",
   "ko": "{b} 계획에서 {a} 다시 표시",
   "ar": "أظهر {a} في خطة {b}"
  },
+ "Showing the block on the schedule.": {
+  "area": "Administration",
+  "ko": "일정에서 블록을 표시합니다.",
+  "ar": "يتم عرض البلوك على الجدول الزمني."
+ },
+ "Sign-ins": {
+  "area": "Administration",
+  "ko": "로그인",
+  "ar": "تسجيلات الدخول"
+ },
+ "Signed in": {
+  "area": "Administration",
+  "ko": "로그인",
+  "ar": "سجّل الدخول"
+ },
+ "Signed in / out": {
+  "area": "Administration",
+  "ko": "로그인 / 로그아웃",
+  "ar": "تسجيل الدخول / الخروج"
+ },
+ "Signed in at": {
+  "area": "Administration",
+  "ko": "로그인 시각",
+  "ar": "وقت تسجيل الدخول"
+ },
+ "Signed out": {
+  "area": "Administration",
+  "ko": "로그아웃",
+  "ar": "سجّل الخروج"
+ },
  "Someone": {
   "area": "Live edits",
   "ko": "누군가",
   "ar": "شخص ما"
+ },
+ "still signed in": {
+  "area": "Administration",
+  "ko": "로그인 상태 유지",
+  "ar": "ما زال مسجّلًا للدخول"
+ },
+ "Switch to F200 – KD2 to manage its no-work days.": {
+  "area": "Administration",
+  "ko": "휴무일을 관리하려면 F200 – KD2로 전환하세요.",
+  "ar": "انتقل إلى F200 – KD2 لإدارة أيام عدم العمل."
+ },
+ "Switch to F200 – KD2 to manage its processes.": {
+  "area": "Administration",
+  "ko": "공정을 관리하려면 F200 – KD2로 전환하세요.",
+  "ar": "انتقل إلى F200 – KD2 لإدارة عملياتها."
+ },
+ "Table": {
+  "area": "Administration",
+  "ko": "표",
+  "ar": "جدول"
+ },
+ "the plan for {battalion}": {
+  "area": "Administration",
+  "ko": "{battalion} 계획",
+  "ar": "خطة {battalion}"
+ },
+ "the plan into a new version": {
+  "area": "Administration",
+  "ko": "새 버전으로 계획",
+  "ar": "الخطة إلى إصدار جديد"
+ },
+ "the {vehicle} categories": {
+  "area": "Administration",
+  "ko": "{vehicle} 분류",
+  "ar": "فئات {vehicle}"
+ },
+ "the {vehicle} route": {
+  "area": "Administration",
+  "ko": "{vehicle} 경로",
+  "ar": "مسار {vehicle}"
+ },
+ "the {vehicle} template": {
+  "area": "Administration",
+  "ko": "{vehicle} 템플릿",
+  "ar": "قالب {vehicle}"
+ },
+ "the {vehicle} template layout": {
+  "area": "Administration",
+  "ko": "{vehicle} 템플릿 구성",
+  "ar": "تخطيط قالب {vehicle}"
+ },
+ "This block is not in the current view — it may have been deleted, or the filters hide it. Clear the filters and try again.": {
+  "area": "Administration",
+  "ko": "이 블록은 현재 보기에 없습니다 — 삭제되었거나 필터에 가려졌을 수 있습니다. 필터를 지우고 다시 시도하세요.",
+  "ar": "هذا البلوك غير موجود في العرض الحالي — ربما حُذف أو تخفيه الفلاتر. امسح الفلاتر وحاول مرة أخرى."
+ },
+ "This is in {module}. Switch to {module} to view it? The page will reload.": {
+  "area": "Administration",
+  "ko": "이 항목은 {module}에 있습니다. {module}(으)로 전환해서 볼까요? 페이지가 다시 로드됩니다.",
+  "ar": "هذا في {module}. التبديل إلى {module} لعرضه؟ ستتم إعادة تحميل الصفحة."
+ },
+ "This is the last active Master Admin — add or activate another Master Admin first.": {
+  "area": "Administration",
+  "ko": "마지막 활성 최고 관리자입니다 — 먼저 다른 최고 관리자를 추가하거나 활성화하세요.",
+  "ar": "هذا آخر مسؤول رئيسي نشط — أضف مسؤولًا رئيسيًا آخر أو فعّله أولًا."
+ },
+ "This is your own account — you cannot change your own role or status.": {
+  "area": "Administration",
+  "ko": "본인 계정입니다 — 자신의 역할이나 상태는 변경할 수 없습니다.",
+  "ar": "هذا حسابك — لا يمكنك تغيير دورك أو حالتك."
+ },
+ "Today": {
+  "area": "Administration",
+  "ko": "오늘",
+  "ar": "اليوم"
+ },
+ "Undid": {
+  "area": "Administration",
+  "ko": "실행 취소",
+  "ar": "تراجع عن"
+ },
+ "Unit code": {
+  "area": "Administration",
+  "ko": "유닛 코드",
+  "ar": "رمز الوحدة"
+ },
+ "Unit name": {
+  "area": "Administration",
+  "ko": "유닛 이름",
+  "ar": "اسم الوحدة"
+ },
+ "Unit no.": {
+  "area": "Administration",
+  "ko": "유닛 번호",
+  "ar": "رقم الوحدة"
+ },
+ "Units": {
+  "area": "Administration",
+  "ko": "유닛",
+  "ar": "الوحدات"
+ },
+ "Updated actuals for": {
+  "area": "Administration",
+  "ko": "실적 수정:",
+  "ar": "حدّث القيم الفعلية لـ"
  },
  "updated actuals for {a}": {
   "area": "Live edits",
   "ko": "{a} 실적 업데이트",
   "ar": "حدّث القيم الفعلية لـ{a}"
  },
+ "Updated by import": {
+  "area": "Administration",
+  "ko": "가져오기로 수정",
+  "ar": "حدّث عبر الاستيراد"
+ },
  "updated {a}": {
   "area": "Live edits",
   "ko": "{a} 수정",
   "ar": "حدّث {a}"
  },
+ "User \"{a}\" deleted.": {
+  "area": "Administration",
+  "ko": "사용자 \"{a}\"를 삭제했습니다.",
+  "ar": "تم حذف المستخدم \"{a}\"."
+ },
+ "User created.": {
+  "area": "Administration",
+  "ko": "사용자를 만들었습니다.",
+  "ar": "تم إنشاء المستخدم."
+ },
+ "User updated.": {
+  "area": "Administration",
+  "ko": "사용자 정보를 수정했습니다.",
+  "ar": "تم تحديث المستخدم."
+ },
+ "Users & access": {
+  "area": "Administration",
+  "ko": "사용자 및 권한",
+  "ar": "المستخدمون والصلاحيات"
+ },
+ "visibility of {stations} ({vehicle})": {
+  "area": "Administration",
+  "ko": "{stations} 표시 여부 ({vehicle})",
+  "ar": "ظهور {stations} ({vehicle})"
+ },
+ "What": {
+  "area": "Administration",
+  "ko": "대상",
+  "ar": "ماذا"
+ },
+ "When": {
+  "area": "Administration",
+  "ko": "기간",
+  "ar": "متى"
+ },
+ "Who changed what, and when — press View to open it in the system": {
+  "area": "Administration",
+  "ko": "누가 언제 무엇을 바꿨는지 — 보기를 누르면 시스템에서 해당 항목을 엽니다",
+  "ar": "من غيّر ماذا ومتى — اضغط \"عرض\" لفتحه في النظام"
+ },
+ "X-ray status": {
+  "area": "Administration",
+  "ko": "X-ray 상태",
+  "ar": "حالة الأشعة السينية"
+ },
+ "Yes": {
+  "area": "Administration",
+  "ko": "예",
+  "ar": "نعم"
+ },
+ "Yesterday": {
+  "area": "Administration",
+  "ko": "어제",
+  "ar": "أمس"
+ },
+ "You cannot deactivate your own account": {
+  "area": "Administration",
+  "ko": "자신의 계정은 비활성화할 수 없습니다",
+  "ar": "لا يمكنك إيقاف حسابك"
+ },
+ "{a} days ago": {
+  "area": "Administration",
+  "ko": "{a}일 전",
+  "ar": "قبل {a} أيام"
+ },
+ "{a} entries · {b} loaded": {
+  "area": "Administration",
+  "ko": "전체 {a}건 · {b}건 불러옴",
+  "ar": "{a} سجل · تم تحميل {b}"
+ },
+ "{a} of {b} loaded entries match": {
+  "area": "Administration",
+  "ko": "불러온 {b}건 중 {a}건 일치",
+  "ar": "{a} من {b} سجل محمّل مطابقة"
+ },
+ "{a} of {b} users": {
+  "area": "Administration",
+  "ko": "사용자 {b}명 중 {a}명",
+  "ar": "{a} من {b} مستخدم"
+ },
+ "{a} user{s}": {
+  "area": "Administration",
+  "ko": "사용자 {a}명",
+  "ar": "{a} مستخدم"
+ },
  "{a}h ago": {
-  "area": "Live edits",
+  "area": "Administration",
   "ko": "{a}시간 전",
   "ar": "قبل {a} س"
  },
  "{a}m ago": {
-  "area": "Live edits",
+  "area": "Administration",
   "ko": "{a}분 전",
   "ar": "قبل {a} د"
  },
@@ -9312,5 +10067,40 @@ export default {
   "area": "Live edits",
   "ko": "{a}초 전",
   "ar": "قبل {a} ث"
+ },
+ "{name} can sign in again.": {
+  "area": "Administration",
+  "ko": "{name}님이 다시 로그인할 수 있습니다.",
+  "ar": "يمكن لـ{name} تسجيل الدخول مجددًا."
+ },
+ "{name} is deactivated.": {
+  "area": "Administration",
+  "ko": "{name}님을 비활성화했습니다.",
+  "ar": "تم إيقاف {name}."
+ },
+ "{n} blocks": {
+  "area": "Administration",
+  "ko": "블록 {n}개",
+  "ar": "{n} بلوك"
+ },
+ "{n} fields": {
+  "area": "Administration",
+  "ko": "{n}개 항목",
+  "ar": "{n} حقل"
+ },
+ "{n} items": {
+  "area": "Administration",
+  "ko": "{n}개 항목",
+  "ar": "{n} عنصر"
+ },
+ "{ref} to {units}": {
+  "area": "Administration",
+  "ko": "{ref} → {units}",
+  "ar": "{ref} إلى {units}"
+ },
+ "{stations} from the {vehicle} plan": {
+  "area": "Administration",
+  "ko": "{vehicle} 계획에서 {stations}",
+  "ar": "{stations} من خطة {vehicle}"
  }
 };
