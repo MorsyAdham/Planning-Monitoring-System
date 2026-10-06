@@ -362,6 +362,32 @@ async function sha256(str) {
         .map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** { module, label, planId, battalion } for an audit entry about a plan block
+ *  or its actual dates — from the loaded plan rows. null when there is nothing
+ *  to add. Stored as `_ctx` in the entry's data (the Audit Log hides it). */
+function _auditContext(table, recId, before, after) {
+    const moduleId = _auditTableModuleId(table);
+    if (!moduleId) return null;
+    const ctx = { module: moduleId };
+    const rows = typeof currentData !== 'undefined' && Array.isArray(currentData) ? currentData : [];
+    const id = String(recId ?? '');
+    let row = null;
+    if ((table === 'kd2_plan' || table === 'assembly_plan' || table === 'f100_plans') && /^\d+$/.test(id)) {
+        row = rows.find(r => String(r.id) === id);
+    } else if (table === 'kd2_progress' || table === 'assembly_progress') {
+        const planId = after?.plan_id ?? before?.plan_id;
+        row = (planId != null && rows.find(r => String(r.id) === String(planId)))
+            || rows.find(r => r.progress && String(r.progress.id) === id)
+            || rows.find(r => String(r.id) === id);
+        if (row) ctx.planId = row.id;
+    }
+    if (row) {
+        ctx.label = _planRowLabel(row);
+        if (row.battalion_code) ctx.battalion = row.battalion_code;
+    }
+    return ctx;
+}
+
 /**
  * Write one entry to planning_audit_log.
  * Silently swallows errors so audit failures never break the UI.
@@ -373,6 +399,18 @@ async function auditLog(action, table, recId, before, after) {
     // works even if the caller's role only has INSERT, not SELECT, on the table.
     const createdAt = new Date().toISOString();
     const versionInfo = _activeVersionInfo(_auditTableModuleId(table));
+    // A readable label ("BTL-01 K9 M2 · Hull - Floor") saved with the entry, so the
+    // Audit Log can name the thing even after it is deleted — see _auditContext().
+    let dataBefore = before ? JSON.parse(JSON.stringify(before)) : null;
+    let dataAfter = after ? JSON.parse(JSON.stringify(after)) : null;
+    try {
+        const ctx = _auditContext(table, recId, dataBefore, dataAfter);
+        if (ctx) {
+            if (dataAfter && typeof dataAfter === 'object' && !Array.isArray(dataAfter)) dataAfter._ctx = ctx;
+            else if (dataBefore && typeof dataBefore === 'object' && !Array.isArray(dataBefore)) dataBefore._ctx = ctx;
+            else if (!dataAfter && !dataBefore) dataAfter = { _ctx: ctx };
+        }
+    } catch {}
     try {
         const basePayload = {
             user_id: user.id,
@@ -381,8 +419,8 @@ async function auditLog(action, table, recId, before, after) {
             action,
             table_name: table,
             record_id: String(recId ?? ''),
-            data_before: before ? JSON.parse(JSON.stringify(before)) : null,
-            data_after: after ? JSON.parse(JSON.stringify(after)) : null,
+            data_before: dataBefore,
+            data_after: dataAfter,
             ip_address: getCachedIP(),
             created_at: createdAt,
         };
@@ -7897,6 +7935,8 @@ function openNotifDropdown() {
 
 // After a cross-module notification jump, open the target comment popover or issue view
 function checkNotifJump() {
+    // An Audit Log "View" that needed a module switch finishes here
+    window.PPMSAudit?.resumePending?.();
     // Issue jump
     let issueId;
     try {
@@ -8267,26 +8307,23 @@ function wireEvents() {
     document.getElementById('btnPvCreate')?.addEventListener('click', createPlanVersionFromDialog);
     document.getElementById('pvNewName')?.addEventListener('keydown', e => { if (e.key === 'Enter') createPlanVersionFromDialog(); });
 
-    // User Management (master_admin only — button hidden for others)
+    // User Management and Audit Log (master_admin only — buttons hidden for others).
+    // Their screens live in features/admin/user-management and features/admin/audit-log.
     document.getElementById('btnUserMgmt')?.addEventListener('click', openUserMgmt);
     document.getElementById('userMgmtClose')?.addEventListener('click', closeUserMgmt);
     document.getElementById('userMgmtOverlay')?.addEventListener('click', function (e) {
         if (e.target === this) closeUserMgmt();
     });
-    document.getElementById('btnAddUser')?.addEventListener('click', () => openUserForm(null));
-    document.getElementById('btnUmSave')?.addEventListener('click', saveUser);
-    document.getElementById('btnUmCancel')?.addEventListener('click', closeUserForm);
-    document.getElementById('umFormClose')?.addEventListener('click', closeUserForm);
-    document.getElementById('umRole')?.addEventListener('change', syncUserFormModulesVisibility);
-
-    // Audit Log (master_admin only — button hidden for others)
+    document.getElementById('btnAddUser')?.addEventListener('click', () => window.PPMSUsers?.openForm(null));
+    document.getElementById('btnUmCancel')?.addEventListener('click', () => window.PPMSUsers?.closeForm());
+    document.getElementById('umFormClose')?.addEventListener('click', () => window.PPMSUsers?.closeForm());
     document.getElementById('btnAuditLog')?.addEventListener('click', openAuditLog);
     document.getElementById('auditLogClose')?.addEventListener('click', closeAuditLog);
     document.getElementById('auditLogOverlay')?.addEventListener('click', function (e) {
         if (e.target === this) closeAuditLog();
     });
-    document.getElementById('btnAlApply')?.addEventListener('click', () => loadAuditLog(true));
-    document.getElementById('btnAlReset')?.addEventListener('click', resetAuditFilters);
+    document.getElementById('btnAlReset')?.addEventListener('click', () => window.PPMSAudit?.reset());
+    document.getElementById('btnAlMore')?.addEventListener('click', () => window.PPMSAudit?.reload(false));
 
 
 
@@ -15724,12 +15761,6 @@ function updateReportPreview() {
     if (bar) bar.style.borderColor = count ? 'rgba(79,142,247,.4)' : 'rgba(239,68,68,.4)';
 }
 
-/* ================================================================
-   USER MANAGEMENT  (master_admin only)
-   ================================================================ */
-let _auditLogOffset = 0;
-const AUDIT_PAGE_SIZE = 50;
-
 /* ──────────────────────────────────────────────────────────────────
    UNIT CODES MANAGEMENT
    ────────────────────────────────────────────────────────────────── */
@@ -16150,224 +16181,9 @@ async function deleteUnitCode(id) {
     }
 }
 
-function openUserMgmt() {
-    document.getElementById('userMgmtOverlay').style.display = 'flex';
-    loadUserList();
-}
-
-function closeUserMgmt() {
-    document.getElementById('userMgmtOverlay').style.display = 'none';
-    closeUserForm();
-}
-
-const MODULE_LABELS = { kd1: 'KD1', kd2: 'KD2', f100kd2: 'F100' };
-
-async function loadUserList() {
-    const tbody = document.getElementById('umTableBody');
-    tbody.innerHTML = `<tr><td colspan="8" class="table-empty"><div class="empty-state"><span class="spinner"></span><p>Loading…</p></div></td></tr>`;
-
-    let { data: users, error } = await db
-        .from('planning_app_users')
-        .select('id,email,full_name,role,is_active,created_at,modules,can_export')
-        .order('created_at', { ascending: true });
-
-    // Migration 44 (modules / can_export / export permissions folded into
-    // this table) not applied yet — retry without those columns.
-    if (error?.code === '42703') {
-        ({ data: users, error } = await db
-            .from('planning_app_users')
-            .select('id,email,full_name,role,is_active,created_at')
-            .order('created_at', { ascending: true }));
-    }
-
-    if (error) {
-        tbody.innerHTML = `<tr><td colspan="8" class="table-empty"><div class="empty-state"><p>Error loading users.</p></div></td></tr>`;
-        return;
-    }
-
-    _umUsers = users || [];
-    const searchEl = document.getElementById('umSearch');
-    if (searchEl && !searchEl.dataset.wired) {
-        searchEl.dataset.wired = '1';
-        searchEl.addEventListener('input', _renderUserList);
-    }
-    _renderUserList();
-}
-
-let _umUsers = [];
-function _renderUserList() {
-    const tbody = document.getElementById('umTableBody');
-    if (!tbody) return;
-    const q = (document.getElementById('umSearch')?.value || '').trim().toLowerCase();
-    const users = q
-        ? _umUsers.filter(u =>
-            (u.full_name || '').toLowerCase().includes(q)
-            || (u.email || '').toLowerCase().includes(q)
-            || roleLabel(u.role).toLowerCase().includes(q)
-            || (u.role || '').toLowerCase().includes(q))
-        : _umUsers;
-
-    document.getElementById('umUserCount').textContent =
-        q ? `${users.length} of ${_umUsers.length} users` : `${_umUsers.length} user${_umUsers.length !== 1 ? 's' : ''}`;
-
-    if (!users.length) {
-        tbody.innerHTML = `<tr><td colspan="8" class="table-empty"><div class="empty-state"><p>No users match "${esc(q)}".</p></div></td></tr>`;
-        return;
-    }
-
-    const currentUserId = getCurrentUser()?.id;
-
-    tbody.innerHTML = users.map(u => {
-        const isMe = u.id === currentUserId;
-        const modules = Array.isArray(u.modules) && u.modules.length ? u.modules : ['kd1', 'kd2', 'f100kd2'];
-        const modulesHtml = u.role === 'master_admin'
-            ? '<span class="um-module-chip um-module-chip--all">All</span>'
-            : (modules.length
-                ? modules.map(m => `<span class="um-module-chip">${esc(MODULE_LABELS[m] || m)}</span>`).join('')
-                : '<span class="um-module-chip um-module-chip--none">None</span>');
-        const exportAllowed = u.role === 'master_admin' || !!u.can_export;
-        return `
-    <tr>
-      <td><strong>${esc(u.full_name)}</strong>${isMe ? ' <span style="font-size:.68rem;color:var(--clr-accent)">(you)</span>' : ''}</td>
-      <td class="mono" style="font-size:.8rem">${esc(u.email)}</td>
-      <td><span class="role-pill ${roleClass(u.role)}">${esc(roleLabel(u.role))}</span></td>
-      <td><div class="um-module-chips">${modulesHtml}</div></td>
-      <td><span class="status-pill ${exportAllowed ? 'active' : 'inactive'}">${exportAllowed ? 'Yes' : 'No'}</span></td>
-      <td><span class="status-pill ${u.is_active ? 'active' : 'inactive'}">${u.is_active ? 'Active' : 'Inactive'}</span></td>
-      <td class="mono" style="font-size:.75rem;color:var(--clr-text-muted)">${new Date(u.created_at).toLocaleDateString('en-GB')}</td>
-      <td>
-        <div class="um-action-cell">
-          <button class="btn-um-edit" onclick="openUserForm('${u.id}')">Edit</button>
-          ${!isMe ? `<button class="btn-um-del" onclick="deleteUser('${u.id}','${esc(u.full_name)}')">Delete</button>` : ''}
-        </div>
-      </td>
-    </tr>`;
-    }).join('');
-}
-
-function setUserFormModules(modules) {
-    const list = Array.isArray(modules) ? modules : ['kd1', 'kd2', 'f100kd2'];
-    document.querySelectorAll('.um-module-check').forEach(cb => { cb.checked = list.includes(cb.value); });
-}
-
-function syncUserFormModulesVisibility() {
-    const role = document.getElementById('umRole')?.value;
-    const group = document.getElementById('umModulesGroup');
-    if (group) group.style.display = role === 'master_admin' ? 'none' : '';
-}
-
-async function openUserForm(userId) {
-    const form = document.getElementById('umForm');
-    form.style.display = '';
-    document.getElementById('umFormTitle').textContent = userId ? 'Edit User' : 'Add New User';
-    document.getElementById('umEditId').value = userId || '';
-    document.getElementById('umFullName').value = '';
-    document.getElementById('umEmail').value = '';
-    document.getElementById('umRole').value = 'viewer';
-    document.getElementById('umPassword').value = '';
-    document.getElementById('umActive').value = 'true';
-    document.getElementById('umFormError').textContent = '';
-    setUserFormModules(['kd1', 'kd2', 'f100kd2']);
-    const canExportEl = document.getElementById('umCanExport');
-    if (canExportEl) canExportEl.checked = false;
-
-    const hint = document.getElementById('umPasswordHint');
-    if (hint) hint.style.display = userId ? 'inline' : 'none';
-
-    if (userId) {
-        const { data } = await db.from('planning_app_users').select('*').eq('id', userId).maybeSingle();
-        if (data) {
-            document.getElementById('umFullName').value = data.full_name;
-            document.getElementById('umEmail').value = data.email;
-            document.getElementById('umRole').value = data.role;
-            document.getElementById('umActive').value = String(data.is_active);
-            setUserFormModules(data.modules);
-            if (canExportEl) canExportEl.checked = !!data.can_export;
-        }
-    }
-
-    syncUserFormModulesVisibility();
-    form.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-function closeUserForm() {
-    document.getElementById('umForm').style.display = 'none';
-}
-
-async function saveUser() {
-    const userId = document.getElementById('umEditId').value;
-    const fullName = document.getElementById('umFullName').value.trim();
-    const email = document.getElementById('umEmail').value.trim().toLowerCase();
-    const role = document.getElementById('umRole').value;
-    const password = document.getElementById('umPassword').value;
-    const isActive = document.getElementById('umActive').value === 'true';
-    const errEl = document.getElementById('umFormError');
-    errEl.textContent = '';
-
-    if (!fullName || !email) { errEl.textContent = 'Name and email are required.'; return; }
-    if (!userId && !password) { errEl.textContent = 'Password is required for new users.'; return; }
-
-    const modules = [...document.querySelectorAll('.um-module-check:checked')].map(cb => cb.value);
-    const canExportChecked = !!document.getElementById('umCanExport')?.checked;
-
-    const payload = {
-        full_name: fullName, email, role, is_active: isActive, updated_at: new Date().toISOString(),
-        // master_admin ignores `modules` entirely (see isModuleAllowed() in
-        // kd2.js) — store whatever's checked anyway so it's there if the role
-        // is later downgraded, but never leave it empty and lock a non-admin out.
-        modules: modules.length ? modules : ['kd1', 'kd2', 'f100kd2'],
-        can_export: canExportChecked,
-    };
-    if (password) payload.password_hash = await sha256(password);
-
-    try {
-        if (userId) {
-            const { data: before } = await db.from('planning_app_users').select('*').eq('id', userId).maybeSingle();
-            let { error } = await db.from('planning_app_users').update(payload).eq('id', userId);
-            if (error) {
-                // Migration 44 not applied yet — drop modules/can_export and retry
-                // rather than losing the rest of the edit.
-                let retryPayload = payload;
-                while (error && (retryPayload = _stripUndefinedColumn(retryPayload, error))) {
-                    ({ error } = await db.from('planning_app_users').update(retryPayload).eq('id', userId));
-                }
-            }
-            if (error) throw error;
-            const { data: after } = await db.from('planning_app_users').select('id,email,full_name,role,is_active,modules,can_export').eq('id', userId).maybeSingle();
-            const safeBefore = { ...before }; delete safeBefore.password_hash;
-            const safeAfter = { ...after }; delete safeAfter.password_hash;
-            await auditLog('UPDATE', 'planning_app_users', userId, safeBefore, safeAfter);
-            showToast('User updated.', 'success');
-        } else {
-            payload.created_at = new Date().toISOString();
-            let insertResult = await db.from('planning_app_users').insert(payload).select('id,email,full_name,role').single();
-            let retryPayload = payload;
-            while (insertResult.error && (retryPayload = _stripUndefinedColumn(retryPayload, insertResult.error))) {
-                insertResult = await db.from('planning_app_users').insert(retryPayload).select('id,email,full_name,role').single();
-            }
-            const { data: inserted, error } = insertResult;
-            if (error) throw error;
-            await auditLog('INSERT', 'planning_app_users', inserted.id, null,
-                { email: inserted.email, full_name: inserted.full_name, role: inserted.role });
-            showToast('User created.', 'success');
-        }
-        closeUserForm();
-        loadUserList();
-    } catch (e) {
-        errEl.textContent = e.message?.includes('duplicate') ? 'Email already exists.' : (e.message || 'Save failed.');
-    }
-}
-
-async function deleteUser(userId, name) {
-    if (!confirm(`Delete user "${name}"? This cannot be undone.`)) return;
-    const { data: before } = await db.from('planning_app_users')
-        .select('id,email,full_name,role').eq('id', userId).maybeSingle();
-    const { error } = await db.from('planning_app_users').delete().eq('id', userId);
-    if (error) { showToast('Delete failed: ' + error.message, 'error'); return; }
-    await auditLog('DELETE', 'planning_app_users', userId, before, null);
-    showToast(`User "${name}" deleted.`, 'success');
-    loadUserList();
-}
+/* User Management screen: features/admin/user-management/index.js */
+function openUserMgmt() { window.PPMSUsers?.open(); }
+function closeUserMgmt() { window.PPMSUsers?.close(); }
 
 /* ================================================================
    PLAN VERSIONS  (revisions of the active module's plan — admin+ manage,
@@ -16551,309 +16367,23 @@ async function deletePlanVersionFromDialog(versionId, name) {
 }
 
 /* ================================================================
-   AUDIT LOG VIEWER  (master_admin only)
+   AUDIT LOG VIEWER  (master_admin only) — features/admin/audit-log/index.js
    ================================================================ */
-let _auditTotal = 0;
-const _diffStore = {};
+function openAuditLog() { window.PPMSAudit?.open(); }
+function closeAuditLog() { window.PPMSAudit?.close(); }
+function exportAuditLogExcel() { window.PPMSAudit?.exportExcel(); }
+function exportAuditLogPDF() { window.PPMSAudit?.exportPDF(); }
 
-async function openAuditLog() {
-    document.getElementById('auditLogOverlay').style.display = 'flex';
-    _auditLogOffset = 0;
-    await populateAuditUserFilter();
-    loadAuditLog(true);
-}
-
-async function populateAuditUserFilter() {
-    const sel = document.getElementById('alFilterUser');
-    if (!sel || sel.options.length > 1) return; // already populated
-    try {
-        const { data } = await db.from('planning_app_users').select('email, full_name').order('email');
-        (data || []).forEach(u => {
-            const opt = document.createElement('option');
-            opt.value = u.email;
-            opt.textContent = u.full_name ? `${u.full_name} (${u.email})` : u.email;
-            sel.appendChild(opt);
-        });
-    } catch (_) {}
-}
-function closeAuditLog() {
-    document.getElementById('auditLogOverlay').style.display = 'none';
-}
-
+/** Short names of audited tables (notifications). */
 const AL_TABLE_LABELS = {
     kd2_plan: 'KD2 Plan', kd2_progress: 'KD2 Progress', kd2_battalions: 'KD2 Battalions',
-    assembly_plan: 'F100 Plan', assembly_progress: 'F100 Progress', f100_plans: 'F100 Plans',
-    planning_app_users: 'Users',
+    assembly_plan: 'KD1 Plan', assembly_progress: 'KD1 Progress', f100_plans: 'F100 Plan',
+    planning_app_users: 'Users', plan_versions: 'Plan Versions',
     production_issues: 'Production Issue', production_issue_categories: 'Issue Category', f100_parts: 'F100 Part', f100_processes: 'F100 Process',
-    ppms_export_permissions: 'Export Permissions',
+    ppms_export_permissions: 'Export Permissions', planning_non_work_days: 'No-work Days',
+    kd2_process_stations: 'KD2 Processes', kd2_process_routes: 'KD2 Route', kd2_process_categories: 'KD2 Categories',
+    kd2_process_lead_times: 'KD2 Lead Times', kd2_plan_route_order: 'KD2 Route Order',
 };
-
-function resetAuditFilters() {
-    document.getElementById('alFilterAction').value = '';
-    document.getElementById('alFilterTable').value = '';
-    const alUser = document.getElementById('alFilterUser'); if (alUser) alUser.selectedIndex = 0;
-    document.getElementById('alFilterDateFrom').value = '';
-    document.getElementById('alFilterDateTo').value = '';
-    _auditLogOffset = 0;
-    loadAuditLog(true);
-}
-
-async function loadAuditLog(reset = false) {
-    if (reset) _auditLogOffset = 0;
-
-    const action   = document.getElementById('alFilterAction')?.value || '';
-    const table    = document.getElementById('alFilterTable')?.value || '';
-    const user     = document.getElementById('alFilterUser')?.value?.trim() || '';
-    const dateFrom = document.getElementById('alFilterDateFrom')?.value || '';
-    const dateTo   = document.getElementById('alFilterDateTo')?.value || '';
-    const tbody    = document.getElementById('alTableBody');
-
-    if (reset) {
-        tbody.innerHTML = `<tr><td colspan="9" class="table-empty"><div class="empty-state"><span class="spinner"></span><p>Loading…</p></div></td></tr>`;
-    }
-
-    let query = db
-        .from('planning_audit_log')
-        .select('*', { count: 'exact' })
-        .order('created_at', { ascending: false })
-        .range(_auditLogOffset, _auditLogOffset + AUDIT_PAGE_SIZE - 1);
-
-    if (action)   query = query.eq('action', action);
-    if (table)    query = query.eq('table_name', table);
-    if (user)     query = query.eq('user_email', user);
-    if (dateFrom) query = query.gte('created_at', dateFrom + 'T00:00:00');
-    if (dateTo)   query = query.lte('created_at', dateTo   + 'T23:59:59');
-
-    const { data, count, error } = await query;
-
-    if (error) {
-        tbody.innerHTML = `<tr><td colspan="9" class="table-empty"><div class="empty-state"><p>Error: ${esc(error.message)}</p></div></td></tr>`;
-        return;
-    }
-
-    _auditTotal = count || 0;
-    const countEl = document.getElementById('alEntryCount');
-    if (countEl) countEl.textContent = `${_auditTotal.toLocaleString()} entr${_auditTotal === 1 ? 'y' : 'ies'}`;
-
-    const rows = (data || []).map((entry, idx) => {
-        const hasDiff = entry.data_before || entry.data_after;
-        const dt = new Date(entry.created_at);
-        const rowId = `al-row-${_auditLogOffset + idx}`;
-        if (hasDiff) _diffStore[rowId] = { before: entry.data_before, after: entry.data_after };
-        const moduleLabel = AL_TABLE_LABELS[entry.table_name] || entry.table_name || '—';
-        const role = entry.user_role || 'viewer';
-        return `
-    <tr id="${rowId}">
-      <td class="mono al-cell-date">${dt.toLocaleDateString('en-GB')} <span class="al-time">${dt.toLocaleTimeString('en-GB', { hour12: false })}</span></td>
-      <td class="al-cell-user" title="${esc(entry.user_email || '')}">${esc(entry.user_email || '—')}</td>
-      <td><span class="role-pill ${roleClass(role)}">${esc(roleLabel(role))}</span></td>
-      <td><span class="al-action ${entry.action}">${entry.action}</span></td>
-      <td class="al-cell-module">${esc(moduleLabel)}</td>
-      <td class="al-cell-version" title="${esc(entry.plan_version_name || '')}">${esc(entry.plan_version_name || '—')}</td>
-      <td class="mono al-cell-record" title="${esc(entry.record_id || '')}">${esc(entry.record_id || '—')}</td>
-      <td class="mono al-cell-ip">${esc(entry.ip_address || '—')}</td>
-      <td>${hasDiff
-            ? `<button class="al-diff-btn" onclick="toggleDiff(this,'${rowId}')">View changes</button>`
-            : '<span class="al-no-diff">—</span>'}</td>
-    </tr>`;
-    });
-
-    if (reset) {
-        tbody.innerHTML = rows.join('') ||
-            `<tr><td colspan="9" class="table-empty"><div class="empty-state"><p>No audit entries match the filters.</p></div></td></tr>`;
-    } else {
-        rows.forEach(r => tbody.insertAdjacentHTML('beforeend', r));
-    }
-
-    _auditLogOffset += (data?.length || 0);
-
-    const moreBtn = document.getElementById('btnAlMore');
-    if (moreBtn) {
-        moreBtn.style.display = (_auditLogOffset < _auditTotal) ? '' : 'none';
-        moreBtn.onclick = () => loadAuditLog(false);
-    }
-}
-
-function toggleDiff(btn, rowId) {
-    const existing = document.getElementById('diff-' + rowId);
-    if (existing) { existing.remove(); btn.textContent = 'View changes'; return; }
-
-    btn.textContent = 'Hide changes';
-    const { before, after } = _diffStore[rowId] || {};
-    const tr = document.getElementById(rowId);
-    const diffRow = document.createElement('tr');
-    diffRow.id = 'diff-' + rowId;
-    diffRow.className = 'al-diff-row';
-
-    const allKeys = [...new Set([...Object.keys(before || {}), ...Object.keys(after || {})])];
-    const changed = allKeys.filter(k => JSON.stringify((before || {})[k]) !== JSON.stringify((after || {})[k]));
-    const unchanged = allKeys.filter(k => !changed.includes(k));
-
-    const renderVal = v => v === null ? '<em class="al-diff-null">null</em>'
-        : v === undefined ? '<em class="al-diff-null">—</em>'
-        : `<span>${esc(typeof v === 'object' ? JSON.stringify(v) : String(v))}</span>`;
-
-    const fieldRows = [
-        ...changed.map(k => `
-            <tr class="al-diff-field al-diff-field--changed">
-                <td class="al-diff-key">${esc(k)}</td>
-                <td class="al-diff-old">${renderVal((before || {})[k])}</td>
-                <td class="al-diff-arrow">→</td>
-                <td class="al-diff-new">${renderVal((after || {})[k])}</td>
-            </tr>`),
-        ...unchanged.map(k => `
-            <tr class="al-diff-field">
-                <td class="al-diff-key al-diff-key--unchanged">${esc(k)}</td>
-                <td class="al-diff-unchanged" colspan="3">${renderVal((before || after || {})[k])}</td>
-            </tr>`),
-    ].join('');
-
-    diffRow.innerHTML = `
-    <td colspan="9" style="padding:0">
-      <div class="al-diff-wrap">
-        <div class="al-diff-header">
-          <span class="al-diff-badge al-diff-badge--changed">${changed.length} field${changed.length !== 1 ? 's' : ''} changed</span>
-          ${unchanged.length ? `<span class="al-diff-badge al-diff-badge--same">${unchanged.length} unchanged</span>` : ''}
-        </div>
-        <div class="al-diff-table-wrap">
-          <table class="al-diff-table">
-            <thead><tr><th>Field</th><th>Before</th><th></th><th>After</th></tr></thead>
-            <tbody>${fieldRows || '<tr><td colspan="4" style="padding:8px;color:var(--clr-text-dim);font-style:italic">No field data recorded</td></tr>'}</tbody>
-          </table>
-        </div>
-      </div>
-    </td>`;
-    tr.insertAdjacentElement('afterend', diffRow);
-}
-
-/* ─── Audit log export helpers ──────────────────────────────────── */
-async function fetchAllAuditRows() {
-    const action   = document.getElementById('alFilterAction')?.value || '';
-    const table    = document.getElementById('alFilterTable')?.value || '';
-    const user     = document.getElementById('alFilterUser')?.value || '';
-    const dateFrom = document.getElementById('alFilterDateFrom')?.value || '';
-    const dateTo   = document.getElementById('alFilterDateTo')?.value || '';
-
-    let query = db.from('planning_audit_log').select('*').order('created_at', { ascending: false });
-    if (action)   query = query.eq('action', action);
-    if (table)    query = query.eq('table_name', table);
-    if (user)     query = query.eq('user_email', user);
-    if (dateFrom) query = query.gte('created_at', dateFrom + 'T00:00:00');
-    if (dateTo)   query = query.lte('created_at', dateTo   + 'T23:59:59');
-
-    const { data, error } = await query;
-    if (error) { showToast('Export failed: ' + error.message, 'error'); return null; }
-    return data || [];
-}
-
-async function exportAuditLogExcel() {
-    if (!window.XLSX) { showToast('Excel library not loaded — please refresh.', 'error'); return; }
-    showToast('Preparing Excel export…', 'info');
-    const rows = await fetchAllAuditRows();
-    if (!rows) return;
-
-    const wsData = [
-        ['Date / Time', 'User', 'Role', 'Action', 'Module', 'Plan Version', 'Record ID', 'IP Address', 'Fields Changed'],
-        ...rows.map(r => {
-            const dt = new Date(r.created_at);
-            const changed = (() => {
-                if (!r.data_before && !r.data_after) return '';
-                const b = r.data_before || {}, a = r.data_after || {};
-                const keys = [...new Set([...Object.keys(b), ...Object.keys(a)])];
-                return keys.filter(k => JSON.stringify(b[k]) !== JSON.stringify(a[k])).join(', ');
-            })();
-            return [
-                dt.toLocaleDateString('en-GB') + ' ' + dt.toLocaleTimeString('en-GB', { hour12: false }),
-                r.user_email || '—',
-                (r.user_role || '').replace(/_/g, ' '),
-                r.action || '—',
-                AL_TABLE_LABELS[r.table_name] || r.table_name || '—',
-                r.plan_version_name || '—',
-                r.record_id || '—',
-                r.ip_address || '—',
-                changed,
-            ];
-        }),
-    ];
-
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-    ws['!cols'] = [{ wch: 20 }, { wch: 30 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 40 }];
-    XLSX.utils.book_append_sheet(wb, ws, 'Audit Log');
-    const now = localDateStr(new Date());
-    XLSX.writeFile(wb, `audit_log_${now}.xlsx`);
-    showToast('Excel exported.', 'success');
-}
-
-async function exportAuditLogPDF() {
-    if (!window.jspdf) { showToast('PDF library not loaded — please refresh.', 'error'); return; }
-    showToast('Preparing PDF export…', 'info');
-    const rows = await fetchAllAuditRows();
-    if (!rows) return;
-
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    const PAGE_W = doc.internal.pageSize.getWidth();
-    const MARGIN = 14;
-    const now = new Date().toLocaleString('en-GB');
-
-    doc.setFillColor(30, 58, 138);
-    doc.rect(0, 0, PAGE_W, 20, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(13);
-    doc.text('Audit Log', MARGIN, 12);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
-    doc.setTextColor(186, 230, 253);
-    doc.text(`Generated: ${now}   ·   ${rows.length.toLocaleString()} entries`, PAGE_W - MARGIN, 16, { align: 'right' });
-
-    const headers = ['Date / Time', 'User', 'Role', 'Action', 'Module', 'Version', 'Record', 'IP Address'];
-    const body = rows.map(r => {
-        const dt = new Date(r.created_at);
-        return [
-            dt.toLocaleDateString('en-GB') + '\n' + dt.toLocaleTimeString('en-GB', { hour12: false }),
-            r.user_email || '—',
-            (r.user_role || '').replace(/_/g, ' '),
-            r.action || '—',
-            AL_TABLE_LABELS[r.table_name] || r.table_name || '—',
-            r.plan_version_name || '—',
-            r.record_id || '—',
-            r.ip_address || '—',
-        ];
-    });
-
-    const ACTION_COLORS = { LOGIN: [59,130,246], LOGOUT: [148,163,184], INSERT: [34,197,94], UPDATE: [245,158,11], DELETE: [239,68,68], BOOTSTRAP: [139,92,246] };
-
-    doc.autoTable({
-        startY: 24,
-        head: [headers], body,
-        margin: { left: MARGIN, right: MARGIN },
-        styles: { fontSize: 7, cellPadding: 2, font: 'helvetica', textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.2 },
-        headStyles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 6.5, halign: 'center' },
-        alternateRowStyles: { fillColor: [248, 250, 252] },
-        columnStyles: {
-            0: { cellWidth: 26 }, 1: { cellWidth: 44 }, 2: { cellWidth: 18 },
-            3: { cellWidth: 18, halign: 'center' }, 4: { cellWidth: 20 },
-            5: { cellWidth: 24 }, 6: { cellWidth: 22 }, 7: { cellWidth: 22 },
-        },
-        didDrawCell(data) {
-            if (data.section !== 'body' || data.column.index !== 3) return;
-            const action = String(data.cell.raw || '');
-            const [r, g, b] = ACTION_COLORS[action] || [100, 116, 139];
-            data.doc.setFillColor(r, g, b, 0.15);
-            data.doc.roundedRect(data.cell.x + 1, data.cell.y + 1, data.cell.width - 2, data.cell.height - 2, 1, 1, 'F');
-            data.doc.setTextColor(r, g, b);
-            data.doc.setFont('helvetica', 'bold');
-            data.doc.setFontSize(6.5);
-            data.doc.text(action, data.cell.x + data.cell.width / 2, data.cell.y + data.cell.height / 2 + 0.5, { align: 'center' });
-        },
-    });
-
-    const exportDate = localDateStr(new Date());
-    doc.save(`audit_log_${exportDate}.pdf`);
-    showToast('PDF exported.', 'success');
-}
 
 /* ================================================================
    PRODUCTION ISSUES

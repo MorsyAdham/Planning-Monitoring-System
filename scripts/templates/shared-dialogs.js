@@ -396,9 +396,10 @@ export function renderSharedDialogs() {
             </div>
         </div>
 
+        <!-- ═══════════════════════════════════════════ USER MANAGEMENT (features/admin/user-management) -->
         <div class="modal-overlay modal-overlay-wide" id="userMgmtOverlay" style="display:none;" role="dialog"
             aria-modal="true" aria-labelledby="userMgmtTitle">
-            <div class="modal modal-wide">
+            <div class="modal modal-wide modal-um2">
                 <div class="modal-header">
                     <h4 class="modal-title" id="userMgmtTitle">
                         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"
@@ -409,123 +410,99 @@ export function renderSharedDialogs() {
                         </svg>
                         User Management
                     </h4>
-                    <button class="modal-close" id="userMgmtClose">&#x2715;</button>
+                    <button class="modal-close" id="userMgmtClose" aria-label="Close">&#x2715;</button>
                 </div>
-                <div class="modal-body" style="padding:0">
-
-                    <!-- Toolbar -->
-                    <div class="um-toolbar">
-                        <span class="um-count" id="umUserCount">0 users</span>
-                        <input type="search" id="umSearch" class="filter-control" placeholder="Search name, email or role…" style="flex:1;min-width:160px;max-width:340px" />
-                        <button class="btn btn-primary btn-sm" id="btnAddUser">
-                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
-                                style="width:13px;height:13px">
-                                <path d="M10 4v12M4 10h12" />
-                            </svg>
-                            Add User
-                        </button>
+                <div class="modal-body um2-body" id="umOverlayBody">
+                    <div class="um2-main">
+                        <div class="um2-toolbar">
+                            <div class="um2-search">
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M14 14l4 4"/></svg>
+                                <input type="search" id="umSearch" placeholder="Search name, email or role…" aria-label="Search users" />
+                            </div>
+                            <span class="um-count" id="umUserCount">0 users</span>
+                            <button class="btn btn-primary btn-sm" id="btnAddUser">
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><path d="M10 4v12M4 10h12" /></svg>
+                                Add User
+                            </button>
+                        </div>
+                        <div class="um2-summary" id="umSummary" role="group" aria-label="Filter users"></div>
+                        <div class="um2-head" aria-hidden="true">
+                            <span>Name</span><span>Role</span><span>Access</span><span>Status</span><span>Last sign-in</span><span>Actions</span>
+                        </div>
+                        <div class="um2-list" id="umList"></div>
                     </div>
 
-                    <!-- User table — one table: role, module access, and export
-                         permission all live here as columns, not a separate
-                         section below. -->
-                    <div class="um-table-wrap">
-                        <table class="data-table um-table">
-                            <thead>
-                                <tr>
-                                    <th>Full Name</th>
-                                    <th>Email</th>
-                                    <th>Role</th>
-                                    <th>Modules</th>
-                                    <th>Export</th>
-                                    <th>Status</th>
-                                    <th>Created</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="umTableBody">
-                                <tr>
-                                    <td colspan="8" class="table-empty">
-                                        <div class="empty-state"><span class="spinner"></span>
-                                            <p>Loading…</p>
-                                        </div>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <!-- Add / Edit form (hidden by default) -->
-                    <div class="um-form" id="umForm" style="display:none">
+                    <!-- Add / Edit panel -->
+                    <aside class="um2-form" id="umForm" hidden aria-labelledby="umFormTitle">
                         <form autocomplete="off" onsubmit="return false">
                             <div class="um-form-header">
                                 <span id="umFormTitle">Add New User</span>
-                                <button class="modal-close" id="umFormClose">&#x2715;</button>
+                                <button type="button" class="modal-close" id="umFormClose" aria-label="Close">&#x2715;</button>
                             </div>
-                            <div class="um-form-body">
+                            <div class="um2-form-body">
                                 <input type="hidden" id="umEditId" />
-                                <div class="um-form-grid">
-                                    <div class="form-group">
-                                        <label class="form-label" for="umFullName">Full Name</label>
-                                        <input type="text" id="umFullName" class="filter-control"
-                                            placeholder="John Doe" />
+                                <p class="um2-self-note" id="umSelfNote" hidden>This is your own account — you cannot change your own role or status.</p>
+                                <div class="form-group">
+                                    <label class="form-label" for="umFullName">Full Name</label>
+                                    <input type="text" id="umFullName" class="filter-control" placeholder="John Doe" />
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="umEmail">Email</label>
+                                    <input type="email" id="umEmail" class="filter-control" placeholder="user@example.com" autocomplete="username" />
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="umRole">Role</label>
+                                    <select id="umRole" class="filter-control">
+                                        <option value="viewer">Viewer</option>
+                                        <option value="operator">Operator</option>
+                                        <option value="planner">Planner</option>
+                                        <option value="master_admin">Master Admin</option>
+                                    </select>
+                                    <small class="um2-hint" id="umRoleHint"></small>
+                                </div>
+                                <div class="form-group" id="umModulesGroup">
+                                    <label class="form-label">Module Access</label>
+                                    <div class="um-modules-check-row">
+                                        <label class="kd2-check"><input type="checkbox" class="um-module-check" value="kd1" checked /> F200 – KD1</label>
+                                        <label class="kd2-check"><input type="checkbox" class="um-module-check" value="kd2" checked /> F200 – KD2</label>
+                                        <label class="kd2-check"><input type="checkbox" class="um-module-check" value="f100kd2" checked /> F100 – KD2</label>
                                     </div>
-                                    <div class="form-group">
-                                        <label class="form-label" for="umEmail">Email</label>
-                                        <input type="email" id="umEmail" class="filter-control"
-                                            placeholder="user@example.com" autocomplete="username" />
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label" for="umRole">Role</label>
-                                        <select id="umRole" class="filter-control">
-                                            <option value="viewer">Viewer — read only</option>
-                                            <option value="operator">Operator — edit production data</option>
-                                            <option value="planner">Planner — edit data &amp; plan schedule</option>
-                                            <option value="master_admin">Master Admin — full access &amp; system settings</option>
-                                        </select>
-                                    </div>
-                                    <div class="form-group" id="umPasswordGroup">
-                                        <label class="form-label" for="umPassword">Password <span id="umPasswordHint"
-                                                class="form-label-optional">(leave blank to keep current)</span></label>
-                                        <input type="password" id="umPassword" class="filter-control"
-                                            placeholder="••••••••" autocomplete="new-password" />
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label" for="umActive">Account Status</label>
-                                        <select id="umActive" class="filter-control">
-                                            <option value="true">Active</option>
-                                            <option value="false">Inactive</option>
-                                        </select>
-                                    </div>
-                                    <div class="form-group" id="umModulesGroup">
-                                        <label class="form-label">Module Access</label>
-                                        <div class="um-modules-check-row">
-                                            <label class="kd2-check"><input type="checkbox" class="um-module-check" value="kd1" checked /> F200 – KD1</label>
-                                            <label class="kd2-check"><input type="checkbox" class="um-module-check" value="kd2" checked /> F200 – KD2</label>
-                                            <label class="kd2-check"><input type="checkbox" class="um-module-check" value="f100kd2" checked /> F100 – KD2</label>
-                                        </div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label">Reports</label>
-                                        <label class="form-check">
-                                            <input type="checkbox" id="umCanExport" />
-                                            <span>Can export Excel &amp; PDF reports</span>
-                                        </label>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-check">
+                                        <input type="checkbox" id="umCanExport" />
+                                        <span>Can export Excel &amp; PDF reports</span>
+                                    </label>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="umActive">Account Status</label>
+                                    <select id="umActive" class="filter-control">
+                                        <option value="true">Active</option>
+                                        <option value="false">Inactive</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="umPassword">Password <span id="umPasswordHint" class="form-label-optional">(leave blank to keep current)</span></label>
+                                    <div class="um2-pw">
+                                        <input type="password" id="umPassword" class="filter-control" placeholder="At least 6 characters" autocomplete="new-password" />
+                                        <button type="button" class="um2-pw-toggle" id="btnUmPwToggle" title="Show / hide password">
+                                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M1.5 10S5 4 10 4s8.5 6 8.5 6-3.5 6-8.5 6S1.5 10 1.5 10z"/><circle cx="10" cy="10" r="2.5"/></svg>
+                                        </button>
                                     </div>
                                 </div>
                             </div>
                             <div class="um-form-footer">
-                                <button class="btn btn-primary" id="btnUmSave">Save User</button>
-                                <button class="btn btn-ghost" id="btnUmCancel">Cancel</button>
-                                <span class="um-form-error" id="umFormError"></span>
+                                <span class="um-form-error" id="umFormError" role="alert"></span>
+                                <button type="button" class="btn btn-ghost" id="btnUmCancel">Cancel</button>
+                                <button type="button" class="btn btn-primary" id="btnUmSave">Save User</button>
                             </div>
-                    </div>
-
+                        </form>
+                    </aside>
                 </div>
             </div>
         </div>
 
-        <!-- ═══════════════════════════════════════════════ AUDIT LOG MODAL -->
+        <!-- ═══════════════════════════════════════════════ AUDIT LOG (features/admin/audit-log) -->
         <div class="modal-overlay modal-overlay-wide" id="auditLogOverlay" style="display:none;" role="dialog"
             aria-modal="true" aria-labelledby="auditLogTitle">
             <div class="modal modal-wide modal-audit">
@@ -539,87 +516,35 @@ export function renderSharedDialogs() {
                         </svg>
                         Audit Log
                     </h4>
-                    <button class="modal-close" id="auditLogClose">&#x2715;</button>
+                    <span class="al2-sub">Who changed what, and when — press View to open it in the system</span>
+                    <button class="modal-close" id="auditLogClose" aria-label="Close">&#x2715;</button>
                 </div>
                 <div class="modal-body" style="padding:0">
-
-                    <!-- Filter bar -->
-                    <div class="al-filter-bar">
-                        <div class="al-filter-row">
-                            <div class="al-filter-group">
-                                <label class="al-filter-label" for="alFilterAction">Action</label>
-                                <select id="alFilterAction" class="al-filter-input">
-                                    <option value="">All</option>
-                                    <option value="LOGIN">Login</option>
-                                    <option value="LOGOUT">Logout</option>
-                                    <option value="INSERT">Insert</option>
-                                    <option value="UPDATE">Update</option>
-                                    <option value="DELETE">Delete</option>
-                                    <option value="BOOTSTRAP">Bootstrap</option>
-                                </select>
-                            </div>
-                            <div class="al-filter-group">
-                                <label class="al-filter-label" for="alFilterTable">Module</label>
-                                <select id="alFilterTable" class="al-filter-input">
-                                    <option value="">All</option>
-                                    <option value="kd2_plan">KD2 Plan</option>
-                                    <option value="kd2_progress">KD2 Progress</option>
-                                    <option value="kd2_battalions">KD2 Battalions</option>
-                                    <option value="assembly_plan">F100 Plan</option>
-                                    <option value="assembly_progress">F100 Progress</option>
-                                    <option value="f100_plans">F100 Plans</option>
-                                    <option value="planning_app_users">Users</option>
-                                </select>
-                            </div>
-                            <div class="al-filter-group al-filter-group--grow">
-                                <label class="al-filter-label" for="alFilterUser">User</label>
-                                <select id="alFilterUser" class="al-filter-input">
-                                    <option value="">All Users</option>
-                                </select>
-                            </div>
-                            <div class="al-filter-group">
-                                <label class="al-filter-label" for="alFilterDateFrom">From</label>
-                                <input type="date" id="alFilterDateFrom" class="al-filter-input" />
-                            </div>
-                            <div class="al-filter-group">
-                                <label class="al-filter-label" for="alFilterDateTo">To</label>
-                                <input type="date" id="alFilterDateTo" class="al-filter-input" />
-                            </div>
-                            <div class="al-filter-actions">
-                                <button class="btn btn-primary btn-sm" id="btnAlApply">Apply</button>
-                                <button class="btn btn-ghost btn-sm" id="btnAlReset">Reset</button>
-                            </div>
+                    <div class="al2-filters">
+                        <div class="al2-search">
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M14 14l4 4"/></svg>
+                            <input type="search" id="alSearch" placeholder="Search — unit, station, user, field…" aria-label="Search the audit log" />
                         </div>
-                        <div class="al-filter-meta">
-                            <span class="al-entry-count" id="alEntryCount">—</span>
-                        </div>
+                        <label class="al2-f"><span>What</span><select id="alFilterArea"></select></label>
+                        <label class="al2-f"><span>Action</span><select id="alFilterAction"></select></label>
+                        <label class="al2-f"><span>Module</span><select id="alFilterModule"></select></label>
+                        <label class="al2-f al2-f--grow"><span>User</span><select id="alFilterUser"><option value="">All users</option></select></label>
+                        <label class="al2-f"><span>When</span>
+                            <select id="alFilterPeriod">
+                                <option value="all">Any time</option>
+                                <option value="today">Today</option>
+                                <option value="7">Last 7 days</option>
+                                <option value="30">Last 30 days</option>
+                                <option value="custom">Custom dates…</option>
+                            </select>
+                        </label>
+                        <label class="al2-f al2-custom-dates" hidden><span>From</span><input type="date" id="alFilterDateFrom" /></label>
+                        <label class="al2-f al2-custom-dates" hidden><span>To</span><input type="date" id="alFilterDateTo" /></label>
+                        <button class="btn btn-ghost btn-sm" id="btnAlReset" type="button">Reset</button>
                     </div>
+                    <div class="al2-meta-bar"><span class="al-entry-count" id="alEntryCount">—</span></div>
 
-                    <!-- Audit table -->
-                    <div class="al-table-wrap">
-                        <table class="data-table al-table">
-                            <thead>
-                                <tr>
-                                    <th>Date / Time</th>
-                                    <th>User</th>
-                                    <th>Role</th>
-                                    <th>Action</th>
-                                    <th>Module</th>
-                                    <th>Version</th>
-                                    <th>Record</th>
-                                    <th>IP Address</th>
-                                    <th>Changes</th>
-                                </tr>
-                            </thead>
-                            <tbody id="alTableBody">
-                                <tr>
-                                    <td colspan="9" class="table-empty">
-                                        <div class="empty-state"><p>Click to load audit log</p></div>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
+                    <div class="al2-list" id="al2List"></div>
 
                     <div class="al-footer">
                         <button class="btn btn-ghost btn-sm" id="btnAlMore" style="display:none">Load more…</button>
@@ -634,7 +559,6 @@ export function renderSharedDialogs() {
                             </button>
                         </div>
                     </div>
-
                 </div>
             </div>
         </div>
