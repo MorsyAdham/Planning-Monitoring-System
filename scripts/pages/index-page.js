@@ -1,6 +1,7 @@
 import { bootstrapPage, exposeCoreGlobals, loadRuntimeScripts } from '../core/app-bootstrap.js';
 import { CDN_SCRIPTS, ROUTES } from '../core/config.js';
 import { byId, loadClassicScript } from '../core/dom.js';
+import { _t } from '../core/i18n.js';
 import { canEditPlan, canWrite, getCurrentUser, isPlanner, isMasterAdmin } from '../core/guards.js';
 import { installToastGlobal } from '../core/notifications.js';
 import { applyTheme, applyStoredTheme, clearSession, toggleTheme } from '../core/session.js';
@@ -87,12 +88,12 @@ function wireLazyExportLibs() {
         e.stopImmediatePropagation();
         if (el.dataset.ppmsLibWait) return;
         el.dataset.ppmsLibWait = '1';
-        const slow = setTimeout(() => window.showToast?.('Preparing export tools…', 'info'), 400);
+        const slow = setTimeout(() => window.showToast?.(_t('Preparing export tools…'), 'info'), 400);
         try {
             await loadExportLibs();
         } catch (err) {
             console.warn(err);
-            window.showToast?.('Could not load the export tools — check the connection and try again.', 'error');
+            window.showToast?.(_t('Could not load the export tools — check the connection and try again.'), 'error');
         }
         clearTimeout(slow);
         delete el.dataset.ppmsLibWait;
@@ -117,10 +118,10 @@ function populateShellSessionState() {
     const role = byId('navRoleBadge');
     if (role) {
         const labels = {
-            master_admin: 'Master Admin',
-            operator: 'Operator',
-            planner: 'Planner',
-            viewer: 'Viewer',
+            master_admin: _t('Master Admin'),
+            operator: _t('Operator'),
+            planner: _t('Planner'),
+            viewer: _t('Viewer'),
         };
         // 'admin' is the legacy value for 'operator' (pre-migration 46).
         const normRole = user.role === 'admin' ? 'operator' : (user.role || 'viewer');

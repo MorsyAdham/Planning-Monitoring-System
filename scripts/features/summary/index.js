@@ -1,3 +1,4 @@
+import { _t } from '../../core/i18n.js';
 const svg = p => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 
 /** KPI tile (value id is written by updateSummary() in app.js). */
@@ -6,23 +7,23 @@ const tile = (cls, id, label, icon, sub = '') => `
                         <div class="card-icon">${svg(icon)}</div>
                         <div class="card-body">
                             <span class="card-value" id="${id}">0</span>
-                            <span class="card-label">${label}</span>
-                            ${sub ? `<span class="ex-tile-sub" id="${id}Sub">${sub}</span>` : ''}
+                            <span class="card-label">${_t(label)}</span>
+                            ${sub ? `<span class="ex-tile-sub" id="${id}Sub">${_t(sub)}</span>` : ''}
                         </div>
                     </div>`;
 
 export function initFeature() {
     return `
         <!-- ═══════════════════════════════════════════════ EXECUTIVE SUMMARY -->
-        <section class="summary-section ex-summary" id="summarySection" aria-label="Executive Summary">
+        <section class="summary-section ex-summary" id="summarySection" aria-label="${_t("Executive Summary")}">
             <div class="ppms-section-header ex-head">
                 <div>
-                    <h3 class="ppms-section-heading">Executive Summary</h3>
-                    <span class="ppms-section-sub">Where production stands for the current filters</span>
+                    <h3 class="ppms-section-heading">${_t("Executive Summary")}</h3>
+                    <span class="ppms-section-sub">${_t("Where production stands for the current filters")}</span>
                 </div>
                 <div class="ex-head-right">
                     <div class="vpx-bat-picker ex-bat-picker" id="exBattalionTabs" hidden></div>
-                    <span class="ex-scope" id="exScope" title="What these numbers cover">All data</span>
+                    <span class="ex-scope" id="exScope" title="${_t("What these numbers cover")}">${_t("All data")}</span>
                 </div>
             </div>
 
@@ -36,12 +37,12 @@ export function initFeature() {
                         </svg>
                         <div class="ex-ring-text">
                             <span class="ex-ring-value" id="sumProgress">0%</span>
-                            <span class="ex-ring-label">complete</span>
+                            <span class="ex-ring-label">${_t("complete")}</span>
                         </div>
                     </div>
                     <div class="ex-hero-body">
-                        <p class="ex-hero-line"><strong id="exDoneCount">0</strong> of <strong id="exTotalCount">0</strong> planned tasks are done</p>
-                        <div class="ex-split" id="exSplit" role="img" aria-label="Status split">
+                        <p class="ex-hero-line">${_t("{done} of {total} planned tasks are done", { done: '<strong id="exDoneCount">0</strong>', total: '<strong id="exTotalCount">0</strong>' })}</p>
+                        <div class="ex-split" id="exSplit" role="img" aria-label="${_t("Status split")}">
                             <span class="ex-split-seg ex-c-completed" data-k="completed"></span>
                             <span class="ex-split-seg ex-c-late" data-k="late"></span>
                             <span class="ex-split-seg ex-c-progress" data-k="inprogress"></span>
@@ -49,11 +50,11 @@ export function initFeature() {
                             <span class="ex-split-seg ex-c-planned" data-k="planned" style="flex-grow:1"></span>
                         </div>
                         <ul class="ex-legend">
-                            <li><i class="ex-c-completed"></i>On time <b id="exLegCompleted">0</b></li>
-                            <li><i class="ex-c-late"></i>Late <b id="exLegLate">0</b></li>
-                            <li><i class="ex-c-progress"></i>In progress <b id="exLegProgress">0</b></li>
-                            <li><i class="ex-c-overdue"></i>Overdue <b id="exLegOverdue">0</b></li>
-                            <li><i class="ex-c-planned"></i>Not started <b id="exLegPlanned">0</b></li>
+                            <li><i class="ex-c-completed"></i>${_t("On time")} <b id="exLegCompleted">0</b></li>
+                            <li><i class="ex-c-late"></i>${_t("Late")} <b id="exLegLate">0</b></li>
+                            <li><i class="ex-c-progress"></i>${_t("In progress")} <b id="exLegProgress">0</b></li>
+                            <li><i class="ex-c-overdue"></i>${_t("Overdue")} <b id="exLegOverdue">0</b></li>
+                            <li><i class="ex-c-planned"></i>${_t("Not started")} <b id="exLegPlanned">0</b></li>
                         </ul>
                         <!-- kept for older callers; the ring shows progress now -->
                         <div class="progress-bar-wrap" hidden><div class="progress-bar-fill" id="progressBarFill" style="width:0%"></div></div>
@@ -67,19 +68,19 @@ export function initFeature() {
                     ${tile('card-late', 'sumLate', 'Late completion', '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>', '')}
                     ${tile('card-overdue', 'sumOverdue', 'Overdue', '<path d="M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/>', 'past planned end')}
 
-                    <div class="summary-card card-delivery ex-delivery" role="button" tabindex="0" title="Click for the delay breakdown">
+                    <div class="summary-card card-delivery ex-delivery" role="button" tabindex="0" title="${_t("Click for the delay breakdown")}">
                         <div class="ex-delivery-head">
                             <span class="card-icon">${svg('<path d="M3 7h11v9H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="1.8"/><circle cx="17" cy="18" r="1.8"/>')}</span>
-                            <span class="card-label">Delivery</span>
-                            <span class="ex-delivery-link">Delay breakdown ${svg('<path d="M5 12h14M13 6l6 6-6 6"/>')}</span>
+                            <span class="card-label">${_t("Delivery")}</span>
+                            <span class="ex-delivery-link">${_t("Delay breakdown")} ${svg('<path d="M5 12h14M13 6l6 6-6 6"/>')}</span>
                         </div>
                         <div class="delivery-rows">
                             <div class="delivery-row">
-                                <span class="delivery-lbl">Planned</span>
+                                <span class="delivery-lbl">${_t("Planned")}</span>
                                 <span class="delivery-date" id="sumDeliveryPlanned">—</span>
                             </div>
                             <div class="delivery-row">
-                                <span class="delivery-lbl">Expected</span>
+                                <span class="delivery-lbl">${_t("Expected")}</span>
                                 <span class="delivery-date delivery-date--expected" id="sumDeliveryExpected">—</span>
                                 <span class="delivery-delta" id="sumDeliveryDelta" style="display:none"></span>
                             </div>

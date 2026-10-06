@@ -5,6 +5,7 @@ import { redirectIfAuthenticated } from '../core/guards.js';
 import { applyStoredTheme, applyTheme, getTheme, saveSession } from '../core/session.js';
 import { createSupabaseClient } from '../core/supabase-client.js';
 import { renderLoginLayout } from '../templates/login-layout.js';
+import { _t, adoptProfileLang } from '../core/i18n.js';
 
 const THEME_ORDER = ['dark', 'light', 'nord', 'dracula', 'midnight', 'catppuccin', 'crimson'];
 const THEME_META = {
@@ -117,7 +118,7 @@ async function initPage() {
         const password = byId('loginPassword').value;
 
         if (!email || !password) {
-            showError('Please enter your email and password.');
+            showError(_t('Please enter your email and password.'));
             return;
         }
 
@@ -147,11 +148,11 @@ async function initPage() {
 
             if (error) throw error;
             if (!user) {
-                showError('Invalid email or password. Please try again.');
+                showError(_t('Invalid email or password. Please try again.'));
                 return;
             }
             if (!user.is_active) {
-                showError('Your account has been deactivated. Contact the administrator.');
+                showError(_t('Your account has been deactivated. Contact the administrator.'));
                 return;
             }
 
@@ -168,6 +169,13 @@ async function initPage() {
                 ip,
                 loginAt: new Date().toISOString(),
             });
+
+            // Interface language saved on the user's profile (migration 60) wins
+            try {
+                const { data: pref } = await db.from('planning_app_users')
+                    .select('preferred_language').eq('id', user.id).maybeSingle();
+                if (pref?.preferred_language) adoptProfileLang(pref.preferred_language);
+            } catch { /* column not there yet — keep this browser's choice */ }
 
             const { error: auditError } = await db.from('planning_audit_log').insert({
                 user_id: user.id,
@@ -187,7 +195,7 @@ async function initPage() {
             window.location.href = ROUTES.app;
         } catch (error) {
             console.error(error);
-            showError('Connection error. Please try again.');
+            showError(_t('Connection error. Please try again.'));
         } finally {
             button.disabled = false;
             button.classList.remove('loading');
@@ -252,5 +260,5 @@ async function initPage() {
 
 initPage().catch(error => {
     console.error(error);
-    showError('Connection error. Please try again.');
+    showError(_t('Connection error. Please try again.'));
 });

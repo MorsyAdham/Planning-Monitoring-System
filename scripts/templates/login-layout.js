@@ -1,3 +1,4 @@
+import { _t, langPickerHtml } from '../core/i18n.js';
 export function renderLoginLayout() {
     return `
 <div class="lp-root">
@@ -63,15 +64,15 @@ export function renderLoginLayout() {
             <div class="lp-hero-top">
                 <div class="lp-hero-badge-wrap">
                     <div class="lp-hero-badge-ring" aria-hidden="true"></div>
-                    <div class="lp-hero-badge">PPMS</div>
+                    <div class="lp-hero-badge">${_t("PPMS")}</div>
                 </div>
                 <span class="lp-hero-ver">F200 · F100</span>
             </div>
 
-            <h1 class="lp-hero-title">Production<br>Planning &amp;<br>Monitoring</h1>
+            <h1 class="lp-hero-title">${_t("Production Planning & Monitoring")}</h1>
 
             <p class="lp-hero-desc">
-                End-to-end production schedule control — from raw-material allocation to final delivery. Plan, track, and resolve issues across all modules in real time.
+                ${_t("End-to-end production schedule control — from raw-material allocation to final delivery. Plan, track, and resolve issues across all modules in real time.")}
             </p>
 
             <!-- Animated workflow diagram — rounded icon nodes + dots traveling the connectors -->
@@ -95,26 +96,26 @@ export function renderLoginLayout() {
                     <!-- Node: PLAN (cx 43) — three centered list lines -->
                     <rect x="6" y="14" width="74" height="58" rx="11" fill="var(--clr-accent-dim)" stroke="var(--la)" stroke-opacity=".4" stroke-width="1"/>
                     <path d="M32 30h22M35 38h16M33 46h20" stroke="var(--la)" stroke-width="1.5" stroke-linecap="round"/>
-                    <text x="43" y="63" text-anchor="middle" font-size="7.5" fill="rgba(225,238,255,.85)" font-family="Inter,sans-serif" font-weight="700" letter-spacing=".06em">PLAN</text>
+                    <text x="43" y="63" text-anchor="middle" font-size="7.5" fill="rgba(225,238,255,.85)" font-family="Inter,sans-serif" font-weight="700" letter-spacing=".06em">${_t("PLAN")}</text>
 
                     <!-- Node: SCHEDULE (cx 147) — centered calendar -->
                     <rect x="110" y="14" width="74" height="58" rx="11" fill="var(--clr-accent-dim)" stroke="var(--la)" stroke-opacity=".4" stroke-width="1"/>
                     <rect x="137" y="27" width="20" height="17" rx="2.5" stroke="var(--la)" stroke-width="1.5"/>
                     <path d="M137 32h20M142 24v6M152 24v6" stroke="var(--la)" stroke-width="1.5" stroke-linecap="round"/>
-                    <text x="147" y="63" text-anchor="middle" font-size="7.5" fill="rgba(225,238,255,.85)" font-family="Inter,sans-serif" font-weight="700" letter-spacing=".06em">SCHEDULE</text>
+                    <text x="147" y="63" text-anchor="middle" font-size="7.5" fill="rgba(225,238,255,.85)" font-family="Inter,sans-serif" font-weight="700" letter-spacing=".06em">${_t("SCHEDULE")}</text>
 
                     <!-- Node: TRACK (cx 251) — centered bar chart -->
                     <rect x="214" y="14" width="74" height="58" rx="11" fill="var(--clr-accent-dim)" stroke="var(--la)" stroke-opacity=".4" stroke-width="1"/>
                     <rect x="241" y="36" width="6" height="14" rx="1.5" fill="var(--la)" opacity=".85"/>
                     <rect x="249" y="28" width="6" height="22" rx="1.5" fill="var(--la)"/>
                     <rect x="257" y="40" width="6" height="10" rx="1.5" fill="var(--la)" opacity=".85"/>
-                    <text x="251" y="63" text-anchor="middle" font-size="7.5" fill="rgba(225,238,255,.85)" font-family="Inter,sans-serif" font-weight="700" letter-spacing=".06em">TRACK</text>
+                    <text x="251" y="63" text-anchor="middle" font-size="7.5" fill="rgba(225,238,255,.85)" font-family="Inter,sans-serif" font-weight="700" letter-spacing=".06em">${_t("TRACK")}</text>
 
                     <!-- Node: DELIVER (cx 355, success accent) — centered checkmark -->
                     <rect x="318" y="14" width="74" height="58" rx="11" fill="rgba(34,197,94,.08)" stroke="rgba(34,197,94,.4)" stroke-width="1"/>
                     <circle cx="355" cy="36" r="10" stroke="#22c55e" stroke-width="1.6"/>
                     <path d="M350.5 36l3 3 6.5-7" stroke="#22c55e" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                    <text x="355" y="63" text-anchor="middle" font-size="7.5" fill="rgba(160,235,190,.9)" font-family="Inter,sans-serif" font-weight="700" letter-spacing=".06em">DELIVER</text>
+                    <text x="355" y="63" text-anchor="middle" font-size="7.5" fill="rgba(160,235,190,.9)" font-family="Inter,sans-serif" font-weight="700" letter-spacing=".06em">${_t("DELIVER")}</text>
                 </svg>
             </div>
 
@@ -122,19 +123,19 @@ export function renderLoginLayout() {
             <div class="lp-features">
                 <div class="lp-feature">
                     <svg class="lp-feat-icon" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="3" width="16" height="12" rx="2"/><path d="M5 7h4M5 10h3" stroke-linecap="round"/><rect x="10" y="7" width="4" height="2" rx="1" fill="currentColor" stroke="none"/></svg>
-                    <div><div class="lp-feat-name">Production Schedule</div><div class="lp-feat-sub">Gantt-based timeline planning &amp; tracking</div></div>
+                    <div><div class="lp-feat-name">${_t("Production Schedule")}</div><div class="lp-feat-sub">${_t("Gantt-based timeline planning & tracking")}</div></div>
                 </div>
                 <div class="lp-feature">
                     <svg class="lp-feat-icon" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="9" cy="9" r="7"/><path d="M9 5v4l3 2" stroke-linecap="round"/></svg>
-                    <div><div class="lp-feat-name">Progress Monitoring</div><div class="lp-feat-sub">Real-time VPX progress &amp; completion rates</div></div>
+                    <div><div class="lp-feat-name">${_t("Progress Monitoring")}</div><div class="lp-feat-sub">${_t("Real-time VPX progress & completion rates")}</div></div>
                 </div>
                 <div class="lp-feature">
                     <svg class="lp-feat-icon" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="6" r="3"/><path d="M1 16c0-3 2.7-5 6-5s6 2 6 5"/><path d="M13 5l1.5 1.5L17 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    <div><div class="lp-feat-name">Issues Tracker</div><div class="lp-feat-sub">Log, assign and resolve production problems</div></div>
+                    <div><div class="lp-feat-name">${_t("Issues Tracker")}</div><div class="lp-feat-sub">${_t("Log, assign and resolve production problems")}</div></div>
                 </div>
                 <div class="lp-feature">
                     <svg class="lp-feat-icon" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 13l4-5 4 2 4-8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="14" cy="2" r="1.5" fill="currentColor" stroke="none"/></svg>
-                    <div><div class="lp-feat-name">Analytics &amp; Reports</div><div class="lp-feat-sub">Exportable dashboards and delivery insights</div></div>
+                    <div><div class="lp-feat-name">${_t("Analytics & Reports")}</div><div class="lp-feat-sub">${_t("Exportable dashboards and delivery insights")}</div></div>
                 </div>
             </div>
 
@@ -142,17 +143,17 @@ export function renderLoginLayout() {
             <div class="lp-stats">
                 <div class="lp-stat">
                     <span class="lp-stat-num">3</span>
-                    <span class="lp-stat-lbl">Modules</span>
+                    <span class="lp-stat-lbl">${_t("Modules")}</span>
                 </div>
                 <span class="lp-stat-div"></span>
                 <div class="lp-stat">
                     <span class="lp-stat-live"></span>
-                    <span class="lp-stat-lbl">Live sync</span>
+                    <span class="lp-stat-lbl">${_t("Live sync")}</span>
                 </div>
                 <span class="lp-stat-div"></span>
                 <div class="lp-stat">
-                    <span class="lp-stat-num">SHA-256</span>
-                    <span class="lp-stat-lbl">Encrypted</span>
+                    <span class="lp-stat-num">${_t("SHA-256")}</span>
+                    <span class="lp-stat-lbl">${_t("Encrypted")}</span>
                 </div>
             </div>
 
@@ -163,11 +164,12 @@ export function renderLoginLayout() {
     <div class="lp-form-panel">
 
         <!-- Background watermark -->
-        <div class="lp-watermark" aria-hidden="true">PPMS</div>
+        <div class="lp-watermark" aria-hidden="true">${_t("PPMS")}</div>
 
         <!-- Theme picker -->
         <div class="lp-theme-wrap" id="lpThemeWrap">
-            <button class="lp-theme-btn" id="btnTheme" title="Theme" type="button" aria-haspopup="true" aria-expanded="false">
+            ${langPickerHtml('lang-picker--login')}
+            <button class="lp-theme-btn" id="btnTheme" title="${_t("Theme")}" type="button" aria-haspopup="true" aria-expanded="false">
                 <span id="lpThemePickerIcon"></span>
             </button>
             <div class="lp-theme-dropdown" id="lpThemeDropdown" style="display:none" role="menu"></div>
@@ -176,8 +178,8 @@ export function renderLoginLayout() {
         <div class="lp-form-inner">
             <!-- Mobile brand -->
             <div class="lp-form-brand-sm">
-                <div class="lp-badge-sm">PPMS</div>
-                <span>Production Planning &amp; Monitoring</span>
+                <div class="lp-badge-sm">${_t("PPMS")}</div>
+                <span>${_t("Production Planning & Monitoring")}</span>
             </div>
 
             <!-- Heading -->
@@ -189,34 +191,34 @@ export function renderLoginLayout() {
                         <circle cx="16" cy="12" r="2.5" fill="currentColor" stroke="none" opacity=".7"/>
                     </svg>
                 </div>
-                <h2 class="lp-form-title">Welcome back</h2>
-                <p class="lp-form-sub">Sign in to access the production workspace</p>
+                <h2 class="lp-form-title">${_t("Welcome back")}</h2>
+                <p class="lp-form-sub">${_t("Sign in to access the production workspace")}</p>
             </div>
 
             <!-- Error -->
             <div class="login-error" id="loginError" role="alert">
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="8"/><path d="M10 6v4M10 14h.01"/></svg>
-                <span id="loginErrorMsg">Invalid email or password.</span>
+                <span id="loginErrorMsg">${_t("Invalid email or password.")}</span>
             </div>
 
             <form id="loginForm" autocomplete="on" onsubmit="return false;">
                 <div class="form-group">
-                    <label class="form-label" for="loginEmail">Email Address</label>
+                    <label class="form-label" for="loginEmail">${_t("Email Address")}</label>
                     <div class="form-field-wrap">
                         <svg class="form-field-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="4" width="16" height="12" rx="2"/><path d="M2 7l8 5 8-5" stroke-linecap="round"/></svg>
-                        <input type="email" id="loginEmail" name="email" class="form-input" placeholder="you@example.com"
+                        <input type="email" id="loginEmail" name="email" class="form-input" placeholder="${_t("you@example.com")}"
                             autocomplete="username" spellcheck="false"
                             readonly onfocus="this.removeAttribute('readonly')" onclick="this.removeAttribute('readonly')"/>
                     </div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label" for="loginPassword">Password</label>
+                    <label class="form-label" for="loginPassword">${_t("Password")}</label>
                     <div class="pw-wrap form-field-wrap">
                         <svg class="form-field-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="8" width="10" height="9" rx="2"/><path d="M7 8V6a3 3 0 0 1 6 0v2" stroke-linecap="round"/></svg>
                         <input type="password" id="loginPassword" name="password" class="form-input" placeholder="••••••••"
                             autocomplete="current-password"
                             readonly onfocus="this.removeAttribute('readonly')" onclick="this.removeAttribute('readonly')"/>
-                        <button class="pw-toggle" id="pwToggle" type="button" aria-label="Toggle password visibility">
+                        <button class="pw-toggle" id="pwToggle" type="button" aria-label="${_t("Toggle password visibility")}">
                             <svg id="eyeIcon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                                 <path d="M1 10s3.5-7 9-7 9 7 9 7-3.5 7-9 7-9-7-9-7z"/>
                                 <circle cx="10" cy="10" r="3"/>
@@ -227,18 +229,18 @@ export function renderLoginLayout() {
                 <button class="btn-login" id="btnLogin" type="button">
                     <svg class="btn-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10h14M10 4l7 6-7 6"/></svg>
                     <span class="btn-spinner"></span>
-                    Sign In
+                    ${_t("Sign In")}
                 </button>
             </form>
 
             <div class="lp-form-footer">
                 <div class="security-note">
                     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 2l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V5l7-3z"/></svg>
-                    Secured with SHA-256 encryption
+                    ${_t("Secured with SHA-256 encryption")}
                 </div>
                 <div class="lp-contact">
                     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="4" width="16" height="12" rx="2"/><path d="M2 7l8 5 8-5" stroke-linecap="round"/></svg>
-                    <span>Need an account? <a href="mailto:adahm.ahmed@hanwhaegypt.com?subject=PPMS Account Request" class="lp-contact-link">Contact us</a></span>
+                    <span>${_t("Need an account?")} <a href="mailto:adahm.ahmed@hanwhaegypt.com?subject=PPMS Account Request" class="lp-contact-link">${_t("Contact us")}</a></span>
                 </div>
             </div>
         </div>

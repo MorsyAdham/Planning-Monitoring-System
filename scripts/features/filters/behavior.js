@@ -1,3 +1,4 @@
+import { _t } from '../../core/i18n.js';
 /* ================================================================
    FILTER BAR + EXECUTIVE SUMMARY — presentation behaviour
    • time-frame pills drive the (hidden) #filterTimeFrame select
@@ -8,7 +9,7 @@
    ================================================================ */
 /* global filterConfig, filterState, filterOptions, REPORT_FILTER_KEYS, ISSUE_FILTER_KEYS */
 
-const TF_LABELS = { day: 'Today', week: 'This week', month: 'This month', custom: 'Custom dates' };
+const TF_LABELS = { day: 'Today', week: 'This week', month: 'This month', custom: 'Custom dates' }; // translated where shown
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function globals() {
@@ -39,15 +40,15 @@ export function activeFilters() {
     }
     const tf = document.getElementById('filterTimeFrame')?.value;
     if (tf && tf !== 'all') {
-        let text = TF_LABELS[tf] || tf;
+        let text = _t(TF_LABELS[tf] || tf);
         if (tf === 'custom') {
             const a = document.getElementById('filterStartDate')?.value, b = document.getElementById('filterEndDate')?.value;
             if (a || b) text = `${a || '…'} → ${b || '…'}`;
         }
-        out.push({ key: '__time', label: 'Time', text });
+        out.push({ key: '__time', label: _t('Time'), text });
     }
     const q = document.getElementById('filterSearch')?.value.trim();
-    if (q) out.push({ key: '__search', label: 'Search', text: `"${q}"` });
+    if (q) out.push({ key: '__search', label: _t('Search'), text: `"${q}"` });
     return out;
 }
 
@@ -67,16 +68,16 @@ export function refreshFilterUI() {
     const chips = document.getElementById('fxChips');
     if (chips) {
         chips.innerHTML = active.map(a =>
-            `<button type="button" class="fx-chip" data-fx-clear="${esc(a.key)}" title="Remove this filter"><span><b>${esc(a.label)}:</b> ${esc(a.text)}</span><span class="fx-chip-x" aria-hidden="true">&times;</span></button>`).join('');
+            `<button type="button" class="fx-chip" data-fx-clear="${esc(a.key)}" title="${_t('Remove this filter')}"><span><b>${esc(a.label)}:</b> ${esc(a.text)}</span><span class="fx-chip-x" aria-hidden="true">&times;</span></button>`).join('');
     }
     const count = document.getElementById('fxActiveCount');
-    if (count) { count.hidden = !active.length; count.textContent = `${active.length} active`; }
+    if (count) { count.hidden = !active.length; count.textContent = _t('{n} active', { n: active.length }); }
 
     const scope = document.getElementById('exScope');
     if (scope) {
         const moduleLabel = document.querySelector('#moduleSelectorWrap [data-cs-value]')?.textContent.trim();
         const parts = active.map(a => a.text);
-        scope.textContent = [moduleLabel && moduleLabel !== '—' ? moduleLabel : '', parts.length ? parts.join(' · ') : 'All data']
+        scope.textContent = [moduleLabel && moduleLabel !== '—' ? moduleLabel : '', parts.length ? parts.join(' · ') : _t('All data')]
             .filter(Boolean).join(' — ');
     }
 

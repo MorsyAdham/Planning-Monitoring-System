@@ -6,6 +6,8 @@ window.PPMSModuleRuntime = (() => {
     // (a date-range object from buildForwardWindow/etc.) — using the alias avoids
     // accidentally reading `.PlanVersions` off that shadowed local instead.
     const PlanVersions = window.PlanVersions;
+    // Interface language (core/i18n.js); English if it hasn't loaded
+    const _t = window._t || ((text, vars) => (vars ? String(text).replace(/\{(\w+)\}/g, (m, k) => (vars[k] ?? m)) : text));
     const MODULE_KEY = 'ppms_active_module';
     const SESSION_KEY = 'kd1_session';
     const VEHICLES = ['K9', 'K10', 'K11'];
@@ -563,7 +565,7 @@ window.PPMSModuleRuntime = (() => {
         setText('brandTitle', config.title);
         setText('brandSubtitle', config.subtitle);
         setText('tableTitle', config.tableTitle);
-        setText('filterUnitLabel', config.unitLabel);
+        setText('filterUnitLabel', _t(config.unitLabel));
         populateCategoryFilter(config.categories);
 
         if (window.CustomSelect) {
@@ -639,21 +641,21 @@ window.PPMSModuleRuntime = (() => {
 
         // Dynamic text labels
         if (f100) {
-            setText('ganttTitle', 'F100 – KD2 Production Gantt');
-            setText('ganttSubtitle', 'Part Manufacturing Progress · Daily View');
-            setText('btnGanttEditLabel', 'Edit Gantt');
+            setText('ganttTitle', 'F100 – KD2 ' + _t('Production Gantt'));
+            setText('ganttSubtitle', _t('Part Manufacturing Progress · Daily View'));
+            setText('btnGanttEditLabel', _t('Edit Gantt'));
             setText('vpxTitle', 'F100 – KD2 Part Progress Matrix');
             setText('vpxSubtitle', 'Part-by-process completion · hover for details');
         } else if (kd2) {
-            setText('ganttTitle', 'F200 – KD2 Planning Gantt');
-            setText('ganttSubtitle', 'Battalion Plan · Daily Gantt View');
-            setText('btnGanttEditLabel', 'Edit Gantt');
+            setText('ganttTitle', 'F200 – KD2 ' + _t('Planning Gantt'));
+            setText('ganttSubtitle', _t('Battalion Plan · Daily Gantt View'));
+            setText('btnGanttEditLabel', _t('Edit Gantt'));
             setText('vpxTitle', 'F200 – KD2 VPX Matrix');
             setText('vpxSubtitle', 'Battalion-by-station planned vs actual · hover for details');
         } else {
-            setText('ganttTitle', 'F200 – KD1 Production Master Schedule');
-            setText('ganttSubtitle', 'Assembly Plan · Daily Gantt View');
-            setText('btnGanttEditLabel', 'Edit Plan');
+            setText('ganttTitle', 'F200 – KD1 ' + _t('Production Master Schedule'));
+            setText('ganttSubtitle', _t('Assembly Plan · Daily Gantt View'));
+            setText('btnGanttEditLabel', _t('Edit Plan'));
             setText('vpxTitle', 'F200 – KD1 Vehicle Production Progress');
             setText('vpxSubtitle', 'Station-by-station planned vs actual · hover for details');
         }

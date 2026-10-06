@@ -3,7 +3,12 @@
    Production-ready vanilla JS + Supabase + Chart.js
    ================================================================ */
 
+
 'use strict';
+
+// Interface language (scripts/core/i18n.js). Falls back to English if a
+// cached older page hasn't loaded the translation module.
+var _t = window._t || ((text, vars) => (vars ? String(text).replace(/\{(\w+)\}/g, (m, k) => (vars[k] ?? m)) : text));
 
 /* ──────────────────────────────────────────────────────────────────
    1. CONFIGURATION — Replace with your Supabase project credentials
@@ -34,7 +39,7 @@ function canEditPlan() { return isMasterAdmin() || getCurrentUser()?.role === 'p
 // so rows still stored as 'admin' (before migration 46) render correctly.
 const ROLE_LABELS = { master_admin: 'Master Admin', operator: 'Operator', planner: 'Planner', viewer: 'Viewer' };
 function normalizeRole(role) { return role === 'admin' ? 'operator' : role; }
-function roleLabel(role) { const r = normalizeRole(role); return ROLE_LABELS[r] || r || '—'; }
+function roleLabel(role) { const r = normalizeRole(role); return ROLE_LABELS[r] ? _t(ROLE_LABELS[r]) : (r || '—'); }
 function roleClass(role) { return normalizeRole(role) || 'viewer'; }
 function getCachedIP() { return getCurrentUser()?.ip || 'unknown'; }
 
@@ -912,8 +917,8 @@ function _syncGanttCombineButton(available) {
     btn.classList.toggle('is-on', _ganttCombineK1011);
     btn.setAttribute('aria-checked', _ganttCombineK1011 ? 'true' : 'false');
     btn.title = _ganttCombineK1011 && _ganttEditMode && _ganttReorderMode
-        ? 'Shown separately while Reorder route is on (the route order is per vehicle)'
-        : 'Process view: show K10 and K11 as one plan — both vehicles\' blocks on the same station rows (K11 blocks have a white left edge)';
+        ? _t('Shown separately while Reorder route is on (the route order is per vehicle)')
+        : _t('Process view: show K10 and K11 as one plan — both vehicles\' blocks on the same station rows (K11 blocks have a white left edge)');
 }
 document.addEventListener('click', e => {
     if (e.target.closest?.('#btnGanttCopyPlan')) getModuleRuntime()?.openCopyPlanModal?.();
@@ -932,16 +937,16 @@ document.addEventListener('click', e => {
 let _ganttTipEl = null, _ganttTipId = null, _ganttTipRaf = 0;
 function _ganttTipFmt(iso) {
     if (!iso) return '—';
-    return new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' });
+    return new Date(iso + 'T00:00:00').toLocaleDateString(window.PPMSi18n?.getLocale?.() || 'en-GB', { day: '2-digit', month: 'short', year: '2-digit' });
 }
 function _ganttTipWd(a, b) {
     if (!a || !b || b < a) return '';
     const n = daysBetween(a, b) + (new Date(a + 'T00:00:00').getDay() === 5 ? 0 : 1);
-    return `${n} wd`;
+    return _t('{n} wd', { n });
 }
 function _ganttTipHtml(task) {
     const st = ganttHighlightState(task);
-    const row = (k, v, cls = '') => v ? `<div class="gtip-row${cls ? ' ' + cls : ''}"><span>${k}</span><b>${v}</b></div>` : '';
+    const row = (k, v, cls = '') => v ? `<div class="gtip-row${cls ? ' ' + cls : ''}"><span>${_t(k)}</span><b>${v}</b></div>` : '';
     const f100 = isF100KD2Module();
     const plannedS = f100 ? task.planned_start_date : task.start_date;
     const plannedE = f100 ? task.planned_end_date : task.end_date;
@@ -963,16 +968,16 @@ function _ganttTipHtml(task) {
     }
     let delayHtml = '';
     const d = typeof delayDays === 'function' ? delayDays(task) : 0;
-    if (st === 'late-complete' || st === 'late') delayHtml = row(st === 'late' ? 'Overdue by' : 'Finished late by', `${d > 0 ? d : '—'} wd`, 'gtip-bad');
-    else if (st === 'early') delayHtml = row('Finished', 'early', 'gtip-good');
+    if (st === 'late-complete' || st === 'late') delayHtml = row(st === 'late' ? 'Overdue by' : 'Finished late by', d > 0 ? _t('{n} wd', { n: d }) : '—', 'gtip-bad');
+    else if (st === 'early') delayHtml = row('Finished', _t('early'), 'gtip-good');
     if (!f100 && isKD2Module() && st !== 'complete' && st !== 'early' && st !== 'late-complete') {
         try {
             const step = getPlanForecast(applyActiveFilters(currentData)).byRowId?.get(task.id);
-            if (step?.projEnd && step.projEnd > plannedE) delayHtml += row('Expected finish', `${_ganttTipFmt(step.projEnd)} <i>(+${_fcSlip(plannedE, step.projEnd)} wd)</i>`, 'gtip-bad');
+            if (step?.projEnd && step.projEnd > plannedE) delayHtml += row('Expected finish', `${_ganttTipFmt(step.projEnd)} <i>(${_t('+{n} wd', { n: _fcSlip(plannedE, step.projEnd) })})</i>`, 'gtip-bad');
         } catch {}
     }
     const comments = Array.isArray(task.comments) ? task.comments.length : 0;
-    return `<div class="gtip-head"><span class="gtip-title">${esc(title)}</span><span class="gtip-pill gtip-${st}">${GANTT_STATUS_ICON[st] ? GANTT_STATUS_ICON[st] + ' ' : ''}${GANTT_STATUS_LABEL[st] || ''}</span></div>`
+    return `<div class="gtip-head"><span class="gtip-title">${esc(title)}</span><span class="gtip-pill gtip-${st}">${GANTT_STATUS_ICON[st] ? GANTT_STATUS_ICON[st] + ' ' : ''}${_t(GANTT_STATUS_LABEL[st] || '')}</span></div>`
         + (sub ? `<div class="gtip-sub">${esc(sub)}</div>` : '')
         + `<div class="gtip-grid">`
         + row('Planned', `${_ganttTipFmt(plannedS)} → ${_ganttTipFmt(plannedE)} <i>${_ganttTipWd(plannedS, plannedE)}</i>`)
@@ -982,7 +987,7 @@ function _ganttTipHtml(task) {
         + row('Remark', esc(task.remark || ''))
         + row('Comments', comments ? String(comments) : '')
         + `</div>`
-        + (_ganttEditMode ? `<div class="gtip-foot">Drag to move · drag an edge to resize · ⋯ for more</div>` : '');
+        + (_ganttEditMode ? `<div class="gtip-foot">${_t('Drag to move · drag an edge to resize · ⋯ for more')}</div>` : '');
 }
 function _ganttHideTip() {
     _ganttTipId = null;
@@ -1254,7 +1259,7 @@ const GANTT_MOVE_HINTS = {
 };
 function _syncGanttMoveHint() {
     const hint = document.getElementById('gmtHint');
-    if (hint) hint.textContent = GANTT_MOVE_HINTS[_ganttMoveMode] || '';
+    if (hint) hint.textContent = _t(GANTT_MOVE_HINTS[_ganttMoveMode] || '');
 }
 
 // Every block of this battalion + vehicle type in the active version, straight
@@ -1382,7 +1387,7 @@ async function resolveGanttMoveSet(task) {
         const moveRows = pick(task, rows.length ? rows : currentData);
         if (moveRows.length > 1) {
             const units = new Set(moveRows.map(r => r.unit_serial)).size;
-            showToast(`Shifting ${units} vehicle${units === 1 ? '' : 's'} (${moveRows.length} blocks)…`, 'info');
+            showToast(_t(units === 1 ? 'Shifting 1 vehicle ({b} blocks)…' : 'Shifting {n} vehicles ({b} blocks)…', { n: units, b: moveRows.length }), 'info');
         }
         return moveRows;
     }
@@ -1760,7 +1765,7 @@ function updateMultiSelectButtonLabel(key) {
     if (!ISSUE_FILTER_KEYS.has(key) && !REPORT_FILTER_KEYS.has(key)) queueMicrotask(() => window.PPMSFilterUI?.refresh?.());
 
     if (!selected || selected.has('all') || selected.size === 0) {
-        btn.textContent = filterAllLabels[key] || 'All';
+        btn.textContent = _t(filterAllLabels[key] || 'All');
         return;
     }
     if (selected.size === 1) {
@@ -1769,7 +1774,7 @@ function updateMultiSelectButtonLabel(key) {
         btn.textContent = opt ? opt.label : v;
         return;
     }
-    btn.textContent = `${selected.size} selected`;
+    btn.textContent = _t('{n} selected', { n: selected.size });
 }
 
 /** Same summary text as the button label, for use in titles/filenames/export chips. */
@@ -1803,7 +1808,7 @@ function renderMultiSelectMenu(key) {
     menu.innerHTML = `
         <label class="ms-option ms-option-all">
             <input type="checkbox" data-value="all" ${allChecked ? 'checked' : ''} />
-            <span>All</span>
+            <span>${_t('All')}</span>
         </label>
         <div class="ms-option-divider"></div>
         ${options.map(o => `
@@ -1897,9 +1902,9 @@ function _mainBattalionLock() {
 }
 /** "Battalion · BTL-02 · from the battalion filter · Load all battalions" */
 function _battalionLockHtml(code) {
-    return `<span class="vpx-bat-label">Battalion</span>`
-        + `<span class="bat-lock" title="Set by the battalion filter (top filter bar / Gantt) — only this battalion is loaded"><b>${esc(code)}</b><span>from the battalion filter</span></span>`
-        + `<button type="button" class="bat-load-all" data-load-all-bats>Load all battalions</button>`;
+    return `<span class="vpx-bat-label">${_t('Battalion')}</span>`
+        + `<span class="bat-lock" title="${_t('Set by the battalion filter (top filter bar / Gantt) — only this battalion is loaded')}"><b>${esc(code)}</b><span>${_t('from the battalion filter')}</span></span>`
+        + `<button type="button" class="bat-load-all" data-load-all-bats>${_t('Load all battalions')}</button>`;
 }
 document.addEventListener('click', e => {
     if (!e.target.closest?.('[data-load-all-bats]')) return;
@@ -1923,9 +1928,9 @@ function _renderGanttBattalionChips() {
     const active = sel.has('all') ? 'all' : (sel.size === 1 ? [...sel][0] : null);
     const chip = (value, label) => `<button type="button" role="tab" aria-selected="${value === active}" class="vpx-type-tab vpx-bat-tab${value === active ? ' active' : ''}" data-gbat="${esc(value)}">${esc(label)}</button>`;
     el.hidden = false;
-    el.innerHTML = `<span class="vpx-bat-label">Battalion</span><span class="vpx-type-tabs vpx-bat-tabs" role="tablist" aria-label="Battalion to load">`
-        + chip('all', 'All') + opts.map(o => chip(o.value, o.label)).join('')
-        + (active === null ? `<button type="button" class="vpx-type-tab vpx-bat-tab active" disabled>${sel.size} selected</button>` : '')
+    el.innerHTML = `<span class="vpx-bat-label">${_t('Battalion')}</span><span class="vpx-type-tabs vpx-bat-tabs" role="tablist" aria-label="${_t('Battalion to load')}">`
+        + chip('all', _t('All')) + opts.map(o => chip(o.value, o.label)).join('')
+        + (active === null ? `<button type="button" class="vpx-type-tab vpx-bat-tab active" disabled>${_t('{n} selected', { n: sel.size })}</button>` : '')
         + `</span>`;
 }
 document.addEventListener('click', e => {
@@ -2054,7 +2059,7 @@ function _loaderSetProgress(pct, label) {
     const pctEl  = document.getElementById('appLoaderPct');
     const clamped = Math.max(0, Math.min(100, pct));
     if (fill)   fill.style.width = clamped + '%';
-    if (status && label) status.textContent = label;
+    if (status && label) status.textContent = _t(label);
     if (pctEl)  pctEl.textContent = Math.round(clamped) + '%';
 }
 
@@ -2064,7 +2069,7 @@ function _loaderSetWelcome() {
     if (!el) return;
     const u = getCurrentUser();
     const raw = (u?.name || u?.full_name || u?.email || '').split('@')[0].split(' ')[0];
-    el.textContent = raw ? `WELCOME, ${raw.toUpperCase()}` : 'WELCOME';
+    el.textContent = raw ? _t('WELCOME, {name}', { name: raw.toUpperCase() }) : _t('WELCOME');
 }
 
 /** HUD corner readout — which module (F200-KD1 / F200-KD2 / F100-KD2) is being loaded. */
@@ -2079,7 +2084,7 @@ let _loaderClockTimer = null;
 function _loaderStartClock() {
     const el = document.getElementById('appLoaderClock');
     if (!el) return;
-    const tick = () => { el.textContent = new Date().toLocaleTimeString('en-GB', { hour12: false }); };
+    const tick = () => { el.textContent = new Date().toLocaleTimeString(window.PPMSi18n?.getLocale?.() || 'en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }); };
     tick();
     _loaderClockTimer = setInterval(tick, 1000);
 }
@@ -2090,7 +2095,7 @@ function _loaderHide() {
     if (!el) return;
     _loaderSetProgress(100, 'All systems ready');
     const link = document.getElementById('appLoaderLink');
-    if (link) link.textContent = 'SECURE';
+    if (link) link.textContent = _t('SECURE');
     clearInterval(_loaderClockTimer);
     el.classList.add('app-loader--hidden');
     setTimeout(() => el.remove(), 550);
@@ -2129,7 +2134,7 @@ async function initializeApp() {
         showToast('Failed to initialise Supabase. Check your credentials.', 'error');
         console.error(err);
         const link = document.getElementById('appLoaderLink');
-        if (link) link.textContent = 'FAILED';
+        if (link) link.textContent = _t('FAILED');
         _loaderSetProgress(100, 'Connection failed');
         clearInterval(_loaderClockTimer);
         document.getElementById('appLoader')?.classList.add('app-loader--hidden');
@@ -2612,10 +2617,10 @@ function _renderGanttCoEditors() {
 
     let text;
     const names = peers.map(p => (p.name || p.email || 'Someone').split(' ')[0]);
-    if (iAmEditing && !peers.length) text = "You're editing this plan";
-    else if (iAmEditing) text = `You &amp; ${esc(names.join(', '))} editing together`;
-    else if (peers.length === 1) text = `${esc(names[0])} is editing this plan`;
-    else text = `${esc(names.join(', '))} are editing this plan`;
+    if (iAmEditing && !peers.length) text = _t("You're editing this plan");
+    else if (iAmEditing) text = _t('You & {names} editing together', { names: esc(names.join(', ')) });
+    else if (peers.length === 1) text = _t('{name} is editing this plan', { name: esc(names[0]) });
+    else text = _t('{names} are editing this plan', { names: esc(names.join(', ')) });
 
     badge.hidden = false;
     badge.className = 'gce-badge' + (iAmEditing ? ' gce-badge-me' : '');
@@ -4455,7 +4460,7 @@ function _renderThFilterMenu(field) {
     menu.innerHTML = `
         <label class="ms-option ms-option-all">
             <input type="checkbox" data-value="all" ${allChecked ? 'checked' : ''} />
-            <span>All</span>
+            <span>${_t('All')}</span>
         </label>
         <div class="ms-option-divider"></div>
         ${options.map(o => `
@@ -5053,7 +5058,7 @@ function _renderExBattalionTabs(data) {
     }
     if (_exBattalion !== 'all' && !bats.includes(_exBattalion)) _exBattalion = 'all';
     const tab = (value, label) => `<button type="button" role="tab" aria-selected="${value === _exBattalion}" class="vpx-type-tab vpx-bat-tab${value === _exBattalion ? ' active' : ''}" data-exbat="${esc(value)}">${esc(label)}</button>`;
-    el.innerHTML = `<span class="vpx-bat-label" title="Switches this section only — the battalion filter decides what is loaded">View</span><span class="vpx-type-tabs vpx-bat-tabs" role="tablist" aria-label="Executive Summary battalion">${tab('all', 'All')}${bats.map(b => tab(b, b)).join('')}</span>`;
+    el.innerHTML = `<span class="vpx-bat-label" title="${_t('Switches this section only — the battalion filter decides what is loaded')}">${_t('View')}</span><span class="vpx-type-tabs vpx-bat-tabs" role="tablist" aria-label="${_t('Executive Summary battalion')}">${tab('all', _t('All'))}${bats.map(b => tab(b, b)).join('')}</span>`;
     el.querySelectorAll('[data-exbat]').forEach(btn => btn.addEventListener('click', () => {
         if (btn.dataset.exbat === _exBattalion) return;
         _exBattalion = btn.dataset.exbat;
@@ -5092,7 +5097,7 @@ function updateSummary(data) {
     document.querySelectorAll('#exSplit .ex-split-seg').forEach(seg => {
         const n = split[seg.dataset.k] || 0;
         seg.style.flexGrow = total ? n : (seg.dataset.k === 'planned' ? 1 : 0);
-        seg.title = `${seg.dataset.k === 'inprogress' ? 'In progress' : seg.dataset.k === 'planned' ? 'Not started' : seg.dataset.k[0].toUpperCase() + seg.dataset.k.slice(1)}: ${n}`;
+        seg.title = `${_t({ completed: 'On time', late: 'Late', inprogress: 'In progress', overdue: 'Overdue', planned: 'Not started' }[seg.dataset.k] || seg.dataset.k)}: ${n}`;
     });
     setText('exLegCompleted', completed); setText('exLegLate', late); setText('exLegProgress', inProgress);
     setText('exLegOverdue', overdue); setText('exLegPlanned', notStarted);
@@ -5110,7 +5115,7 @@ function updateSummary(data) {
 function _fmtDeliveryDate(iso) {
     if (!iso) return '—';
     const d = new Date(iso + 'T00:00:00');
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    return d.toLocaleDateString(window.PPMSi18n?.getLocale?.() || 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 function _addWorkingDays(dateStr, n) {
@@ -5346,7 +5351,7 @@ function _updateDeliveryCard(data) {
     expectedEl.textContent = _fmtDeliveryDate(expectedDelivery);
 
     if (totalDelay > 0) {
-        deltaEl.textContent = `+${totalDelay} wd`;
+        deltaEl.textContent = _t('+{n} wd', { n: totalDelay });
         deltaEl.className = 'delivery-delta delivery-delta--late';
         deltaEl.style.display = '';
     } else {
@@ -5356,7 +5361,7 @@ function _updateDeliveryCard(data) {
     const card = document.querySelector('.card-delivery');
     if (card) {
         card.style.cursor = 'pointer';
-        card.title = 'Click to see delay breakdown';
+        card.title = _t('Click to see delay breakdown');
         card.onclick = () => _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, totalDelay, fc);
     }
 }
@@ -5613,7 +5618,7 @@ function _renderVpxBattalionTabs(battalions) {
     el.hidden = false;
     const lock = _mainBattalionLock();
     if (lock && battalions.length === 1) { el.innerHTML = _battalionLockHtml(lock); return; }
-    el.innerHTML = `<span class="vpx-bat-label" title="Switches the VPX only — the battalion filter decides what is loaded">View</span><span class="vpx-type-tabs vpx-bat-tabs" role="tablist" aria-label="Battalion">${battalions.map(b =>
+    el.innerHTML = `<span class="vpx-bat-label" title="${_t('Switches the VPX only — the battalion filter decides what is loaded')}">${_t('View')}</span><span class="vpx-type-tabs vpx-bat-tabs" role="tablist" aria-label="${_t('Battalion')}">${battalions.map(b =>
         `<button type="button" role="tab" aria-selected="${b === _vpxBattalionFilter}" class="vpx-type-tab vpx-bat-tab${b === _vpxBattalionFilter ? ' active' : ''}" data-vbat="${esc(b)}">${esc(b)}</button>`
     ).join('')}</span>`;
     el.querySelectorAll('.vpx-bat-tab').forEach(btn => {
@@ -8525,7 +8530,7 @@ function setConnStatus(state, label) {
     const el = document.getElementById('connIndicator');
     const lbl = el.querySelector('.conn-label');
     el.className = `conn-indicator ${state}`;
-    lbl.textContent = label;
+    lbl.textContent = _t(label);
 }
 
 function setTableLoading(loading) {
@@ -8580,9 +8585,9 @@ function startClock() {
     function tick() {
         const now = new Date();
         document.getElementById('headerClock').textContent =
-            now.toLocaleTimeString('en-GB', { hour12: false });
+            now.toLocaleTimeString(window.PPMSi18n?.getLocale?.() || 'en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
         document.getElementById('headerDate').textContent =
-            now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+            now.toLocaleDateString(window.PPMSi18n?.getLocale?.() || 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
     }
     tick();
     setInterval(tick, 1000);
@@ -9348,7 +9353,7 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
         return {
             date: d,
             dayNum: dt.getDate(),
-            month: dt.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }),
+            month: dt.toLocaleDateString(window.PPMSi18n?.getLocale?.() || 'en-GB', { month: 'short', year: 'numeric' }),
             isoWeek: getISOWeek(d),
             isSat: dow === 6,
             isToday: d === today,
@@ -9618,7 +9623,7 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
     // ── 3. Header HTML ─────────────────────────────────────────────
     let mHtml = `<div class="gh-corner" style="width:${GANTT_LABEL_W}px;height:28px"></div>`;
     let wHtml = `<div class="gh-corner" style="width:${GANTT_LABEL_W}px;height:22px"></div>`;
-    let dHtml = `<div class="gh-corner gh-corner-label" style="width:${GANTT_LABEL_W}px;height:28px">${isF100ProcessView ? 'Part / Process' : isF100KD2Module() ? 'Battalion / Vehicle / Unit' : isKd2ProcessView ? 'Vehicle / Station' : isKD2Module() ? 'Battalion / Vehicle / Unit' : 'Vehicle / Unit'}</div>`;
+    let dHtml = `<div class="gh-corner gh-corner-label" style="width:${GANTT_LABEL_W}px;height:28px">${_t(isF100ProcessView ? 'Part / Process' : isF100KD2Module() ? 'Battalion / Vehicle / Unit' : isKd2ProcessView ? 'Vehicle / Station' : isKD2Module() ? 'Battalion / Vehicle / Unit' : 'Vehicle / Unit')}</div>`;
 
     let runMonth = '', runMonthSpan = 0;
     let runWeek = -1, runWeekSpan = 0;
@@ -9790,7 +9795,7 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
           <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" style="width:10px;height:10px;flex-shrink:0;opacity:.7">
             <path d="M3 4h8M3 7h8M3 10h8" stroke-dasharray="2 1.5"/>
           </svg>
-          ${esc(lineLabel)}
+          ${esc(_t(lineLabel))}
         </div>
         <div class="gr-track gr-process-cat-track" style="width:${totalW}px">${trackZonesHtml}${bgCells}</div>
       </div>`;
@@ -9851,7 +9856,7 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
             const rowH = Math.max(GANTT_ROW_H, numLanes * LANE_H + BAR_GAP * 2);
             const lineShort = l => (/^Assembly/i.test(l) ? 'Assembly' : l);
             const lineTagsHtml = lineSections && lineSections.length > 1
-                ? `<div class="gr-line-tags">${lineSections.map(sec => `<span class="gr-line-tag gr-line-${esc(lineShort(sec.line).toLowerCase())}" style="top:${BAR_GAP + sec.start * LANE_H}px;height:${sec.lanes * LANE_H}px" title="${esc(sec.line)}">${esc(lineShort(sec.line))}</span>`).join('')}</div>`
+                ? `<div class="gr-line-tags">${lineSections.map(sec => `<span class="gr-line-tag gr-line-${esc(lineShort(sec.line).toLowerCase())}" style="top:${BAR_GAP + sec.start * LANE_H}px;height:${sec.lanes * LANE_H}px" title="${esc(_t(sec.line))}">${esc(_t(lineShort(sec.line)))}</span>`).join('')}</div>`
                 : '';
             const lineBandsHtml = lineSections && lineSections.length > 1
                 ? lineSections.map((sec, i) => `<div class="gr-line-band${i % 2 ? ' gr-line-band-alt' : ''}" style="top:${BAR_GAP / 2 + sec.start * LANE_H}px;height:${sec.lanes * LANE_H}px"></div>`).join('')
@@ -19505,7 +19510,7 @@ function isGanttFullscreen() {
 
 function syncGanttFullscreenButtons() {
     const active = isGanttFullscreen();
-    const label = active ? 'Exit Full Screen' : 'Full Screen';
+    const label = active ? _t('Exit Full Screen') : _t('Full Screen');
     const host = getGanttCardHost();
     if (host) host.classList.toggle('is-fullscreen', active);
     [
@@ -19567,7 +19572,7 @@ function isVpxFullscreen() {
 
 function syncVpxFullscreenButtons() {
     const active = isVpxFullscreen();
-    const label = active ? 'Exit Full Screen' : 'Full Screen';
+    const label = active ? _t('Exit Full Screen') : _t('Full Screen');
     const host = getVpxCardHost();
     if (host) host.classList.toggle('is-fullscreen', active);
     [
@@ -19643,7 +19648,7 @@ function toggleTableFullscreen() {
     ['btnTableFullscreen', 'btnTableFullscreenLabel'].forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
-        if (id.endsWith('Label')) el.textContent = isFs ? 'Exit Full Screen' : 'Full Screen';
+        if (id.endsWith('Label')) el.textContent = isFs ? _t('Exit Full Screen') : _t('Full Screen');
         else el.setAttribute('aria-pressed', String(isFs));
     });
 }
@@ -19683,7 +19688,7 @@ function syncGanttLegendUi() {
         btn.disabled = !hasContent;
         btn.setAttribute('aria-expanded', hasContent && _ganttLegendOpen ? 'true' : 'false');
     }
-    if (label) label.textContent = hasContent && _ganttLegendOpen ? 'Hide Legend' : 'Show Legend';
+    if (label) label.textContent = hasContent && _ganttLegendOpen ? _t('Hide Legend') : _t('Show Legend');
 }
 
 function clearGanttHoverGuide() {
@@ -19806,14 +19811,14 @@ function _syncUndoButtons() {
     if (btnU) {
         btnU.disabled = _undoStack.length === 0;
         btnU.setAttribute('title', _undoStack.length
-            ? 'Undo last move (' + _undoStack.length + ' in history)'
-            : 'Nothing to undo');
+            ? _t('Undo last move ({n} in history)', { n: _undoStack.length })
+            : _t('Nothing to undo'));
     }
     if (btnR) {
         btnR.disabled = _redoStack.length === 0;
         btnR.setAttribute('title', _redoStack.length
-            ? 'Redo (' + _redoStack.length + ' available)'
-            : 'Nothing to redo');
+            ? _t('Redo ({n} available)', { n: _redoStack.length })
+            : _t('Nothing to redo'));
     }
 }
 
@@ -19845,10 +19850,10 @@ function _syncSelectedBlockUi() {
     const selStrip = document.getElementById('ganttSelStrip');
     if (countEl) countEl.textContent = String(count);
     const nounEl = document.getElementById('ganttSelectedNoun');
-    if (nounEl) nounEl.textContent = count === 1 ? 'block' : 'blocks';
+    if (nounEl) nounEl.textContent = count === 1 ? _t('block') : _t('blocks');
     if (delBtn) {
         delBtn.disabled = count === 0;
-        delBtn.textContent = count > 0 ? `Delete ${count} block${count === 1 ? '' : 's'}` : 'Delete selected';
+        delBtn.textContent = count > 0 ? _t(count === 1 ? 'Delete {n} block' : 'Delete {n} blocks', { n: count }) : _t('Delete selected');
     }
     if (selStrip) selStrip.hidden = count === 0;
     document.querySelectorAll('[data-gantt-lane-select]').forEach(btn => {
@@ -19979,7 +19984,7 @@ function syncGanttModuleEditControls() {
     }
 
     const scopeLabel = document.getElementById('ganttReorderScope');
-    if (scopeLabel) scopeLabel.textContent = 'Route order · this version';
+    if (scopeLabel) scopeLabel.textContent = _t('Route order · this version');
 
     document.body.classList.toggle('gantt-reorder-active', _ganttEditMode && _ganttReorderMode);
 }
@@ -20252,7 +20257,7 @@ async function _applyDateChanges(changes) {
 async function savePlanChanges(changes) {
     if (!changes.length) return;
     markLocalSave();
-    showToast(`Saving ${changes.length} block${changes.length > 1 ? 's' : ''}…`, 'info');
+    showToast(_t(changes.length > 1 ? 'Saving {n} blocks…' : 'Saving {n} block…', { n: changes.length }), 'info');
 
     try {
         await _applyDateChanges(changes);
@@ -20263,7 +20268,7 @@ async function savePlanChanges(changes) {
             { count: changes.length, sample: { id: changes[0].id, newStart: changes[0].newStart } }
         );
 
-        showToast(`${changes.length} block${changes.length > 1 ? 's' : ''} rescheduled ✓`, 'success');
+        showToast(_t(changes.length > 1 ? '{n} blocks rescheduled ✓' : '{n} block rescheduled ✓', { n: changes.length }), 'success');
         if (_ganttEditMode) {
             if (changes.length === 1) {
                 const c = changes[0];
