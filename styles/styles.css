@@ -2435,6 +2435,7 @@ body {
     border-radius: var(--radius);
     background: var(--clr-surface-2);
     overflow: hidden;
+    flex-shrink: 0; /* keep each card full height inside the scrolling column */
 }
 
 .kd2-leadtime-head {
@@ -8565,6 +8566,12 @@ body.gantt-reorder-active .gr-process-cat-sep .gr-label {
 .gc-row-menu-open .gr-track {
     overflow: visible; /* let the bar menu escape the track bounds */
     z-index: 81;
+}
+
+/* Keep the sticky station name above the raised track, so bars scrolled
+   to the left don't paint over it while a menu is open. */
+.gc-row-menu-open .gr-label {
+    z-index: 82;
 }
 
 .gc-bar-menu-open {

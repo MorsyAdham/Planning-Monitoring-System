@@ -8533,11 +8533,6 @@ export default {
   "ko": "용어집",
   "ar": "مسرد المصطلحات"
  },
- "Hide topics your role cannot use": {
-  "area": "Help & tour",
-  "ko": "내 역할로 사용할 수 없는 항목 숨기기",
-  "ar": "إخفاء الموضوعات التي لا يمكن لدورك استخدامها"
- },
  "Jump straight to any part of the page: <b>Summary</b>, <b>Schedule</b>, <b>Progress</b>, <b>Analytics</b>, <b>Plan Table</b> and <b>Issues</b>. The section you are in is underlined.": {
   "area": "Help & tour",
   "ko": "페이지의 원하는 부분으로 바로 이동합니다: <b>요약</b>, <b>일정</b>, <b>진행 현황</b>, <b>분석</b>, <b>계획 표</b>, <b>이슈</b>. 현재 섹션에는 밑줄이 표시됩니다.",
@@ -9138,6 +9133,11 @@ export default {
   "ko": "전체 모듈",
   "ar": "كل الوحدات"
  },
+ "All roles": {
+  "area": "Administration",
+  "ko": "전체 역할",
+  "ar": "كل الأدوار"
+ },
  "All users": {
   "area": "Administration",
   "ko": "전체 사용자",
@@ -9307,6 +9307,11 @@ export default {
   "area": "Administration",
   "ko": "납품 마감일",
   "ar": "موعد التسليم النهائي"
+ },
+ "Download the {a} edition of the manual as a Word document": {
+  "area": "Administration",
+  "ko": "{a}용 매뉴얼을 Word 문서로 다운로드",
+  "ar": "تنزيل نسخة {a} من الدليل كمستند Word"
  },
  "e.g.": {
   "area": "Administration",
@@ -9613,6 +9618,11 @@ export default {
   "ko": "담당자",
   "ar": "المسؤول"
  },
+ "Pick a chapter, search above, or ask the assistant at the bottom left. Topics marked with a lock are not available for your role. Use \"Topics for\" at the top to see — and download — the manual for one role.": {
+  "area": "Administration",
+  "ko": "장을 선택하거나, 위에서 검색하거나, 왼쪽 아래 어시스턴트에게 물어보세요. 자물쇠 표시 항목은 현재 역할로 사용할 수 없습니다. 위의 \"대상 역할\"에서 한 역할의 매뉴얼을 보고 다운로드할 수 있습니다.",
+  "ar": "اختر فصلًا، أو ابحث في الأعلى، أو اسأل المساعد أسفل اليسار. الموضوعات المعلَّمة بقفل غير متاحة لدورك. استخدم \"المواضيع لـ\" في الأعلى لعرض الدليل — وتنزيله — لدور واحد."
+ },
  "Plan block": {
   "area": "Administration",
   "ko": "계획 블록",
@@ -9808,6 +9818,16 @@ export default {
   "ko": "비밀번호 표시 / 숨기기",
   "ar": "إظهار / إخفاء كلمة المرور"
  },
+ "Show the manual for one role — only the topics that role can use. Word downloads the same selection.": {
+  "area": "Administration",
+  "ko": "한 역할의 매뉴얼만 표시합니다 — 해당 역할이 사용할 수 있는 주제만 보입니다. Word도 같은 선택으로 내려받습니다.",
+  "ar": "اعرض الدليل لدور واحد — المواضيع التي يمكن لذلك الدور استخدامها فقط. يُنزَّل ملف Word بالاختيار نفسه."
+ },
+ "Show topics for": {
+  "area": "Administration",
+  "ko": "역할별 주제 보기",
+  "ar": "عرض المواضيع لـ"
+ },
  "showed {a} in the {b} plan": {
   "area": "Live edits",
   "ko": "{b} 계획에서 {a} 다시 표시",
@@ -9927,6 +9947,11 @@ export default {
   "area": "Administration",
   "ko": "오늘",
   "ar": "اليوم"
+ },
+ "Topics for": {
+  "area": "Administration",
+  "ko": "대상 역할",
+  "ar": "المواضيع لـ"
  },
  "Undid": {
   "area": "Administration",

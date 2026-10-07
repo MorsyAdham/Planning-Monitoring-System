@@ -1,8 +1,8 @@
 {
- "version": "v159-d5e1972",
- "label": "v159",
- "deployedAt": "2026-10-07T09:58:31.833Z",
- "notes": "Update the user manual, screenshots and guided tour",
+ "version": "v160-ea16fa1",
+ "label": "v160",
+ "deployedAt": "2026-10-07T10:33:43.601Z",
+ "notes": "Add role-based manual view and retake all manual screenshots",
  "files": [
   "index.html",
   "login.html",

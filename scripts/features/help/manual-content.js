@@ -1021,9 +1021,9 @@ export const MANUAL_SECTIONS = [
         steps: [
             'Pick a chapter on the start screen or in the contents on the left.',
             'Type in the search box to find a topic (for example "x-ray" or "export").',
-            'Tick "My role only" to hide topics your role cannot use.',
+            'Choose a role in "Topics for" (All roles, Viewer, Operator, Planner or Master Admin) to see only the topics that role can use — your own role is marked "(you)". The choice is remembered.',
             'Press a topic\'s "Show me" button to go straight to that feature.',
-            'Press Word to download the manual as a Word document for printing or email.',
+            'Press Word to download the manual as a Word document for printing or email. It downloads the edition for the role chosen in "Topics for" — for example "Word · Operator" for an Operator\'s manual.',
         ],
         related: ['tour', 'assistant'],
         keywords: ['help', 'manual', 'guide', 'documentation', 'how to'],

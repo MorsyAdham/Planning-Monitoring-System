@@ -15,6 +15,16 @@ import { getCurrentUser } from '../../core/guards.js';
 const MODULE_LABELS = { all: 'All modules', kd1: 'KD1', kd2: 'F200-KD2', f100kd2: 'F100-KD2' };
 const ROLE_RANK = { viewer: 0, operator: 1, planner: 2, master_admin: 3 };
 const SECTION_MIN_RANK = { all: 0, operator: 1, planner: 2, master_admin: 3 };
+/* "Topics for" choice: which role the manual is shown (and downloaded) for.
+   The Word editions are built by tools/build_manual_docx.py. */
+const VIEW_ROLES = [
+    { id: '', label: 'All roles', file: 'PPMS_User_Manual.docx' },
+    { id: 'viewer', label: 'Viewer', file: 'PPMS_User_Manual_Viewer.docx' },
+    { id: 'operator', label: 'Operator', file: 'PPMS_User_Manual_Operator.docx' },
+    { id: 'planner', label: 'Planner', file: 'PPMS_User_Manual_Planner.docx' },
+    { id: 'master_admin', label: 'Master Admin', file: 'PPMS_User_Manual_Master_Admin.docx' },
+];
+const VIEW_ROLE_KEY = 'ppms_help_view_role';
 
 /** One line icon per chapter (24×24, stroke). */
 const GROUP_ICONS = {
@@ -55,8 +65,12 @@ export function renderHelp() {
                     <input type="search" id="helpSearch" placeholder="Search the manual — e.g. x-ray, export, password" autocomplete="off" />
                 </div>
                 <div class="help-top-actions">
-                    <label class="help-mine" title="Hide topics your role cannot use"><input type="checkbox" id="helpOnlyMine" /> <span>My role only</span></label>
-                    <a class="help-download" href="assets/help/PPMS_User_Manual.docx" download title="Download the manual as a Word document">
+                    <label class="help-role" title="Show the manual for one role — only the topics that role can use. Word downloads the same selection.">
+                        ${icon('<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>')}
+                        <span class="help-role-label">Topics for</span>
+                        <select id="helpViewRole" aria-label="Show topics for"></select>
+                    </label>
+                    <a class="help-download" id="helpDownload" href="assets/help/PPMS_User_Manual.docx" download title="Download the manual as a Word document">
                         ${icon('<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>')}<span>Word</span>
                     </a>
                     <button class="help-close" id="helpClose" aria-label="Close help">${icon('<path d="M6 6l12 12M18 6L6 18"/>')}</button>
@@ -70,9 +84,41 @@ export function renderHelp() {
     </div>`;
 }
 
-function userRank() {
+function userRole() {
     const r = getCurrentUser()?.role;
-    return ROLE_RANK[r === 'admin' ? 'operator' : r] ?? 0;
+    return r === 'admin' ? 'operator' : (r || 'viewer');
+}
+function userRank() {
+    return ROLE_RANK[userRole()] ?? 0;
+}
+/** The role chosen in "Topics for" ('' = all roles). */
+function viewRole() {
+    return document.getElementById('helpViewRole')?.value || '';
+}
+
+/** Fill the "Topics for" list (your own role is marked) and restore the last choice. */
+function fillViewRoles() {
+    const sel = document.getElementById('helpViewRole');
+    if (!sel) return;
+    const mine = userRole();
+    let saved = '';
+    try { saved = localStorage.getItem(VIEW_ROLE_KEY) || ''; } catch {}
+    const tr = t => (window._t ? window._t(t) : t);
+    sel.innerHTML = VIEW_ROLES.map(r => `<option value="${r.id}">${esc(tr(r.label))}${r.id === mine ? ` ${esc(tr('(you)'))}` : ''}</option>`).join('');
+    sel.value = VIEW_ROLES.some(r => r.id === saved) ? saved : '';
+    syncDownload();
+}
+
+/** The Word button downloads the edition for the chosen role. */
+function syncDownload() {
+    const a = document.getElementById('helpDownload');
+    if (!a) return;
+    const r = VIEW_ROLES.find(x => x.id === viewRole()) || VIEW_ROLES[0];
+    const tr = t => (window._t ? window._t(t) : t);
+    a.href = `assets/help/${r.file}`;
+    a.setAttribute('download', r.file);
+    a.querySelector('span').textContent = r.id ? `Word · ${tr(r.label)}` : 'Word';
+    a.title = r.id ? `Download the ${r.label} edition of the manual as a Word document` : 'Download the manual as a Word document';
 }
 
 function sectionHtml(s) {
@@ -135,9 +181,9 @@ function matches(s, q) {
 
 function visibleSections() {
     const q = document.getElementById('helpSearch')?.value.trim() || '';
-    const onlyMine = !!document.getElementById('helpOnlyMine')?.checked;
-    const rank = userRank();
-    return { q, list: MANUAL_SECTIONS.filter(s => matches(s, q) && (!onlyMine || rank >= (SECTION_MIN_RANK[s.roles] ?? 0))) };
+    const role = viewRole();
+    const rank = role ? ROLE_RANK[role] : Infinity;
+    return { q, list: MANUAL_SECTIONS.filter(s => matches(s, q) && rank >= (SECTION_MIN_RANK[s.roles] ?? 0)) };
 }
 
 function render() {
@@ -181,7 +227,7 @@ function render() {
     const overview = q ? '' : `
         <section class="help-hero">
             <h3>Welcome to PPMS</h3>
-            <p>Pick a chapter, search above, or ask the assistant at the bottom left. Topics marked with a lock are not available for your role.</p>
+            <p>Pick a chapter, search above, or ask the assistant at the bottom left. Topics marked with a lock are not available for your role. Use "Topics for" at the top to see — and download — the manual for one role.</p>
             <div class="help-hero-actions">
                 <button type="button" class="help-hero-tour" data-help-tour>${icon('<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>')}<span><strong>Take the guided tour</strong><small>A 2-minute walk around the screen</small></span></button>
                 <button type="button" class="help-hero-tour help-hero-tour--ghost" data-help-jump="help-quick-start">${icon('<path d="M5 12h14M13 6l6 6-6 6"/>')}<span><strong>Your first 10 minutes</strong><small>A quick-start checklist</small></span></button>
@@ -236,6 +282,7 @@ function open(sectionId) {
     if (!overlay) return;
     overlay.hidden = false;
     document.body.classList.add('help-open');
+    fillViewRoles();
     render();
     if (sectionId) requestAnimationFrame(() => document.getElementById(`help-${sectionId}`)?.scrollIntoView({ block: 'start' }));
     else document.getElementById('helpSearch')?.focus();
@@ -253,7 +300,11 @@ export function wireHelp() {
     document.getElementById('helpClose')?.addEventListener('click', close);
     let t = null;
     document.getElementById('helpSearch')?.addEventListener('input', () => { clearTimeout(t); t = setTimeout(render, 120); });
-    document.getElementById('helpOnlyMine')?.addEventListener('change', render);
+    document.getElementById('helpViewRole')?.addEventListener('change', () => {
+        try { localStorage.setItem(VIEW_ROLE_KEY, viewRole()); } catch {}
+        syncDownload();
+        render();
+    });
     document.getElementById('helpContent')?.addEventListener('scroll', () => requestAnimationFrame(spy), { passive: true });
     document.getElementById('helpOverlay')?.addEventListener('click', e => {
         if (e.target.id === 'helpOverlay') { close(); return; }
