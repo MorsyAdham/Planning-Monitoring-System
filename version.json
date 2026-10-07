@@ -1,8 +1,8 @@
 {
- "version": "v128-164ff34",
- "label": "v128",
- "deployedAt": "2026-10-06T13:28:14.267Z",
- "notes": "Live active users panel; log exports and returning sessions",
+ "version": "v129-d5e1972",
+ "label": "v129",
+ "deployedAt": "2026-10-07T09:58:44.405Z",
+ "notes": "Update the user manual, screenshots and guided tour",
  "files": [
   "index.html",
   "login.html",
