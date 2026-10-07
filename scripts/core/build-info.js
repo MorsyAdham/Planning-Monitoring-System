@@ -1,2 +1,2 @@
 /* Written by tools/deploy.sh - the version of PPMS this code is. */
-window.PPMS_BUILD = {"version":"v158-164ff34","label":"v158","deployedAt":"2026-10-06T13:28:07.487Z","notes":"Live active users panel; log exports and returning sessions"};
+window.PPMS_BUILD = {"version":"v159-d5e1972","label":"v159","deployedAt":"2026-10-07T09:58:31.833Z","notes":"Update the user manual, screenshots and guided tour"};

@@ -158,6 +158,7 @@ tr.ppms-flash > td { background: color-mix(in srgb, var(--clr-accent) 12%, trans
 }
 
 [data-theme="light"] .um2-chip span { background: #eef2f7; }
+[data-theme="light"] .um2-chip.is-on span { background: rgba(255, 255, 255, .22); color: #fff; }
 html[dir="rtl"] .al2-diff th, html[dir="rtl"] .al2-diff td { text-align: right; }
 html[dir="rtl"] .um2-form { animation-name: um2InRtl; }
 @keyframes um2InRtl { from { transform: translateX(-16px); opacity: 0; } }

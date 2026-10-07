@@ -54,6 +54,11 @@ const STEPS = [
         text: 'Pick the look you prefer — Dark, Light, Crimson Red and more. Your choice is remembered.',
     },
     {
+        target: '#langMenuWrap',
+        title: 'Language',
+        text: 'Use PPMS in <b>English</b>, <b>Korean (한국어)</b> or <b>Arabic (العربية)</b>. Your choice is remembered.',
+    },
+    {
         target: '#navMoreWrap',
         title: 'The menu',
         text: 'The <b>Help &amp; User Manual</b> and this <b>Guided tour</b> live here, together with the tools your role allows — Unit Codes, Manage Processes, Plan Versions, User Management and the Audit Log.',
@@ -62,6 +67,12 @@ const STEPS = [
         target: '#navUserChip',
         title: 'Your account',
         text: 'Your name and role. Click it to change your password or sign out. The green dot by the clock means you are connected and receiving live updates.',
+    },
+    {
+        target: '#activeUsersWrap',
+        roles: ['master_admin'],
+        title: 'Active users',
+        text: 'See who is online right now — live, with what they are doing and where. Press <b>Activity</b> to open a person\'s Audit Log.',
     },
     {
         target: '#overviewSegment',
@@ -89,7 +100,7 @@ const STEPS = [
         target: '#ganttSection',
         scroll: 'start',
         title: 'Production Schedule',
-        text: 'The plan on a calendar. Hover any bar for its dates and status; scroll sideways through time. <b>TODAY</b> is marked and Saturdays are shaded.',
+        text: 'The plan on a calendar. Hover any block for a card with its dates, status and delay; the key above the chart explains the status badges. Scroll sideways through time — <b>TODAY</b> is marked and Saturdays are shaded.',
     },
     {
         target: '#ganttViewToggle',
