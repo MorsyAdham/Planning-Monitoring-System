@@ -81,16 +81,23 @@ body.help-open { overflow: hidden; }
 .help-searchbox input::placeholder { color: var(--clr-text-dim); }
 
 .help-top-actions { display: flex; align-items: center; gap: 8px; }
-.help-mine {
+/* "Topics for" — show (and download) the manual for one role */
+.help-role {
     display: flex; align-items: center; gap: 6px;
-    padding: 0 12px; height: 36px;
+    padding: 0 4px 0 10px; height: 36px;
     border: 1px solid var(--clr-border);
     border-radius: 10px;
     font-size: .78rem; font-weight: 600;
     color: var(--clr-text-muted);
-    cursor: pointer; user-select: none;
+    background: var(--clr-surface);
 }
-.help-mine input { accent-color: var(--clr-accent); }
+.help-role svg { width: 15px; height: 15px; flex: none; }
+.help-role select {
+    height: 30px; border: none; border-radius: 7px; padding: 0 6px;
+    background: var(--clr-surface-2); color: var(--clr-text);
+    font: inherit; font-weight: 700; cursor: pointer;
+}
+.help-role:focus-within { border-color: var(--clr-accent); }
 .help-download {
     display: flex; align-items: center; gap: 6px;
     padding: 0 14px; height: 36px;
@@ -319,7 +326,7 @@ body.help-open { overflow: hidden; }
     .help-shell { border-radius: 0; }
     .help-top { grid-template-columns: 1fr auto; }
     .help-searchbox { grid-column: 1 / -1; grid-row: 2; }
-    .help-subtitle, .help-mine span { display: none; }
+    .help-subtitle, .help-role-label { display: none; }
     .help-body { grid-template-columns: 1fr; }
     .help-toc { display: none; }
     .help-content { padding: 18px 16px 60px; }

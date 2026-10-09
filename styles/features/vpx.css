@@ -145,3 +145,73 @@
 .bat-load-all:hover { text-decoration: underline; }
 [data-theme="light"] .bat-lock { border-color: #d97706; background: #fffbeb; }
 [data-theme="light"] .bat-lock b { color: #b45309; }
+
+/* ── Matrix hover: highlight the current row, column and cell ──
+   A background-image tint sits on top of the status colour, so Completed /
+   Overdue / Late cells keep their colour while highlighted. */
+.vpx-table .vpx-row.vpx-hl-row > td,
+.vpx-table .vpx-cell.vpx-hl-col,
+.vpx-table th.vpx-th-col.vpx-hl-col {
+    background-image: linear-gradient(color-mix(in srgb, var(--clr-accent) 10%, transparent), color-mix(in srgb, var(--clr-accent) 10%, transparent));
+}
+.vpx-table .vpx-row.vpx-hl-row > td.vpx-cell.vpx-hl-col {
+    background-image: linear-gradient(color-mix(in srgb, var(--clr-accent) 18%, transparent), color-mix(in srgb, var(--clr-accent) 18%, transparent));
+}
+.vpx-table .vpx-cell.vpx-hl-cell {
+    outline: 2px solid var(--clr-accent);
+    outline-offset: -2px;
+}
+.vpx-table th.vpx-th-col.vpx-hl-col { color: var(--clr-text); }
+.vpx-table th.vpx-th-col.vpx-hl-col .vpx-col-step { color: var(--clr-accent); }
+.vpx-table .vpx-row.vpx-hl-row > .vpx-td-unit { box-shadow: inset 3px 0 0 var(--clr-accent), 2px 0 5px rgba(0, 0, 0, .18); }
+
+/* ── Matrix: hover pencil to enter / update actual dates ── */
+.vpx-cell.vpx-cell-editable { position: relative; }
+.vpx-cell-edit-btn {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--clr-border);
+    border-radius: 5px;
+    background: var(--clr-surface-2);
+    color: var(--clr-text-muted);
+    cursor: pointer;
+    z-index: 2;
+}
+.vpx-cell-edit-btn svg { width: 12px; height: 12px; }
+.vpx-cell-editable:hover .vpx-cell-edit-btn,
+.vpx-cell-editable.vpx-hl-cell .vpx-cell-edit-btn,
+.vpx-cell-edit-btn:focus-visible { display: inline-flex; }
+.vpx-cell-edit-btn:hover { color: var(--clr-accent); border-color: var(--clr-accent); }
+
+.vpx-date-pop {
+    position: fixed;
+    z-index: 3000;
+    width: 290px;
+    max-width: calc(100vw - 32px);
+    padding: 14px;
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius);
+    background: var(--clr-surface);
+    color: var(--clr-text);
+    box-shadow: var(--shadow-modal);
+    font-size: .8rem;
+}
+.vpx-date-pop-title { font-weight: 700; font-size: .86rem; margin: 0 22px 2px 0; }
+.vpx-date-pop-sub { color: var(--clr-text-muted); font-size: .74rem; margin-bottom: 8px; }
+.vpx-date-pop-plan { color: var(--clr-text-muted); font-size: .74rem; padding: 6px 8px; border-radius: var(--radius-sm); background: var(--clr-surface-2); margin-bottom: 10px; }
+.vpx-date-pop-close { position: absolute; top: 8px; right: 8px; border: none; background: none; color: var(--clr-text-muted); font-size: 1rem; line-height: 1; cursor: pointer; padding: 4px; }
+.vpx-date-pop-close:hover { color: var(--clr-text); }
+.vpx-date-pop-field { margin-bottom: 8px; }
+.vpx-date-pop-field label { display: block; font-size: .72rem; font-weight: 600; color: var(--clr-text-muted); margin-bottom: 3px; }
+.vpx-date-pop-row { display: flex; gap: 6px; align-items: center; }
+.vpx-date-pop-row input[type="date"] { flex: 1; min-width: 0; }
+.vpx-date-pop-row .btn { padding: 4px 8px; font-size: .72rem; }
+.vpx-date-pop-error { color: var(--clr-overdue); font-size: .74rem; min-height: 1em; margin: 2px 0 6px; }
+.vpx-date-pop-actions { display: flex; justify-content: flex-end; gap: 8px; }

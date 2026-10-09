@@ -1,2 +1,2 @@
 /* Written by tools/deploy.sh - the version of PPMS this code is. */
-window.PPMS_BUILD = {"version":"v129-d5e1972","label":"v129","deployedAt":"2026-10-07T09:58:44.405Z","notes":"Update the user manual, screenshots and guided tour"};
+window.PPMS_BUILD = {"version":"v130-44fac04","label":"v130","deployedAt":"2026-10-09T11:17:17.511Z","notes":"Add Delivery Outlook and fix parallel-station forecast"};

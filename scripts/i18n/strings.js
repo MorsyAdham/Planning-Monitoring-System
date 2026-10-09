@@ -28,11 +28,6 @@ export default {
   "ko": "맨 위로",
   "ar": "العودة إلى الأعلى"
  },
- "Cancel": {
-  "area": "Header & menus",
-  "ko": "취소",
-  "ar": "إلغاء"
- },
  "Change password": {
   "area": "Header & menus",
   "ko": "비밀번호 변경",
@@ -648,11 +643,6 @@ export default {
   "ko": "(빗금)",
   "ar": "(مخطّط)"
  },
- "Actual start": {
-  "area": "Gantt",
-  "ko": "실제 시작",
-  "ar": "البدء الفعلي"
- },
  "Add Template": {
   "area": "Gantt",
   "ko": "템플릿 추가",
@@ -707,11 +697,6 @@ export default {
   "area": "Gantt",
   "ko": "블록을 드래그할 때 이동할 대상을 선택하세요",
   "ar": "اختر ما يتحرّك عند سحب بلوك"
- },
- "Clear": {
-  "area": "Gantt",
-  "ko": "지우기",
-  "ar": "مسح"
  },
  "Click to place": {
   "area": "Gantt",
@@ -948,11 +933,6 @@ export default {
   "ko": "계획",
   "ar": "الخطة"
  },
- "Planned": {
-  "area": "Gantt",
-  "ko": "계획",
-  "ar": "مخطّط"
- },
  "Process": {
   "area": "Gantt",
   "ko": "공정",
@@ -1173,6 +1153,11 @@ export default {
   "ko": "활동",
   "ar": "النشاط"
  },
+ "Actual start": {
+  "area": "Gantt / shared",
+  "ko": "실제 시작",
+  "ar": "البدء الفعلي"
+ },
  "All": {
   "area": "Gantt / shared",
   "ko": "전체",
@@ -1233,15 +1218,45 @@ export default {
   "ko": "블록",
   "ar": "بلوكات"
  },
+ "Cancel": {
+  "area": "Gantt / shared",
+  "ko": "취소",
+  "ar": "إلغاء"
+ },
+ "Clear": {
+  "area": "Gantt / shared",
+  "ko": "지우기",
+  "ar": "مسح"
+ },
  "Click to see delay breakdown": {
   "area": "Gantt / shared",
   "ko": "클릭하여 지연 상세 보기",
   "ar": "انقر لعرض تفاصيل التأخير"
  },
+ "Close": {
+  "area": "Gantt / shared",
+  "ko": "닫기",
+  "ar": "إغلاق"
+ },
+ "Completed on": {
+  "area": "Gantt / shared",
+  "ko": "완료일",
+  "ar": "تاريخ الإنجاز"
+ },
+ "Completion date cannot be before the actual start.": {
+  "area": "Gantt / shared",
+  "ko": "완료일은 실제 시작일보다 앞설 수 없습니다.",
+  "ar": "لا يمكن أن يكون تاريخ الإنجاز قبل البدء الفعلي."
+ },
  "Component: {c}": {
   "area": "Gantt / shared",
   "ko": "구성품: {c}",
   "ar": "المكوّن: {c}"
+ },
+ "Dates cannot be in the future.": {
+  "area": "Gantt / shared",
+  "ko": "미래 날짜는 입력할 수 없습니다.",
+  "ar": "لا يمكن أن تكون التواريخ في المستقبل."
  },
  "Delete selected": {
   "area": "Gantt / shared",
@@ -1287,6 +1302,11 @@ export default {
   "area": "Gantt / shared",
   "ko": "계획 편집",
   "ar": "تعديل الخطة"
+ },
+ "Enter / update dates": {
+  "area": "Gantt / shared",
+  "ko": "날짜 입력 / 수정",
+  "ar": "إدخال / تحديث التواريخ"
  },
  "Everything this user did, in the audit log": {
   "area": "Gantt / shared",
@@ -1443,6 +1463,11 @@ export default {
   "ko": "부품 제작 진행 · 일별 보기",
   "ar": "تقدّم تصنيع القطع · عرض يومي"
  },
+ "Planned": {
+  "area": "Gantt / shared",
+  "ko": "계획",
+  "ar": "مخطّط"
+ },
  "Planning Gantt": {
   "area": "Gantt / shared",
   "ko": "계획 간트",
@@ -1473,6 +1498,11 @@ export default {
   "ko": "공정 순서 · 이 버전",
   "ar": "ترتيب المسار · هذا الإصدار"
  },
+ "Save": {
+  "area": "Gantt / shared",
+  "ko": "저장",
+  "ar": "حفظ"
+ },
  "Saving {n} blocks…": {
   "area": "Gantt / shared",
   "ko": "블록 {n}개 저장 중…",
@@ -1492,6 +1522,11 @@ export default {
   "area": "Gantt / shared",
   "ko": "사용자 검색",
   "ar": "البحث عن مستخدمين"
+ },
+ "Search…": {
+  "area": "Gantt / shared",
+  "ko": "검색…",
+  "ar": "بحث…"
  },
  "SECURE": {
   "area": "Gantt / shared",
@@ -1562,6 +1597,11 @@ export default {
   "area": "Gantt / shared",
   "ko": "이번 접속 {d}",
   "ar": "هذه الزيارة {d}"
+ },
+ "Today": {
+  "area": "Gantt / shared",
+  "ko": "오늘",
+  "ar": "اليوم"
  },
  "Turret": {
   "area": "Gantt / shared",
@@ -2067,11 +2107,6 @@ export default {
   "area": "Screens & messages",
   "ko": "클릭하여 {a}(으)로 전환 →",
   "ar": "انقر للتبديل إلى {a} →"
- },
- "Close": {
-  "area": "Screens & messages",
-  "ko": "닫기",
-  "ar": "إغلاق"
  },
  "Closed": {
   "area": "Screens & messages",
@@ -3602,11 +3637,6 @@ export default {
   "area": "Screens & messages",
   "ko": "행 작업",
   "ar": "إجراءات الصف"
- },
- "Save": {
-  "area": "Screens & messages",
-  "ko": "저장",
-  "ar": "حفظ"
  },
  "Save failed:": {
   "area": "Screens & messages",
@@ -8533,11 +8563,6 @@ export default {
   "ko": "용어집",
   "ar": "مسرد المصطلحات"
  },
- "Hide topics your role cannot use": {
-  "area": "Help & tour",
-  "ko": "내 역할로 사용할 수 없는 항목 숨기기",
-  "ar": "إخفاء الموضوعات التي لا يمكن لدورك استخدامها"
- },
  "Jump straight to any part of the page: <b>Summary</b>, <b>Schedule</b>, <b>Progress</b>, <b>Analytics</b>, <b>Plan Table</b> and <b>Issues</b>. The section you are in is underlined.": {
   "area": "Help & tour",
   "ko": "페이지의 원하는 부분으로 바로 이동합니다: <b>요약</b>, <b>일정</b>, <b>진행 현황</b>, <b>분석</b>, <b>계획 표</b>, <b>이슈</b>. 현재 섹션에는 밑줄이 표시됩니다.",
@@ -8562,11 +8587,6 @@ export default {
   "area": "Help & tour",
   "ko": "모듈 및 계획 버전",
   "ar": "الوحدة وإصدار الخطة"
- },
- "My role only": {
-  "area": "Help & tour",
-  "ko": "내 역할만",
-  "ar": "دوري فقط"
  },
  "Narrow the <b>whole page</b> at once — battalion, vehicle, unit, category, week, time frame or a search. Active filters appear as chips; click × on a chip to remove it, or <b>Reset</b> to clear them all.": {
   "area": "Help & tour",
@@ -9138,6 +9158,11 @@ export default {
   "ko": "전체 모듈",
   "ar": "كل الوحدات"
  },
+ "All roles": {
+  "area": "Administration",
+  "ko": "전체 역할",
+  "ar": "كل الأدوار"
+ },
  "All users": {
   "area": "Administration",
   "ko": "전체 사용자",
@@ -9238,11 +9263,6 @@ export default {
   "ko": "클릭하여 비활성화",
   "ar": "انقر للإيقاف"
  },
- "Completed on": {
-  "area": "Administration",
-  "ko": "완료일",
-  "ar": "تاريخ الإنجاز"
- },
  "Copied": {
   "area": "Administration",
   "ko": "복사",
@@ -9307,6 +9327,11 @@ export default {
   "area": "Administration",
   "ko": "납품 마감일",
   "ar": "موعد التسليم النهائي"
+ },
+ "Download the {a} edition of the manual as a Word document": {
+  "area": "Administration",
+  "ko": "{a}용 매뉴얼을 Word 문서로 다운로드",
+  "ar": "تنزيل نسخة {a} من الدليل كمستند Word"
  },
  "e.g.": {
   "area": "Administration",
@@ -9613,6 +9638,11 @@ export default {
   "ko": "담당자",
   "ar": "المسؤول"
  },
+ "Pick a chapter, search above, or ask the assistant at the bottom left. Topics marked with a lock are not available for your role. Use \"Topics for\" at the top to see — and download — the manual for one role.": {
+  "area": "Administration",
+  "ko": "장을 선택하거나, 위에서 검색하거나, 왼쪽 아래 어시스턴트에게 물어보세요. 자물쇠 표시 항목은 현재 역할로 사용할 수 없습니다. 위의 \"대상 역할\"에서 한 역할의 매뉴얼을 보고 다운로드할 수 있습니다.",
+  "ar": "اختر فصلًا، أو ابحث في الأعلى، أو اسأل المساعد أسفل اليسار. الموضوعات المعلَّمة بقفل غير متاحة لدورك. استخدم \"المواضيع لـ\" في الأعلى لعرض الدليل — وتنزيله — لدور واحد."
+ },
  "Plan block": {
   "area": "Administration",
   "ko": "계획 블록",
@@ -9808,6 +9838,16 @@ export default {
   "ko": "비밀번호 표시 / 숨기기",
   "ar": "إظهار / إخفاء كلمة المرور"
  },
+ "Show the manual for one role — only the topics that role can use. Word downloads the same selection.": {
+  "area": "Administration",
+  "ko": "한 역할의 매뉴얼만 표시합니다 — 해당 역할이 사용할 수 있는 주제만 보입니다. Word도 같은 선택으로 내려받습니다.",
+  "ar": "اعرض الدليل لدور واحد — المواضيع التي يمكن لذلك الدور استخدامها فقط. يُنزَّل ملف Word بالاختيار نفسه."
+ },
+ "Show topics for": {
+  "area": "Administration",
+  "ko": "역할별 주제 보기",
+  "ar": "عرض المواضيع لـ"
+ },
  "showed {a} in the {b} plan": {
   "area": "Live edits",
   "ko": "{b} 계획에서 {a} 다시 표시",
@@ -9923,10 +9963,10 @@ export default {
   "ko": "본인 계정입니다 — 자신의 역할이나 상태는 변경할 수 없습니다.",
   "ar": "هذا حسابك — لا يمكنك تغيير دورك أو حالتك."
  },
- "Today": {
+ "Topics for": {
   "area": "Administration",
-  "ko": "오늘",
-  "ar": "اليوم"
+  "ko": "대상 역할",
+  "ar": "المواضيع لـ"
  },
  "Undid": {
   "area": "Administration",
