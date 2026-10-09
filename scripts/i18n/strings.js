@@ -528,11 +528,6 @@ export default {
   "ko": "정시 완료",
   "ar": "اكتمل في الموعد"
  },
- "Delay breakdown": {
-  "area": "Executive Summary",
-  "ko": "지연 상세",
-  "ar": "تفاصيل التأخير"
- },
  "Delivery": {
   "area": "Executive Summary",
   "ko": "납품",
@@ -553,11 +548,6 @@ export default {
   "ko": "KD2 설정 현황",
   "ar": "لمحة عن إعداد KD2"
  },
- "Late": {
-  "area": "Executive Summary",
-  "ko": "지연 완료",
-  "ar": "متأخر"
- },
  "Late completion": {
   "area": "Executive Summary",
   "ko": "지연 완료",
@@ -567,11 +557,6 @@ export default {
   "area": "Executive Summary",
   "ko": "리드타임 준비 상태",
   "ar": "جاهزية المهل الزمنية"
- },
- "Not started": {
-  "area": "Executive Summary",
-  "ko": "미착수",
-  "ar": "لم يبدأ"
  },
  "past planned end": {
   "area": "Executive Summary",
@@ -662,11 +647,6 @@ export default {
   "area": "Gantt",
   "ko": "각 행에 해당 행의 모든 블록을 한 번에 선택하는 버튼을 추가합니다",
   "ar": "يضيف زرًا في كل صف لتحديد جميع بلوكاته دفعة واحدة"
- },
- "All battalions": {
-  "area": "Gantt",
-  "ko": "전체 대대",
-  "ar": "جميع الكتائب"
  },
  "All processes": {
   "area": "Gantt",
@@ -782,11 +762,6 @@ export default {
   "area": "Gantt",
   "ko": "필터",
   "ar": "فلتر"
- },
- "Finished": {
-  "area": "Gantt",
-  "ko": "완료",
-  "ar": "اكتمل"
  },
  "Finished late by": {
   "area": "Gantt",
@@ -928,11 +903,6 @@ export default {
   "ko": "초과 기간",
   "ar": "متأخر بمقدار"
  },
- "Plan": {
-  "area": "Gantt",
-  "ko": "계획",
-  "ar": "الخطة"
- },
  "Process": {
   "area": "Gantt",
   "ko": "공정",
@@ -1073,11 +1043,6 @@ export default {
   "ko": "실행 취소",
   "ar": "تراجع"
  },
- "Unit": {
-  "area": "Gantt",
-  "ko": "유닛",
-  "ar": "الوحدة"
- },
  "Unit View": {
   "area": "Gantt",
   "ko": "유닛 보기",
@@ -1087,11 +1052,6 @@ export default {
   "area": "Gantt",
   "ko": "각 행의 화살표를 사용하세요 · ∥ 는 위 행과 병합 · 변경 사항은 이 계획 버전에 적용됩니다",
   "ar": "استخدم الأسهم في كل صف · ∥ يدمج مع الصف الأعلى · تُطبَّق التغييرات على إصدار الخطة هذا"
- },
- "Vehicle": {
-  "area": "Gantt",
-  "ko": "장비",
-  "ar": "المركبة"
  },
  "Visual Placement": {
   "area": "Gantt",
@@ -1133,6 +1093,31 @@ export default {
   "ko": "+{n} 근무일",
   "ar": "+{n} يوم عمل"
  },
+ "1 unit": {
+  "area": "Gantt / shared",
+  "ko": "유닛 1개",
+  "ar": "وحدة واحدة"
+ },
+ "1 unit still open": {
+  "area": "Gantt / shared",
+  "ko": "미완료 유닛 1개",
+  "ar": "وحدة واحدة ما زالت مفتوحة"
+ },
+ "8 weeks ago it was +{n} wd.": {
+  "area": "Gantt / shared",
+  "ko": "8주 전에는 +{n}근무일이었습니다.",
+  "ar": "قبل 8 أسابيع كان +{n} يوم عمل."
+ },
+ "A station waits only for the stations the plan finishes before it starts, so work the plan runs side by side does not wait. Assembly, Processing & Testing starts when the Hull and Turret (K9) or the Structure (K10 / K11) are finished.": {
+  "area": "Gantt / shared",
+  "ko": "스테이션은 계획상 자신의 시작 전에 끝나는 스테이션만 기다리므로, 계획상 병행되는 작업은 서로 기다리지 않습니다. 조립 · 가공 · 시험은 차체와 포탑(K9) 또는 구조물(K10 / K11)이 끝나면 시작합니다.",
+  "ar": "لا تنتظر المحطة إلا المحطات التي تنتهي في الخطة قبل بدئها، لذا لا ينتظر العمل الذي تجريه الخطة بالتوازي. يبدأ التجميع والمعالجة والاختبار عند انتهاء الهيكل والبرج (K9) أو الهيكل الإنشائي (K10 / K11)."
+ },
+ "Act now": {
+  "area": "Gantt / shared",
+  "ko": "즉시 조치",
+  "ar": "تصرّف الآن"
+ },
  "Active": {
   "area": "Gantt / shared",
   "ko": "사용 중",
@@ -1153,6 +1138,16 @@ export default {
   "ko": "활동",
   "ar": "النشاط"
  },
+ "Actual": {
+  "area": "Gantt / shared",
+  "ko": "실적",
+  "ar": "الفعلي"
+ },
+ "actual": {
+  "area": "Gantt / shared",
+  "ko": "실적",
+  "ar": "فعلي"
+ },
  "Actual start": {
   "area": "Gantt / shared",
   "ko": "실제 시작",
@@ -1162,6 +1157,11 @@ export default {
   "area": "Gantt / shared",
   "ko": "전체",
   "ar": "الكل"
+ },
+ "All battalions": {
+  "area": "Gantt / shared",
+  "ko": "전체 대대",
+  "ar": "جميع الكتائب"
  },
  "Assembly": {
   "area": "Gantt / shared",
@@ -1177,6 +1177,21 @@ export default {
   "area": "Gantt / shared",
   "ko": "조립 계획 · 일별 간트 보기",
   "ar": "خطة التجميع · عرض جانت اليومي"
+ },
+ "Assembly, Processing & Testing": {
+  "area": "Gantt / shared",
+  "ko": "조립 · 가공 · 시험",
+  "ar": "التجميع والمعالجة والاختبار"
+ },
+ "At risk": {
+  "area": "Gantt / shared",
+  "ko": "위험",
+  "ar": "معرّض للخطر"
+ },
+ "Averages per unit, in working days. A vehicle can take longer than planned and still finish on time when it was started early.": {
+  "area": "Gantt / shared",
+  "ko": "유닛당 평균, 근무일 기준. 일찍 시작한 장비는 계획보다 오래 걸려도 제때 완료될 수 있습니다.",
+  "ar": "متوسطات لكل وحدة بأيام العمل. قد تستغرق المركبة وقتًا أطول من المخطّط وتنتهي في الموعد إذا بدأت مبكرًا."
  },
  "Away": {
   "area": "Gantt / shared",
@@ -1208,6 +1223,16 @@ export default {
   "ko": "불러올 대대",
   "ar": "الكتيبة المطلوب تحميلها"
  },
+ "Biggest shortfall: by the end of {m}, 1 unit fewer than planned will be finished.": {
+  "area": "Gantt / shared",
+  "ko": "최대 부족: {m} 말까지 계획보다 유닛 1개가 적게 완료됩니다.",
+  "ar": "أكبر عجز: بنهاية {m} ستكتمل وحدة واحدة أقل من المخطّط."
+ },
+ "Biggest shortfall: by the end of {m}, {n} fewer units than planned will be finished.": {
+  "area": "Gantt / shared",
+  "ko": "최대 부족: {m} 말까지 계획보다 유닛 {n}개가 적게 완료됩니다.",
+  "ar": "أكبر عجز: بنهاية {m} ستكتمل {n} وحدات أقل من المخطّط."
+ },
  "block": {
   "area": "Gantt / shared",
   "ko": "블록",
@@ -1217,6 +1242,36 @@ export default {
   "area": "Gantt / shared",
   "ko": "블록",
   "ar": "بلوكات"
+ },
+ "Build time (wd)": {
+  "area": "Gantt / shared",
+  "ko": "제작 기간 (근무일)",
+  "ar": "مدة البناء (أيام عمل)"
+ },
+ "Build time = working days from a vehicle's first station start to its last station finish. The real start is the first actual start or completion recorded on any of its stations.": {
+  "area": "Gantt / shared",
+  "ko": "제작 기간 = 장비의 첫 스테이션 시작부터 마지막 스테이션 완료까지의 근무일. 실제 시작은 해당 장비의 스테이션에 처음 기록된 실제 시작 또는 완료입니다.",
+  "ar": "مدة البناء = أيام العمل من بدء أول محطة للمركبة حتى انتهاء آخر محطة. البدء الفعلي هو أول بدء أو إنجاز فعلي مسجّل على أي من محطاتها."
+ },
+ "Build time per vehicle": {
+  "area": "Gantt / shared",
+  "ko": "장비별 제작 기간",
+  "ar": "مدة بناء كل مركبة"
+ },
+ "By battalion and vehicle": {
+  "area": "Gantt / shared",
+  "ko": "대대 및 장비별",
+  "ar": "حسب الكتيبة والمركبة"
+ },
+ "Calculating the forecast…": {
+  "area": "Gantt / shared",
+  "ko": "전망 계산 중…",
+  "ar": "جارٍ حساب التوقّعات…"
+ },
+ "Calculating…": {
+  "area": "Gantt / shared",
+  "ko": "계산 중…",
+  "ar": "جارٍ الحساب…"
  },
  "Cancel": {
   "area": "Gantt / shared",
@@ -1238,6 +1293,11 @@ export default {
   "ko": "닫기",
   "ar": "إغلاق"
  },
+ "Complete": {
+  "area": "Gantt / shared",
+  "ko": "완료",
+  "ar": "مكتمل"
+ },
  "Completed on": {
   "area": "Gantt / shared",
   "ko": "완료일",
@@ -1253,10 +1313,40 @@ export default {
   "ko": "구성품: {c}",
   "ar": "المكوّن: {c}"
  },
+ "data as of {d}": {
+  "area": "Gantt / shared",
+  "ko": "{d} 기준 데이터",
+  "ar": "البيانات حتى {d}"
+ },
  "Dates cannot be in the future.": {
   "area": "Gantt / shared",
   "ko": "미래 날짜는 입력할 수 없습니다.",
   "ar": "لا يمكن أن تكون التواريخ في المستقبل."
+ },
+ "Delay": {
+  "area": "Gantt / shared",
+  "ko": "지연",
+  "ar": "التأخير"
+ },
+ "Delay = working days between planned and forecast finish (Fridays not counted). Forecast delivery = the last vehicle's forecast finish. Same figures as the Delivery card and the reports.": {
+  "area": "Gantt / shared",
+  "ko": "지연 = 계획 완료와 예상 완료 사이의 근무일(금요일 제외). 예상 납품 = 마지막 장비의 예상 완료. 납품 카드 및 보고서와 같은 수치입니다.",
+  "ar": "التأخير = أيام العمل بين الانتهاء المخطّط والمتوقّع (دون احتساب أيام الجمعة). التسليم المتوقّع = الانتهاء المتوقّع لآخر مركبة. الأرقام نفسها في بطاقة التسليم والتقارير."
+ },
+ "Delay breakdown": {
+  "area": "Gantt / shared",
+  "ko": "지연 상세",
+  "ar": "تفاصيل التأخير"
+ },
+ "Delay trend = the forecast as it would have looked on each past day, using only the dates recorded by then and today's plan. Dates entered late make past days look better than they were.": {
+  "area": "Gantt / shared",
+  "ko": "지연 추이 = 그때까지 기록된 날짜와 오늘의 계획만으로 계산한 과거 각 날짜의 전망. 날짜를 늦게 입력하면 과거가 실제보다 좋아 보입니다.",
+  "ar": "اتجاه التأخير = التوقّع كما كان سيبدو في كل يوم سابق، باستخدام التواريخ المسجّلة حتى ذلك اليوم وخطة اليوم فقط. إدخال التواريخ متأخرًا يجعل الأيام السابقة تبدو أفضل مما كانت."
+ },
+ "Delay trend · last 8 weeks": {
+  "area": "Gantt / shared",
+  "ko": "지연 추이 · 최근 8주",
+  "ar": "اتجاه التأخير · آخر 8 أسابيع"
  },
  "Delete selected": {
   "area": "Gantt / shared",
@@ -1273,10 +1363,30 @@ export default {
   "ko": "블록 {n}개 삭제",
   "ar": "حذف {n} بلوكات"
  },
+ "Delivery date is set by {u}": {
+  "area": "Gantt / shared",
+  "ko": "납품일은 {u}이(가) 결정합니다",
+  "ar": "يحدّد {u} تاريخ التسليم"
+ },
+ "Delivery delay trend": {
+  "area": "Gantt / shared",
+  "ko": "납품 지연 추이",
+  "ar": "اتجاه تأخر التسليم"
+ },
+ "Delivery Outlook": {
+  "area": "Gantt / shared",
+  "ko": "납품 전망",
+  "ar": "توقّعات التسليم"
+ },
  "Drag to move · drag an edge to resize · ⋯ for more": {
   "area": "Gantt / shared",
   "ko": "드래그하여 이동 · 가장자리를 드래그하여 기간 변경 · ⋯ 더보기",
   "ar": "اسحب للنقل · اسحب الحافة لتغيير المدة · ⋯ للمزيد"
+ },
+ "Each vehicle follows the order of its plan. Finished stations use their real completion dates; the rest start when the stations they wait for are done (not before today or their planned start) and take their planned number of working days.": {
+  "area": "Gantt / shared",
+  "ko": "각 장비는 계획 순서를 따릅니다. 완료된 스테이션은 실제 완료일을 사용하고, 나머지는 기다리는 스테이션이 끝나면(오늘이나 계획 시작일보다 앞서지 않게) 시작해 계획된 근무일만큼 걸립니다.",
+  "ar": "تتبع كل مركبة ترتيب خطتها. تستخدم المحطات المكتملة تواريخ انتهائها الفعلية؛ وتبدأ البقية عندما تنتهي المحطات التي تنتظرها (ليس قبل اليوم أو موعد بدئها المخطّط) وتستغرق عدد أيام العمل المخطّط."
  },
  "early": {
   "area": "Gantt / shared",
@@ -1308,6 +1418,16 @@ export default {
   "ko": "날짜 입력 / 수정",
   "ar": "إدخال / تحديث التواريخ"
  },
+ "Every unit": {
+  "area": "Gantt / shared",
+  "ko": "전체 유닛",
+  "ar": "كل الوحدات"
+ },
+ "Every unit is forecast to finish by the planned delivery of {p}.": {
+  "area": "Gantt / shared",
+  "ko": "모든 유닛이 계획 납품일 {p}까지 완료될 것으로 예상됩니다.",
+  "ar": "يُتوقّع أن تنتهي كل الوحدات بحلول موعد التسليم المخطّط {p}."
+ },
  "Everything this user did, in the audit log": {
   "area": "Gantt / shared",
   "ko": "감사 로그에서 이 사용자의 모든 활동 보기",
@@ -1328,10 +1448,65 @@ export default {
   "ko": "실패",
   "ar": "فشل"
  },
+ "Filter the Plan Table to this station": {
+  "area": "Gantt / shared",
+  "ko": "이 스테이션으로 계획 표 필터링",
+  "ar": "تصفية جدول الخطة لهذه المحطة"
+ },
+ "Finished": {
+  "area": "Gantt / shared",
+  "ko": "완료",
+  "ar": "اكتمل"
+ },
+ "finished late, delay carried forward": {
+  "area": "Gantt / shared",
+  "ko": "지연 완료, 지연이 이어짐",
+  "ar": "انتهت متأخرة، والتأخير منقول إلى ما بعدها"
+ },
+ "forecast": {
+  "area": "Gantt / shared",
+  "ko": "예상",
+  "ar": "متوقّع"
+ },
+ "Forecast": {
+  "area": "Gantt / shared",
+  "ko": "예상",
+  "ar": "المتوقّع"
+ },
+ "Forecast delivery": {
+  "area": "Gantt / shared",
+  "ko": "예상 납품",
+  "ar": "التسليم المتوقّع"
+ },
+ "Forecast delivery {f} against a plan of {p}. {l} of {n} units are forecast to finish late.": {
+  "area": "Gantt / shared",
+  "ko": "예상 납품 {f}, 계획 {p}. 유닛 {n}개 중 {l}개가 지연 완료될 것으로 예상됩니다.",
+  "ar": "التسليم المتوقّع {f} مقابل خطة {p}. يُتوقّع أن تنتهي {l} من {n} وحدة متأخرة."
+ },
+ "Forecast finish": {
+  "area": "Gantt / shared",
+  "ko": "예상 완료",
+  "ar": "الانتهاء المتوقّع"
+ },
+ "Forecast output keeps pace with the plan every month.": {
+  "area": "Gantt / shared",
+  "ko": "예상 산출이 매월 계획을 따라갑니다.",
+  "ar": "الإنتاج المتوقّع يواكب الخطة كل شهر."
+ },
+ "from last week": {
+  "area": "Gantt / shared",
+  "ko": "지난주 대비",
+  "ar": "عن الأسبوع الماضي"
+ },
  "from the battalion filter": {
   "area": "Gantt / shared",
   "ko": "대대 필터 기준",
   "ar": "من فلتر الكتيبة"
+ },
+ "Full screen": {
+  "area": "Gantt / shared",
+  "ko": "전체 화면",
+  "ar": "ملء الشاشة"
  },
  "Full Screen": {
   "area": "Gantt / shared",
@@ -1343,10 +1518,20 @@ export default {
   "ko": "범례 숨기기",
   "ar": "إخفاء الدليل"
  },
+ "How the figures are calculated": {
+  "area": "Gantt / shared",
+  "ko": "수치 계산 방법",
+  "ar": "كيف تُحسب الأرقام"
+ },
  "Hull": {
   "area": "Gantt / shared",
   "ko": "차체",
   "ar": "الهيكل"
+ },
+ "Hull / Structure": {
+  "area": "Gantt / shared",
+  "ko": "차체 / 구조물",
+  "ar": "الهيكل / الهيكل الإنشائي"
  },
  "Idle": {
   "area": "Gantt / shared",
@@ -1362,6 +1547,16 @@ export default {
   "area": "Gantt / shared",
   "ko": "방금",
   "ar": "الآن"
+ },
+ "Late": {
+  "area": "Gantt / shared",
+  "ko": "지연 완료",
+  "ar": "متأخر"
+ },
+ "Late to start": {
+  "area": "Gantt / shared",
+  "ko": "착수 지연",
+  "ar": "تأخّر في البدء"
  },
  "Live — updates as people come and go. Idle = no activity for 5 min · Away = PPMS is in a background tab.": {
   "area": "Gantt / shared",
@@ -1383,15 +1578,45 @@ export default {
   "ko": "가장 많은 곳: {name} ({n}건, {pct}%)",
   "ar": "أكثرها في {name} ({n}، {pct}%)"
  },
+ "most of its delay comes from {s}": {
+  "area": "Gantt / shared",
+  "ko": "지연의 대부분은 {s}에서 발생합니다",
+  "ar": "ومعظم تأخره يأتي من {s}"
+ },
+ "No change": {
+  "area": "Gantt / shared",
+  "ko": "변동 없음",
+  "ar": "لا تغيير"
+ },
  "No delays · {n} tasks": {
   "area": "Gantt / shared",
   "ko": "지연 없음 · 작업 {n}개",
   "ar": "لا تأخير · {n} مهمة"
  },
+ "No finished station is still delaying a unit.": {
+  "area": "Gantt / shared",
+  "ko": "아직 유닛을 지연시키는 완료 스테이션이 없습니다.",
+  "ar": "لا توجد محطة مكتملة ما زالت تؤخّر أي وحدة."
+ },
+ "No open station is delaying a unit.": {
+  "area": "Gantt / shared",
+  "ko": "유닛을 지연시키는 미완료 스테이션이 없습니다.",
+  "ar": "لا توجد محطة مفتوحة تؤخّر أي وحدة."
+ },
  "No overdue {noun} · {pct}% of {total} {noun} complete.": {
   "area": "Gantt / shared",
   "ko": "기한 초과 {noun} 없음 · {noun} {total}개 중 {pct}% 완료.",
   "ar": "لا توجد {noun} متأخرة عن موعدها · أُنجز {pct}% من {total} {noun}."
+ },
+ "No planned units to forecast.": {
+  "area": "Gantt / shared",
+  "ko": "전망할 계획 유닛이 없습니다.",
+  "ar": "لا توجد وحدات مخطّطة للتوقّع."
+ },
+ "No slip": {
+  "area": "Gantt / shared",
+  "ko": "지연 없음",
+  "ar": "لا انزلاق"
  },
  "No station has delayed tasks for {vehicle} in the current filter.": {
   "area": "Gantt / shared",
@@ -1402,6 +1627,11 @@ export default {
   "area": "Gantt / shared",
   "ko": "현재 필터에서 지연 작업이 있는 스테이션이 없습니다.",
   "ar": "لا توجد محطة بها مهام متأخرة ضمن الفلتر الحالي."
+ },
+ "no unit late": {
+  "area": "Gantt / shared",
+  "ko": "지연 유닛 없음",
+  "ar": "لا توجد وحدة متأخرة"
  },
  "No users match \"{a}\".": {
   "area": "Gantt / shared",
@@ -1423,6 +1653,26 @@ export default {
   "ko": "현재 필터에 {noun}이(가) 없습니다.",
   "ar": "لا توجد {noun} ضمن الفلتر الحالي."
  },
+ "none": {
+  "area": "Gantt / shared",
+  "ko": "없음",
+  "ar": "لا شيء"
+ },
+ "none finished": {
+  "area": "Gantt / shared",
+  "ko": "완료 없음",
+  "ar": "لم تكتمل أي منها"
+ },
+ "not finished yet": {
+  "area": "Gantt / shared",
+  "ko": "아직 미완료",
+  "ar": "لم يكتمل بعد"
+ },
+ "Not started": {
+  "area": "Gantt / shared",
+  "ko": "미착수",
+  "ar": "لم يبدأ"
+ },
  "Nothing to redo": {
   "area": "Gantt / shared",
   "ko": "다시 실행할 작업이 없습니다",
@@ -1432,6 +1682,11 @@ export default {
   "area": "Gantt / shared",
   "ko": "취소할 작업이 없습니다",
   "ar": "لا شيء للتراجع عنه"
+ },
+ "Now at": {
+  "area": "Gantt / shared",
+  "ko": "현재 위치",
+  "ar": "الموقع الحالي"
  },
  "older version": {
   "area": "Gantt / shared",
@@ -1443,10 +1698,25 @@ export default {
   "ko": "계획대로: 오늘까지 기한 {due}개 대비 {noun} {done}개 완료 (계획의 {pct}%).",
   "ar": "وفق الخطة: أُنجز {done} من {noun} مقابل {due} مستحقة حتى اليوم ({pct}% من الخطة)."
  },
+ "On time": {
+  "area": "Gantt / shared",
+  "ko": "정시 완료",
+  "ar": "في الموعد"
+ },
+ "On track": {
+  "area": "Gantt / shared",
+  "ko": "정상 진행",
+  "ar": "ضمن المسار"
+ },
  "Open in User Management": {
   "area": "Gantt / shared",
   "ko": "사용자 관리에서 열기",
   "ar": "فتح في إدارة المستخدمين"
+ },
+ "Open the Delivery Delay Analysis": {
+  "area": "Gantt / shared",
+  "ko": "납품 지연 분석 열기",
+  "ar": "فتح تحليل تأخر التسليم"
  },
  "Other": {
   "area": "Gantt / shared",
@@ -1463,15 +1733,85 @@ export default {
   "ko": "부품 제작 진행 · 일별 보기",
   "ar": "تقدّم تصنيع القطع · عرض يومي"
  },
+ "Plan": {
+  "area": "Gantt / shared",
+  "ko": "계획",
+  "ar": "الخطة"
+ },
+ "plan": {
+  "area": "Gantt / shared",
+  "ko": "계획",
+  "ar": "المخطّط"
+ },
+ "Plan adherence": {
+  "area": "Gantt / shared",
+  "ko": "계획 준수율",
+  "ar": "الالتزام بالخطة"
+ },
+ "Plan adherence = station tasks planned to finish by today that are marked finished. Late to start = tasks past their planned start with no actual start.": {
+  "area": "Gantt / shared",
+  "ko": "계획 준수율 = 오늘까지 완료 예정인 스테이션 작업 중 완료로 표시된 비율. 착수 지연 = 계획 시작일이 지났지만 실제 시작이 없는 작업.",
+  "ar": "الالتزام بالخطة = مهام المحطات المخطّط إنهاؤها حتى اليوم والمعلَّمة كمكتملة. التأخّر في البدء = مهام تجاوزت موعد بدئها المخطّط دون بدء فعلي."
+ },
+ "Plan order": {
+  "area": "Gantt / shared",
+  "ko": "계획 순서",
+  "ar": "ترتيب الخطة"
+ },
+ "Plan {p} → forecast {f}": {
+  "area": "Gantt / shared",
+  "ko": "계획 {p} → 예상 {f}",
+  "ar": "المخطّط {p} ← المتوقّع {f}"
+ },
+ "plan → actual / forecast": {
+  "area": "Gantt / shared",
+  "ko": "계획 → 실적 / 예상",
+  "ar": "المخطّط ← الفعلي / المتوقّع"
+ },
+ "planned": {
+  "area": "Gantt / shared",
+  "ko": "계획",
+  "ar": "مخطّط"
+ },
  "Planned": {
   "area": "Gantt / shared",
   "ko": "계획",
   "ar": "مخطّط"
  },
+ "Planned = planned start to planned finish. Actual = real start to real finish (finished vehicles). Forecast = real start (or forecast start) to forecast finish (vehicles still in work).": {
+  "area": "Gantt / shared",
+  "ko": "계획 = 계획 시작부터 계획 완료까지. 실적 = 실제 시작부터 실제 완료까지(완료된 장비). 예상 = 실제 시작(또는 예상 시작)부터 예상 완료까지(작업 중인 장비).",
+  "ar": "المخطّط = من البدء المخطّط إلى الانتهاء المخطّط. الفعلي = من البدء الفعلي إلى الانتهاء الفعلي (المركبات المكتملة). المتوقّع = من البدء الفعلي (أو المتوقّع) إلى الانتهاء المتوقّع (المركبات قيد العمل)."
+ },
+ "Planned delivery": {
+  "area": "Gantt / shared",
+  "ko": "계획 납품",
+  "ar": "التسليم المخطّط"
+ },
+ "Planned finish": {
+  "area": "Gantt / shared",
+  "ko": "계획 완료",
+  "ar": "الانتهاء المخطّط"
+ },
+ "Planned {p} · forecast {f} · {d}/{t} stations done": {
+  "area": "Gantt / shared",
+  "ko": "계획 {p} · 예상 {f} · 스테이션 {d}/{t} 완료",
+  "ar": "المخطّط {p} · المتوقّع {f} · {d}/{t} محطات مكتملة"
+ },
  "Planning Gantt": {
   "area": "Gantt / shared",
   "ko": "계획 간트",
   "ar": "مخطط جانت للتخطيط"
+ },
+ "Print": {
+  "area": "Gantt / shared",
+  "ko": "인쇄",
+  "ar": "طباعة"
+ },
+ "Print / save as PDF": {
+  "area": "Gantt / shared",
+  "ko": "인쇄 / PDF로 저장",
+  "ar": "طباعة / حفظ بصيغة PDF"
  },
  "Process view: show K10 and K11 as one plan — both vehicles' blocks on the same station rows (K11 blocks have a white left edge)": {
   "area": "Gantt / shared",
@@ -1488,6 +1828,11 @@ export default {
   "ko": "생산 마스터 일정",
   "ar": "الجدول الرئيسي للإنتاج"
  },
+ "Rebuilt from the dates recorded in PPMS, against today's plan.": {
+  "area": "Gantt / shared",
+  "ko": "PPMS에 기록된 날짜로 오늘의 계획 기준으로 재구성했습니다.",
+  "ar": "أُعيد بناؤه من التواريخ المسجّلة في PPMS مقابل خطة اليوم."
+ },
  "Redo ({n} available)": {
   "area": "Gantt / shared",
   "ko": "다시 실행 ({n}개 가능)",
@@ -1497,6 +1842,11 @@ export default {
   "area": "Gantt / shared",
   "ko": "공정 순서 · 이 버전",
   "ar": "ترتيب المسار · هذا الإصدار"
+ },
+ "Same as 8 weeks ago (+{n} wd).": {
+  "area": "Gantt / shared",
+  "ko": "8주 전과 동일 (+{n}근무일).",
+  "ar": "كما كان قبل 8 أسابيع (+{n} يوم عمل)."
  },
  "Save": {
   "area": "Gantt / shared",
@@ -1543,6 +1893,11 @@ export default {
   "ko": "대대 필터(상단 필터 바 / 간트)에서 설정됨 — 이 대대만 불러옵니다",
   "ar": "محدّد بواسطة فلتر الكتيبة (شريط الفلاتر / مخطط جانت) — يتم تحميل هذه الكتيبة فقط"
  },
+ "sets delivery date": {
+  "area": "Gantt / shared",
+  "ko": "납품일 결정",
+  "ar": "تحدّد تاريخ التسليم"
+ },
  "Shifting 1 vehicle ({b} blocks)…": {
   "area": "Gantt / shared",
   "ko": "장비 1대 이동 중 (블록 {b}개)…",
@@ -1553,10 +1908,20 @@ export default {
   "ko": "장비 {n}대 이동 중 (블록 {b}개)…",
   "ar": "جارٍ نقل {n} مركبات ({b} بلوك)…"
  },
+ "Show in Plan Table": {
+  "area": "Gantt / shared",
+  "ko": "계획 표에서 보기",
+  "ar": "عرض في جدول الخطة"
+ },
  "Show Legend": {
   "area": "Gantt / shared",
   "ko": "범례 보기",
   "ar": "إظهار الدليل"
+ },
+ "Showing \"{s}\" — clear the Search chip in Filters to see everything again.": {
+  "area": "Gantt / shared",
+  "ko": "\"{s}\" 표시 중 — 전체를 다시 보려면 필터의 검색 칩을 지우세요.",
+  "ar": "يتم عرض \"{s}\" — امسح شريحة البحث في الفلاتر لرؤية كل شيء مجددًا."
  },
  "Shown separately while Reorder route is on (the route order is per vehicle)": {
   "area": "Gantt / shared",
@@ -1573,6 +1938,26 @@ export default {
   "ko": "{time} 로그인",
   "ar": "سجّل الدخول {time}"
  },
+ "slip": {
+  "area": "Gantt / shared",
+  "ko": "지연",
+  "ar": "انزلاق"
+ },
+ "Something on the critical path is standing still. Each day it waits, delivery moves one more day.": {
+  "area": "Gantt / shared",
+  "ko": "주공정 경로의 작업이 멈춰 있습니다. 하루 기다릴 때마다 납품이 하루씩 늦어집니다.",
+  "ar": "هناك عمل متوقّف على المسار الحرج. كل يوم انتظار يؤخّر التسليم يومًا آخر."
+ },
+ "Sort units": {
+  "area": "Gantt / shared",
+  "ko": "유닛 정렬",
+  "ar": "ترتيب الوحدات"
+ },
+ "Stations done": {
+  "area": "Gantt / shared",
+  "ko": "완료 스테이션",
+  "ar": "المحطات المكتملة"
+ },
  "Structure": {
   "area": "Gantt / shared",
   "ko": "구조물",
@@ -1588,20 +1973,65 @@ export default {
   "ko": "이 섹션만 전환합니다 — 불러올 데이터는 대대 필터가 결정합니다",
   "ar": "يغيّر هذا القسم فقط — فلتر الكتيبة هو الذي يحدّد ما يتم تحميله"
  },
+ "tasks past their planned start, not started": {
+  "area": "Gantt / shared",
+  "ko": "계획 시작일이 지났지만 미착수인 작업",
+  "ar": "مهام تجاوزت موعد بدئها المخطّط ولم تبدأ"
+ },
+ "than last week": {
+  "area": "Gantt / shared",
+  "ko": "지난주 대비",
+  "ar": "مقارنة بالأسبوع الماضي"
+ },
+ "The delay is growing every day: +{a} → +{b} wd over the last {n} working days.": {
+  "area": "Gantt / shared",
+  "ko": "지연이 매일 늘고 있습니다: 최근 {n}근무일 동안 +{a} → +{b}근무일.",
+  "ar": "التأخير يزداد كل يوم: من +{a} إلى +{b} يوم عمل خلال آخر {n} أيام عمل."
+ },
+ "The outlook could not be calculated.": {
+  "area": "Gantt / shared",
+  "ko": "전망을 계산할 수 없습니다.",
+  "ar": "تعذّر حساب التوقّعات."
+ },
+ "These stations are done; their delay can only be won back further down the route.": {
+  "area": "Gantt / shared",
+  "ko": "이 스테이션들은 완료되었으며, 지연은 이후 공정에서만 만회할 수 있습니다.",
+  "ar": "هذه المحطات مكتملة؛ ولا يمكن تعويض تأخيرها إلا في المراحل اللاحقة من المسار."
+ },
  "This person is on an older PPMS version — they should load the latest version (blinking version badge) to show where they are and to log their exports.": {
   "area": "Gantt / shared",
   "ko": "이 사용자는 이전 PPMS 버전을 사용 중입니다 — 위치 표시와 내보내기 기록을 위해 최신 버전을 불러와야 합니다(깜박이는 버전 배지).",
   "ar": "هذا المستخدم على إصدار أقدم من PPMS — عليه تحميل أحدث إصدار (شارة الإصدار الوامضة) لإظهار مكانه وتسجيل عمليات التصدير."
+ },
+ "This view uses all loaded plan data; the page filters do not apply. Calculated {t}.": {
+  "area": "Gantt / shared",
+  "ko": "이 화면은 불러온 모든 계획 데이터를 사용하며 페이지 필터는 적용되지 않습니다. 계산 시각 {t}.",
+  "ar": "يستخدم هذا العرض كل بيانات الخطة المحمّلة؛ ولا تنطبق فلاتر الصفحة. وقت الحساب {t}."
  },
  "this visit {d}": {
   "area": "Gantt / shared",
   "ko": "이번 접속 {d}",
   "ar": "هذه الزيارة {d}"
  },
+ "Time already lost": {
+  "area": "Gantt / shared",
+  "ko": "이미 잃은 시간",
+  "ar": "وقت ضائع بالفعل"
+ },
+ "Time can still be recovered here. Ranked by the delay each station adds to a unit's finish.": {
+  "area": "Gantt / shared",
+  "ko": "여기서는 아직 시간을 만회할 수 있습니다. 각 스테이션이 유닛 완료에 더하는 지연 순으로 정렬됩니다.",
+  "ar": "لا يزال بالإمكان تعويض الوقت هنا. مرتّبة حسب التأخير الذي تضيفه كل محطة إلى انتهاء الوحدة."
+ },
  "Today": {
   "area": "Gantt / shared",
   "ko": "오늘",
   "ar": "اليوم"
+ },
+ "Today · {n} working days to planned delivery": {
+  "area": "Gantt / shared",
+  "ko": "오늘 · 계획 납품까지 {n}근무일",
+  "ar": "اليوم · {n} يوم عمل حتى التسليم المخطّط"
  },
  "Turret": {
   "area": "Gantt / shared",
@@ -1613,10 +2043,45 @@ export default {
   "ko": "마지막 이동 취소 (기록 {n}개)",
   "ar": "التراجع عن آخر نقل ({n} في السجل)"
  },
+ "unfinished stations pushing unit finishes back": {
+  "area": "Gantt / shared",
+  "ko": "유닛 완료를 늦추는 미완료 스테이션",
+  "ar": "محطات غير مكتملة تؤخّر انتهاء الوحدات"
+ },
+ "Unit": {
+  "area": "Gantt / shared",
+  "ko": "유닛",
+  "ar": "الوحدة"
+ },
+ "Units": {
+  "area": "Gantt / shared",
+  "ko": "유닛",
+  "ar": "الوحدات"
+ },
+ "Units finishing per month, planned versus forecast": {
+  "area": "Gantt / shared",
+  "ko": "월별 완료 유닛, 계획 대비 예상",
+  "ar": "الوحدات المنتهية شهريًا، المخطّط مقابل المتوقّع"
+ },
+ "units finishing, planned vs forecast": {
+  "area": "Gantt / shared",
+  "ko": "완료 유닛, 계획 대비 예상",
+  "ar": "الوحدات المنتهية، المخطّط مقابل المتوقّع"
+ },
+ "Units forecast late": {
+  "area": "Gantt / shared",
+  "ko": "지연 예상 유닛",
+  "ar": "وحدات متوقّع تأخرها"
+ },
  "User": {
   "area": "Gantt / shared",
   "ko": "사용자",
   "ar": "المستخدم"
+ },
+ "Vehicle": {
+  "area": "Gantt / shared",
+  "ko": "장비",
+  "ar": "المركبة"
  },
  "Vehicle / Station": {
   "area": "Gantt / shared",
@@ -1628,6 +2093,11 @@ export default {
   "ko": "장비 / 유닛",
   "ar": "المركبة / الوحدة"
  },
+ "Vehicle output by month": {
+  "area": "Gantt / shared",
+  "ko": "월별 장비 산출",
+  "ar": "إنتاج المركبات شهريًا"
+ },
  "Vehicle: {v}": {
   "area": "Gantt / shared",
   "ko": "장비: {v}",
@@ -1637,6 +2107,16 @@ export default {
   "area": "Gantt / shared",
   "ko": "보기",
   "ar": "عرض"
+ },
+ "vs plan": {
+  "area": "Gantt / shared",
+  "ko": "계획 대비",
+  "ar": "مقابل الخطة"
+ },
+ "wd": {
+  "area": "Gantt / shared",
+  "ko": "근무일",
+  "ar": "يوم عمل"
  },
  "WELCOME": {
   "area": "Gantt / shared",
@@ -1648,10 +2128,40 @@ export default {
   "ko": "{name}님, 환영합니다",
   "ar": "مرحبًا، {name}"
  },
+ "Work done": {
+  "area": "Gantt / shared",
+  "ko": "작업 완료율",
+  "ar": "العمل المنجز"
+ },
+ "working days": {
+  "area": "Gantt / shared",
+  "ko": "근무일",
+  "ar": "أيام عمل"
+ },
+ "working days from first station start to last station finish": {
+  "area": "Gantt / shared",
+  "ko": "첫 스테이션 시작부터 마지막 스테이션 완료까지의 근무일",
+  "ar": "أيام العمل من بدء أول محطة حتى انتهاء آخر محطة"
+ },
+ "worst": {
+  "area": "Gantt / shared",
+  "ko": "최대",
+  "ar": "الأسوأ"
+ },
  "Worst +{n} wd · avg +{avg} wd": {
   "area": "Gantt / shared",
   "ko": "최대 +{n}근무일 · 평균 +{avg}근무일",
   "ar": "الأسوأ +{n} يوم عمل · المتوسط +{avg} يوم عمل"
+ },
+ "Worst first": {
+  "area": "Gantt / shared",
+  "ko": "지연 큰 순",
+  "ar": "الأسوأ أولًا"
+ },
+ "Worst unit": {
+  "area": "Gantt / shared",
+  "ko": "최대 지연 유닛",
+  "ar": "الوحدة الأسوأ"
  },
  "You & {names} editing together": {
   "area": "Gantt / shared",
@@ -1662,6 +2172,26 @@ export default {
   "area": "Gantt / shared",
   "ko": "이 계획을 편집 중입니다",
   "ar": "أنت تعدّل هذه الخطة"
+ },
+ "{a} of {b} tasks due by today are done": {
+  "area": "Gantt / shared",
+  "ko": "오늘까지 예정된 작업 {b}건 중 {a}건 완료",
+  "ar": "اكتملت {a} من {b} مهمة مستحقة حتى اليوم"
+ },
+ "{a} of {b} tasks · {c} units complete": {
+  "area": "Gantt / shared",
+  "ko": "작업 {b}건 중 {a}건 · 유닛 {c}개 완료",
+  "ar": "{a} من {b} مهمة · {c} وحدة مكتملة"
+ },
+ "{b}: no progress recorded.": {
+  "area": "Gantt / shared",
+  "ko": "{b}: 기록된 진행 없음.",
+  "ar": "{b}: لا يوجد تقدّم مسجّل."
+ },
+ "{due} station tasks were due by today and none is marked finished; {ns} should have started. Either work has not started or the dates have not been entered in PPMS.": {
+  "area": "Gantt / shared",
+  "ko": "오늘까지 완료 예정인 스테이션 작업 {due}건 중 완료로 표시된 것이 없으며, {ns}건은 이미 시작했어야 합니다. 작업이 시작되지 않았거나 PPMS에 날짜가 입력되지 않았습니다.",
+  "ar": "كان من المقرّر إنجاز {due} مهمة محطة بحلول اليوم ولم تُعلَّم أي منها كمكتملة؛ وكان يجب أن تبدأ {ns} منها. إما أن العمل لم يبدأ أو لم تُدخل التواريخ في PPMS."
  },
  "{d} d {h} h": {
   "area": "Gantt / shared",
@@ -1682,6 +2212,11 @@ export default {
   "area": "Gantt / shared",
   "ko": "{h}시간 {m}분",
   "ar": "{h} س {m} د"
+ },
+ "{l} of {n} units are late, but not the ones that set the delivery date.": {
+  "area": "Gantt / shared",
+  "ko": "유닛 {n}개 중 {l}개가 지연되지만, 납품일을 결정하는 유닛은 아닙니다.",
+  "ar": "{l} من {n} وحدة متأخرة، لكنها ليست الوحدات التي تحدّد تاريخ التسليم."
  },
  "{names} are editing this plan": {
   "area": "Gantt / shared",
@@ -1708,6 +2243,11 @@ export default {
   "ko": "블록 {n}개 일정 변경됨 ✓",
   "ar": "تمت إعادة جدولة {n} بلوكات ✓"
  },
+ "{n} by more than 5 wd": {
+  "area": "Gantt / shared",
+  "ko": "{n}개는 5근무일 초과",
+  "ar": "{n} منها بأكثر من 5 أيام عمل"
+ },
  "{n} delayed of {total} tasks": {
   "area": "Gantt / shared",
   "ko": "작업 {total}개 중 {n}개 지연",
@@ -1733,15 +2273,45 @@ export default {
   "ko": "{n}개 선택",
   "ar": "{n} محدد"
  },
+ "{n} units": {
+  "area": "Gantt / shared",
+  "ko": "유닛 {n}개",
+  "ar": "{n} وحدات"
+ },
+ "{n} units still open": {
+  "area": "Gantt / shared",
+  "ko": "미완료 유닛 {n}개",
+  "ar": "{n} وحدات ما زالت مفتوحة"
+ },
+ "{n} units · planned vs forecast finish": {
+  "area": "Gantt / shared",
+  "ko": "유닛 {n}개 · 계획 대비 예상 완료",
+  "ar": "{n} وحدة · الانتهاء المخطّط مقابل المتوقّع"
+ },
  "{n} wd": {
   "area": "Gantt / shared",
   "ko": "{n} 근무일",
   "ar": "{n} يوم عمل"
  },
+ "{n} wd better": {
+  "area": "Gantt / shared",
+  "ko": "{n}근무일 개선",
+  "ar": "أفضل بـ {n} يوم عمل"
+ },
+ "{n} wd worse": {
+  "area": "Gantt / shared",
+  "ko": "{n}근무일 악화",
+  "ar": "أسوأ بـ {n} يوم عمل"
+ },
  "{pct}% complete": {
   "area": "Gantt / shared",
   "ko": "{pct}% 완료",
   "ar": "أُنجز {pct}%"
+ },
+ "{s} on {u} was planned to start on {d} and has not started; that unit sets the delivery date. Each day it waits, delivery moves one more day.": {
+  "area": "Gantt / shared",
+  "ko": "{u}의 {s}은(는) {d}에 시작할 계획이었으나 시작되지 않았습니다. 이 유닛이 납품일을 결정합니다. 하루 기다릴 때마다 납품이 하루씩 늦어집니다.",
+  "ar": "كان مخطّطًا أن تبدأ {s} في {u} يوم {d} ولم تبدأ؛ وهذه الوحدة تحدّد تاريخ التسليم. كل يوم انتظار يؤخّر التسليم يومًا آخر."
  },
  "\"{a}\" added to {b} {c}": {
   "area": "Screens & messages",
@@ -1847,11 +2417,6 @@ export default {
   "area": "Screens & messages",
   "ko": "접속 중인 사용자",
   "ar": "المستخدمون النشطون"
- },
- "Actual": {
-  "area": "Screens & messages",
-  "ko": "실적",
-  "ar": "الفعلي"
  },
  "Actual (cumulative)": {
   "area": "Screens & messages",
@@ -2632,6 +3197,11 @@ export default {
   "area": "Screens & messages",
   "ko": "{a} 필터",
   "ar": "فلتر {a}"
+ },
+ "Final Test": {
+  "area": "Screens & messages",
+  "ko": "최종 시험",
+  "ar": "الاختبار النهائي"
  },
  "Fix these first — the top one sets the delivery date.": {
   "area": "Screens & messages",
@@ -3493,6 +4063,11 @@ export default {
   "ko": "공정을 수정했습니다.",
   "ar": "تم تحديث العملية."
  },
+ "Processing": {
+  "area": "Screens & messages",
+  "ko": "표면 처리",
+  "ar": "المعالجة"
+ },
  "Progress : {a}/{b} ({c}%)": {
   "area": "Screens & messages",
   "ko": "진행 : {a}/{b} ({c}%)",
@@ -3713,10 +4288,10 @@ export default {
   "ko": "사용으로 설정",
   "ar": "تعيين كنشط"
  },
- "Show in Plan Table": {
+ "Shot Blasting and Painting": {
   "area": "Screens & messages",
-  "ko": "계획 표에서 보기",
-  "ar": "عرض في جدول الخطة"
+  "ko": "쇼트 블라스트 및 도장",
+  "ar": "السفع والطلاء"
  },
  "show more": {
   "area": "Screens & messages",
@@ -4067,11 +4642,6 @@ export default {
   "area": "Screens & messages",
   "ko": "표시된 스테이션",
   "ar": "المحطات المعروضة"
- },
- "wd": {
-  "area": "Screens & messages",
-  "ko": "근무일",
-  "ar": "يوم عمل"
  },
  "Welding": {
   "area": "Screens & messages",
@@ -4458,11 +5028,6 @@ export default {
   "ko": "누적 작업",
   "ar": "المهام التراكمية"
  },
- "Delay": {
-  "area": "Analytics",
-  "ko": "지연",
-  "ar": "التأخير"
- },
  "Delay per station": {
   "area": "Analytics",
   "ko": "스테이션별 지연",
@@ -4558,11 +5123,6 @@ export default {
   "ko": "일정대로",
   "ar": "وفق الجدول"
  },
- "On time": {
-  "area": "Analytics",
-  "ko": "정시 완료",
-  "ar": "في الموعد"
- },
  "Open": {
   "area": "Analytics",
   "ko": "미해결",
@@ -4617,11 +5177,6 @@ export default {
   "area": "Analytics",
   "ko": "계획 완료 대비 실적",
   "ar": "الإنجاز المخطّط مقابل الفعلي"
- },
- "Planned finish": {
-  "area": "Analytics",
-  "ko": "계획 완료",
-  "ar": "الانتهاء المخطّط"
  },
  "Planned finish → expected finish": {
   "area": "Analytics",
@@ -5628,11 +6183,6 @@ export default {
   "ko": "이것부터 해결하세요 — 맨 위 항목이 납품일을 결정합니다. <b>계획 표에서 보기</b>를 누르면 표가 해당 스테이션으로 필터링되어 실제 날짜를 기록하거나 지연 사유를 추가할 수 있습니다.",
   "ar": "عالج هذه أولًا — الأولى تحدّد تاريخ التسليم. <b>عرض في جدول الخطة</b> يصفّي الجدول لتلك المحطة لتتمكّن من تسجيل التواريخ الفعلية أو إضافة سبب التأخير."
  },
- "Forecast delivery": {
-  "area": "Dialogs",
-  "ko": "예상 납품",
-  "ar": "التسليم المتوقّع"
- },
  "Fridays are always skipped automatically.": {
   "area": "Dialogs",
   "ko": "금요일은 항상 자동으로 건너뜁니다.",
@@ -6522,11 +7072,6 @@ export default {
   "area": "Dialogs",
   "ko": "이 이슈의 후속 조치 담당자",
   "ar": "من يتابع هذه المشكلة"
- },
- "working days": {
-  "area": "Dialogs",
-  "ko": "근무일",
-  "ar": "أيام عمل"
  },
  "Written report": {
   "area": "Dialogs",
@@ -9987,11 +10532,6 @@ export default {
   "area": "Administration",
   "ko": "유닛 번호",
   "ar": "رقم الوحدة"
- },
- "Units": {
-  "area": "Administration",
-  "ko": "유닛",
-  "ar": "الوحدات"
  },
  "Updated actuals for": {
   "area": "Administration",
