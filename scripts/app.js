@@ -5754,7 +5754,8 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
     const causes = [...causeMap.values()].sort((a, b) => b.maxDelay - a.maxDelay || b.count - a.count);
     const cats = [...catMap.entries()].sort((a, b) => b[1].maxDelay - a[1].maxDelay);
     const top = causes[0];
-    const worst = totalDelay || 1;
+    // Bar scale: a single unit can be later than the delivery date itself, so scale to the biggest figure shown
+    const worst = Math.max(1, totalDelay, ...causes.map(c => c.maxDelay));
     const late = totalDelay > 0;
 
     const icon = p => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
@@ -6038,8 +6039,9 @@ function _showDeliveryOutlook() {
                 else overlay.requestFullscreen?.().catch(() => {});
                 break;
             case 'dda': {
-                const data = typeof _exSummaryData !== 'undefined' && _exSummaryData?.length ? _exSummaryData : currentData;
-                const fc = getPlanForecast(data);
+                // Same scope as the Outlook shows (its battalion switch, all plan data)
+                const data = currentData.filter(r => scope === 'all' || (r.battalion_code || '—') === scope);
+                const fc = planForecast(data);
                 close();
                 _showDeliveryAnalysisModal(data, fc.plannedDelivery, fc.expectedDelivery, Math.max(0, fc.deliverySlip), fc);
                 break;
@@ -6113,7 +6115,7 @@ function _showDeliveryOutlook() {
             ? causes.filter(c => setters.some(u => unitKey(u) === unitKey(c))).sort((a, b) => b.d - a.d)[0] : null;
         const setText = setters.length
             ? _t('Delivery date is set by {u}', { u: `<b>${esc(setters.slice(0, 2).map(unitLabel).join(', '))}${setters.length > 2 ? ` +${setters.length - 2}` : ''}</b>` })
-              + (setterCause ? `; ${_t('most of its delay comes from {s}', { s: `<b>${esc(setterCause.st)}</b> (${esc(setterCause.line)}, +${setterCause.d} ${_t('wd')}${setterCause.open ? `, ${_t('not finished yet')}` : ''})` })}.` : '.')
+              + (setterCause ? `; ${_t('most of its delay comes from {s}', { s: `<b>${esc(setterCause.st)}</b> (${esc(_t(setterCause.line))}, +${setterCause.d} ${_t('wd')}${setterCause.open ? `, ${_t('not finished yet')}` : ''})` })}.` : '.')
             : '';
 
         const series = m.history.map(h => ({ date: h.date, slip: Math.max(0, wd(planned, maxIso(units.map(u => h.ff[unitKey(u)])))) }))
@@ -6240,7 +6242,9 @@ function _showDeliveryOutlook() {
             <div class="dol-card dol-pad">
                 <h3 class="dol-h">${_t('Vehicle output by month')} <small>${_t('units finishing, planned vs forecast')}</small></h3>
                 <p class="dol-hint">${gap > 0
-                    ? _t(gap === 1 ? 'Biggest shortfall: by the end of {m}, 1 unit fewer than planned will be finished.' : 'Biggest shortfall: by the end of {m}, {n} fewer units than planned will be finished.', { m: `<b>${D(gapM + '-01').toLocaleDateString(locale, { month: 'long', year: 'numeric' })}</b>`, n: gap })
+                    ? (mv => (gap === 1
+                        ? _t('Biggest shortfall: by the end of {m}, 1 unit fewer than planned will be finished.', { m: mv })
+                        : _t('Biggest shortfall: by the end of {m}, {n} fewer units than planned will be finished.', { m: mv, n: gap })))(`<b>${D(gapM + '-01').toLocaleDateString(locale, { month: 'long', year: 'numeric' })}</b>`)
                     : _t('Forecast output keeps pace with the plan every month.')}</p>
                 <div class="dol-chart">${chart}</div>
                 <div class="dol-legend"><span><i class="dol-bar-plan"></i>${_t('Planned finish')}</span><span><i class="dol-bar-fc"></i>${_t('Forecast finish')}</span></div>
@@ -6288,7 +6292,7 @@ function _showDeliveryOutlook() {
             <div class="dol-cause">
                 <span class="dol-rank">${i + 1}</span>
                 <div class="dol-cause-main">
-                    <div class="dol-cause-t"><strong>${esc(c.st)}</strong><span class="dol-vt">${esc(c.v)}</span><span class="dol-chip">${esc(c.line)}</span><span class="dol-chip">${esc(c.cat)}</span></div>
+                    <div class="dol-cause-t"><strong>${esc(c.st)}</strong><span class="dol-vt">${esc(c.v)}</span><span class="dol-chip">${esc(_t(c.line))}</span><span class="dol-chip">${esc(_t(c.cat))}</span></div>
                     <div class="dol-cause-l">${isOpen ? `<b>${c.openUnits.size === 1 ? _t('1 unit still open') : _t('{n} units still open', { n: c.openUnits.size })}</b> · ${esc(unitsTxt(c.openUnits))}` : `${c.units.size === 1 ? _t('1 unit') : _t('{n} units', { n: c.units.size })} · ${esc(unitsTxt(c.units))}`}</div>
                     <div class="dol-cause-bar"><i style="width:${Math.max(6, Math.round(c.max / barMax * 100))}%"></i></div>
                 </div>
@@ -10948,15 +10952,12 @@ function renderGantt(plans, startDate, endDate, { patch = false } = {}) {
     // ── 10. Preserve viewport after edits/reloads ──────────────────
     if (patched) {
         // Header and other rows untouched — the scroll position never moved
+    } else if (_ganttTodayPending && todayCol != null) {
+        // todayCol = the today line's column: Fridays have no column, so on a
+        // Friday it is the nearest working day (dayIndex[today] is undefined)
+        _scrollGanttToToday(GANTT_LABEL_W + todayCol * GANTT_DAY_W);
     } else if (_ganttHasRenderedOnce && previousGanttScroll) {
         restoreGanttScrollPos(previousGanttScroll);
-    } else if (dayIndex[today] !== undefined) {
-        const scrollRoot = document.getElementById('ganttScrollRoot');
-        if (scrollRoot) {
-            const todayPx = GANTT_LABEL_W + dayIndex[today] * GANTT_DAY_W;
-            const offset = Math.max(0, todayPx - scrollRoot.clientWidth / 2);
-            setTimeout(() => { scrollRoot.scrollLeft = offset; }, 60);
-        }
     }
     _ganttHasRenderedOnce = true;
     requestAnimationFrame(positionOpenGanttBlockMenu);
@@ -20201,6 +20202,32 @@ let _vpxFullscreenHandlersBound = false;
 let _ganttHoverDate = '';
 let _ganttHoverRowEl = null;
 let _ganttHasRenderedOnce = false;
+// The first render centres the chart on today. It stays pending until that
+// scroll has really happened: on page load the chart is often built before
+// it has a size (loading screen), when setting scrollLeft does nothing — and
+// every later render then "restored" that 0, i.e. the start of the plan.
+let _ganttTodayPending = true;
+let _ganttTodayObserver = null;
+function _scrollGanttToToday(todayPx) {
+    const root = document.getElementById('ganttScrollRoot');
+    if (!root) return;
+    _ganttTodayObserver?.disconnect();
+    _ganttTodayObserver = null;
+    const apply = () => {
+        if (!root.isConnected) return true; // re-rendered meanwhile — that render takes over
+        if (!root.clientWidth || root.scrollWidth <= root.clientWidth) return false; // not laid out yet
+        root.scrollLeft = Math.max(0, todayPx - root.clientWidth / 2);
+        _ganttTodayPending = false;
+        return true;
+    };
+    setTimeout(() => { // a timer, not rAF: rAF never fires while the tab is in the background
+        if (apply() || typeof ResizeObserver === 'undefined') return;
+        _ganttTodayObserver = new ResizeObserver(() => {
+            if (apply()) { _ganttTodayObserver?.disconnect(); _ganttTodayObserver = null; }
+        });
+        _ganttTodayObserver.observe(root);
+    });
+}
 
 /* ── Undo / Redo stacks ─────────────────────────────────────────── */
 // Each entry: array of { id, newStart, newEnd, oldStart, oldEnd }
