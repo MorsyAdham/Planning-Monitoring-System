@@ -6305,6 +6305,8 @@ body {
     box-shadow: 0 24px 70px rgba(0, 0, 0, .5);
 }
 
+.report-preview-tabs[hidden] { display: none; }
+
 .report-preview-tabs {
     display: flex;
     align-items: center;
@@ -10452,6 +10454,35 @@ th.vpx-grp-processing:first-of-type {
     letter-spacing: normal;
     font-weight: 400;
     z-index: 200;
+}
+
+/* Search box at the top of long column-filter menus */
+.th-filter-search {
+    padding: 4px 4px 6px;
+}
+.th-filter-search-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 5px 8px;
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-sm);
+    background: var(--clr-surface-2);
+    color: var(--clr-text);
+    font: inherit;
+    font-size: .76rem;
+}
+.th-filter-menu .ms-option[hidden] {
+    display: none;
+}
+/* Second, labelled filter button in one header (Category on Station / Process) */
+.th-filter-btn--labelled {
+    width: auto;
+    gap: 3px;
+    padding: 0 5px;
+    font-size: .66rem;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: normal;
 }
 
 /* ─── Gantt Export Schedule dropdown ────────────────────────────── */

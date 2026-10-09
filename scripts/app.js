@@ -1619,10 +1619,11 @@ function getTableFilterFields() {
     ];
     return [
         { field: 'vehicle',     label: 'Vehicle',      value: r => r.vehicle },
-        { field: 'unit',        label: 'Unit',         value: r => r.vehicle_no },
+        { field: 'unit',        label: 'Unit',         value: r => _tableUnitFilterValue(r) },
         { field: 'battalion',   label: 'Battalion',    value: r => r.battalion_code },
         { field: 'week',        label: 'Week',         value: r => r.week },
         { field: 'station',     label: 'Station',      value: r => r.process_station },
+        { field: 'category',    label: 'Category',     value: r => getModuleCategory(r.process_station, r) },
         { field: 'code',        label: 'Code',         value: r => getRowCode(r) },
         { field: 'plannedStart',label: 'Planned Start',value: r => formatDate(r.start_date) },
         { field: 'plannedEnd',  label: 'Planned End',  value: r => formatDate(r.end_date) },
@@ -1632,6 +1633,18 @@ function getTableFilterFields() {
         { field: 'delay',       label: 'Delay',        value: r => _delayFilterValue(r) },
         { field: 'comments',    label: 'Comments',     value: r => _commentsFilterValue(r) },
     ];
+}
+
+/** F200 Unit filter value. Unit labels (M1, M2…) repeat in every battalion
+ *  and vehicle, so the bare label is ambiguous — show battalion · vehicle +
+ *  unit · unit code, e.g. "BTL-01 · K9 M2 · EGY N26011". */
+function _tableUnitFilterValue(r) {
+    if (!r.vehicle_no) return '';
+    return [
+        r.battalion_code,
+        `${r.vehicle || ''} ${r.vehicle_no}`.trim(),
+        getUnitCode(r.vehicle, r.vehicle_no, r.battalion_code),
+    ].filter(Boolean).join(' · ');
 }
 
 /** Distinct, sorted values for one table-filter field across the full dataset. */
@@ -4740,20 +4753,30 @@ function _reapplyFilters() {
 
 /** <th> cell — plain, or with an embedded checkbox-filter dropdown when `field` is given
  *  (field must be one of getTableFilterFields()'s keys for the active module). */
-function _thCell(label, field, extraClass = '') {
+/** `extraFilter` ({ field, label }) adds a second filter button to the same
+ *  header — used for Category on "Station / Process", so no new column is
+ *  needed and the table's colspans stay valid. */
+function _thCell(label, field, extraClass = '', extraFilter = null) {
     if (!field) return `<th${extraClass ? ` class="${extraClass}"` : ''}>${esc(label)}</th>`;
-    const active = _tblColumnFilters[field]?.size > 0;
+    const filterBtn = (f, l, withLabel) => {
+        const active = _tblColumnFilters[f]?.size > 0;
+        return `
+        <button type="button" class="th-filter-btn${withLabel ? ' th-filter-btn--labelled' : ''}${active ? ' th-filter-btn--active' : ''}" data-filter-field="${f}" title="Filter ${esc(l)}" aria-label="Filter ${esc(l)}">
+            <svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M1.5 2.5h9M3.5 6h5M5.5 9.5h1" stroke-linecap="round"/></svg>${withLabel ? `<span>${esc(l)}</span>` : ''}
+        </button>
+        <div class="ms-menu th-filter-menu" data-filter-field="${f}" hidden></div>`;
+    };
     return `
     <th class="th-filterable${extraClass ? ' ' + extraClass : ''}">
         <span class="th-label">${esc(label)}</span>
-        <button type="button" class="th-filter-btn${active ? ' th-filter-btn--active' : ''}" data-filter-field="${field}" title="Filter ${esc(label)}" aria-label="Filter ${esc(label)}">
-            <svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M1.5 2.5h9M3.5 6h5M5.5 9.5h1" stroke-linecap="round"/></svg>
-        </button>
-        <div class="ms-menu th-filter-menu" data-filter-field="${field}" hidden></div>
+        ${filterBtn(field, label, false)}
+        ${extraFilter ? filterBtn(extraFilter.field, extraFilter.label, true) : ''}
     </th>`;
 }
 
 let _thOpenFilterField = null; // which column header's filter menu is open (survives the table re-render a checkbox change triggers)
+let _thFilterSearch = {};      // typed search text per field (survives the same re-render)
+const TH_FILTER_SEARCH_MIN = 8; // menus with more options than this get a search box
 
 /** (Re)build one column header's checkbox list from the full loaded dataset. */
 function _renderThFilterMenu(field) {
@@ -4762,18 +4785,34 @@ function _renderThFilterMenu(field) {
     const selected = _tblColumnFilters[field] || new Set();
     const options = getTableFilterFieldValues(field);
     const allChecked = selected.size === 0;
+    const withSearch = options.length > TH_FILTER_SEARCH_MIN;
+    const query = withSearch ? (_thFilterSearch[field] || '') : '';
     menu.innerHTML = `
+        ${withSearch ? `<div class="th-filter-search"><input type="search" class="th-filter-search-input" placeholder="${esc(_t('Search…'))}" value="${esc(query)}" /></div>` : ''}
         <label class="ms-option ms-option-all">
             <input type="checkbox" data-value="all" ${allChecked ? 'checked' : ''} />
             <span>${_t('All')}</span>
         </label>
         <div class="ms-option-divider"></div>
         ${options.map(o => `
-            <label class="ms-option">
+            <label class="ms-option" data-search="${esc(o.toLowerCase())}">
                 <input type="checkbox" data-value="${esc(o)}" ${(!allChecked && selected.has(o)) ? 'checked' : ''} />
                 <span>${esc(o)}</span>
             </label>
         `).join('') || '<div class="ms-option" style="opacity:.6;cursor:default">No values</div>'}`;
+    if (withSearch) {
+        const input = menu.querySelector('.th-filter-search-input');
+        const applySearch = () => {
+            // Every typed word must appear, in any order ("btl-02 k10" finds "BTL-02 · K10 M1 · …")
+            const words = input.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+            _thFilterSearch[field] = input.value;
+            menu.querySelectorAll('.ms-option[data-search]').forEach(opt => {
+                opt.hidden = !words.every(w => opt.dataset.search.includes(w));
+            });
+        };
+        input.addEventListener('input', applySearch);
+        applySearch();
+    }
 }
 
 /** Wire every column-header filter button/menu in the current #mainTable thead.
@@ -4795,6 +4834,7 @@ function _wireColumnHeaderThFilters() {
                 _renderThFilterMenu(field);
                 menuEl.hidden = false;
                 _thOpenFilterField = field;
+                menuEl.querySelector('.th-filter-search-input')?.focus();
             }
         });
     });
@@ -4862,7 +4902,7 @@ function renderTable(data) {
         thead.innerHTML = `<tr>${[
             _thCell('Vehicle', 'vehicle'),
             _thCell('Unit', 'unit'),
-            _thCell('Station / Process', 'station'),
+            _thCell('Station / Process', 'station', '', { field: 'category', label: 'Category' }),
             _thCell('Code', 'code'),
             _thCell('Week', 'week'),
             _thCell('Planned Start', 'plannedStart'),
@@ -5443,8 +5483,13 @@ function _addWorkingDays(dateStr, n) {
    Each unit is walked through its stations in route order:
      • KD2 lines — Hull and Turret (K9) / Structure (K10/K11) run in
        parallel; the downstream line (Assembly & Processing & Testing)
-       starts after ALL of them. Stations sharing a route position
-       (parallel work centres) share the same predecessor.
+       starts after ALL of them. Inside a line a station waits only for
+       the stations the PLAN finishes before it starts — stations the plan
+       runs side by side (parallel work centres, the Turret / Gun Barrel
+       sub-assemblies next to the hull-side Assembly stations) don't wait
+       for each other. The live route order is a display order and can't
+       say which stations run in parallel; chaining them one after another
+       added 6–12 phantom working days to every K9 unit.
      • A completed station ends on its actual completion date.
      • An unfinished station starts no earlier than its planned start, the
        working day after the station(s) before it, and today — unless it
@@ -5480,15 +5525,6 @@ function _fcUnitKey(r) {
  *  `credit` the part of that which still reaches the unit's finish. */
 function planForecast(rows, today = todayStr()) {
     const kd2 = isKD2Module();
-    const rt = getModuleRuntime();
-    const orderCache = {};
-    const slotOf = (r, i) => {
-        if (!kd2) return 'i' + i;
-        const v = _getVehicleType(r.vehicle) || r.vehicle;
-        if (!(v in orderCache)) orderCache[v] = rt?.getStationOrderByCode?.(v) || new Map();
-        const info = orderCache[v].get(r.station_code);
-        return info ? info.sortKey : 'i' + i;
-    };
     const groups = new Map();
     rows.forEach(r => {
         if (!r || !r.start_date || !r.end_date || r.module === 'gun' || r.module === 'vehicle') return;
@@ -5496,36 +5532,41 @@ function planForecast(rows, today = todayStr()) {
         if (!groups.has(k)) groups.set(k, []);
         groups.get(k).push(r);
     });
+    const byPlan = (a, b) => a.start_date.localeCompare(b.start_date) || a.end_date.localeCompare(b.end_date);
 
     const byRowId = new Map();
     const units = [];
     groups.forEach((list, key) => {
+        // KD2: feeder lines first, then the downstream line, each by planned
+        // start — so every station's predecessors are already forecast.
+        const lineOf = r => (kd2 ? (kd2LineLabel(r) || 'Other') : 'Main');
+        const isFeeder = name => kd2 && _FC_FEEDER_LINES.test(name);
         list = list.slice().sort(kd2
-            ? kd2StationCompare
-            : (a, b) => a.start_date.localeCompare(b.start_date) || a.end_date.localeCompare(b.end_date));
+            ? (a, b) => (isFeeder(lineOf(a)) ? 0 : 1) - (isFeeder(lineOf(b)) ? 0 : 1) || byPlan(a, b) || kd2StationCompare(a, b)
+            : byPlan);
         const lines = new Map();
         const steps = [];
-        list.forEach((r, i) => {
-            const lineName = kd2 ? (kd2LineLabel(r) || 'Other') : 'Main';
+        list.forEach(r => {
+            const lineName = lineOf(r);
             let L = lines.get(lineName);
-            if (!L) {
-                L = { name: lineName, prevEnd: null, prevSlip: 0, slot: undefined, slotEnd: null, slotSlip: null, end: null, endSlip: 0, steps: [] };
-                if (kd2 && !_FC_FEEDER_LINES.test(lineName)) {
-                    // Downstream starts after every feeder line has finished
-                    lines.forEach(F => {
-                        if (!_FC_FEEDER_LINES.test(F.name) || !F.end) return;
-                        if (!L.prevEnd || F.end > L.prevEnd) L.prevEnd = F.end;
-                        L.prevSlip = Math.max(L.prevSlip, F.endSlip);
-                    });
-                }
-                lines.set(lineName, L);
-            }
-            const slot = slotOf(r, i);
-            if (slot !== L.slot) { // next route position
-                if (L.slot !== undefined) { L.prevEnd = L.slotEnd; L.prevSlip = L.slotSlip ?? 0; }
-                L.slot = slot; L.slotEnd = null; L.slotSlip = null;
-            }
+            if (!L) { L = { name: lineName, steps: [] }; lines.set(lineName, L); }
             const pStart = r.start_date, pEnd = r.end_date;
+            // Predecessors: KD2 — the stations of this line the plan finishes
+            // before this one starts (stations the plan runs side by side
+            // don't wait for each other), plus every feeder station for the
+            // downstream line. KD1 — the previous station.
+            const preds = !kd2
+                ? steps.slice(-1)
+                : steps.filter(p => (p.line === lineName && p.row.end_date < pStart)
+                    || (!isFeeder(lineName) && isFeeder(p.line)));
+            let prevEnd = null;
+            const lastPlanned = new Map(); // line → { end, slip } of its latest-planned predecessor(s)
+            preds.forEach(p => {
+                if (!prevEnd || p.projEnd > prevEnd) prevEnd = p.projEnd;
+                const lp = lastPlanned.get(p.line);
+                if (!lp || p.row.end_date > lp.end) lastPlanned.set(p.line, { end: p.row.end_date, slip: p.slip });
+                else if (p.row.end_date === lp.end) lp.slip = Math.max(lp.slip, p.slip);
+            });
             const pr = r.progress || {};
             const done = !!(pr.completed && pr.completion_date);
             let projStart, projEnd;
@@ -5537,7 +5578,7 @@ function planForecast(rows, today = todayStr()) {
                     projStart = pr.actual_start_date;
                 } else {
                     projStart = pStart;
-                    if (L.prevEnd) { const after = _fcNextWork(L.prevEnd); if (after > projStart) projStart = after; }
+                    if (prevEnd) { const after = _fcNextWork(prevEnd); if (after > projStart) projStart = after; }
                     if (projStart < today) projStart = today;
                 }
                 projStart = _fcOnOrAfterWork(projStart);
@@ -5545,15 +5586,12 @@ function planForecast(rows, today = todayStr()) {
                 if (projEnd < today) projEnd = _fcOnOrAfterWork(today);
             }
             const slip = _fcSlip(pEnd, projEnd);
-            const inSlip = Math.max(0, L.prevSlip || 0);
+            // Slip that reached this station = the slip of the station(s) planned right before it
+            const inSlip = Math.max(0, ...[...lastPlanned.values()].map(x => x.slip));
             const step = { row: r, line: lineName, done, projStart, projEnd, slip, added: slip - inSlip, credit: 0 };
             steps.push(step);
             L.steps.push(step);
             byRowId.set(String(r.id), step);
-            if (!L.slotEnd || projEnd > L.slotEnd) L.slotEnd = projEnd;
-            if (L.slotSlip === null || slip > L.slotSlip) L.slotSlip = slip;
-            if (!L.end || projEnd >= L.end) { L.end = projEnd; }
-            L.endSlip = L.slotSlip;
         });
 
         const plannedFinish = list.reduce((m, r) => (r.end_date > m ? r.end_date : m), '');
@@ -5568,14 +5606,17 @@ function planForecast(rows, today = todayStr()) {
             ? Math.min(...downstream.flatMap(L => L.steps.map(st => st.slip)))
             : Infinity;
         lines.forEach(L => {
-            let suffixMin = Infinity;
-            for (let i = L.steps.length - 1; i >= 0; i--) {
-                const st = L.steps[i];
-                const pathMin = Math.min(suffixMin, _FC_FEEDER_LINES.test(L.name) ? downstreamMin : Infinity);
+            const feeder = kd2 && _FC_FEEDER_LINES.test(L.name);
+            L.steps.forEach((st, i) => {
+                // Stations after it on its path: KD2 — those of its line the plan
+                // starts after it ends; KD1 — every later station.
+                const after = kd2
+                    ? L.steps.filter(q => q.row.start_date > st.row.end_date)
+                    : L.steps.slice(i + 1);
+                const pathMin = Math.min(...after.map(q => q.slip), feeder ? downstreamMin : Infinity);
                 const carry = Math.min(st.slip, pathMin, finishSlip);
                 st.credit = finishSlip > 0 ? Math.max(0, Math.min(st.added, carry)) : 0;
-                suffixMin = Math.min(suffixMin, st.slip);
-            }
+            });
         });
 
         const r0 = list[0];
@@ -5667,7 +5708,10 @@ function _updateDeliveryCard(data) {
     if (card) {
         card.style.cursor = 'pointer';
         card.title = _t('Click to see delay breakdown');
-        card.onclick = () => _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, totalDelay, fc);
+        // KD2: the full-screen Delivery Outlook (it links to the Delay Analysis); other modules keep the analysis modal
+        card.onclick = () => (fc && isKD2Module()
+            ? _showDeliveryOutlook()
+            : _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, totalDelay, fc));
     }
 }
 
@@ -5854,6 +5898,527 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
         showToast(`Showing "${btn.dataset.station}" — clear the Search chip in Filters to see everything again.`, 'info');
     });
     document.addEventListener('keydown', onKey, true);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   DELIVERY OUTLOOK — full-screen management view (KD2)
+   Opened from the Delivery card. Answers, in order: are we on time and
+   is it getting better or worse · what sets the date · are we keeping up
+   with the plan · when do vehicles come out · how long a vehicle takes ·
+   what can still be acted on · detail per battalion and unit.
+   Every figure comes from planForecast(), so it matches the Delivery
+   card, the Delivery Delay Analysis and the reports. Uses ALL loaded
+   plan rows (not the page filters) with its own battalion switch.
+   ══════════════════════════════════════════════════════════════════ */
+const _DOL_SORT_KEY = 'ppms_dol_sort';
+const _DOL_SCOPE_KEY = 'ppms_dol_scope';
+
+/** Snapshot of everything the Outlook shows, from live plan rows. */
+function _buildOutlookModel(rows) {
+    const today = todayStr();
+    const data = rows.filter(r => r && r.start_date && r.end_date && r.module !== 'gun' && r.module !== 'vehicle');
+    const fc = planForecast(data, today);
+    const keyOf = u => `${u.battalion}|${u.vehicle}|${u.unitNo}`;
+    const minIso = list => list.filter(Boolean).reduce((m, x) => (!m || x < m ? x : m), '');
+    const shiftIso = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return localDateStr(d); };
+
+    // Trend: the same forecast as it would have looked on past days, from the
+    // dates recorded by then (daily for two weeks, weekly before that).
+    const asOf = past => data.map(r => {
+        const pr = r.progress || {};
+        const c = !!(pr.completed && pr.completion_date && pr.completion_date <= past);
+        const as = pr.actual_start_date && pr.actual_start_date <= past ? pr.actual_start_date : null;
+        return { ...r, progress: { ...pr, completed: c, completion_date: c ? pr.completion_date : null, actual_start_date: as } };
+    });
+    const history = [-56, -49, -42, -35, -28, -21, -14, -13, -12, -11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1].map(o => {
+        const past = shiftIso(today, o);
+        const f = planForecast(asOf(past), past);
+        const ff = {};
+        f.units.forEach(u => { ff[keyOf(u)] = u.projFinish; });
+        return { date: past, ff };
+    });
+
+    const units = fc.units.map(u => {
+        const lines = {};
+        u.steps.forEach(st => {
+            const L = lines[st.line] || (lines[st.line] = { planned: '', forecast: '', done: 0, total: 0 });
+            if (st.row.end_date > L.planned) L.planned = st.row.end_date;
+            if (st.projEnd > L.forecast) L.forecast = st.projEnd;
+            L.total++; if (st.done) L.done++;
+        });
+        Object.values(lines).forEach(L => { L.slip = _fcSlip(L.planned, L.forecast); });
+        const open = u.steps.filter(s => !s.done).sort((a, b) => a.projStart.localeCompare(b.projStart));
+        const actualStart = minIso(u.steps.flatMap(s => [s.row.progress?.actual_start_date, s.done ? s.row.progress?.completion_date : null]));
+        // Stations that should have started, have not, and are held to today
+        const waiting = open.filter(s => !s.row.progress?.actual_start_date && s.row.start_date < today && s.projStart <= _fcOnOrAfterWork(today))
+            .sort((a, b) => b.slip - a.slip || a.row.start_date.localeCompare(b.row.start_date))
+            .slice(0, 3).map(s => ({ st: s.row.process_station, line: s.line, ps: s.row.start_date, slip: s.slip }));
+        return {
+            b: u.battalion, v: u.vehicle, u: u.unitNo, code: getUnitCode(u.steps[0].row.vehicle, u.unitNo, u.battalion),
+            ps: minIso(u.steps.map(s => s.row.start_date)), pf: u.plannedFinish,
+            as: actualStart || null, fs: actualStart || minIso(u.steps.map(s => s.projStart)),
+            ff: u.projFinish, slip: u.finishSlip, done: u.steps.filter(s => s.done).length, total: u.steps.length,
+            complete: u.steps.every(s => s.done), started: !!actualStart,
+            now: open[0] ? open[0].row.process_station : null, lines, waiting,
+        };
+    });
+    const causes = [];
+    fc.units.filter(u => u.finishSlip > 0).forEach(u => u.steps.filter(st => st.credit > 0).forEach(st => causes.push({
+        b: u.battalion, v: u.vehicle, u: u.unitNo, st: st.row.process_station,
+        cat: getModuleCategory(st.row.process_station, st.row) || 'Other', line: st.line, d: st.credit, open: !st.done,
+    })));
+    const adh = {};
+    data.forEach(r => {
+        const b = r.battalion_code || '—';
+        const a = adh[b] || (adh[b] = { total: 0, due: 0, dueDone: 0, done: 0, notStarted: 0 });
+        const pr = r.progress || {};
+        const done = !!(pr.completed && pr.completion_date);
+        a.total++; if (done) a.done++;
+        if (r.end_date <= today) { a.due++; if (done) a.dueDone++; }
+        if (r.start_date <= today && !done && !pr.actual_start_date) a.notStarted++;
+    });
+    return { today, title: getModuleReportTitle(), badge: getModuleBadge(), units, causes, history, adh, generated: new Date() };
+}
+
+function _showDeliveryOutlook() {
+    document.querySelector('.dol-overlay')?.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'dol-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', _t('Delivery Outlook'));
+    const ico = p => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+    overlay.innerHTML = `
+        <header class="dol-bar">
+            <span class="dol-badge">${esc(getModuleBadge())}</span>
+            <div class="dol-titles"><h2>${_t('Delivery Outlook')}</h2><div class="dol-sub" data-dol="sub">${_t('Calculating…')}</div></div>
+            <span class="dol-grow"></span>
+            <div class="dol-seg" data-dol="scope" role="group" aria-label="${_t('Battalion')}"></div>
+            <button type="button" class="dol-btn" data-dol="dda" title="${_t('Open the Delivery Delay Analysis')}">${ico('<path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/>')}<span>${_t('Delay breakdown')}</span></button>
+            <button type="button" class="dol-icon" data-dol="fs" title="${_t('Full screen')}" aria-label="${_t('Full screen')}">${ico('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>')}</button>
+            <button type="button" class="dol-icon" data-dol="print" title="${_t('Print / save as PDF')}" aria-label="${_t('Print')}">${ico('<path d="M6 9V3h12v6M6 18H4a1 1 0 01-1-1v-6a2 2 0 012-2h14a2 2 0 012 2v6a1 1 0 01-1 1h-2"/><rect x="6" y="14" width="12" height="7" rx="1"/>')}</button>
+            <button type="button" class="dol-icon" data-dol="close" title="${_t('Close')}" aria-label="${_t('Close')}">${ico('<path d="M6 6l12 12M18 6L6 18"/>')}</button>
+        </header>
+        <main class="dol-main" data-dol="main"><div class="dol-loading">${_t('Calculating the forecast…')}</div></main>`;
+    document.body.appendChild(overlay);
+    document.body.classList.add('dol-open');
+
+    const close = () => {
+        document.removeEventListener('keydown', onKey, true);
+        if (document.fullscreenElement === overlay) document.exitFullscreen?.().catch(() => {});
+        overlay.remove();
+        document.body.classList.remove('dol-open');
+    };
+    function onKey(e) { if (e.key === 'Escape' && !document.fullscreenElement) { e.preventDefault(); close(); } }
+    document.addEventListener('keydown', onKey, true);
+
+    let model = null;
+    let scope = 'all';
+    let sortMode = 'worst';
+    try { sortMode = localStorage.getItem(_DOL_SORT_KEY) || 'worst'; scope = localStorage.getItem(_DOL_SCOPE_KEY) || 'all'; } catch { /* private mode */ }
+
+    overlay.addEventListener('click', e => {
+        const btn = e.target.closest('[data-dol], [data-dol-b], [data-dol-s], [data-dol-station]');
+        if (!btn) return;
+        if (btn.dataset.dolB) { scope = btn.dataset.dolB; try { localStorage.setItem(_DOL_SCOPE_KEY, scope); } catch { /* ignore */ } render(); return; }
+        if (btn.dataset.dolS) { sortMode = btn.dataset.dolS; try { localStorage.setItem(_DOL_SORT_KEY, sortMode); } catch { /* ignore */ } render(); return; }
+        if (btn.dataset.dolStation) {
+            close();
+            const search = document.getElementById('filterSearch');
+            if (search) { search.value = btn.dataset.dolStation; search.dispatchEvent(new Event('input', { bubbles: true })); }
+            document.getElementById('tableSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            showToast(_t('Showing "{s}" — clear the Search chip in Filters to see everything again.', { s: btn.dataset.dolStation }), 'info');
+            return;
+        }
+        switch (btn.dataset.dol) {
+            case 'close': close(); break;
+            case 'print': window.print(); break;
+            case 'fs':
+                if (document.fullscreenElement) document.exitFullscreen?.();
+                else overlay.requestFullscreen?.().catch(() => {});
+                break;
+            case 'dda': {
+                const data = typeof _exSummaryData !== 'undefined' && _exSummaryData?.length ? _exSummaryData : currentData;
+                const fc = getPlanForecast(data);
+                close();
+                _showDeliveryAnalysisModal(data, fc.plannedDelivery, fc.expectedDelivery, Math.max(0, fc.deliverySlip), fc);
+                break;
+            }
+        }
+    });
+
+    // Let the overlay paint first — the trend runs the forecast 21 times
+    setTimeout(() => {
+        try { model = _buildOutlookModel(currentData); render(); }
+        catch (err) {
+            console.error('[DeliveryOutlook]', err);
+            overlay.querySelector('[data-dol="main"]').innerHTML = `<div class="dol-loading">${_t('The outlook could not be calculated.')} ${esc(err.message || '')}</div>`;
+        }
+    }, 30);
+
+    function render() {
+        const main = overlay.querySelector('[data-dol="main"]');
+        const m = model;
+        const today = m.today;
+        const locale = window.PPMSi18n?.getLocale?.() || 'en-GB';
+        const D = iso => new Date(iso + 'T00:00:00');
+        const fmt = iso => (iso ? D(iso).toLocaleDateString(locale, { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+        const fmtShort = iso => (iso ? D(iso).toLocaleDateString(locale, { day: '2-digit', month: 'short' }) : '—');
+        const days = (a, b) => Math.round((D(b) - D(a)) / 86400000);
+        const wd = (a, b) => _fcSlip(a, b);
+        const span = (a, b) => (!a || !b ? null : _fcSpan(a, b));
+        const sev = n => (n <= 0 ? 'ok' : n <= 5 ? 'warn' : 'bad');
+        const delayTxt = n => (n > 0 ? `+${n} ${_t('wd')}` : _t('On track'));
+        const vOrder = v => ({ K9: 0, K10: 1, K11: 2 }[v] ?? 9);
+        const unitNum = u => parseInt(String(u).replace(/\D+/g, ''), 10) || 0;
+        const planCmp = (a, b) => a.b.localeCompare(b.b, undefined, { numeric: true }) || vOrder(a.v) - vOrder(b.v) || unitNum(a.u) - unitNum(b.u);
+        const maxIso = list => list.reduce((x, y) => (y && y > x ? y : x), '');
+        const minIso = list => list.reduce((x, y) => (y && (!x || y < x) ? y : x), '');
+        const unitKey = u => `${u.b}|${u.v}|${u.u}`;
+        const unitLabel = u => `${u.b} · ${u.v} ${u.u}`;
+        const buildTime = u => ({ plan: span(u.ps, u.pf), real: span(u.fs, u.ff), done: u.complete });
+        const ICON_WARN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg>';
+        const LINE_COLS = [
+            { label: _t('Hull / Structure'), pick: L => L.Hull || L.Structure },
+            { label: _t('Turret'), pick: L => L.Turret },
+            { label: _t('Assembly, Processing & Testing'), pick: L => L['Assembly & Processing & Testing'] },
+        ];
+
+        const battalions = [...new Set(m.units.map(u => u.b))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+        if (scope !== 'all' && !battalions.includes(scope)) scope = 'all';
+        overlay.querySelector('[data-dol="scope"]').innerHTML = ['all', ...battalions].map(b =>
+            `<button type="button" data-dol-b="${esc(b)}" aria-pressed="${b === scope}">${b === 'all' ? _t('All battalions') : esc(b)}</button>`).join('');
+
+        const inScope = x => scope === 'all' || x.b === scope;
+        const units = m.units.filter(inScope);
+        const causes = m.causes.filter(inScope);
+        overlay.querySelector('[data-dol="sub"]').textContent =
+            `${m.title} · ${scope === 'all' ? _t('All battalions') : scope} · ${_t('data as of {d}', { d: fmt(today) })}`;
+        if (!units.length) { main.innerHTML = `<div class="dol-loading">${_t('No planned units to forecast.')}</div>`; return; }
+
+        const planned = maxIso(units.map(u => u.pf));
+        const forecast = maxIso(units.map(u => u.ff));
+        const slip = Math.max(0, wd(planned, forecast));
+        const late = units.filter(u => u.slip > 0);
+        const worst = units.slice().sort((a, b) => b.slip - a.slip)[0];
+        const s = sev(slip);
+        const adh = Object.entries(m.adh).filter(([b]) => scope === 'all' || b === scope).map(([, a]) => a)
+            .reduce((t, a) => { Object.keys(a).forEach(k => { t[k] = (t[k] || 0) + a[k]; }); return t; }, {});
+
+        // ── 1 · verdict, timeline, trend
+        const tlSpan = Math.max(1, days(today, forecast > planned ? forecast : planned));
+        const pos = iso => Math.min(100, Math.max(0, days(today, iso) / tlSpan * 100));
+        const setters = units.filter(u => u.ff === forecast);
+        const setterCause = setters.length
+            ? causes.filter(c => setters.some(u => unitKey(u) === unitKey(c))).sort((a, b) => b.d - a.d)[0] : null;
+        const setText = setters.length
+            ? _t('Delivery date is set by {u}', { u: `<b>${esc(setters.slice(0, 2).map(unitLabel).join(', '))}${setters.length > 2 ? ` +${setters.length - 2}` : ''}</b>` })
+              + (setterCause ? `; ${_t('most of its delay comes from {s}', { s: `<b>${esc(setterCause.st)}</b> (${esc(setterCause.line)}, +${setterCause.d} ${_t('wd')}${setterCause.open ? `, ${_t('not finished yet')}` : ''})` })}.` : '.')
+            : '';
+
+        const series = m.history.map(h => ({ date: h.date, slip: Math.max(0, wd(planned, maxIso(units.map(u => h.ff[unitKey(u)])))) }))
+            .concat([{ date: today, slip }]);
+        const weekAgo = [...series].reverse().find(p => days(p.date, today) >= 7) || series[0];
+        const diff = slip - weekAgo.slip;
+        const first = series[0].slip;
+        let streak = 0, streakFrom = slip;
+        for (let i = series.length - 1; i > 0 && days(series[i - 1].date, series[i].date) <= 2; i--) {
+            if (series[i].slip > series[i - 1].slip) { streak++; streakFrom = series[i - 1].slip; } else break;
+        }
+        const tW = 320, tH = 80, padL = 4, padR = 26;
+        const tMax = Math.max(4, ...series.map(p => p.slip)) * 1.15;
+        const tSpan = Math.max(1, days(series[0].date, today));
+        const tx = i => padL + days(series[0].date, series[i].date) / tSpan * (tW - padL - padR);
+        const ty = v => tH - 8 - v / tMax * (tH - 18);
+        const tone = s === 'ok' ? 'ok' : 'bad';
+        const path = series.map((p, i) => `${i ? 'L' : 'M'}${tx(i).toFixed(1)},${ty(p.slip).toFixed(1)}`).join(' ');
+        const trendSvg = `<svg viewBox="0 0 ${tW} ${tH + 14}" preserveAspectRatio="none" role="img" aria-label="${_t('Delivery delay trend')}">
+            <line x1="${padL}" x2="${tW - padR}" y1="${ty(0)}" y2="${ty(0)}" class="dol-axis"/>
+            <path d="${path} L${tx(series.length - 1)},${ty(0)} L${tx(0)},${ty(0)} Z" class="dol-area dol-${tone}"/>
+            <path d="${path}" class="dol-line dol-${tone}" vector-effect="non-scaling-stroke"/>
+            ${series.map((p, i) => `<circle cx="${tx(i)}" cy="${ty(p.slip)}" r="${i === series.length - 1 ? 4 : 2.6}" class="dol-dot dol-${p.slip > 0 ? 'bad' : 'ok'}"><title>${fmt(p.date)}: +${p.slip} ${_t('wd')}</title></circle>`).join('')}
+            <text x="${tx(series.length - 1) + 8}" y="${ty(slip) + 4}" class="dol-tval">+${slip}</text>
+            <text x="${padL}" y="${tH + 12}" class="dol-tlbl">${fmtShort(series[0].date)}</text>
+            <text x="${tW - padR}" y="${tH + 12}" class="dol-tlbl" text-anchor="end">${_t('Today')}</text>
+        </svg>`;
+        const trendWord = diff > 0 ? `<span class="dol-up">▲ ${_t('{n} wd worse', { n: diff })}</span> ${_t('than last week')}`
+            : diff < 0 ? `<span class="dol-down">▼ ${_t('{n} wd better', { n: -diff })}</span> ${_t('than last week')}`
+                : `<span class="dol-flat">${_t('No change')}</span> ${_t('from last week')}`;
+
+        const verdict = `
+            <section class="dol-card dol-verdict">
+                <div>
+                    <span class="dol-status dol-${s}">${slip > 0 ? (s === 'bad' ? _t('Late') : _t('At risk')) : _t('On track')}</span>
+                    <div class="dol-big">${slip > 0 ? `+${slip}<small>${_t('working days')}</small>` : _t('On time')}</div>
+                    <p>${slip > 0
+                        ? _t('Forecast delivery {f} against a plan of {p}. {l} of {n} units are forecast to finish late.', { f: `<b>${fmt(forecast)}</b>`, p: `<b>${fmt(planned)}</b>`, l: late.length, n: units.length })
+                        : _t('Every unit is forecast to finish by the planned delivery of {p}.', { p: `<b>${fmt(planned)}</b>` })}${slip === 0 && late.length ? ' ' + _t('{l} of {n} units are late, but not the ones that set the delivery date.', { l: late.length, n: units.length }) : ''}</p>
+                </div>
+                <div>
+                    <div class="dol-tl-dates">
+                        <div><span class="dol-lbl">${_t('Planned delivery')}</span><strong>${fmt(planned)}</strong></div>
+                        <div class="${slip > 0 ? 'is-late' : ''}"><span class="dol-lbl">${_t('Forecast delivery')}</span><strong>${fmt(forecast)}</strong></div>
+                    </div>
+                    <div class="dol-tl-track" aria-hidden="true">
+                        <i class="dol-tl-plan" style="width:${pos(planned)}%"></i>
+                        ${slip > 0 ? `<i class="dol-tl-slip" style="left:${pos(planned)}%;width:${pos(forecast) - pos(planned)}%"></i>` : ''}
+                    </div>
+                    <div class="dol-tl-legend"><span>${_t('Today · {n} working days to planned delivery', { n: daysBetween(today, planned) })}</span><span>${slip > 0 ? `<b class="dol-up">+${slip} ${_t('wd')}</b> ${_t('slip')}` : _t('No slip')}</span></div>
+                    ${setText ? `<div class="dol-setby">${setText}</div>` : ''}
+                </div>
+                <div class="dol-trend">
+                    <span class="dol-lbl">${_t('Delay trend · last 8 weeks')}</span>
+                    <div class="dol-trend-val"><strong>+${slip} ${_t('wd')}</strong><span>${trendWord}</span></div>
+                    ${trendSvg}
+                    <div class="dol-note-sm">${slip === first ? _t('Same as 8 weeks ago (+{n} wd).', { n: first }) : _t('8 weeks ago it was +{n} wd.', { n: first })} ${_t('Rebuilt from the dates recorded in PPMS, against today\'s plan.')}</div>
+                </div>
+            </section>`;
+
+        // ── 2 · alerts
+        const alerts = [];
+        if (streak >= 3) {
+            const w = setters[0]?.waiting?.[0];
+            alerts.push({ k: 'bad', t: `<b>${_t('The delay is growing every day: +{a} → +{b} wd over the last {n} working days.', { a: streakFrom, b: slip, n: streak })}</b> <span>${w
+                ? _t('{s} on {u} was planned to start on {d} and has not started; that unit sets the delivery date. Each day it waits, delivery moves one more day.', { s: `<b>${esc(w.st)}</b>`, u: esc(unitLabel(setters[0])), d: fmt(w.ps) })
+                : _t('Something on the critical path is standing still. Each day it waits, delivery moves one more day.')}</span>` });
+        }
+        battalions.filter(b => scope === 'all' || b === scope).forEach(b => {
+            const a = m.adh[b];
+            if (a && a.due > 0 && a.dueDone === 0) {
+                alerts.push({ k: 'bad', t: `<b>${_t('{b}: no progress recorded.', { b: esc(b) })}</b> <span>${_t('{due} station tasks were due by today and none is marked finished; {ns} should have started. Either work has not started or the dates have not been entered in PPMS.', { due: a.due, ns: a.notStarted })}</span>` });
+            }
+        });
+        const alertHtml = alerts.length ? `<section class="dol-alerts">${alerts.map(a => `<div class="dol-alert dol-${a.k}">${ICON_WARN}<div>${a.t}</div></div>`).join('')}</section>` : '';
+
+        // ── 3 · key figures
+        const adhPct = adh.due ? Math.round(adh.dueDone / adh.due * 100) : 100;
+        const donePct = adh.total ? Math.round(adh.done / adh.total * 100) : 0;
+        const finished = units.filter(u => u.complete).length;
+        const kpis = `
+            <section class="dol-kpis">
+                <div class="dol-card dol-kpi dol-${adhPct >= 90 ? 'ok' : adhPct >= 70 ? 'warn' : 'bad'}"><span class="dol-lbl">${_t('Plan adherence')}</span><strong>${adhPct}%</strong>
+                    <div class="dol-meter"><i style="width:${adhPct}%"></i></div><em>${_t('{a} of {b} tasks due by today are done', { a: adh.dueDone || 0, b: adh.due || 0 })}</em></div>
+                <div class="dol-card dol-kpi dol-${adh.notStarted ? 'bad' : 'ok'}"><span class="dol-lbl">${_t('Late to start')}</span><strong>${adh.notStarted || 0}</strong><em>${_t('tasks past their planned start, not started')}</em></div>
+                <div class="dol-card dol-kpi dol-${late.length ? 'bad' : 'ok'}"><span class="dol-lbl">${_t('Units forecast late')}</span><strong>${late.length}<small> / ${units.length}</small></strong><em>${late.length ? _t('{n} by more than 5 wd', { n: late.filter(u => u.slip > 5).length }) : _t('none')}</em></div>
+                <div class="dol-card dol-kpi dol-${worst?.slip > 0 ? 'bad' : 'ok'}"><span class="dol-lbl">${_t('Worst unit')}</span><strong>${worst?.slip > 0 ? `+${worst.slip} ${_t('wd')}` : '—'}</strong><em>${worst?.slip > 0 ? esc(unitLabel(worst)) : _t('no unit late')}</em></div>
+                <div class="dol-card dol-kpi"><span class="dol-lbl">${_t('Work done')}</span><strong>${donePct}%</strong>
+                    <div class="dol-meter"><i style="width:${donePct}%"></i></div><em>${_t('{a} of {b} tasks · {c} units complete', { a: (adh.done || 0).toLocaleString(), b: (adh.total || 0).toLocaleString(), c: finished })}</em></div>
+            </section>`;
+
+        // ── 4 · monthly output
+        const mk = iso => iso.slice(0, 7);
+        const months = [];
+        {
+            const from = minIso(units.map(u => (u.pf < u.ff ? u.pf : u.ff))).slice(0, 7);
+            const to = maxIso(units.map(u => (u.ff > u.pf ? u.ff : u.pf))).slice(0, 7);
+            let [y, mo] = from.split('-').map(Number);
+            while (months.length < 36) { const k = `${y}-${String(mo).padStart(2, '0')}`; if (k > to) break; months.push(k); if (++mo > 12) { mo = 1; y++; } }
+        }
+        const pc = months.map(x => units.filter(u => mk(u.pf) === x).length);
+        const fcn = months.map(x => units.filter(u => mk(u.ff) === x).length);
+        const cW = 640, cH = 220, cl = 28, cr = 8, ct = 14, cb = 26;
+        const cMax = Math.max(1, ...pc, ...fcn);
+        const bw = (cW - cl - cr) / Math.max(1, months.length);
+        const cy = v => ct + (cH - ct - cb) * (1 - v / cMax);
+        const ticks = [...new Set([0, Math.ceil(cMax / 2), cMax])];
+        const monthName = x => D(x + '-01').toLocaleDateString(locale, { month: 'short' }) + (x.endsWith('-01') || x === months[0] ? ` ${x.slice(2, 4)}` : '');
+        const chart = `<svg viewBox="0 0 ${cW} ${cH}" role="img" aria-label="${_t('Units finishing per month, planned versus forecast')}">
+            ${ticks.map(t => `<line x1="${cl}" x2="${cW - cr}" y1="${cy(t)}" y2="${cy(t)}" class="dol-grid"/><text x="${cl - 6}" y="${cy(t) + 3.5}" text-anchor="end" class="dol-tlbl">${t}</text>`).join('')}
+            ${months.map((x, i) => {
+                const x0 = cl + i * bw, w = Math.min(22, bw * 0.34), g = 3;
+                const x1 = x0 + bw / 2 - w - g / 2, x2 = x0 + bw / 2 + g / 2;
+                return `<rect x="${x1}" y="${cy(pc[i])}" width="${w}" height="${cy(0) - cy(pc[i])}" rx="3" class="dol-bar-plan"><title>${monthName(x)} — ${_t('planned')}: ${pc[i]}</title></rect>
+                    <rect x="${x2}" y="${cy(fcn[i])}" width="${w}" height="${cy(0) - cy(fcn[i])}" rx="3" class="dol-bar-fc"><title>${monthName(x)} — ${_t('forecast')}: ${fcn[i]}</title></rect>
+                    ${pc[i] ? `<text x="${x1 + w / 2}" y="${cy(pc[i]) - 4}" text-anchor="middle" class="dol-tlbl">${pc[i]}</text>` : ''}
+                    ${fcn[i] ? `<text x="${x2 + w / 2}" y="${cy(fcn[i]) - 4}" text-anchor="middle" class="dol-tval">${fcn[i]}</text>` : ''}
+                    <text x="${x0 + bw / 2}" y="${cH - 8}" text-anchor="middle" class="dol-mlbl">${monthName(x)}</text>`;
+            }).join('')}
+        </svg>`;
+        let cp = 0, cf = 0, gap = 0, gapM = null;
+        months.forEach((x, i) => { cp += pc[i]; cf += fcn[i]; if (cp - cf > gap) { gap = cp - cf; gapM = x; } });
+        const output = `
+            <div class="dol-card dol-pad">
+                <h3 class="dol-h">${_t('Vehicle output by month')} <small>${_t('units finishing, planned vs forecast')}</small></h3>
+                <p class="dol-hint">${gap > 0
+                    ? _t(gap === 1 ? 'Biggest shortfall: by the end of {m}, 1 unit fewer than planned will be finished.' : 'Biggest shortfall: by the end of {m}, {n} fewer units than planned will be finished.', { m: `<b>${D(gapM + '-01').toLocaleDateString(locale, { month: 'long', year: 'numeric' })}</b>`, n: gap })
+                    : _t('Forecast output keeps pace with the plan every month.')}</p>
+                <div class="dol-chart">${chart}</div>
+                <div class="dol-legend"><span><i class="dol-bar-plan"></i>${_t('Planned finish')}</span><span><i class="dol-bar-fc"></i>${_t('Forecast finish')}</span></div>
+            </div>`;
+
+        // ── 5 · build time per vehicle
+        const vtList = [...new Set(units.map(u => u.v))].sort((x, y) => vOrder(x) - vOrder(y));
+        const avg = l => (l.length ? Math.round(l.reduce((a, b) => a + b, 0) / l.length) : null);
+        const diffChip = (real, plan) => (real == null || plan == null ? '' : `<span class="dol-delay dol-${sev(real - plan)}">${real - plan > 0 ? '+' : ''}${real - plan}</span>`);
+        const btRows = vtList.map(v => {
+            const vu = units.filter(u => u.v === v).map(u => ({ u, ...buildTime(u) }));
+            const fin = vu.filter(x => x.done), open = vu.filter(x => !x.done);
+            return { v, n: vu.length, plan: avg(vu.map(x => x.plan)), actual: avg(fin.map(x => x.real)), nFin: fin.length,
+                fcst: avg(open.map(x => x.real)), nOpen: open.length, planOpen: avg(open.map(x => x.plan)), planFin: avg(fin.map(x => x.plan)) };
+        });
+        const buildCard = `
+            <div class="dol-card dol-pad">
+                <h3 class="dol-h">${_t('Build time per vehicle')} <small>${_t('working days from first station start to last station finish')}</small></h3>
+                <p class="dol-hint">${_t('Planned = planned start to planned finish. Actual = real start to real finish (finished vehicles). Forecast = real start (or forecast start) to forecast finish (vehicles still in work).')}</p>
+                <table class="dol-table">
+                    <thead><tr><th>${_t('Vehicle')}</th><th class="c">${_t('Units')}</th><th class="r">${_t('Planned')}</th><th class="r">${_t('Actual')}</th><th class="r">${_t('Forecast')}</th><th class="r">${_t('vs plan')}</th></tr></thead>
+                    <tbody>${btRows.map(r => `<tr><td><span class="dol-vt">${esc(r.v)}</span></td><td class="c">${r.n}</td>
+                        <td class="r dol-num">${r.plan ?? '—'}</td>
+                        <td class="r dol-num">${r.nFin ? `${r.actual} <span class="dol-dim">(${r.nFin})</span>` : `<span class="dol-dim">${_t('none finished')}</span>`}</td>
+                        <td class="r dol-num">${r.nOpen ? `${r.fcst} <span class="dol-dim">(${r.nOpen})</span>` : '—'}</td>
+                        <td class="r">${r.nOpen ? diffChip(r.fcst, r.planOpen) : diffChip(r.actual, r.planFin)}</td></tr>`).join('')}</tbody>
+                </table>
+                <p class="dol-hint dol-foot">${_t('Averages per unit, in working days. A vehicle can take longer than planned and still finish on time when it was started early.')}</p>
+            </div>`;
+
+        // ── 6 · where to act
+        const agg = new Map();
+        causes.forEach(c => {
+            const k = `${c.v}||${c.st}`;
+            const e = agg.get(k) || { v: c.v, st: c.st, cat: c.cat, line: c.line, max: 0, units: new Set(), openUnits: new Set() };
+            e.max = Math.max(e.max, c.d); e.units.add(`${c.b} ${c.u}`); if (c.open) e.openUnits.add(`${c.b} ${c.u}`);
+            agg.set(k, e);
+        });
+        const all = [...agg.values()].sort((a, b) => b.max - a.max || b.units.size - a.units.size);
+        const openList = all.filter(c => c.openUnits.size).slice(0, 6);
+        const lostList = all.filter(c => !c.openUnits.size).slice(0, 6);
+        const barMax = Math.max(1, ...all.map(c => c.max));
+        const unitsTxt = set => { const a = [...set]; return a.slice(0, 4).join(', ') + (a.length > 4 ? ` +${a.length - 4}` : ''); };
+        const causeRow = (c, i, isOpen) => `
+            <div class="dol-cause">
+                <span class="dol-rank">${i + 1}</span>
+                <div class="dol-cause-main">
+                    <div class="dol-cause-t"><strong>${esc(c.st)}</strong><span class="dol-vt">${esc(c.v)}</span><span class="dol-chip">${esc(c.line)}</span><span class="dol-chip">${esc(c.cat)}</span></div>
+                    <div class="dol-cause-l">${isOpen ? `<b>${c.openUnits.size === 1 ? _t('1 unit still open') : _t('{n} units still open', { n: c.openUnits.size })}</b> · ${esc(unitsTxt(c.openUnits))}` : `${c.units.size === 1 ? _t('1 unit') : _t('{n} units', { n: c.units.size })} · ${esc(unitsTxt(c.units))}`}</div>
+                    <div class="dol-cause-bar"><i style="width:${Math.max(6, Math.round(c.max / barMax * 100))}%"></i></div>
+                </div>
+                <span class="dol-wd">+${c.max}<small>${_t('wd')}</small></span>
+                ${isOpen ? `<button type="button" class="dol-link" data-dol-station="${esc(c.st)}" title="${_t('Filter the Plan Table to this station')}">${_t('Show in Plan Table')} →</button>` : ''}
+            </div>`;
+        const actCard = `
+            <div class="dol-card dol-pad dol-open-list">
+                <h3 class="dol-h">${_t('Act now')} <small>${_t('unfinished stations pushing unit finishes back')}</small></h3>
+                <p class="dol-hint">${_t('Time can still be recovered here. Ranked by the delay each station adds to a unit\'s finish.')}</p>
+                ${openList.length ? openList.map((c, i) => causeRow(c, i, true)).join('') : `<div class="dol-empty">${_t('No open station is delaying a unit.')}</div>`}
+            </div>`;
+        const lostCard = `
+            <div class="dol-card dol-pad dol-lost">
+                <h3 class="dol-h">${_t('Time already lost')} <small>${_t('finished late, delay carried forward')}</small></h3>
+                <p class="dol-hint">${_t('These stations are done; their delay can only be won back further down the route.')}</p>
+                ${lostList.length ? lostList.map((c, i) => causeRow(c, i, false)).join('') : `<div class="dol-empty">${_t('No finished station is still delaying a unit.')}</div>`}
+            </div>`;
+
+        // ── 7 · battalions
+        const btlCards = battalions.filter(b => scope === 'all' || b === scope).map(b => {
+            const bu = units.filter(u => u.b === b);
+            const bp = maxIso(bu.map(u => u.pf)), bf = maxIso(bu.map(u => u.ff)), bs = Math.max(0, wd(bp, bf));
+            const a = m.adh[b] || {};
+            const ap = a.due ? Math.round(a.dueDone / a.due * 100) : 100;
+            const vts = [...new Set(bu.map(u => u.v))].sort((x, y) => vOrder(x) - vOrder(y));
+            return `
+                <article class="dol-card dol-pad">
+                    <div class="dol-btl-head"><h3>${esc(b)}</h3><span class="dol-delay dol-${sev(bs)}">${delayTxt(bs)}</span>
+                        <span class="dol-btl-dates">${_t('Plan')} <b>${fmt(bp)}</b> → ${_t('Forecast')} <b>${fmt(bf)}</b></span></div>
+                    <div class="dol-btl-adh">
+                        <span class="${ap < 70 ? 'is-bad' : ''}">${_t('Plan adherence')} <b>${ap}%</b></span>
+                        <span class="${a.notStarted ? 'is-bad' : ''}">${_t('Late to start')} <b>${a.notStarted || 0}</b></span>
+                        <span>${_t('Work done')} <b>${a.total ? Math.round(a.done / a.total * 100) : 0}%</b></span>
+                    </div>
+                    <table class="dol-table">
+                        <thead><tr><th>${_t('Vehicle')}</th><th class="c">${_t('Units')}</th><th class="c">${_t('Late')}</th><th>${_t('Planned finish')}</th><th>${_t('Forecast finish')}</th><th class="r">${_t('Delay')}</th></tr></thead>
+                        <tbody>${vts.map(v => {
+                            const vu = bu.filter(u => u.v === v);
+                            const vp = maxIso(vu.map(u => u.pf)), vf = maxIso(vu.map(u => u.ff)), vs = Math.max(0, wd(vp, vf));
+                            const vl = vu.filter(u => u.slip > 0).length;
+                            const vw = Math.max(0, ...vu.map(u => u.slip));
+                            return `<tr><td><span class="dol-vt">${esc(v)}</span></td><td class="c">${vu.length}</td>
+                                <td class="c"><b>${vl}</b>${vl && vw > vs ? ` <span class="dol-dim">· ${_t('worst')} +${vw}</span>` : ''}</td>
+                                <td class="dol-num">${fmt(vp)}</td><td class="dol-num">${fmt(vf)}</td><td class="r"><span class="dol-delay dol-${sev(vs)}">${delayTxt(vs)}</span></td></tr>`;
+                        }).join('')}</tbody>
+                    </table>
+                </article>`;
+        }).join('');
+
+        // ── 8 · every unit (fixed height)
+        const dom0 = minIso(units.map(u => (u.pf < today ? u.pf : today))), dom1 = maxIso(units.map(u => (u.ff > u.pf ? u.ff : u.pf)));
+        const dspan = Math.max(1, days(dom0, dom1));
+        const mpos = iso => (days(dom0, iso) / dspan * 100).toFixed(2);
+        const lineCell = L => {
+            if (!L) return '<span class="dol-dim">—</span>';
+            if (L.done >= L.total) return `<span class="dol-line is-done"><i></i>${_t('Finished')}</span>`;
+            const ls = Math.max(0, L.slip);
+            return `<span class="dol-line dol-${sev(ls)}" title="${_t('Planned {p} · forecast {f} · {d}/{t} stations done', { p: fmt(L.planned), f: fmt(L.forecast), d: L.done, t: L.total })}"><i></i>${fmtShort(L.forecast)}${ls > 0 ? `<b>+${ls}</b>` : ''}</span>`;
+        };
+        const setKeys = new Set(setters.map(unitKey));
+        const row = u => {
+            const bt = buildTime(u);
+            return `
+            <tr class="${setKeys.has(unitKey(u)) && slip > 0 ? 'is-crit' : ''}">
+                <td><div class="dol-unit">${esc(unitLabel(u))}<small>${esc(u.code || '')}${setKeys.has(unitKey(u)) ? ` · ${_t('sets delivery date')}` : ''}</small></div></td>
+                <td><div class="dol-prog"><div class="dol-meter"><i style="width:${Math.round(u.done / u.total * 100)}%"></i></div><span>${u.done}/${u.total}</span></div></td>
+                <td class="dol-now">${u.complete ? `<span class="dol-dim">${_t('Complete')}</span>` : !u.started ? `<span class="dol-dim">${_t('Not started')}</span>` : esc(u.now || '—')}</td>
+                ${LINE_COLS.map(c => `<td>${lineCell(c.pick(u.lines))}</td>`).join('')}
+                <td class="dol-num">${fmt(u.pf)}</td>
+                <td class="dol-num">${fmt(u.ff)}</td>
+                <td class="dol-bt dol-num">${bt.plan} → <b>${bt.real}</b> ${diffChip(bt.real, bt.plan)}<small>${bt.done ? _t('actual') : _t('forecast')}</small></td>
+                <td><div class="dol-mini" title="${_t('Plan {p} → forecast {f}', { p: fmt(u.pf), f: fmt(u.ff) })}">
+                    <span class="dol-mini-t" style="left:${mpos(today)}%"></span>
+                    ${u.ff > u.pf ? `<span class="dol-mini-l" style="left:${mpos(u.pf)}%;width:${(mpos(u.ff) - mpos(u.pf)).toFixed(2)}%"></span>` : ''}
+                    <span class="dol-mini-p" style="left:${mpos(u.pf)}%"></span>
+                    <span class="dol-mini-f dol-${sev(u.slip)}" style="left:${mpos(u.ff)}%"></span></div></td>
+                <td class="r"><span class="dol-delay dol-${sev(u.slip)}">${delayTxt(u.slip)}</span></td>
+            </tr>`;
+        };
+        let body;
+        if (sortMode === 'worst') {
+            body = units.slice().sort((a, b) => b.slip - a.slip || b.ff.localeCompare(a.ff) || planCmp(a, b)).map(row).join('');
+        } else {
+            let g = '';
+            body = units.slice().sort(planCmp).map(u => { const k = `${u.b} · ${u.v}`; const h = k !== g ? `<tr class="dol-grp"><td colspan="11">${esc(k)}</td></tr>` : ''; g = k; return h + row(u); }).join('');
+        }
+        const unitTable = `
+            <section class="dol-card dol-pad">
+                <div class="dol-units-head">
+                    <h3 class="dol-h">${_t('Every unit')} <small>${_t('{n} units · planned vs forecast finish', { n: units.length })}</small></h3>
+                    <span class="dol-grow"></span>
+                    <div class="dol-seg" role="group" aria-label="${_t('Sort units')}">
+                        <button type="button" data-dol-s="worst" aria-pressed="${sortMode === 'worst'}">${_t('Worst first')}</button>
+                        <button type="button" data-dol-s="plan" aria-pressed="${sortMode === 'plan'}">${_t('Plan order')}</button>
+                    </div>
+                </div>
+                <div class="dol-scroll"><table class="dol-table dol-units">
+                    <thead><tr><th>${_t('Unit')}</th><th>${_t('Stations done')}</th><th>${_t('Now at')}</th>${LINE_COLS.map(c => `<th>${c.label}</th>`).join('')}
+                        <th>${_t('Planned finish')}</th><th>${_t('Forecast finish')}</th><th>${_t('Build time (wd)')}<br><span class="dol-th-sub">${_t('plan → actual / forecast')}</span></th>
+                        <th><div class="dol-mini-axis"><span>${fmtShort(dom0)}</span><span>${_t('plan')} ▏ ${_t('forecast')} ●</span><span>${fmtShort(dom1)}</span></div></th>
+                        <th class="r">${_t('Delay')}</th></tr></thead>
+                    <tbody>${body}</tbody>
+                </table></div>
+            </section>`;
+
+        const note = `
+            <section class="dol-card dol-note">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
+                <div><b>${_t('How the figures are calculated')}</b>
+                    <ul>
+                        <li>${_t('Each vehicle follows the order of its plan. Finished stations use their real completion dates; the rest start when the stations they wait for are done (not before today or their planned start) and take their planned number of working days.')}</li>
+                        <li>${_t('A station waits only for the stations the plan finishes before it starts, so work the plan runs side by side does not wait. Assembly, Processing & Testing starts when the Hull and Turret (K9) or the Structure (K10 / K11) are finished.')}</li>
+                        <li>${_t('Delay = working days between planned and forecast finish (Fridays not counted). Forecast delivery = the last vehicle\'s forecast finish. Same figures as the Delivery card and the reports.')}</li>
+                        <li>${_t('Plan adherence = station tasks planned to finish by today that are marked finished. Late to start = tasks past their planned start with no actual start.')}</li>
+                        <li>${_t('Delay trend = the forecast as it would have looked on each past day, using only the dates recorded by then and today\'s plan. Dates entered late make past days look better than they were.')}</li>
+                        <li>${_t('Build time = working days from a vehicle\'s first station start to its last station finish. The real start is the first actual start or completion recorded on any of its stations.')}</li>
+                        <li>${_t('This view uses all loaded plan data; the page filters do not apply. Calculated {t}.', { t: m.generated.toLocaleString(locale, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) })}</li>
+                    </ul></div>
+            </section>`;
+
+        const keepScroll = overlay.querySelector('.dol-scroll')?.scrollTop || 0;
+        main.innerHTML = verdict + alertHtml + kpis
+            + `<section class="dol-row2">${output}${buildCard}</section>`
+            + `<section class="dol-row2">${actCard}${lostCard}</section>`
+            + `<section><h3 class="dol-h dol-h-out">${_t('By battalion and vehicle')}</h3><div class="dol-btls">${btlCards}</div></section>`
+            + unitTable + note;
+        const sc = overlay.querySelector('.dol-scroll');
+        if (sc) sc.scrollTop = keepScroll;
+    }
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -6358,6 +6923,7 @@ function renderF100VPX(data) {
     const f100mode = document.getElementById('f100Mode')?.value || 'gun';
     const cols = buildF100VpxColumns(data);
     const rows = buildF100VpxRows(data);
+    const editable = canWrite();
 
     if (!cols.length) {
         container.innerHTML = '<div class="vpx-empty">No process steps found for the current filters.</div>';
@@ -6472,12 +7038,12 @@ function renderF100VPX(data) {
                 `Status  : ${status}`,
             ].filter(Boolean).join('\n');
 
-            html += `<td class="vpx-cell vpx-status-${statusSlug}" data-ri="${ri}" data-ci="${ci}" title="${tip.replace(/"/g, "'")}">`
+            html += `<td class="vpx-cell vpx-status-${statusSlug}${editable ? ' vpx-cell-editable' : ''}" data-ri="${ri}" data-ci="${ci}" title="${tip.replace(/"/g, "'")}">`
                 + `<span class="vpx-dot ${dotClass}"></span>`
                 + '<div class="vpx-dates">'
                 + `<span class="vpx-date-plan">${planRange}</span>`
                 + `<span class="vpx-date-act${actRange ? '' : ' vpx-date-none'}">${actRange || '—'}</span>`
-                + '</div></td>';
+                + '</div>' + (editable ? _vpxCellEditBtnHtml(task.id) : '') + '</td>';
         });
 
         html += '</tr>';
@@ -6539,6 +7105,8 @@ function renderVPX(data) {
     // streams, not sequential phases, so one component's delay must never
     // be computed from — or shown identical to — a different component's).
     const stationMode = _vpxViewMode === 'station';
+    // Station Report cells are projections, so only Matrix cells get the date editor
+    const editable = !stationMode && canWrite();
     const rows = buildVpxRows(data);
     const activeCols = buildVpxColumns(data).filter(col =>
         rows.some(row => { const k = col.resolve(row.vehicle); return k !== null && row.stations[k]; })
@@ -6741,12 +7309,13 @@ function renderVPX(data) {
                 ? formatDateShort(actStart) + ' → ' + (actual ? formatDateShort(actual) : '?')
                 : (actual ? '? → ' + formatDateShort(actual) : null);
 
-            html += '<td class="vpx-cell ' + grpCls + ' vpx-status-' + statusSlug + '" data-ri="' + ri + '" data-ci="' + ci + '" title="' + tipParts.replace(/"/g, "'") + '">'
+            html += '<td class="vpx-cell ' + grpCls + ' vpx-status-' + statusSlug + (editable ? ' vpx-cell-editable' : '') + '" data-ri="' + ri + '" data-ci="' + ci + '" title="' + tipParts.replace(/"/g, "'") + '">'
                 + '<span class="vpx-dot ' + dotClass + '"></span>'
                 + '<div class="vpx-dates">'
                 + '<span class="vpx-date-plan">' + planRange + '</span>'
                 + '<span class="vpx-date-act' + (actRange ? '' : ' vpx-date-none') + '">' + (actRange || '—') + '</span>'
-                + '</div>' + renderXrayMarker(task.id, task, { activeOnly: true }) + '</td>';
+                + '</div>' + renderXrayMarker(task.id, task, { activeOnly: true })
+                + (editable ? _vpxCellEditBtnHtml(task.id) : '') + '</td>';
         });
 
         if (stationMode) {
@@ -8550,6 +9119,7 @@ function wireEvents() {
     wireVpxReportModal();
     wireExecReportModal();
     wireVpxDelayReasonModal();
+    wireVpxCellEditor();
     wireXrayModal();
 
     // Notification bell (F100-KD2 and F200-KD2)
@@ -11108,23 +11678,6 @@ function kd2StationCompare(a, b) {
         || String(a.process_station || '').localeCompare(String(b.process_station || ''), undefined, { numeric: true });
 }
 
-/* ─── Merged route-order map (min lane sortKey per station name, across all
-   vehicles) — for the analytics rollup, which aggregates by station name. ─ */
-function getReportRouteOrder() {
-    const rt = getModuleRuntime();
-    const byName = rt?.getStationOrderByName ? v => rt.getStationOrderByName(v)
-        : rt?.getStationRouteOrder ? v => rt.getStationRouteOrder(v)
-        : null;
-    if (!byName) return new Map();
-    const merged = new Map();
-    ['K9', 'K10', 'K11'].forEach(v => {
-        byName(v).forEach((seq, name) => {
-            if (!merged.has(name) || seq < merged.get(name)) merged.set(name, seq);
-        });
-    });
-    return merged;
-}
-
 /** Narrow report rows by the Export Report modal's own filter selections
  *  (mirrors the main bar's Vehicle / Battalion / Unit / K9 Component /
  *  Category / Week — same matchesMultiSet semantics). */
@@ -11227,15 +11780,54 @@ function buildReportRows(typeKey, fromDate, toDate, category) {
                 const bc = cmp(a.battalion_code, b.battalion_code);
                 if (bc !== 0) return bc;
             }
-            return cmp(a.vehicle, b.vehicle) || cmp(a.vehicle_no, b.vehicle_no) || stationCmp(a, b);
+            // Battalion stays a key even when it isn't the first one — unit
+            // labels (M1, M2…) repeat in every battalion, so without it the
+            // same unit of two battalions is interleaved station by station.
+            return cmp(a.vehicle, b.vehicle) || cmp(a.battalion_code, b.battalion_code)
+                || cmp(a.vehicle_no, b.vehicle_no) || stationCmp(a, b);
         });
     } else if (!isF100KD2Module()) {
+        // KD1 — same plan order as the Plan Data table: week, then planned start
         rows = [...rows].sort((a, b) =>
-            cmp(a.vehicle, b.vehicle) || cmp(a.vehicle_no, b.vehicle_no) || cmp(a.process_station, b.process_station)
+            cmp(a.vehicle, b.vehicle) || cmp(a.vehicle_no, b.vehicle_no) || kd1PlanCompare(a, b)
         );
     }
 
     return rows;
+}
+
+/** KD1 process order inside one unit — the plan's own order (week FW01…,
+ *  then planned start), same as the Plan Data table. */
+function kd1PlanCompare(a, b) {
+    const wA = parseInt((a.week || '').replace(/\D/g, ''), 10) || 9999;
+    const wB = parseInt((b.week || '').replace(/\D/g, ''), 10) || 9999;
+    return wA - wB || (a.start_date || '').localeCompare(b.start_date || '')
+        || (a.end_date || '').localeCompare(b.end_date || '');
+}
+
+/** Report section a row belongs to — the same split the Plan Data table,
+ *  Gantt and VPX use. KD2 K9: Hull → Turret → Assembly & Processing &
+ *  Testing; K10/K11: Structure → Assembly & Processing & Testing. KD1: the
+ *  station category (Assembly, Processing, Final Test…). F100: none. */
+function reportSectionLabel(r) {
+    if (isF100KD2Module()) return '';
+    if (isKD2Module()) return kd2LineLabel(r) || getModuleCategory(r.process_station, r) || '';
+    return getModuleCategory(r.process_station, r) || '';
+}
+
+/** For a sorted report row list, map<rowIndex, sectionLabel> for each row
+ *  that starts a new section inside its unit group (`unitSeps` from
+ *  reportGroupSeparators — a new unit always restarts the section). */
+function reportSectionSeparators(rows, unitSeps) {
+    const sep = new Map();
+    let prev = null;
+    (rows || []).forEach((r, i) => {
+        const label = reportSectionLabel(r);
+        if (unitSeps?.has(i)) prev = null;
+        if (label && label !== prev) sep.set(i, label);
+        prev = label;
+    });
+    return sep;
 }
 
 /* ─── Column config ─────────────────────────────────────────────── */
@@ -11255,7 +11847,7 @@ const REPORT_COLUMNS = [
     {
         header: 'Delay (days)', key: r => {
             const d = delayDays(r);
-            return d > 0 ? `+${d}d` : calculateStatus(r) === 'Completed' ? 'On Time' : '—';
+            return d > 0 ? `+${d}` : calculateStatus(r) === 'Completed' ? '0' : '—';
         }
     },
     { header: 'Remark', key: r => r.remark || '' },
@@ -11281,7 +11873,7 @@ const F100_REPORT_COLUMNS = [
     {
         header: 'Delay (days)', key: r => {
             const d = delayDays(r);
-            return d > 0 ? `+${d}d` : (r.status === 'Completed' || r.status === 'Late Completion') ? 'On Time' : '—';
+            return d > 0 ? `+${d}` : (r.status === 'Completed' || r.status === 'Late Completion') ? '0' : '—';
         }
     },
 ];
@@ -11301,28 +11893,38 @@ const KD2_REPORT_COLUMNS = [
     { header: 'Actual Start',      key: r => r.progress?.actual_start_date ? formatDate(r.progress.actual_start_date) : '—' },
     { header: 'Completed On',      key: r => r.progress?.completion_date ? formatDate(r.progress.completion_date) : '—' },
     { header: 'Status',            key: r => calculateStatus(r) },
-    { header: 'Delay (days)',      key: r => { const d = delayDays(r); return d > 0 ? `+${d}d` : calculateStatus(r) === 'Completed' ? 'On Time' : '—'; } },
+    { header: 'Delay (days)',      key: r => { const d = delayDays(r); return d > 0 ? `+${d}` : calculateStatus(r) === 'Completed' ? '0' : '—'; } },
     { header: 'Remark',            key: r => r.remark || '' },
 ];
 
 /* ─── KD2 station-level analytics aggregation ───────────────────── */
+/* One row per vehicle + station, ordered exactly like the plan: vehicle
+   (K9 → K10 → K11), then section (K9: Hull → Turret → Assembly & Processing
+   & Testing; K10/K11: Structure → Assembly & Processing & Testing), then the
+   live route order inside the section — the same order as the Plan Data
+   table and Gantt. Stations are not merged across vehicles: each vehicle
+   has its own route, so a merged list could never match any one plan. */
 function buildKD2AnalyticsRows(rows) {
+    resetKd2LaneOrderCache();
     const stationMap = new Map();
     rows.forEach(r => {
-        const key = r.process_station || '(Unknown)';
-        if (!stationMap.has(key)) {
-            stationMap.set(key, { station: key, category: getModuleCategory(r.process_station, r) || '—', rows: [] });
+        const station = r.process_station || '(Unknown)';
+        const key = `${r.vehicle || ''}||${station}`;
+        let e = stationMap.get(key);
+        if (!e) {
+            e = { vehicle: r.vehicle || '—', station, category: getModuleCategory(r.process_station, r) || '—',
+                section: reportSectionLabel(r) || 'Other', first: r, rows: [] };
+            stationMap.set(key, e);
         }
-        stationMap.get(key).rows.push(r);
+        // Representative row = earliest in route order (parallel work centers share a name)
+        if (kd2StationCompare(r, e.first) < 0) { e.first = r; e.section = reportSectionLabel(r) || e.section; }
+        e.rows.push(r);
     });
-    const routeOrder = getReportRouteOrder();
+    const vCmp = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
     return [...stationMap.values()]
-        .sort((a, b) => {
-            const ra = routeOrder.get(a.station) ?? 9999;
-            const rb = routeOrder.get(b.station) ?? 9999;
-            return ra - rb || String(a.category).localeCompare(String(b.category)) || String(a.station).localeCompare(String(b.station));
-        })
-        .map(({ station, category, rows: sr }) => {
+        .sort((a, b) => vCmp(a.vehicle, b.vehicle) || kd2StationCompare(a.first, b.first)
+            || String(a.station).localeCompare(String(b.station), undefined, { numeric: true }))
+        .map(({ vehicle, section, station, category, rows: sr }) => {
             const s = buildSummaryStats(sr);
             const plannedDurations = sr.map(r => {
                 if (!r.start_date || !r.end_date) return null;
@@ -11345,8 +11947,39 @@ function buildKD2AnalyticsRows(rows) {
             const delays = sr.map(r => delayDays(r)).filter(d => d > 0);
             const avgDelay = delays.length ? Math.round(delays.reduce((a, b) => a + b, 0) / delays.length) : 0;
             const maxDelay = delays.length ? Math.max(...delays) : 0;
-            return { station, category, ...s, avgPlanned, avgActual, avgDelay, maxDelay };
+            return { vehicle, section, station, category, rows: sr, ...s, avgPlanned, avgActual, avgDelay, maxDelay };
         });
+}
+
+/** Analytics rows → [{ kind: 'vehicle'|'section'|'station', … }] with a
+ *  heading (and its totals) before each vehicle and each section, and a
+ *  plan-order position (#) per station inside its section. Shared by the
+ *  PDF and Excel exports so both read identically. */
+function groupKD2AnalyticsRows(aRows) {
+    const out = [];
+    const totals = list => {
+        const all = list.flatMap(a => a.rows);
+        const s = buildSummaryStats(all);
+        return { stations: list.length, total: s.total, done: s.completed + s.late, pct: s.pct, overdue: s.overdue };
+    };
+    const vehicles = [...new Set(aRows.map(a => a.vehicle))];
+    vehicles.forEach(v => {
+        const vRows = aRows.filter(a => a.vehicle === v);
+        out.push({ kind: 'vehicle', label: v, ...totals(vRows) });
+        const sections = [...new Set(vRows.map(a => a.section))];
+        sections.forEach(sec => {
+            const sRows = vRows.filter(a => a.section === sec);
+            out.push({ kind: 'section', label: sec, vehicle: v, ...totals(sRows) });
+            sRows.forEach((a, i) => out.push({ kind: 'station', pos: i + 1, ...a }));
+        });
+    });
+    return out;
+}
+
+/** "12 stations · 480 tasks · 63% done · 5 overdue" — heading text for a group. */
+function analyticsGroupSummary(g) {
+    return `${g.stations} station${g.stations !== 1 ? 's' : ''} · ${g.total} task${g.total !== 1 ? 's' : ''} · ${g.pct}% done`
+        + (g.overdue ? ` · ${g.overdue} overdue` : '');
 }
 
 /* ─── Status → colour map for PDF ──────────────────────────────── */
@@ -11376,7 +12009,7 @@ function buildSummaryStats(rows) {
 async function exportPDF(typeKey, fromDate, toDate, category, preview) {
     if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (isKD2Module() && typeKey === 'analytics') {
-        return exportKD2AnalyticsPDF(fromDate, toDate, category);
+        return exportKD2AnalyticsPDF(fromDate, toDate, category, preview);
     }
     if (isKD2Module() && typeKey === 'xray_status') {
         return exportXrayStatusPDF();
@@ -11510,6 +12143,7 @@ async function exportPDF(typeKey, fromDate, toDate, category, preview) {
     const delayColIdx  = isF100KD2Module() ? 14 : isKD2Module() ? 13 : 12;
     const headers = activeCols.map(c => c.header);
     const _seps = reportGroupSeparators(rows);
+    const _secSeps = reportSectionSeparators(rows, _seps);
     const body = [];
     rows.forEach((r, i) => {
         if (_seps.has(i)) {
@@ -11517,6 +12151,14 @@ async function exportPDF(typeKey, fromDate, toDate, category, preview) {
                 content: _seps.get(i),
                 colSpan: activeCols.length,
                 styles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'left', fontSize: 8, cellPadding: 2 },
+            }]);
+        }
+        // Section row (Hull / Turret / Assembly & Processing & Testing …) — same split as the Plan Data table
+        if (_secSeps.has(i)) {
+            body.push([{
+                content: _secSeps.get(i),
+                colSpan: activeCols.length,
+                styles: { fillColor: [219, 234, 254], textColor: [30, 58, 138], fontStyle: 'bold', halign: 'left', fontSize: 7, cellPadding: { top: 1.4, bottom: 1.4, left: 4, right: 2 } },
             }]);
         }
         body.push(activeCols.map(c => String(c.key(r, i) ?? '')));
@@ -11573,36 +12215,37 @@ async function exportPDF(typeKey, fromDate, toDate, category, preview) {
             13: { halign: 'center', cellWidth: 20 },
             14: { halign: 'center', cellWidth: 13 },
         } : isKD2Module() ? {
-            0: { halign: 'center', cellWidth: 5 },
-            1: { cellWidth: 20 },
+            0: { halign: 'center', cellWidth: 10 },
+            1: { cellWidth: 16 },
             2: { halign: 'center', cellWidth: 15 },
             3: { halign: 'center', cellWidth: 12 },
             4: { cellWidth: 18 },
             5: { cellWidth: 40 },
             6: { cellWidth: 16 },
-            7: { halign: 'center', cellWidth: 10 },
+            7: { halign: 'center', cellWidth: 12 },
             8: { cellWidth: 18 },
             9: { cellWidth: 18 },
             10: { cellWidth: 18 },
             11: { cellWidth: 18 },
             12: { halign: 'center', cellWidth: 18 },
             13: { halign: 'center', cellWidth: 13 },
-            14: { cellWidth: 26, overflow: 'linebreak', valign: 'top' },
+            14: { cellWidth: 23, overflow: 'linebreak', valign: 'top' },
         } : {
             0: { halign: 'center', cellWidth: 8 },
-            1: { cellWidth: 16 },
-            2: { cellWidth: 14 },
-            3: { cellWidth: 28 },
-            4: { cellWidth: 18 },
-            5: { cellWidth: 12 },
-            6: { cellWidth: 20 },
-            7: { cellWidth: 20 },
-            8: { cellWidth: 20 },
-            9: { cellWidth: 20 },
-            10: { halign: 'center', cellWidth: 18 },
-            11: { halign: 'center', cellWidth: 16 },
-            12: { cellWidth: 28, overflow: 'linebreak', valign: 'top' },
-            13: { cellWidth: 40, overflow: 'linebreak', valign: 'top' },
+            1: { cellWidth: 14 },
+            2: { cellWidth: 11 },
+            3: { cellWidth: 30 },
+            4: { cellWidth: 16 },
+            5: { cellWidth: 16 },
+            6: { cellWidth: 12 },
+            7: { cellWidth: 18 },
+            8: { cellWidth: 18 },
+            9: { cellWidth: 18 },
+            10: { cellWidth: 18 },
+            11: { halign: 'center', cellWidth: 20 },
+            12: { halign: 'center', cellWidth: 14 },
+            13: { cellWidth: 26, overflow: 'linebreak', valign: 'top' },
+            14: { cellWidth: 26, overflow: 'linebreak', valign: 'top' },
         },
         didDrawCell(data) {
             if (data.section === 'body' && data.column.index === statusColIdx) {
@@ -11694,7 +12337,7 @@ async function exportPDF(typeKey, fromDate, toDate, category, preview) {
 async function exportExcel(typeKey, fromDate, toDate, category, preview) {
     if (!await canExport()) { showToast('You do not have permission to export reports.', 'error'); return; }
     if (isKD2Module() && typeKey === 'analytics') {
-        return exportKD2AnalyticsExcel(fromDate, toDate, category);
+        return exportKD2AnalyticsExcel(fromDate, toDate, category, preview);
     }
     if (isKD2Module() && typeKey === 'xray_status') {
         return exportXrayStatusExcel();
@@ -11797,7 +12440,7 @@ async function exportExcel(typeKey, fromDate, toDate, category, preview) {
         { header: 'Actual Start', width: 14, key: r => r.actual_start_date || '—' },
         { header: 'Actual End',   width: 14, key: r => r.actual_end_date || '—' },
         { header: 'Status',       width: 18, key: r => r.status || 'Planned' },
-        { header: 'Delay (days)', width: 13, key: r => { const d = delayDays(r); return d > 0 ? `+${d}d` : (r.status === 'Completed' || r.status === 'Late Completion') ? 'On Time' : '—'; } },
+        { header: 'Delay (days)', width: 13, key: r => { const d = delayDays(r); return d > 0 ? d : (r.status === 'Completed' || r.status === 'Late Completion') ? 0 : null; } },
     ] : isKD2Module() ? [
         { header: '#',                 width: 5,  key: (r, i) => i + 1 },
         { header: 'Battalion',         width: 18, key: r => r.battalion_code || '—' },
@@ -11812,7 +12455,7 @@ async function exportExcel(typeKey, fromDate, toDate, category, preview) {
         { header: 'Actual Start',      width: 14, key: r => r.progress?.actual_start_date || '—' },
         { header: 'Completed On',      width: 14, key: r => r.progress?.completion_date || '—' },
         { header: 'Status',            width: 18, key: r => calculateStatus(r) },
-        { header: 'Delay (days)',      width: 13, key: r => { const d = delayDays(r); return d > 0 ? '+' + d + 'd' : calculateStatus(r) === 'Completed' ? 'On Time' : '—'; } },
+        { header: 'Delay (days)',      width: 13, key: r => { const d = delayDays(r); return d > 0 ? d : calculateStatus(r) === 'Completed' ? 0 : null; } },
         { header: 'Remark',            width: 24, key: r => r.remark || '' },
     ] : [
         { header: '#', width: 5, key: (r, i) => i + 1 },
@@ -11828,7 +12471,7 @@ async function exportExcel(typeKey, fromDate, toDate, category, preview) {
         { header: 'Actual Start', width: 14, key: r => r.progress?.actual_start_date || '—' },
         { header: 'Completed On', width: 14, key: r => r.progress?.completion_date || '—' },
         { header: 'Status', width: 18, key: r => calculateStatus(r) },
-        { header: 'Delay (days)', width: 13, key: r => { const d = delayDays(r); return d > 0 ? '+' + d + 'd' : calculateStatus(r) === 'Completed' ? 'On Time' : '—'; } },
+        { header: 'Delay (days)', width: 13, key: r => { const d = delayDays(r); return d > 0 ? d : calculateStatus(r) === 'Completed' ? 0 : null; } },
         { header: 'Remark', width: 22, key: r => r.remark || '' },
         { header: 'Completion Note', width: 36, key: r => r.progress?.notes || '' },
     ];
@@ -11872,6 +12515,7 @@ async function exportExcel(typeKey, fromDate, toDate, category, preview) {
 
     // ── Data rows (with vehicle-group separator rows) ──────────────
     const _xlSeps = reportGroupSeparators(rows);
+    const _xlSecSeps = reportSectionSeparators(rows, _xlSeps);
     let _xlRow = 5; // running worksheet row index
     rows.forEach((r, ri) => {
         if (_xlSeps.has(ri)) {
@@ -11883,6 +12527,18 @@ async function exportExcel(typeKey, fromDate, toDate, category, preview) {
             gc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAV } };
             gc.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
             ws.getRow(_xlRow).height = 18;
+            _xlRow++;
+        }
+        // Section row (Hull / Turret / Assembly & Processing & Testing …)
+        if (_xlSecSeps.has(ri)) {
+            ws.addRow([_xlSecSeps.get(ri)]);
+            ws.mergeCells(_xlRow, 1, _xlRow, COLS.length);
+            const sc = ws.getCell(_xlRow, 1);
+            sc.value = _xlSecSeps.get(ri);
+            sc.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FF1e3a8a' } };
+            sc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFdbeafe' } };
+            sc.alignment = { horizontal: 'left', vertical: 'middle', indent: 2 };
+            ws.getRow(_xlRow).height = 15;
             _xlRow++;
         }
 
@@ -11908,8 +12564,8 @@ async function exportExcel(typeKey, fromDate, toDate, category, preview) {
             }
             // Delay cell — red if positive
             else if (colHdr === 'Delay (days)') {
-                const val = String(cell.value || '');
-                const isLate = val.startsWith('+');
+                const isLate = typeof cell.value === 'number' && cell.value > 0;
+                cell.numFmt = '"+"0;-0;0'; // shows +5 but stays a number for SUM / filters
                 cell.font = { name: 'Calibri', size: 8, bold: isLate, color: { argb: isLate ? 'FF991b1b' : 'FF475569' } };
                 cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isLate ? 'FFfee2e2' : rowBg } };
                 cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -12088,7 +12744,7 @@ async function exportExcel(typeKey, fromDate, toDate, category, preview) {
 /* ================================================================
    KD2 ANALYTICS EXPORT  (station-level aggregated report)
    ================================================================ */
-function exportKD2AnalyticsPDF(fromDate, toDate, category) {
+function exportKD2AnalyticsPDF(fromDate, toDate, category, preview) {
     try {
     if (!window.jspdf) { showToast('PDF library not loaded — please refresh.', 'error'); return; }
     const baseRows = buildReportRows('full', fromDate, toDate, category);
@@ -12173,17 +12829,41 @@ function exportKD2AnalyticsPDF(fromDate, toDate, category) {
         doc.text(b.label.toUpperCase(), bx + (boxW - 2) / 2, stats_y + 12.5, { align: 'center' });
     });
 
-    // Analytics table
-    const headers = ['Station / Process', 'Category', 'Total', 'Done', 'In Prog', 'Overdue', 'Late', '% Done', 'Avg Plan (d)', 'Avg Actual (d)', 'Avg Delay', 'Max Delay'];
-    const body = aRows.map(ar => [
-        ar.station, ar.category,
-        ar.total, ar.completed, ar.inProgress, ar.overdue, ar.late,
-        `${ar.pct}%`,
-        ar.avgPlanned !== null ? `${ar.avgPlanned}d` : '—',
-        ar.avgActual  !== null ? `${ar.avgActual}d`  : '—',
-        ar.avgDelay > 0 ? `+${ar.avgDelay}d` : '—',
-        ar.maxDelay > 0 ? `+${ar.maxDelay}d` : '—',
-    ]);
+    // Analytics table — vehicle heading → section heading → stations in plan order
+    const headers = ['#', 'Station / Process', 'Category', 'Total', 'Done', 'In Prog', 'Overdue', 'Late', '% Done', 'Avg Plan (d)', 'Avg Actual (d)', 'Avg Delay (d)', 'Max Delay (d)'];
+    const grouped = groupKD2AnalyticsRows(aRows);
+    const body = [];
+    const rowBgs = []; // zebra per station row, restarting in every section
+    const rowGroup = []; // "K9 · Hull" per body row, for the continued-page strip
+    const pageFirstRow = {}; // table page number → first body row drawn on it
+    let zebra = 0, curVehicle = '', curSection = '';
+    grouped.forEach(g => {
+        if (g.kind === 'vehicle') curVehicle = g.label, curSection = '';
+        if (g.kind === 'section') curSection = g.label;
+        rowGroup.push([curVehicle, curSection].filter(Boolean).join(' · '));
+        if (g.kind === 'vehicle') {
+            body.push([{ content: `${g.label}   ·   ${analyticsGroupSummary(g)}`, colSpan: headers.length,
+                styles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8.5, cellPadding: 2.4 } }]);
+            rowBgs.push(null);
+        } else if (g.kind === 'section') {
+            body.push([{ content: `${g.label}   ·   ${analyticsGroupSummary(g)}`, colSpan: headers.length,
+                styles: { fillColor: [219, 234, 254], textColor: [30, 58, 138], fontStyle: 'bold', fontSize: 7.5, cellPadding: 2 } }]);
+            rowBgs.push(null);
+            zebra = 0;
+        } else {
+            const bg = zebra++ % 2 === 0 ? [255, 255, 255] : [248, 250, 252];
+            rowBgs.push(bg);
+            body.push([
+                g.pos, g.station, g.category,
+                g.total, g.completed, g.inProgress, g.overdue, g.late,
+                `${g.pct}%`,
+                g.avgPlanned !== null ? String(g.avgPlanned) : '—',
+                g.avgActual  !== null ? String(g.avgActual)  : '—',
+                g.avgDelay > 0 ? `+${g.avgDelay}` : '0',
+                g.maxDelay > 0 ? `+${g.maxDelay}` : '0',
+            ].map(v => ({ content: v, styles: { fillColor: bg } })));
+        }
+    });
 
     doc.autoTable({
         startY: stats_y + 18,
@@ -12191,34 +12871,36 @@ function exportKD2AnalyticsPDF(fromDate, toDate, category) {
         margin: { left: MARGIN, right: MARGIN },
         styles: { fontSize: 7.5, cellPadding: 2.5, font: 'helvetica', textColor: [30, 41, 59], fillColor: [255, 255, 255], lineColor: [226, 232, 240], lineWidth: 0.25, overflow: 'linebreak' },
         headStyles: { fillColor: [30, 58, 138], textColor: [241, 245, 249], fontStyle: 'bold', fontSize: 7, halign: 'center' },
-        alternateRowStyles: { fillColor: [248, 250, 252] },
         columnStyles: {
-            0: { cellWidth: 44 }, 1: { cellWidth: 22 },
-            2: { halign: 'center', cellWidth: 13 }, 3: { halign: 'center', cellWidth: 16 },
-            4: { halign: 'center', cellWidth: 14 }, 5: { halign: 'center', cellWidth: 16 },
-            6: { halign: 'center', cellWidth: 16 }, 7: { halign: 'center', cellWidth: 14 },
-            8: { halign: 'center', cellWidth: 22 }, 9: { halign: 'center', cellWidth: 22 },
-            10: { halign: 'center', cellWidth: 20 }, 11: { halign: 'center', cellWidth: 20 },
+            0: { halign: 'center', cellWidth: 8, textColor: [100, 116, 139] },
+            1: { cellWidth: 66, fontStyle: 'bold' }, 2: { cellWidth: 24, fontStyle: 'italic', textColor: [100, 116, 139] },
+            3: { halign: 'center', cellWidth: 13 }, 4: { halign: 'center', cellWidth: 15 },
+            5: { halign: 'center', cellWidth: 15 }, 6: { halign: 'center', cellWidth: 16 },
+            7: { halign: 'center', cellWidth: 14 }, 8: { halign: 'center', cellWidth: 15 },
+            9: { halign: 'center', cellWidth: 21 }, 10: { halign: 'center', cellWidth: 22 },
+            11: { halign: 'center', cellWidth: 20 }, 12: { halign: 'center', cellWidth: 20 },
         },
         didDrawCell(data) {
             if (data.section !== 'body') return;
-            const val = String(data.cell.raw ?? '');
-            const rowBg = data.row.index % 2 === 0 ? [255, 255, 255] : [248, 250, 252];
+            if (!(data.pageNumber in pageFirstRow)) pageFirstRow[data.pageNumber] = data.row.index;
+            const rowBg = rowBgs[data.row.index];
+            if (!rowBg) return; // vehicle / section heading row
+            const val = String(data.cell.raw?.content ?? data.cell.raw ?? '');
             const redraw = (bg, fg, bold) => {
                 doc.setFillColor(...bg); doc.rect(data.cell.x + 0.2, data.cell.y + 0.2, data.cell.width - 0.4, data.cell.height - 0.4, 'F');
                 doc.setTextColor(...fg); doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(7);
                 doc.text(val, data.cell.x + data.cell.width / 2, data.cell.y + data.cell.height / 2, { align: 'center', baseline: 'middle' });
             };
-            if (data.column.index === 7) {
+            if (data.column.index === 8) { // % Done
                 const pct = parseInt(val);
                 if (pct >= 80) redraw([220, 252, 231], [21, 128, 61], true);
                 else if (pct >= 40) redraw([254, 243, 199], [146, 64, 14], true);
                 else if (!isNaN(pct)) redraw([254, 226, 226], [153, 27, 27], true);
             }
-            if ((data.column.index === 10 || data.column.index === 11) && val.startsWith('+')) {
+            if ((data.column.index === 11 || data.column.index === 12) && val.startsWith('+')) { // Avg / Max Delay
                 redraw(rowBg, [153, 27, 27], true);
             }
-            if (data.column.index === 5 && parseInt(val) > 0) {
+            if (data.column.index === 6 && parseInt(val) > 0) { // Overdue
                 redraw(rowBg, [153, 27, 27], true);
             }
         },
@@ -12227,6 +12909,12 @@ function exportKD2AnalyticsPDF(fromDate, toDate, category) {
                 doc.setFillColor(30, 58, 138); doc.rect(0, 0, PAGE_W, 6, 'F');
                 doc.setTextColor(186, 230, 253); doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5);
                 doc.text(`${moduleBadge} ${moduleTitle} — Station Analytics`, MARGIN, 4.5);
+                // A page that opens mid-section says which vehicle / section it continues
+                const first = pageFirstRow[data.pageNumber];
+                if (first != null && rowBgs[first] && rowGroup[first]) {
+                    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold');
+                    doc.text(`${rowGroup[first]} (continued)`, PAGE_W - MARGIN, 4.5, { align: 'right' });
+                }
             }
             const pY = PAGE_H - 8;
             doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.3); doc.line(MARGIN, pY, PAGE_W - MARGIN, pY);
@@ -12236,15 +12924,19 @@ function exportKD2AnalyticsPDF(fromDate, toDate, category) {
         },
     });
 
-    doc.save(`${moduleBadge}_Station_Analytics_${localDateStr(new Date())}.pdf`);
-    showToast(`Analytics PDF exported — ${aRows.length} stations`, 'success');
+    const doDownload = () => {
+        doc.save(`${moduleBadge}_Station_Analytics_${localDateStr(new Date())}.pdf`);
+        showToast(`Analytics PDF exported — ${aRows.length} stations`, 'success');
+    };
+    if (preview) _showGenericPreview({ title: 'Station Analytics', kind: 'pdf', src: doc.output('bloburl'), onDownload: doDownload });
+    else doDownload();
     } catch (err) {
         console.error('[exportKD2AnalyticsPDF]', err);
         showToast('Analytics PDF export failed: ' + (err.message || err), 'error');
     }
 }
 
-async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
+async function exportKD2AnalyticsExcel(fromDate, toDate, category, preview) {
     try {
     if (typeof ExcelJS === 'undefined') { showToast('ExcelJS not loaded.', 'error'); return; }
     const baseRows = buildReportRows('full', fromDate, toDate, category);
@@ -12277,6 +12969,7 @@ async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
         views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }],
     });
     const ACOLS = [
+        { h: '#', w: 6 },
         { h: 'Station / Process', w: 38 }, { h: 'Category', w: 20 },
         { h: 'Total', w: 10 },             { h: 'Completed', w: 14 },
         { h: 'In Progress', w: 14 },       { h: 'Overdue', w: 12 },
@@ -12312,35 +13005,51 @@ async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
         cell.border = hbdr();
     });
 
-    // Data rows
-    aRows.forEach((ar, ri) => {
-        const rowBg = ri % 2 === 1 ? ALT : WHITE;
-        ws.addRow([ ar.station, ar.category, ar.total, ar.completed, ar.inProgress, ar.overdue, ar.late,
-            `${ar.pct}%`,
-            ar.avgPlanned !== null ? `${ar.avgPlanned}d` : '—',
-            ar.avgActual  !== null ? `${ar.avgActual}d`  : '—',
-            ar.avgDelay > 0 ? `+${ar.avgDelay}d` : '—',
-            ar.maxDelay > 0 ? `+${ar.maxDelay}d` : '—',
+    // Data rows — vehicle heading → section heading → stations in plan order
+    let zebra = 0;
+    groupKD2AnalyticsRows(aRows).forEach(g => {
+        if (g.kind !== 'station') {
+            const isVeh = g.kind === 'vehicle';
+            const hRow = ws.addRow([`${g.label}   ·   ${analyticsGroupSummary(g)}`]);
+            ws.mergeCells(hRow.number, 1, hRow.number, ACOLS.length);
+            const hc = ws.getCell(hRow.number, 1);
+            hc.font = { name:'Calibri', size: isVeh ? 11 : 10, bold:true, color:{argb: isVeh ? WHITE : 'FF1e3a8a'} };
+            hc.fill = { type:'pattern', pattern:'solid', fgColor:{argb: isVeh ? 'FF1e3a8a' : 'FFdbeafe'} };
+            hc.alignment = { horizontal:'left', vertical:'middle', indent: isVeh ? 1 : 2 };
+            hRow.height = isVeh ? 20 : 18;
+            if (!isVeh) zebra = 0;
+            return;
+        }
+        const rowBg = zebra++ % 2 === 1 ? ALT : WHITE;
+        const row = ws.addRow([ g.pos, g.station, g.category, g.total, g.completed, g.inProgress, g.overdue, g.late,
+            g.pct / 100,
+            g.avgPlanned, g.avgActual,
+            g.avgDelay, g.maxDelay,
         ]);
-        const row = ws.getRow(ri + 5); row.height = 16;
+        row.height = 16;
         ACOLS.forEach((col, ci) => {
-            const cell = ws.getCell(ri + 5, ci + 1);
-            const val = String(cell.value ?? '');
+            const cell = ws.getCell(row.number, ci + 1);
+            const val = cell.value;
             let font = { name:'Calibri', size:9, color:{argb:NAV} };
             let fill = { type:'pattern', pattern:'solid', fgColor:{argb:rowBg} };
-            let align = { horizontal: ci < 2 ? 'left' : 'center', vertical:'middle', indent: ci < 2 ? 1 : 0 };
-            if (ci === 0) { font = { ...font, bold:true }; }
-            else if (ci === 1) { font = { ...font, italic:true, color:{argb:MUTE} }; }
-            else if (ci === 7) { // % Done
-                const pct = parseInt(val);
+            let align = { horizontal: (ci === 1 || ci === 2) ? 'left' : 'center', vertical:'middle', indent: (ci === 1 || ci === 2) ? 1 : 0 };
+            if (ci === 0) { font = { ...font, size:8, color:{argb:MUTE} }; }
+            else if (ci === 1) { font = { ...font, bold:true }; }
+            else if (ci === 2) { font = { ...font, italic:true, color:{argb:MUTE} }; }
+            else if (ci === 8) { // % Done
+                const pct = Math.round((val || 0) * 100);
+                cell.numFmt = '0%';
                 const clr = pct >= 80 ? ST['Completed'] : pct >= 40 ? ST['In Progress'] : ST['Overdue'];
                 font = { name:'Calibri', size:8, bold:true, color:{argb:clr.fg} };
                 fill = { type:'pattern', pattern:'solid', fgColor:{argb:clr.bg} };
-            } else if (ci === 5 && parseInt(val) > 0) { // Overdue count
+            } else if (ci === 6 && val > 0) { // Overdue count
                 font = { name:'Calibri', size:8, bold:true, color:{argb:'FF991b1b'} };
                 fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FFfee2e2'} };
-            } else if (ci === 10 || ci === 11) { // Avg/Max Delay
-                const late = val.startsWith('+');
+            } else if (ci === 9 || ci === 10) { // Avg plan / actual (days)
+                if (val === null) cell.value = null;
+            } else if (ci === 11 || ci === 12) { // Avg/Max Delay
+                const late = val > 0;
+                cell.numFmt = '"+"0;-0;0';
                 font = { name:'Calibri', size:8, bold:late, color:{argb: late ? 'FF991b1b' : 'FF475569'} };
                 fill = { type:'pattern', pattern:'solid', fgColor:{argb: late ? 'FFfee2e2' : rowBg} };
             }
@@ -12391,16 +13100,45 @@ async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
         });
     });
 
-    showToast('Building Analytics Excel…', 'info');
-    const buffer = await wb.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${moduleBadge}_Station_Analytics_${localDateStr(new Date())}.xlsx`;
-    document.body.appendChild(a); a.click();
-    document.body.removeChild(a); URL.revokeObjectURL(url);
-    showToast(`Analytics Excel exported — ${aRows.length} stations`, 'success');
+    // By section — one line per vehicle + section, in plan order
+    [28, 16, 14, 12, 12, 12].forEach((w, i) => { wsSumm.getColumn(i + 1).width = w; });
+    wsSumm.addRow([]);
+    const secHdr = wsSumm.addRow(['Vehicle · Section', 'Stations', 'Tasks', 'Done', '% Done', 'Overdue']);
+    secHdr.height = 17;
+    [1,2,3,4,5,6].forEach(c => {
+        const cell = wsSumm.getCell(secHdr.number, c);
+        cell.font = { name:'Calibri', size:9, bold:true, color:{argb:WHITE} };
+        cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAV} };
+        cell.alignment = { horizontal:'center', vertical:'middle' };
+        cell.border = hbdr();
+    });
+    groupKD2AnalyticsRows(aRows).filter(g => g.kind !== 'station').forEach(g => {
+        const isVeh = g.kind === 'vehicle';
+        const row = wsSumm.addRow([isVeh ? g.label : `${g.vehicle} · ${g.label}`, g.stations, g.total, g.done, g.pct + '%', g.overdue]);
+        row.height = 16;
+        [1,2,3,4,5,6].forEach(c => {
+            const cell = wsSumm.getCell(row.number, c);
+            cell.font = { name:'Calibri', size:9, bold: isVeh || c === 1, color:{argb: c === 6 && g.overdue ? 'FF991b1b' : NAV} };
+            cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb: isVeh ? 'FFdbeafe' : WHITE} };
+            cell.alignment = { horizontal: c === 1 ? 'left' : 'center', vertical:'middle', indent: c === 1 ? (isVeh ? 1 : 2) : 0 };
+            cell.border = bdr();
+        });
+    });
+
+    const doDownload = async () => {
+        showToast('Building Analytics Excel…', 'info');
+        const buffer = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${moduleBadge}_Station_Analytics_${localDateStr(new Date())}.xlsx`;
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a); URL.revokeObjectURL(url);
+        showToast(`Analytics Excel exported — ${aRows.length} stations`, 'success');
+    };
+    if (preview) _showGenericPreview({ title: 'Station Analytics', kind: 'sheets', sheets: _workbookToSheets(wb), onDownload: doDownload });
+    else await doDownload();
     } catch (err) {
         console.error('[exportKD2AnalyticsExcel]', err);
         showToast('Analytics Excel export failed: ' + (err.message || err), 'error');
@@ -13598,7 +14336,9 @@ function _worksheetToHtml(ws) {
             const style = `background:${bg};color:${color};font-weight:${font.bold ? 'bold' : 'normal'};`
                 + `font-style:${font.italic ? 'italic' : 'normal'};font-size:${(font.size || 10)}px;`
                 + `text-align:${align};padding:3px 6px;white-space:pre-wrap`;
-            const val = cell.value == null ? '' : String(cell.value);
+            const fmtNum = (v, f) => (/%/.test(f || '') ? `${Math.round(v * 100)}%`
+                : /^"\+"0/.test(f || '') && v > 0 ? `+${v}` : String(v));
+            const val = cell.value == null ? '' : typeof cell.value === 'number' ? fmtNum(cell.value, cell.numFmt) : String(cell.value);
             html += `<td${span ? ` rowspan="${span.rowspan}" colspan="${span.colspan}"` : ''} style="${style}">${esc(val)}</td>`;
         }
         html += '</tr>';
@@ -13849,7 +14589,7 @@ function _addVpxStationReportSheet(wb, built, sheetName, categoryForReason = _vp
     const stationHeaderText = col => (col.name && col.name !== col.code) ? `${col.code}\n${col.name}` : col.code;
     const codeRowData = [''];
     activeCols.forEach(col => codeRowData.push(stationHeaderText(col)));
-    codeRowData.push('Delay', categoryForReason ? `Delay Reason (${categoryForReason})` : 'Delay Reason');
+    codeRowData.push('Delay (wd)', categoryForReason ? `Delay Reason (${categoryForReason})` : 'Delay Reason');
     ws.addRow(codeRowData);
     ws.getRow(5).height = 30;
     for (let c = 1; c <= totalCols; c++) {
@@ -13901,7 +14641,8 @@ function _addVpxStationReportSheet(wb, built, sheetName, categoryForReason = _vp
         // expected completion date); not-yet-finished (projected, still
         // within schedule) cells are grey.
         const actualVals = cells.map(c => c.overdue ? formatDateShort(c.expected) : (c.actual ? formatDateShort(c.actual) : (c.planned ? '' : '—')));
-        ws.addRow(['', ...actualVals, finalDelay > 0 ? `+${finalDelay}d` : '0d', '']);
+        ws.addRow(['', ...actualVals, finalDelay, '']);
+        ws.getCell(actualRowN, delayCol).numFmt = '"+"0;-0;0';
         ws.getRow(actualRowN).eachCell({ includeEmpty: true }, (cell, colN) => {
             const isDelayCol = colN === delayCol;
             const c = colN > 1 && !isDelayCol && colN !== reasonCol ? cells[colN - 2] : null;
@@ -14087,7 +14828,7 @@ function _drawVpxStationReportTable(doc, built, title, categoryForReason = _vpxC
     doc.text('Generated: ' + new Date().toLocaleString('en-GB'), PAGE_W - MARGIN, 10, { align: 'right' });
 
     const stationHeaderText = col => (col.name && col.name !== col.code) ? `${col.code}\n${col.name}` : col.code;
-    const headers = ['Vehicle', ...activeCols.map(stationHeaderText), 'Delay', categoryForReason ? `Delay Reason (${categoryForReason})` : 'Delay Reason'];
+    const headers = ['Vehicle', ...activeCols.map(stationHeaderText), 'Delay (wd)', categoryForReason ? `Delay Reason (${categoryForReason})` : 'Delay Reason'];
     const body = [];
     const cellFlags = []; // parallel to body — {projected,late,real} per station cell, per row
     const vehicleBlockStartRows = []; // body row index where each vehicle's Plan row starts
@@ -14111,7 +14852,7 @@ function _drawVpxStationReportTable(doc, built, title, categoryForReason = _vpxC
 
         body.push([
             ...cells.map(c => c.overdue ? formatDateShort(c.expected) : (c.actual ? formatDateShort(c.actual) : (c.planned ? '' : '—'))),
-            finalDelay > 0 ? `+${finalDelay}d` : '0d',
+            finalDelay > 0 ? `+${finalDelay}` : '0',
         ]);
         cellFlags.push(cells.map(c => ({ projected: c.projected, late: c.late, overdue: c.overdue, real: !c.projected && !c.overdue && !!c.actual })));
     });
@@ -14148,7 +14889,7 @@ function _drawVpxStationReportTable(doc, built, title, categoryForReason = _vpxC
                 if (!isPlanRow) {
                     const text = String(data.cell.raw || '');
                     if (text.startsWith('+')) { data.cell.styles.textColor = [185, 28, 28]; data.cell.styles.fontStyle = 'bold'; }
-                    else if (text === '0d') { data.cell.styles.textColor = [21, 128, 61]; data.cell.styles.fontStyle = 'bold'; }
+                    else if (text === '0') { data.cell.styles.textColor = [21, 128, 61]; data.cell.styles.fontStyle = 'bold'; }
                 }
                 return;
             }
@@ -15696,6 +16437,190 @@ function wireVpxDelayReasonModal() {
     });
 }
 
+/* ─── VPX Matrix — row / column / cell highlight on hover, and the hover
+   pencil that opens a small popover to enter or update a cell's actual
+   start and completion dates. Saving goes through saveActualStart /
+   saveCompletionDate, so audit log, notifications, co-editing broadcast and
+   view refresh behave exactly like the Plan Table. ── */
+function _vpxCellEditBtnHtml(planId) {
+    return '<button type="button" class="vpx-cell-edit-btn" data-plan-id="' + esc(String(planId)) + '" title="' + esc(_t('Enter / update dates')) + '">'
+        + '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5l2 2L6 12l-2.8.8L4 10z"/><path d="M10 4l2 2"/></svg>'
+        + '</button>';
+}
+
+let _vpxHlEls = [];
+let _vpxHlCell = null;
+let _vpxDatePop = null;
+
+function _vpxClearHighlight() {
+    _vpxHlEls.forEach(el => el.classList.remove('vpx-hl-row', 'vpx-hl-col', 'vpx-hl-cell'));
+    _vpxHlEls = [];
+    _vpxHlCell = null;
+}
+
+function _vpxHighlightCell(container, cell) {
+    if (cell === _vpxHlCell) return;
+    _vpxClearHighlight();
+    if (!cell) return;
+    _vpxHlCell = cell;
+    const tr = cell.closest('tr.vpx-row[data-ri]');
+    if (tr) { tr.classList.add('vpx-hl-row'); _vpxHlEls.push(tr); }
+    const ci = cell.dataset.ci;
+    if (ci != null) {
+        container.querySelectorAll('td.vpx-cell[data-ci="' + ci + '"], th.vpx-th-col[data-col="' + ci + '"]').forEach(el => {
+            el.classList.add('vpx-hl-col');
+            _vpxHlEls.push(el);
+        });
+        cell.classList.add('vpx-hl-cell');
+        _vpxHlEls.push(cell);
+    }
+}
+
+function _closeVpxDatePop() {
+    if (!_vpxDatePop) return;
+    _vpxDatePop.remove();
+    _vpxDatePop = null;
+    document.getElementById('vpxMatrix')?.removeAttribute('data-no-hover-card');
+    _vpxClearHighlight();
+}
+
+function _openVpxDatePop(planId, cell) {
+    _closeVpxDatePop();
+    if (!canWrite()) return;
+    const row = currentData.find(t => String(t.id) === String(planId));
+    if (!row) return;
+    const container = document.getElementById('vpxMatrix');
+    if (container) {
+        _vpxHighlightCell(container, cell);
+        // No cell hover cards on top of the popover while it is open
+        container.setAttribute('data-no-hover-card', '');
+    }
+    window.PPMSHoverCard?.hide();
+
+    const f100 = isF100KD2Module();
+    const start = (f100 ? row.actual_start_date : row.progress?.actual_start_date) || '';
+    const end = (f100 ? row.actual_end_date : row.progress?.completion_date) || '';
+    const planStart = f100 ? row.planned_start_date : row.start_date;
+    const planEnd = f100 ? row.planned_end_date : row.end_date;
+    const title = f100
+        ? `${row.part_name || ''} · #${row.step_number ?? ''} ${row.process_name || ''}`
+        : (row.process_station || '');
+    const sub = f100
+        ? [row.battalion_code, [row.vehicle_type, row.serial_number != null ? '#' + row.serial_number : null].filter(Boolean).join(' '), row.unit_code].filter(Boolean).join(' · ')
+        : [row.battalion_code, `${row.vehicle || ''} ${row.vehicle_no || ''}`.trim(), getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code)].filter(Boolean).join(' · ');
+    const today = todayStr();
+
+    const pop = document.createElement('div');
+    pop.className = 'vpx-date-pop';
+    pop.setAttribute('role', 'dialog');
+    pop.innerHTML = `
+        <button type="button" class="vpx-date-pop-close" data-act="cancel" title="${esc(_t('Close'))}">✕</button>
+        <div class="vpx-date-pop-title">${esc(title)}</div>
+        <div class="vpx-date-pop-sub">${esc(sub)}</div>
+        <div class="vpx-date-pop-plan">${esc(_t('Planned'))}: ${formatDate(planStart)} → ${formatDate(planEnd)}</div>
+        <div class="vpx-date-pop-field">
+            <label for="vpxPopStart">${esc(_t('Actual start'))}</label>
+            <div class="vpx-date-pop-row">
+                <input type="date" id="vpxPopStart" class="filter-control" value="${start}" max="${today}" />
+                <button type="button" class="btn btn-ghost btn-sm" data-act="today" data-target="vpxPopStart">${esc(_t('Today'))}</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-act="clear" data-target="vpxPopStart">${esc(_t('Clear'))}</button>
+            </div>
+        </div>
+        <div class="vpx-date-pop-field">
+            <label for="vpxPopEnd">${esc(_t('Completed on'))}</label>
+            <div class="vpx-date-pop-row">
+                <input type="date" id="vpxPopEnd" class="filter-control" value="${end}" max="${today}" />
+                <button type="button" class="btn btn-ghost btn-sm" data-act="today" data-target="vpxPopEnd">${esc(_t('Today'))}</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-act="clear" data-target="vpxPopEnd">${esc(_t('Clear'))}</button>
+            </div>
+        </div>
+        <div class="vpx-date-pop-error" aria-live="polite"></div>
+        <div class="vpx-date-pop-actions">
+            <button type="button" class="btn btn-ghost btn-sm" data-act="cancel">${esc(_t('Cancel'))}</button>
+            <button type="button" class="btn btn-primary btn-sm" data-act="save">${esc(_t('Save'))}</button>
+        </div>`;
+    // Full-screen VPX uses the native Fullscreen API — anything outside the
+    // fullscreen element is invisible, so the popover must live inside it.
+    _fullscreenOverlayHost().appendChild(pop);
+    _vpxDatePop = pop;
+
+    // Place next to the cell, kept inside the viewport
+    const r = cell.getBoundingClientRect();
+    const pw = pop.offsetWidth, ph = pop.offsetHeight;
+    let left = r.right + 6;
+    if (left + pw > window.innerWidth - 8) left = r.left - pw - 6;
+    left = Math.max(8, Math.min(left, window.innerWidth - pw - 8));
+    let top = Math.max(8, Math.min(r.top, window.innerHeight - ph - 8));
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+
+    const startEl = pop.querySelector('#vpxPopStart');
+    const endEl = pop.querySelector('#vpxPopEnd');
+    const errEl = pop.querySelector('.vpx-date-pop-error');
+    startEl.focus();
+
+    pop.addEventListener('click', async e => {
+        const btn = e.target.closest('[data-act]');
+        if (!btn) return;
+        const act = btn.dataset.act;
+        if (act === 'cancel') { _closeVpxDatePop(); return; }
+        if (act === 'today') { pop.querySelector('#' + btn.dataset.target).value = today; errEl.textContent = ''; return; }
+        if (act === 'clear') { pop.querySelector('#' + btn.dataset.target).value = ''; errEl.textContent = ''; return; }
+        if (act !== 'save') return;
+
+        const newStart = startEl.value || '';
+        const newEnd = endEl.value || '';
+        if ((newStart && newStart > today) || (newEnd && newEnd > today)) {
+            errEl.textContent = _t('Dates cannot be in the future.');
+            return;
+        }
+        if (newStart && newEnd && newEnd < newStart) {
+            errEl.textContent = _t('Completion date cannot be before the actual start.');
+            return;
+        }
+        if (newStart === start && newEnd === end) { _closeVpxDatePop(); return; }
+        pop.querySelectorAll('button, input').forEach(el => { el.disabled = true; });
+        // Start first: F100 derives the new status from the saved start date
+        if (newStart !== start) await saveActualStart(planId, newStart);
+        if (newEnd !== end) await saveCompletionDate(planId, newEnd);
+        _closeVpxDatePop();
+    });
+    pop.addEventListener('keydown', e => {
+        if (e.key === 'Escape') { e.stopPropagation(); _closeVpxDatePop(); }
+        else if (e.key === 'Enter' && e.target.tagName === 'INPUT') pop.querySelector('[data-act="save"]').click();
+    });
+}
+
+function wireVpxCellEditor() {
+    const container = document.getElementById('vpxMatrix');
+    if (!container) return;
+
+    container.addEventListener('mouseover', e => {
+        if (_vpxDatePop) return; // keep the edited cell highlighted while the popover is open
+        const cell = e.target.closest('td.vpx-cell[data-ci]');
+        if (cell && container.contains(cell)) _vpxHighlightCell(container, cell);
+    });
+    container.addEventListener('mouseleave', () => { if (!_vpxDatePop) _vpxClearHighlight(); });
+
+    container.addEventListener('click', e => {
+        const btn = e.target.closest('.vpx-cell-edit-btn');
+        if (!btn) return;
+        e.stopPropagation();
+        _openVpxDatePop(btn.dataset.planId, btn.closest('td'));
+    });
+
+    // Close on an outside click, on scroll (the popover is fixed and would
+    // drift from its cell) and on resize
+    document.addEventListener('mousedown', e => {
+        if (_vpxDatePop && !_vpxDatePop.contains(e.target) && !e.target.closest('.vpx-cell-edit-btn')) _closeVpxDatePop();
+    });
+    document.addEventListener('scroll', e => {
+        if (_vpxDatePop && !_vpxDatePop.contains(e.target)) _closeVpxDatePop();
+    }, true);
+    window.addEventListener('resize', _closeVpxDatePop);
+    document.addEventListener('fullscreenchange', _closeVpxDatePop);
+}
+
 /* ─── X-ray / repair cycle — click the marker on a Welding-station row (main
    table or VPX cell) to see the cycle history and advance to the next step. ── */
 const XRAY_ACTIONS_BY_STAGE = {
@@ -16030,7 +16955,7 @@ function updateReportPreview() {
 
     if (isKD2Module() && type === 'analytics') {
         const baseRows = buildReportRows('full', from, to, category);
-        const stationCount = new Set(baseRows.map(r => r.process_station)).size;
+        const stationCount = new Set(baseRows.map(r => `${r.vehicle}||${r.process_station}`)).size;
         if (cnt) cnt.textContent = `${stationCount} station${stationCount !== 1 ? 's' : ''} will be analysed`;
         if (hint) hint.textContent = stationCount ? 'Avg plan vs actual · delay per process — ready to export' : 'No stations found — adjust filters';
         if (bar) bar.style.borderColor = stationCount ? 'rgba(79,142,247,.4)' : 'rgba(239,68,68,.4)';
