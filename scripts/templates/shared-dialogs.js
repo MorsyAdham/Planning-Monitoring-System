@@ -1842,12 +1842,23 @@ export function renderSharedDialogs() {
                         <div><small>Completion</small><strong id="execSnapPct">—</strong><em id="execSnapPctSub"></em></div>
                         <div><small>Open issues</small><strong id="execSnapIssues">—</strong><em id="execSnapIssuesSub"></em></div>
                     </div>
+                    <div class="xr-bats">
+                        <h5>Battalions <span>started battalions are selected by default</span></h5>
+                        <div class="xr-bat-row">
+                            <div class="xr-bat-chips" id="execBatChips" role="group" aria-label="Battalions in the report"><span class="xr-bat-loading">Loading battalions…</span></div>
+                            <div class="xr-bat-quick">
+                                <button type="button" class="xr-bat-q" data-xr-bats="started">Started</button>
+                                <button type="button" class="xr-bat-q" data-xr-bats="all">All</button>
+                            </div>
+                        </div>
+                        <p class="xr-parts-hint" id="execBatHint" hidden>Select at least one battalion.</p>
+                    </div>
                     <div class="xr-inside">
                         <h5>What's inside <span>switch off any part you don't need</span></h5>
                         <div class="xr-opts">
-                            <label class="xr-opt"><span class="xr-num">1</span><span class="xr-opt-text"><strong>Cover summary</strong><span>Progress, status split, delivery forecast and contents</span></span><input type="checkbox" id="execIncCover" checked /><span class="xr-switch" aria-hidden="true"></span></label>
-                            <label class="xr-opt"><span class="xr-num">2</span><span class="xr-opt-text"><strong>Station report</strong><span>K9 Hull · Turret · Assembly, then K10 and K11 Structure · Assembly — one page per table</span></span><input type="checkbox" id="execIncStations" checked /><span class="xr-switch" aria-hidden="true"></span></label>
-                            <label class="xr-opt"><span class="xr-num">3</span><span class="xr-opt-text"><strong>Production insights</strong><span>Two pages: where we stand, and where to act</span></span><input type="checkbox" id="execIncludeInsights" checked /><span class="xr-switch" aria-hidden="true"></span></label>
+                            <label class="xr-opt"><span class="xr-num">1</span><span class="xr-opt-text"><strong>Cover summary</strong><span>Overall and by battalion: progress, delivery forecast and contents</span></span><input type="checkbox" id="execIncCover" checked /><span class="xr-switch" aria-hidden="true"></span></label>
+                            <label class="xr-opt"><span class="xr-num">2</span><span class="xr-opt-text"><strong>Station report</strong><span>Every battalion in turn: K9 Hull · Turret · Assembly, then K10 and K11 Structure · Assembly — one page per table</span></span><input type="checkbox" id="execIncStations" checked /><span class="xr-switch" aria-hidden="true"></span></label>
+                            <label class="xr-opt"><span class="xr-num">3</span><span class="xr-opt-text"><strong>Production insights</strong><span>Two pages per battalion: where we stand, and where to act</span></span><input type="checkbox" id="execIncludeInsights" checked /><span class="xr-switch" aria-hidden="true"></span></label>
                             <label class="xr-opt"><span class="xr-num">4</span><span class="xr-opt-text"><strong>Production issues status report</strong><span>All time, every status and category</span></span><input type="checkbox" id="execIncIssues" checked /><span class="xr-switch" aria-hidden="true"></span></label>
                         </div>
                         <p class="xr-parts-hint" id="execPartsHint" hidden>Switch on at least one part to create the report.</p>

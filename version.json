@@ -1,8 +1,8 @@
 {
- "version": "v162-e88fdf6",
- "label": "v162",
- "deployedAt": "2026-10-09T11:38:55.987Z",
- "notes": "Fix Gantt today scroll; translate Delivery Outlook",
+ "version": "v163-754add3",
+ "label": "v163",
+ "deployedAt": "2026-10-10T12:46:33.756Z",
+ "notes": "Executive Report: every battalion, battalion picker, signed footer",
  "files": [
   "index.html",
   "login.html",

@@ -3,6 +3,51 @@
 // Edit through the Excel review sheet (tools/i18n_export.py), not by hand.
 // Placeholders such as {n} must be kept exactly as they are.
 export default {
+ "started battalions are selected by default": {
+  "area": "Dialogs",
+  "ko": "시작된 대대가 기본으로 선택됩니다",
+  "ar": "تُحدَّد الكتائب التي بدأت افتراضيًا"
+ },
+ "Started": {
+  "area": "Dialogs",
+  "ko": "시작됨",
+  "ar": "بدأت"
+ },
+ "Select at least one battalion.": {
+  "area": "Dialogs",
+  "ko": "대대를 하나 이상 선택하세요.",
+  "ar": "اختر كتيبة واحدة على الأقل."
+ },
+ "Loading battalions…": {
+  "area": "Dialogs",
+  "ko": "대대 불러오는 중…",
+  "ar": "جارٍ تحميل الكتائب…"
+ },
+ "No battalions in the current filters": {
+  "area": "Dialogs",
+  "ko": "현재 필터에 대대가 없습니다",
+  "ar": "لا توجد كتائب ضمن عوامل التصفية الحالية"
+ },
+ "{n}% done": {
+  "area": "Dialogs",
+  "ko": "{n}% 완료",
+  "ar": "{n}% منجز"
+ },
+ "not started": {
+  "area": "Dialogs",
+  "ko": "시작 전",
+  "ar": "لم تبدأ"
+ },
+ "Could not load the battalions — close and try again.": {
+  "area": "Dialogs",
+  "ko": "대대를 불러올 수 없습니다 — 닫고 다시 시도하세요.",
+  "ar": "تعذّر تحميل الكتائب — أغلق النافذة وحاول مجددًا."
+ },
+ "Battalions in the report": {
+  "area": "Dialogs",
+  "ko": "보고서에 포함할 대대",
+  "ar": "الكتائب المضمّنة في التقرير"
+ },
  "a form or dialog is open": {
   "area": "Header & menus",
   "ko": "양식이나 대화상자가 열려 있습니다",
@@ -6283,10 +6328,10 @@ export default {
   "ko": "K9 / K10 / K11 구분",
   "ar": "تفصيل K9 / K10 / K11"
  },
- "K9 Hull · Turret · Assembly, then K10 and K11 Structure · Assembly — one page per table": {
+ "Every battalion in turn: K9 Hull · Turret · Assembly, then K10 and K11 Structure · Assembly — one page per table": {
   "area": "Dialogs",
-  "ko": "K9 차체 · 포탑 · 조립, 그다음 K10과 K11 구조물 · 조립 — 표당 한 페이지",
-  "ar": "K9 الهيكل · البرج · التجميع، ثم K10 وK11 الهيكل الإنشائي · التجميع — صفحة لكل جدول"
+  "ko": "모든 대대를 차례로: K9 차체 · 포탑 · 조립, 그다음 K10과 K11 구조물 · 조립 — 표당 한 페이지",
+  "ar": "كل كتيبة بالترتيب: K9 الهيكل · البرج · التجميع، ثم K10 وK11 الهيكل الإنشائي · التجميع — صفحة لكل جدول"
  },
  "KD2 Battalions": {
   "area": "Dialogs",
@@ -6643,10 +6688,10 @@ export default {
   "ko": "진행 매트릭스",
   "ar": "مصفوفة التقدّم"
  },
- "Progress, status split, delivery forecast and contents": {
+ "Overall and by battalion: progress, delivery forecast and contents": {
   "area": "Dialogs",
-  "ko": "진행, 상태 분포, 납품 예측 및 목차",
-  "ar": "التقدّم وتوزيع الحالات وتوقّع التسليم والمحتويات"
+  "ko": "전체 및 대대별: 진행, 납품 예측 및 목차",
+  "ar": "الإجمالي وحسب الكتيبة: التقدّم وتوقّع التسليم والمحتويات"
  },
  "Quantity": {
   "area": "Dialogs",
@@ -6958,10 +7003,10 @@ export default {
   "ko": "종료일",
   "ar": "إلى تاريخ"
  },
- "Two pages: where we stand, and where to act": {
+ "Two pages per battalion: where we stand, and where to act": {
   "area": "Dialogs",
-  "ko": "두 페이지: 현재 상황과 조치할 곳",
-  "ar": "صفحتان: أين نقف، وأين يجب التدخل"
+  "ko": "대대별 두 페이지: 현재 상황과 조치할 곳",
+  "ar": "صفحتان لكل كتيبة: أين نقف، وأين يجب التدخل"
  },
  "Type a category name.": {
   "area": "Dialogs",
