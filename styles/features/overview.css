@@ -273,6 +273,10 @@
 .ex-delivery .delivery-row { justify-content: flex-start; }
 .ex-delivery .delivery-date { font-family: var(--ff-display); font-size: 1.1rem; font-weight: 700; }
 .ex-delivery .delivery-date--expected { color: var(--clr-text); }
+/* What sets the delivery date + vehicles late (planForecast) */
+.delivery-note { display: grid; gap: 2px; font-size: .74rem; line-height: 1.35; color: var(--clr-text-dim); }
+.delivery-note b { color: var(--clr-text); font-weight: 600; }
+.delivery-note .dn-late { color: var(--clr-overdue); font-weight: 600; }
 
 @media (max-width: 1180px) {
     .ex-grid { grid-template-columns: 1fr; }

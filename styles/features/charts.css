@@ -45,7 +45,7 @@
     flex-wrap: wrap;
     align-items: flex-start;
     gap: 6px 10px;
-    padding-right: 34px; /* room for the expand button */
+    padding-right: 68px; /* room for the table and expand buttons */
 }
 .an-head-text {
     display: flex;
@@ -62,6 +62,7 @@
     text-overflow: ellipsis;
 }
 .an-grid .chart-expand-btn { top: 12px; right: 12px; }
+.an-grid .chart-view-btn { top: 12px; right: 46px; }
 
 /* Segmented selectors */
 .an-controls {

@@ -1,5 +1,8 @@
 const _expandIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>`;
 
+const _tableIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16"/></svg>`;
+const _viewBtn = `<button class="chart-view-btn" onclick="toggleChartTable(this)" aria-pressed="false" title="Show as table" aria-label="Show as table">${_tableIcon}</button>`;
+
 const _insightIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2V17h6v-.3c0-.8.4-1.5 1-2A7 7 0 0 0 12 2z"/></svg>`;
 
 /** Segmented selector — each button sets analytics option `opt` (see analytics.js). */
@@ -17,6 +20,7 @@ function card({ id, span, hidden, title, titleId, sub, subId, controls, insightI
                             <span class="chart-subtitle"${subId ? ` id="${subId}"` : ''}>${sub}</span>
                         </div>
                         <div class="an-controls">${controls || ''}</div>
+                        ${_viewBtn}
                         <button class="chart-expand-btn" onclick="toggleChartFullscreen(this)" aria-pressed="false" title="Expand chart">${_expandIcon}</button>
                     </div>
                     <div class="chart-insight" id="${insightId}" hidden>${_insightIcon}<span class="chart-insight-text"></span></div>
@@ -100,6 +104,7 @@ export function initFeature() {
                     <div class="chart-card-header">
                         <h3 class="chart-title">Status Distribution</h3>
                         <span class="chart-subtitle">Overall task status breakdown</span>
+                        ${_viewBtn}
                         <button class="chart-expand-btn" onclick="toggleChartFullscreen(this)" aria-pressed="false" title="Expand chart">${_expandIcon}</button>
                     </div>
                     <div class="chart-canvas-wrap" style="height:220px">
@@ -110,6 +115,7 @@ export function initFeature() {
                     <div class="chart-card-header">
                         <h3 class="chart-title">Process Step Completion</h3>
                         <span class="chart-subtitle">% of units that completed each manufacturing step</span>
+                        ${_viewBtn}
                         <button class="chart-expand-btn" onclick="toggleChartFullscreen(this)" aria-pressed="false" title="Expand chart">${_expandIcon}</button>
                     </div>
                     <div class="chart-canvas-wrap" style="height:220px">
@@ -120,6 +126,7 @@ export function initFeature() {
                     <div class="chart-card-header">
                         <h3 class="chart-title">Completion by Vehicle Type</h3>
                         <span class="chart-subtitle">% complete and total tasks per vehicle type</span>
+                        ${_viewBtn}
                         <button class="chart-expand-btn" onclick="toggleChartFullscreen(this)" aria-pressed="false" title="Expand chart">${_expandIcon}</button>
                     </div>
                     <div class="chart-canvas-wrap" style="height:220px">

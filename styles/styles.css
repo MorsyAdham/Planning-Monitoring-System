@@ -3898,7 +3898,7 @@ body {
     gap: 3px;
 }
 
-.chart-expand-btn {
+.chart-expand-btn, .chart-view-btn {
     position: absolute;
     top: 12px;
     right: 12px;
@@ -3917,12 +3917,12 @@ body {
     z-index: 2;
 }
 
-.chart-expand-btn svg {
+.chart-expand-btn svg, .chart-view-btn svg {
     width: 14px;
     height: 14px;
 }
 
-.chart-expand-btn:hover {
+.chart-expand-btn:hover, .chart-view-btn:hover, .chart-view-btn[aria-pressed="true"] {
     opacity: 1;
     background: var(--clr-surface-2, var(--clr-surface));
     color: var(--clr-text);
@@ -3931,6 +3931,25 @@ body {
 .chart-card {
     position: relative;
 }
+
+/* Chart ↔ table switch (toggleChartTable): sits left of the expand button */
+.chart-view-btn { right: 46px; }
+.chart-view-btn:focus-visible, .chart-expand-btn:focus-visible { opacity: 1; outline: 2px solid var(--clr-accent); outline-offset: 2px; }
+.chart-card.show-table .chart-canvas-wrap { display: none; }
+.chart-table-wrap {
+    overflow: auto;
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--clr-surface);
+}
+.chart-card.chart-fullscreen .chart-table-wrap { flex: 1; height: auto !important; min-height: 0; }
+.chart-table { width: 100%; border-collapse: collapse; font-size: .74rem; }
+.chart-table th, .chart-table td { padding: 5px 9px; border-bottom: 1px solid var(--clr-border); text-align: left; white-space: nowrap; }
+.chart-table th { position: sticky; top: 0; z-index: 1; background: var(--clr-surface-2, var(--clr-surface)); color: var(--clr-text-dim); font-weight: 700; }
+.chart-table td { color: var(--clr-text); }
+.chart-table td.num, .chart-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.chart-table tbody tr:hover td { background: var(--clr-accent-dim, rgba(37, 99, 235, .08)); }
+.chart-table-empty { margin: 0; padding: 14px; font-size: .78rem; color: var(--clr-text-dim); }
 
 .chart-expand-backdrop {
     position: fixed;

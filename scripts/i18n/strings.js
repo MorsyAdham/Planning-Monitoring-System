@@ -3,6 +3,66 @@
 // Edit through the Excel review sheet (tools/i18n_export.py), not by hand.
 // Placeholders such as {n} must be kept exactly as they are.
 export default {
+ "Set by {unit}": {
+  "area": "Summary & charts",
+  "ko": "{unit} 기준",
+  "ar": "يحدّده {unit}"
+ },
+ "Set by {unit} · {station} overdue since {date}": {
+  "area": "Summary & charts",
+  "ko": "{unit} 기준 · {station} {date}부터 지연",
+  "ar": "يحدّده {unit} · {station} متأخرة منذ {date}"
+ },
+ "Set by {unit} · {station} in progress, due {date}": {
+  "area": "Summary & charts",
+  "ko": "{unit} 기준 · {station} 진행 중, 기한 {date}",
+  "ar": "يحدّده {unit} · {station} قيد التنفيذ، الموعد {date}"
+ },
+ "Set by {unit} · {station} starts {n} wd late": {
+  "area": "Summary & charts",
+  "ko": "{unit} 기준 · {station} {n} 작업일 늦게 시작",
+  "ar": "يحدّده {unit} · {station} تبدأ متأخرة {n} يوم عمل"
+ },
+ "Set by {unit} · {station} finished {n} wd late": {
+  "area": "Summary & charts",
+  "ko": "{unit} 기준 · {station} {n} 작업일 늦게 완료",
+  "ar": "يحدّده {unit} · {station} انتهت متأخرة {n} يوم عمل"
+ },
+ "1 vehicle late · +{w} wd": {
+  "area": "Summary & charts",
+  "ko": "차량 1대 지연 · +{w} 작업일",
+  "ar": "مركبة واحدة متأخرة · +{w} يوم عمل"
+ },
+ "{n} vehicles late · worst +{w} wd": {
+  "area": "Summary & charts",
+  "ko": "차량 {n}대 지연 · 최대 +{w} 작업일",
+  "ar": "{n} مركبات متأخرة · الأسوأ +{w} يوم عمل"
+ },
+ "all before the last planned finish": {
+  "area": "Summary & charts",
+  "ko": "모두 마지막 계획 완료일 이전",
+  "ar": "جميعها قبل آخر موعد إنهاء مخطط"
+ },
+ "Show as table": {
+  "area": "Summary & charts",
+  "ko": "표로 보기",
+  "ar": "عرض كجدول"
+ },
+ "Show as chart": {
+  "area": "Summary & charts",
+  "ko": "차트로 보기",
+  "ar": "عرض كمخطط"
+ },
+ "No data to show.": {
+  "area": "Summary & charts",
+  "ko": "표시할 데이터가 없습니다.",
+  "ar": "لا توجد بيانات لعرضها."
+ },
+ "Series {n}": {
+  "area": "Summary & charts",
+  "ko": "계열 {n}",
+  "ar": "السلسلة {n}"
+ },
  "started battalions are selected by default": {
   "area": "Dialogs",
   "ko": "시작된 대대가 기본으로 선택됩니다",

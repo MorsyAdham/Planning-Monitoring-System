@@ -85,6 +85,7 @@ export function initFeature() {
                                 <span class="delivery-delta" id="sumDeliveryDelta" style="display:none"></span>
                             </div>
                         </div>
+                        <div class="delivery-note" id="sumDeliveryNote" hidden></div>
                     </div>
                 </div>
             </div>

@@ -5648,6 +5648,69 @@ function getPlanForecast(rows = currentData) {
     return result;
 }
 
+/** The unit that sets the expected delivery date and why: the first
+ *  unfinished station on its path that is running late (overdue, in
+ *  progress past its date, or starting late), else its latest-finished
+ *  late station. Null when delivery is on time. */
+function _fcDeliveryDriver(fc) {
+    if (!fc || !fc.expectedDelivery || !(fc.deliverySlip > 0)) return null;
+    const unit = fc.units
+        .filter(u => u.projFinish === fc.expectedDelivery)
+        .sort((a, b) => b.finishSlip - a.finishSlip)[0];
+    if (!unit) return null;
+    const byPlan = (a, b) => a.row.start_date.localeCompare(b.row.start_date) || a.row.end_date.localeCompare(b.row.end_date);
+    const open = unit.steps.filter(s => !s.done && s.slip > 0).sort(byPlan)[0];
+    const doneLate = unit.steps.filter(s => s.done && s.slip > 0).sort((a, b) => b.credit - a.credit || byPlan(b, a))[0];
+    const step = open || doneLate || null;
+    let state = null;
+    if (step) {
+        const pr = step.row.progress || {};
+        if (step.done) state = 'finished';
+        else if (pr.actual_start_date) state = 'inProgress';
+        else if (step.row.end_date < todayStr()) state = 'overdue';
+        else state = 'startsLate';
+    }
+    return { unit, step, state };
+}
+/** Units forecast to finish after their own planned finish. */
+function _fcLateUnits(fc) {
+    const late = (fc?.units || []).filter(u => u.finishSlip > 0);
+    return { count: late.length, worst: late.reduce((m, u) => Math.max(m, u.finishSlip), 0), total: fc?.units?.length || 0 };
+}
+function _fcUnitName(unit, withBattalion) {
+    return [withBattalion ? unit.battalion : '', unit.vehicle, unit.unitNo].filter(Boolean).join(' ');
+}
+
+/** Delivery card note: what sets a late date, and how many vehicles are late. */
+function _updateDeliveryNote(fc, data) {
+    const el = document.getElementById('sumDeliveryNote');
+    if (!el) return;
+    if (!fc || !fc.expectedDelivery) { el.hidden = true; el.innerHTML = ''; return; }
+    const lines = [];
+    const drv = _fcDeliveryDriver(fc);
+    if (drv) {
+        const multiBat = new Set(fc.units.map(u => u.battalion)).size > 1;
+        const unit = `<b>${esc(_fcUnitName(drv.unit, multiBat))}</b>`;
+        const st = drv.step ? `<b>${esc(drv.step.row.process_station || drv.step.row.station_code || '')}</b>` : '';
+        const due = drv.step ? esc(formatDateShort(drv.step.row.end_date)) : '';
+        const msg = !drv.step ? _t('Set by {unit}', { unit })
+            : drv.state === 'overdue' ? _t('Set by {unit} · {station} overdue since {date}', { unit, station: st, date: due })
+            : drv.state === 'inProgress' ? _t('Set by {unit} · {station} in progress, due {date}', { unit, station: st, date: due })
+            : drv.state === 'startsLate' ? _t('Set by {unit} · {station} starts {n} wd late', { unit, station: st, n: drv.step.slip })
+            : _t('Set by {unit} · {station} finished {n} wd late', { unit, station: st, n: drv.step.slip });
+        lines.push(`<span>${msg}</span>`);
+    }
+    const late = _fcLateUnits(fc);
+    if (late.count) {
+        const txt = late.count === 1
+            ? _t('1 vehicle late · +{w} wd', { w: late.worst })
+            : _t('{n} vehicles late · worst +{w} wd', { n: late.count, w: late.worst });
+        lines.push(`<span><span class="dn-late">${txt}</span>${drv ? '' : ` · ${_t('all before the last planned finish')}`}</span>`);
+    }
+    el.innerHTML = lines.join('');
+    el.hidden = !lines.length;
+}
+
 function _updateDeliveryCard(data) {
     const plannedEl  = document.getElementById('sumDeliveryPlanned');
     const expectedEl = document.getElementById('sumDeliveryExpected');
@@ -5658,6 +5721,7 @@ function _updateDeliveryCard(data) {
         plannedEl.textContent  = '—';
         expectedEl.textContent = '—';
         deltaEl.style.display  = 'none';
+        _updateDeliveryNote(null);
         return;
     }
 
@@ -5695,6 +5759,7 @@ function _updateDeliveryCard(data) {
 
     plannedEl.textContent  = _fmtDeliveryDate(plannedDelivery);
     expectedEl.textContent = _fmtDeliveryDate(expectedDelivery);
+    _updateDeliveryNote(fc, data);
 
     if (totalDelay > 0) {
         deltaEl.textContent = _t('+{n} wd', { n: totalDelay });
@@ -7896,6 +7961,115 @@ function toggleChartFullscreen(btn) {
     } else {
         _closeChartExpand(card, btn);
     }
+}
+
+/* ─── Chart ↔ table switch ───────────────────────────────────────
+   Every chart card has a button that swaps the chart for a table of the
+   same figures (and back). The table is built from the Chart.js chart
+   itself — rows = the chart's labels, one column per visible series —
+   and values are written the way the chart's own axis writes them (dates,
+   %, wd), so the two views always agree. A Chart.js plugin rebuilds an
+   open table whenever its chart redraws (filters, segment buttons). */
+const _CHART_ICON_TABLE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16"/></svg>`;
+const _CHART_ICON_CHART = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 16v-4M12 16V8M17 16v-7"/></svg>`;
+let _chartTablePluginOn = false;
+
+/** One value as the chart's own axis would write it. */
+function _chartTick(scale, v) {
+    if (v == null || (typeof v === 'number' && !isFinite(v))) return '—';
+    const cb = scale?.options?.ticks?.callback;
+    if (typeof v === 'number' && typeof cb === 'function') {
+        try {
+            const r = cb.call(scale, v, 0, [{ value: v }]);
+            if (r != null && r !== '') return Array.isArray(r) ? r.join(' ') : String(r);
+        } catch { /* fall through */ }
+    }
+    return typeof v === 'number' ? v.toLocaleString('en-GB', { maximumFractionDigits: 2 }) : String(v);
+}
+
+/** HTML table of a Chart.js chart's visible data. */
+function _chartTableHtml(chart) {
+    const type = chart.config.type;
+    const radial = ['pie', 'doughnut', 'polarArea', 'radar'].includes(type);
+    const horizontal = chart.options.indexAxis === 'y';
+    const idxKey = horizontal ? 'y' : 'x', valKey = horizontal ? 'x' : 'y';
+    const sets = (chart.data.datasets || [])
+        .map((ds, i) => ({ ds, i }))
+        .filter(({ i }) => radial || chart.isDatasetVisible(i));
+    const isPoint = p => p && typeof p === 'object' && !Array.isArray(p);
+    // Rows: the chart's labels, else the category values found in {x, y} points
+    let labels = (chart.data.labels || []).slice();
+    if (!labels.length) {
+        sets.forEach(({ ds }) => (ds.data || []).forEach(p => {
+            if (isPoint(p) && p[idxKey] != null && !labels.includes(p[idxKey])) labels.push(p[idxKey]);
+        }));
+    }
+    if (!labels.length || !sets.length) return `<p class="chart-table-empty">${esc(_t('No data to show.'))}</p>`;
+    const idxScale = radial ? null : chart.scales[horizontal ? 'y' : 'x'];
+    const rowLabel = (l, j) => {
+        if (Array.isArray(l)) return l.join(' ');
+        if (typeof l === 'number' && idxScale && idxScale.type !== 'category') return _chartTick(idxScale, l);
+        return String(l ?? j + 1);
+    };
+    const valScale = ds => (radial ? null : chart.scales[horizontal ? (ds.xAxisID || 'x') : (ds.yAxisID || 'y')]);
+    const cell = (ds, j, label) => {
+        const data = ds.data || [];
+        let p = data[j];
+        if (data.some(isPoint)) p = data.find(q => isPoint(q) && q[idxKey] === label);
+        const sc = valScale(ds);
+        if (p == null) return { text: '—', num: false };
+        if (Array.isArray(p)) return { text: `${_chartTick(sc, p[0])} → ${_chartTick(sc, p[1])}`, num: false };
+        if (isPoint(p)) return { text: _chartTick(sc, p[valKey]), num: typeof p[valKey] === 'number' };
+        return { text: _chartTick(sc, p), num: typeof p === 'number' };
+    };
+    const idxTitle = (!radial && chart.options.scales?.[idxKey]?.title?.text) || '';
+    const head = `<tr><th scope="col">${esc(idxTitle)}</th>${sets.map(({ ds, i }) => `<th scope="col" class="num">${esc(ds.label || _t('Series {n}', { n: i + 1 }))}</th>`).join('')}</tr>`;
+    const body = labels.map((l, j) => `<tr><th scope="row">${esc(rowLabel(l, j))}</th>${sets.map(({ ds }) => {
+        const c = cell(ds, j, l);
+        return `<td class="num">${esc(c.text)}</td>`;
+    }).join('')}</tr>`).join('');
+    return `<table class="chart-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+
+function _renderChartTable(card) {
+    const wrap = card.querySelector('.chart-table-wrap');
+    const canvas = card.querySelector('canvas');
+    if (!wrap) return;
+    const chart = canvas && typeof Chart !== 'undefined' ? Chart.getChart(canvas) : null;
+    wrap.innerHTML = chart ? _chartTableHtml(chart) : `<p class="chart-table-empty">${esc(_t('No data to show.'))}</p>`;
+}
+
+function toggleChartTable(btn) {
+    const card = btn.closest('.chart-card');
+    if (!card) return;
+    if (!_chartTablePluginOn && typeof Chart !== 'undefined') {
+        Chart.register({
+            id: 'ppmsChartTable',
+            afterUpdate(chart) {
+                const c = chart.canvas?.closest('.chart-card.show-table');
+                if (c) _renderChartTable(c);
+            },
+        });
+        _chartTablePluginOn = true;
+    }
+    const canvasWrap = card.querySelector('.chart-canvas-wrap');
+    let wrap = card.querySelector('.chart-table-wrap');
+    if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.className = 'chart-table-wrap';
+        canvasWrap?.after(wrap);
+    }
+    // Same footprint as the chart, so the grid doesn't jump
+    if (!card.classList.contains('show-table') && canvasWrap) wrap.style.height = canvasWrap.offsetHeight + 'px';
+    const on = card.classList.toggle('show-table');
+    wrap.hidden = !on;
+    btn.setAttribute('aria-pressed', String(on));
+    const label = on ? _t('Show as chart') : _t('Show as table');
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+    btn.innerHTML = on ? _CHART_ICON_CHART : _CHART_ICON_TABLE;
+    if (on) _renderChartTable(card);
+    else _resizeAllCharts();
 }
 
 function updateChartHeadings(grouping) {
@@ -15147,7 +15321,7 @@ function _execCoverSummary(rows = currentData) {
         pct: total ? Math.round((completed + late) / total * 100) : 0,
         plannedDelivery: plannedDelivery ? _fmtDeliveryDate(plannedDelivery) : '—',
         expectedDelivery: expected ? _fmtDeliveryDate(expected) : '—',
-        worst, module: getModuleBadge(), version: version?.name || '',
+        worst, lateUnits: _fcLateUnits(fc), module: getModuleBadge(), version: version?.name || '',
         generated: new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
     };
 }
@@ -15893,21 +16067,22 @@ function _execSheetName(name, used) {
 
 /** One cover row per battalion (plus the overall row first). */
 function _execBattalionTableRows(R) {
-    const row = (label, c) => [label, c.units, `${c.pct}%`, c.inProgress, c.overdue, c.plannedDelivery, c.expectedDelivery, c.worst > 0 ? `+${c.worst} wd` : 'on time'];
+    const lateTxt = l => (l && l.count ? `${l.count} (worst +${l.worst} wd)` : 'none');
+    const row = (label, c) => [label, c.units, `${c.pct}%`, c.inProgress, c.overdue, c.plannedDelivery, c.expectedDelivery, c.worst > 0 ? `+${c.worst} wd` : 'on time', lateTxt(c.lateUnits)];
     return [row(R.scope.total, R.cover), ...R.batCovers.map(c => row(c.bat, c))];
 }
-const EXEC_BAT_HEAD = ['Battalion', 'Units', 'Complete', 'In progress', 'Overdue', 'Planned delivery', 'Expected delivery', 'Delay'];
+const EXEC_BAT_HEAD = ['Battalion', 'Units', 'Complete', 'In progress', 'Overdue', 'Planned delivery', 'Expected delivery', 'Delay', 'Late vehicles'];
 
 /** Excel: the cover as a "Summary" sheet — overall, by battalion, contents.
  *  `sheetOf` maps each segment / insights entry to the sheet it lands on. */
 function _addExecSummarySheet(wb, parts, R, sheetOf) {
     const cover = R.cover;
     const ws = wb.addWorksheet('Summary', { views: [{ showGridLines: false }] });
-    ws.columns = [{ width: 34 }, { width: 10 }, { width: 11 }, { width: 12 }, { width: 10 }, { width: 17 }, { width: 18 }, { width: 11 }];
+    ws.columns = [{ width: 34 }, { width: 10 }, { width: 11 }, { width: 12 }, { width: 10 }, { width: 17 }, { width: 18 }, { width: 11 }, { width: 20 }];
     const navy = 'FF1E3A8A', grey = 'FF64748B';
     const t = ws.addRow(['Executive Report']); t.font = { bold: true, size: 18, color: { argb: 'FF0F172A' } };
     const sub = ws.addRow([_execCoverBlurb(parts)]); sub.font = { color: { argb: grey } };
-    ws.mergeCells(`A${sub.number}:H${sub.number}`);
+    ws.mergeCells(`A${sub.number}:I${sub.number}`);
     ws.addRow([]);
     [['Module', cover.module], ['Plan version', cover.version || '—'], ['Battalions', R.battalions.join(', ') || '—'], ['Generated', cover.generated]].forEach(([k, v]) => {
         const r = ws.addRow([k, v]); r.getCell(1).font = { color: { argb: grey } }; r.getCell(2).font = { bold: true };
