@@ -3,30 +3,80 @@
 // Edit through the Excel review sheet (tools/i18n_export.py), not by hand.
 // Placeholders such as {n} must be kept exactly as they are.
 export default {
- "Set by {unit}": {
+ "Expected delivery": {
   "area": "Summary & charts",
-  "ko": "{unit} 기준",
-  "ar": "يحدّده {unit}"
+  "ko": "예상 납품",
+  "ar": "التسليم المتوقع"
  },
- "Set by {unit} · {station} overdue since {date}": {
+ "{n} late": {
   "area": "Summary & charts",
-  "ko": "{unit} 기준 · {station} {date}부터 지연",
-  "ar": "يحدّده {unit} · {station} متأخرة منذ {date}"
+  "ko": "{n}대 지연",
+  "ar": "{n} متأخرة"
  },
- "Set by {unit} · {station} in progress, due {date}": {
+ "1 vehicle late": {
   "area": "Summary & charts",
-  "ko": "{unit} 기준 · {station} 진행 중, 기한 {date}",
-  "ar": "يحدّده {unit} · {station} قيد التنفيذ، الموعد {date}"
+  "ko": "차량 1대 지연",
+  "ar": "مركبة واحدة متأخرة"
  },
- "Set by {unit} · {station} starts {n} wd late": {
+ "{n} vehicles late": {
   "area": "Summary & charts",
-  "ko": "{unit} 기준 · {station} {n} 작업일 늦게 시작",
-  "ar": "يحدّده {unit} · {station} تبدأ متأخرة {n} يوم عمل"
+  "ko": "차량 {n}대 지연",
+  "ar": "{n} مركبات متأخرة"
  },
- "Set by {unit} · {station} finished {n} wd late": {
+ "within the delivery date": {
   "area": "Summary & charts",
-  "ko": "{unit} 기준 · {station} {n} 작업일 늦게 완료",
-  "ar": "يحدّده {unit} · {station} انتهت متأخرة {n} يوم عمل"
+  "ko": "납품일 이내",
+  "ar": "ضمن موعد التسليم"
+ },
+ "All vehicles on track": {
+  "area": "Summary & charts",
+  "ko": "모든 차량 정상 진행",
+  "ar": "جميع المركبات في الموعد"
+ },
+ "Set by": {
+  "area": "Summary & charts",
+  "ko": "기준 차량",
+  "ar": "يحدّده"
+ },
+ "Sets the delivery date": {
+  "area": "Summary & charts",
+  "ko": "납품일을 결정함",
+  "ar": "يحدّد موعد التسليم"
+ },
+ "overdue since {date}": {
+  "area": "Summary & charts",
+  "ko": "{date}부터 지연",
+  "ar": "متأخرة منذ {date}"
+ },
+ "in progress, due {date}": {
+  "area": "Summary & charts",
+  "ko": "진행 중, 기한 {date}",
+  "ar": "قيد التنفيذ، الموعد {date}"
+ },
+ "starts {n} wd late": {
+  "area": "Summary & charts",
+  "ko": "{n} 작업일 늦게 시작",
+  "ar": "تبدأ متأخرة {n} يوم عمل"
+ },
+ "finished {n} wd late": {
+  "area": "Summary & charts",
+  "ko": "{n} 작업일 늦게 완료",
+  "ar": "انتهت متأخرة {n} يوم عمل"
+ },
+ "{n} of {total} vehicles": {
+  "area": "Summary & charts",
+  "ko": "전체 {total}대 중 {n}대",
+  "ar": "{n} من {total} مركبة"
+ },
+ "late": {
+  "area": "Summary & charts",
+  "ko": "지연",
+  "ar": "متأخرة"
+ },
+ "worst +{w} wd": {
+  "area": "Summary & charts",
+  "ko": "최대 +{w} 작업일",
+  "ar": "الأسوأ +{w} يوم عمل"
  },
  "1 vehicle late · +{w} wd": {
   "area": "Summary & charts",

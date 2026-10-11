@@ -227,7 +227,8 @@
 .ex-c-planned   { background: color-mix(in srgb, var(--clr-text-dim) 55%, transparent); }
 
 /* KPI tiles */
-.summary-grid.ex-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.summary-grid.ex-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 12px; }
+/* Every tile row is as tall as the tallest, so the two rows always match */
 .summary-card.ex-tile {
     padding: 16px 18px;
     border-radius: 14px;
@@ -249,34 +250,49 @@
 }
 .summary-card.card-overdue.has-alert .card-value { color: var(--clr-overdue); }
 
-/* Delivery */
+/* Delivery — same anatomy as the other tiles (icon · value · label · sub),
+   plus a slim footer strip: what sets a late date and late vehicles */
 .summary-card.card-delivery.ex-delivery {
-    flex-direction: column; align-items: stretch; gap: 10px;
-    padding: 14px 18px;
+    flex-direction: column; align-items: stretch; justify-content: space-between; gap: 0;
+    padding: 0;
     border-radius: 14px;
     cursor: pointer;
 }
-.ex-delivery-head { display: flex; align-items: center; gap: 10px; }
-.ex-delivery-head .card-icon { width: 32px; height: 32px; border-radius: 9px; }
-.ex-delivery-head .card-icon svg { width: 18px; height: 18px; }
-.ex-delivery-head .card-label { font-weight: 700; }
-.ex-delivery-link {
-    margin-left: auto;
-    display: inline-flex; align-items: center; gap: 4px;
-    font-size: .7rem; font-weight: 700;
-    color: var(--clr-accent);
-    opacity: .8;
+.summary-card.card-delivery.ex-delivery::before { width: 100%; height: 3px; bottom: auto; }
+.ex-delivery .dl-main {
+    flex: 1; display: flex; align-items: center; gap: 14px;
+    padding: 14px 18px; min-width: 0;
 }
-.ex-delivery-link svg { width: 13px; height: 13px; transition: transform .15s; }
-.ex-delivery:hover .ex-delivery-link { opacity: 1; }
-.ex-delivery:hover .ex-delivery-link svg { transform: translateX(2px); }
-.ex-delivery .delivery-row { justify-content: flex-start; }
-.ex-delivery .delivery-date { font-family: var(--ff-display); font-size: 1.1rem; font-weight: 700; }
-.ex-delivery .delivery-date--expected { color: var(--clr-text); }
-/* What sets the delivery date + vehicles late (planForecast) */
-.delivery-note { display: grid; gap: 2px; font-size: .74rem; line-height: 1.35; color: var(--clr-text-dim); }
-.delivery-note b { color: var(--clr-text); font-weight: 600; }
-.delivery-note .dn-late { color: var(--clr-overdue); font-weight: 600; }
+.ex-delivery .card-icon { width: 42px; height: 42px; border-radius: 12px; flex-shrink: 0; }
+.ex-delivery .card-body { min-width: 0; flex: 1; }
+.ex-delivery .dl-value { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ex-delivery .dl-value .card-value { font-size: 1.35rem; line-height: 1.15; white-space: nowrap; }
+.ex-delivery.is-late .dl-value .card-value { color: var(--clr-overdue); }
+.ex-delivery .card-label { font-size: .68rem; font-weight: 700; }
+.ex-delivery .ex-tile-sub b { font-weight: 600; color: var(--clr-text); }
+.ex-delivery .dl-go {
+    align-self: flex-start; display: inline-flex; color: var(--clr-accent); opacity: .55;
+    transition: opacity .15s, transform .15s;
+}
+.ex-delivery .dl-go svg { width: 15px; height: 15px; }
+.ex-delivery:hover .dl-go { opacity: 1; transform: translateX(2px); }
+
+/* Footer strip */
+.delivery-note {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    min-width: 0; padding: 7px 18px;
+    border-top: 1px solid var(--clr-border);
+    background: color-mix(in srgb, var(--clr-text) 3%, transparent);
+    font-size: .72rem; line-height: 1.3; white-space: nowrap;
+}
+.dn-item { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--clr-text-dim); }
+.dn-item b { color: var(--clr-text); font-weight: 600; }
+.dn-k { margin-right: 4px; font-size: .6rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.dn-count { flex-shrink: 0; font-weight: 700; }
+.dn-bad { color: var(--clr-overdue); }
+.dn-warn { color: var(--clr-late); }
+.dn-item b.dn-warn { color: var(--clr-late); }
+.dn-ok { color: var(--clr-completed); }
 
 @media (max-width: 1180px) {
     .ex-grid { grid-template-columns: 1fr; }

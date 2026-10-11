@@ -5686,29 +5686,36 @@ function _updateDeliveryNote(fc, data) {
     const el = document.getElementById('sumDeliveryNote');
     if (!el) return;
     if (!fc || !fc.expectedDelivery) { el.hidden = true; el.innerHTML = ''; return; }
-    const lines = [];
+    // Footer strip: left = what sets a late date (or late vehicles when the
+    // date holds), right = the late-vehicle count. Full sentences on hover.
     const drv = _fcDeliveryDriver(fc);
+    const late = _fcLateUnits(fc);
+    const lateTip = late.count
+        ? (late.count === 1 ? _t('1 vehicle late · +{w} wd', { w: late.worst }) : _t('{n} vehicles late · worst +{w} wd', { n: late.count, w: late.worst }))
+            + ` (${_t('{n} of {total} vehicles', { n: late.count, total: late.total })})`
+        : '';
+    let left = '', right = '';
     if (drv) {
         const multiBat = new Set(fc.units.map(u => u.battalion)).size > 1;
-        const unit = `<b>${esc(_fcUnitName(drv.unit, multiBat))}</b>`;
-        const st = drv.step ? `<b>${esc(drv.step.row.process_station || drv.step.row.station_code || '')}</b>` : '';
-        const due = drv.step ? esc(formatDateShort(drv.step.row.end_date)) : '';
-        const msg = !drv.step ? _t('Set by {unit}', { unit })
-            : drv.state === 'overdue' ? _t('Set by {unit} · {station} overdue since {date}', { unit, station: st, date: due })
-            : drv.state === 'inProgress' ? _t('Set by {unit} · {station} in progress, due {date}', { unit, station: st, date: due })
-            : drv.state === 'startsLate' ? _t('Set by {unit} · {station} starts {n} wd late', { unit, station: st, n: drv.step.slip })
-            : _t('Set by {unit} · {station} finished {n} wd late', { unit, station: st, n: drv.step.slip });
-        lines.push(`<span>${msg}</span>`);
+        const unit = _fcUnitName(drv.unit, multiBat);
+        const station = drv.step ? (drv.step.row.process_station || drv.step.row.station_code || '') : '';
+        const date = drv.step ? formatDateShort(drv.step.row.end_date) : '';
+        const why = !drv.step ? ''
+            : drv.state === 'overdue' ? _t('overdue since {date}', { date })
+            : drv.state === 'inProgress' ? _t('in progress, due {date}', { date })
+            : drv.state === 'startsLate' ? _t('starts {n} wd late', { n: drv.step.slip })
+            : _t('finished {n} wd late', { n: drv.step.slip });
+        const tip = [_t('Sets the delivery date'), unit, station, why].filter(Boolean).join(' · ');
+        left = `<span class="dn-item" title="${esc(tip)}"><span class="dn-k dn-bad">${esc(_t('Set by'))}</span><b>${esc(unit)}</b>${station ? ` · ${esc(station)}` : ''}</span>`;
+        if (late.count) right = `<span class="dn-count dn-bad" title="${esc(lateTip)}">${esc(_t('{n} late', { n: late.count }))}</span>`;
+    } else if (late.count) {
+        left = `<span class="dn-item" title="${esc(lateTip + ' · ' + _t('all before the last planned finish'))}"><b class="dn-warn">${esc(late.count === 1 ? _t('1 vehicle late') : _t('{n} vehicles late', { n: late.count }))}</b> · ${esc(_t('within the delivery date'))}</span>`;
+        right = `<span class="dn-count dn-warn">${esc(_t('worst +{w} wd', { w: late.worst }))}</span>`;
+    } else {
+        left = `<span class="dn-item dn-ok">✓ ${esc(_t('All vehicles on track'))}</span>`;
     }
-    const late = _fcLateUnits(fc);
-    if (late.count) {
-        const txt = late.count === 1
-            ? _t('1 vehicle late · +{w} wd', { w: late.worst })
-            : _t('{n} vehicles late · worst +{w} wd', { n: late.count, w: late.worst });
-        lines.push(`<span><span class="dn-late">${txt}</span>${drv ? '' : ` · ${_t('all before the last planned finish')}`}</span>`);
-    }
-    el.innerHTML = lines.join('');
-    el.hidden = !lines.length;
+    el.innerHTML = left + right;
+    el.hidden = false;
 }
 
 function _updateDeliveryCard(data) {
@@ -5760,6 +5767,7 @@ function _updateDeliveryCard(data) {
     plannedEl.textContent  = _fmtDeliveryDate(plannedDelivery);
     expectedEl.textContent = _fmtDeliveryDate(expectedDelivery);
     _updateDeliveryNote(fc, data);
+    document.querySelector('.card-delivery')?.classList.toggle('is-late', totalDelay > 0);
 
     if (totalDelay > 0) {
         deltaEl.textContent = _t('+{n} wd', { n: totalDelay });

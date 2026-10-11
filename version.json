@@ -1,8 +1,8 @@
 {
- "version": "v164-9cb58ae",
- "label": "v164",
- "deployedAt": "2026-10-11T06:28:59.042Z",
- "notes": "Show what sets delivery; late vehicles; chart/table switch",
+ "version": "v165-2867bc8",
+ "label": "v165",
+ "deployedAt": "2026-10-11T06:55:27.946Z",
+ "notes": "Redesign the delivery card to match the summary tiles",
  "files": [
   "index.html",
   "login.html",

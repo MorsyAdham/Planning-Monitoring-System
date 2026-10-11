@@ -874,7 +874,7 @@ body {
 .delivery-rows {
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: 3px;
 }
 
 .delivery-row {
