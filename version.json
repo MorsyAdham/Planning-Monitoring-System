@@ -1,8 +1,8 @@
 {
- "version": "v165-2867bc8",
- "label": "v165",
- "deployedAt": "2026-10-11T06:55:27.946Z",
- "notes": "Redesign the delivery card to match the summary tiles",
+ "version": "v166-204e400",
+ "label": "v166",
+ "deployedAt": "2026-10-11T08:41:45.234Z",
+ "notes": "Add system notice banner and maintenance mode",
  "files": [
   "index.html",
   "login.html",
@@ -82,6 +82,7 @@
   "styles/features/overview.css",
   "styles/features/shell.css",
   "styles/features/summary.css",
+  "styles/features/system-notice.css",
   "styles/features/tour.css",
   "styles/features/update-notice.css",
   "styles/features/vpx.css",

@@ -77,9 +77,16 @@ async function refreshSessionFromServer() {
             .maybeSingle();
         if (error || !data) return;
         if (!data.is_active) { doLogout(); return; }
+        // Maintenance (read-only) mode from the control panel: everyone but
+        // master_admin works as a viewer. Every permission check reads the
+        // session role, so swapping it here gates the whole app at once.
+        const notice = await fetchSystemNotice();
+        const readOnly = !!(notice?.active && notice.read_only) && data.role !== 'master_admin';
         const patched = {
             ...user,
-            role: data.role,
+            role: readOnly ? 'viewer' : data.role,
+            realRole: data.role,
+            readOnlyMode: readOnly,
             modules: Array.isArray(data.modules) && data.modules.length ? data.modules : ['kd1', 'kd2', 'f100kd2'],
             canExport: !!data.can_export,
         };
@@ -117,6 +124,70 @@ function _applyLivePermissions() {
 
     // Inline edit inputs in the table etc. are gated per-render.
     if (currentData?.length) refreshAllViews();
+}
+
+/* ── System notice / maintenance mode ──
+   One row in ppms_system_notice, set from the local control panel
+   (tools/control-panel). Shows a banner to every user; read_only turns
+   everyone but master_admin into a viewer (see refreshSessionFromServer).
+   If the table doesn't exist yet (migration 61), nothing happens. */
+let _systemNotice = null;
+async function fetchSystemNotice() {
+    if (!db) return null;
+    try {
+        const { data, error } = await db.from('ppms_system_notice')
+            .select('active, level, message, read_only, updated_at')
+            .eq('id', 1)
+            .maybeSingle();
+        _systemNotice = error ? null : data;
+    } catch {
+        _systemNotice = null;
+    }
+    renderSystemNotice();
+    return _systemNotice;
+}
+
+function renderSystemNotice() {
+    const n = _systemNotice;
+    let bar = document.getElementById('systemNoticeBar');
+    if (!n?.active || (!n.message && !n.read_only)) { bar?.remove(); return; }
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'systemNoticeBar';
+        bar.className = 'system-notice';
+        bar.setAttribute('role', 'status');
+        document.body.prepend(bar);
+    }
+    bar.dataset.level = ['info', 'warning', 'critical'].includes(n.level) ? n.level : 'info';
+    const parts = [];
+    if (n.message) parts.push(n.message);
+    if (n.read_only) {
+        parts.push(isMasterAdmin() || getCurrentUser()?.realRole === 'master_admin'
+            ? _t('Maintenance mode is on — other users are read-only.')
+            : _t('Maintenance mode — the system is read-only for now.'));
+    }
+    bar.textContent = parts.join(' · ');
+}
+
+let _systemNoticeChannel = null;
+function startSystemNoticeSync() {
+    if (!db) return;
+    if (_systemNoticeChannel) { try { db.removeChannel(_systemNoticeChannel); } catch {} }
+    _systemNoticeChannel = db
+        .channel('ppms-system-notice')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ppms_system_notice' }, async () => {
+            const wasReadOnly = !!getCurrentUser()?.readOnlyMode;
+            await refreshSessionFromServer();   // re-reads the notice and re-applies read-only
+            const now = getCurrentUser();
+            if (!now) return;
+            _applyLivePermissions();
+            if (now.readOnlyMode !== wasReadOnly) {
+                showToast(now.readOnlyMode
+                    ? 'Maintenance mode is on — the system is read-only for now.'
+                    : 'Maintenance mode is off — you can edit again.', 'info');
+            }
+        })
+        .subscribe();
 }
 
 let _planVersionChannel = null;
@@ -2235,6 +2306,7 @@ async function initializeApp() {
     startAuditNotifSync();
     startAuditNotifPoll();
     startSelfPermissionSync();
+    startSystemNoticeSync();
     startPlanVersionSync();
     startEditActivitySync();
     wireEvents();
