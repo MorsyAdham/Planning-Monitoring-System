@@ -12,6 +12,8 @@
 
    Tables (migration 63): ppms_commands, ppms_command_recipients,
    ppms_command_replies. If they don't exist yet the button stays hidden.
+   Who sees the feature is set in the admin panel (ppms_settings,
+   key commands_audience): 'off' | 'admins' (pilot) | 'everyone'.
    ================================================================ */
 /* global db, getCurrentUser */
 import { _t } from '../../core/i18n.js';
@@ -41,6 +43,8 @@ const S = {
     open: false,
     channel: null,
     shownUrgent: new Set(),
+    audience: 'admins',
+    wired: false,
 };
 
 const $ = id => document.getElementById(id);
@@ -50,6 +54,10 @@ const myId = () => String(me().id || '');
 // In maintenance mode the session role is 'viewer'; realRole keeps the real one.
 const myRole = () => me().realRole || me().role;
 const canSend = () => SENDER_ROLES.includes(myRole());
+const isPilot = () => S.audience === 'admins';
+const canSee = () => S.audience === 'everyone' || (isPilot() && myRole() === 'master_admin');
+/** People who can currently receive commands (during the pilot: Master Admins only). */
+const reachable = () => S.users.filter(u => !isPilot() || u.role === 'master_admin');
 const toast = (msg, type = 'info') => window.showToast?.(msg, type);
 const userById = id => S.users.find(u => String(u.id) === String(id));
 const colorFor = id => COLORS[[...String(id)].reduce((a, c) => a + c.charCodeAt(0), 0) % COLORS.length];
@@ -104,6 +112,7 @@ function drawerHtml() {
             </div>
             <div class="cmd-tabs" id="cmdTabs"></div>
         </div>
+        <div class="cmd-pilot" id="cmdPilot" hidden>${_t('<b>Pilot</b> — only Master Admins can see Commands for now. You can tag yourself to try it. Switch it on for everyone in the admin panel (Commands page).')}</div>
         <div class="cmd-help" id="cmdHelp" hidden>${helpHtml()}</div>
         <div class="cmd-feed" id="cmdFeed"></div>
         <div class="cmd-composer" id="cmdComposer" hidden>
@@ -225,6 +234,7 @@ function render() {
     const empty = { inbox: _t('No commands for you yet.'), todo: _t('Nothing left to do. Well done!'), sent: _t('You have not sent any commands yet. Type @ in the box below to start.') }[S.tab];
     $('cmdFeed').innerHTML = list.length ? list.map(cardHtml).join('') : `<div class="cmd-empty">${empty}</div>`;
     $('cmdComposer').hidden = !canSend();
+    $('cmdPilot').hidden = !isPilot();
 }
 
 function cardHtml(c) {
@@ -331,7 +341,7 @@ function subscribe() {
 
 /* ── Composer: @ tagging ─────────────────────────────────────── */
 let SG = { open: false, items: [], idx: 0 };
-const groupMembers = g => S.users.filter(u => String(u.id) !== myId() && (!g.roles || g.roles.includes(u.role)));
+const groupMembers = g => reachable().filter(u => String(u.id) !== myId() && (!g.roles || g.roles.includes(u.role)));
 
 function caretText() {
     const sel = getSelection();
@@ -346,7 +356,9 @@ function updateSuggest() {
     if (!m) return closeSuggest();
     const q = m[2].toLowerCase();
     const groups = GROUPS.filter(g => g.key.startsWith(q) || _t(g.label).toLowerCase().includes(q)).filter(g => groupMembers(g).length);
-    const people = S.users.filter(u => String(u.id) !== myId() && (u.handle.includes(q) || String(u.full_name || '').toLowerCase().includes(q))).slice(0, 30);
+    // You can tag yourself by name (a reminder, or to try it during the pilot); groups never include you.
+    const people = reachable().filter(u => u.handle.includes(q) || String(u.full_name || '').toLowerCase().includes(q))
+        .sort((a, b) => (String(a.id) === myId()) - (String(b.id) === myId())).slice(0, 30);
     SG = { open: true, idx: 0, node: t.node, start: t.offset - q.length - 1, end: t.offset,
         items: [...groups.map(g => ({ t: 'group', g })), ...people.map(u => ({ t: 'user', u }))] };
     if (!SG.items.length) return closeSuggest();
@@ -358,7 +370,7 @@ function drawSuggest() {
         if (it.t !== last) { html += `<div class="cmd-sg-head">${it.t === 'group' ? _t('Groups') : _t('People')}</div>`; last = it.t; }
         html += it.t === 'group'
             ? `<div class="cmd-sg ${i === SG.idx ? 'on' : ''}" data-i="${i}"><span class="cmd-av cmd-av-group">@</span><div><div>@${it.g.key}</div><div class="cmd-muted">${_t(it.g.label)} · ${_t('{n} people', { n: groupMembers(it.g).length })}</div></div></div>`
-            : `<div class="cmd-sg ${i === SG.idx ? 'on' : ''}" data-i="${i}">${avatar(it.u.id, it.u.full_name)}<div><div>${esc(it.u.full_name || it.u.email)}</div><div class="cmd-muted cmd-mono">@${esc(it.u.handle)}</div></div><span class="cmd-sg-role">${_t(ROLE_LABEL[it.u.role] || it.u.role)}</span></div>`;
+            : `<div class="cmd-sg ${i === SG.idx ? 'on' : ''}" data-i="${i}">${avatar(it.u.id, it.u.full_name)}<div><div>${esc(it.u.full_name || it.u.email)}${String(it.u.id) === myId() ? ` <span class="cmd-muted">(${_t('you')})</span>` : ''}</div><div class="cmd-muted cmd-mono">@${esc(it.u.handle)}</div></div><span class="cmd-sg-role">${_t(ROLE_LABEL[it.u.role] || it.u.role)}</span></div>`;
     });
     $('cmdSuggest').innerHTML = html;
     $('cmdSuggest').classList.add('open');
@@ -390,7 +402,6 @@ function recipients() {
         if (t.dataset.t === 'user') { const u = userById(t.dataset.k); if (u) set.set(u.id, u); }
         else groupMembers(GROUPS.find(g => g.key === t.dataset.k)).forEach(u => set.set(u.id, u));
     });
-    set.delete(myId());
     return [...set.values()];
 }
 function updateTo(msg) {
@@ -509,18 +520,41 @@ function whenDbReady(cb, tries = 0) {
     setTimeout(() => whenDbReady(cb, tries + 1), 500);
 }
 
+async function loadAudience() {
+    const { data, error } = await db.from('ppms_settings').select('value').eq('key', 'commands_audience').maybeSingle();
+    S.audience = !error && ['off', 'admins', 'everyone'].includes(data?.value) ? data.value : 'admins';
+}
+
+/** Show or hide the whole feature for this user, after the audience changes. */
+async function applyAudience() {
+    const show = canSee();
+    $('cmdNavWrap').style.display = show ? '' : 'none';
+    if (!show) { if (S.open) openPanel(false); $('cmdUrgent') && ($('cmdUrgent').hidden = true); return; }
+    if (!S.wired) {
+        document.body.insertAdjacentHTML('beforeend', drawerHtml());
+        S.wired = true;
+        S.ready = true;
+        wireDom();
+        updateTo();
+        subscribe();
+    }
+    await refresh();
+    showUrgent();
+}
+
 export function wireCommands() {
     whenDbReady(async () => {
         // Feature switches itself on only once migration 63 exists.
         const probe = await db.from('ppms_commands').select('id').limit(1);
         if (probe.error) { console.info('Commands not available yet:', probe.error.message); return; }
-        document.body.insertAdjacentHTML('beforeend', drawerHtml());
-        $('cmdNavWrap').style.display = '';
-        S.ready = true;
-        wireDom();
-        updateTo();
-        await refresh();
-        subscribe();
-        showUrgent();
+        await loadAudience();
+        await applyAudience();
+        // The admin panel can change the audience at any time — follow it live.
+        db.channel('ppms-settings')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'ppms_settings' }, async () => {
+                await loadAudience();
+                await applyAudience();
+            })
+            .subscribe();
     });
 }

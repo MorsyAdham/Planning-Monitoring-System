@@ -1,2 +1,2 @@
 /* Written by tools/deploy.sh - the version of PPMS this code is. */
-window.PPMS_BUILD = {"version":"v168-ce5d00f","label":"v168","deployedAt":"2026-10-14T09:22:46.696Z","notes":"Add Commands: send tagged instructions to people"};
+window.PPMS_BUILD = {"version":"v169-8e23bbd","label":"v169","deployedAt":"2026-10-14T09:27:07.455Z","notes":"Commands pilot (Master Admins only)"};

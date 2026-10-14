@@ -101,3 +101,5 @@
 .cmd-urgent[hidden] { display: none; }
 .cmd-urgent-card { width: 100%; max-width: 460px; padding: 18px; border: 1px solid var(--clr-overdue, #ef4444); border-radius: var(--radius-lg); background: var(--clr-surface); color: var(--clr-text); box-shadow: var(--shadow-modal); font-size: .9rem; }
 .cmd-urgent-card h3 { margin: 0 0 4px; font: 700 1.3rem var(--ff-display); letter-spacing: .05em; text-transform: uppercase; color: var(--clr-overdue, #ef4444); }
+.cmd-pilot { padding: 8px 16px; font-size: .75rem; color: var(--clr-text); background: color-mix(in srgb, var(--clr-late, #f97316) 14%, transparent); border-bottom: 1px solid var(--clr-border); }
+.cmd-pilot[hidden] { display: none; }
