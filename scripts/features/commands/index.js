@@ -2,10 +2,11 @@
    ACTION ITEMS (code name: commands) — work instructions sent to people
    inside PPMS.
 
-   • A round speech-bubble button sits under the top bar, right side. It
-     FLASHES and shows a count whenever a command (or a reply to one of
-     yours) arrives, until you open it.
-   • The window lists commands as cards, oldest at the top and newest at
+   • A half-round tab with an arrow sticks out of the right edge of the
+     screen, half-way down. It FLASHES and shows a count whenever an item
+     (or a reply to one of yours) arrives, until you open it. Clicking it
+     slides in a full-height sidebar (left edge in Arabic / RTL).
+   • The sidebar lists action items as cards, oldest at the top and newest at
      the bottom, grouped by day. Each card: who · when · to whom, the
      instruction, its details (urgent / due / about), then a footer with
      the status on the left and the actions on the right.
@@ -112,10 +113,11 @@ function shellHtml() {
     return `
     <div class="cmx" id="cmx">
         <button type="button" class="cmx-launcher" id="cmxLauncher" aria-expanded="false" aria-controls="cmxPanel" aria-label="${_t('Action Items')}" title="${_t('Action Items')}">
-            <span class="cmx-launcher-icon">${svg(ICON_CMD, 1.9)}</span>
+            <span class="cmx-launcher-arrow">${svg('<path d="m15 18-6-6 6-6"/>', 2.6)}</span>
+            <span class="cmx-launcher-icon">${svg(ICON_CMD, 2)}</span>
             <span class="cmx-badge" id="cmxBadge" hidden>0</span>
         </button>
-        <section class="cmx-panel" id="cmxPanel" hidden role="dialog" aria-label="${_t('Action Items')}">
+        <section class="cmx-panel" id="cmxPanel" role="dialog" aria-label="${_t('Action Items')}" aria-hidden="true">
             <header class="cmx-head">
                 <span class="cmx-head-icon">${svg(ICON_CMD, 1.9)}</span>
                 <div class="cmx-head-text"><strong>${_t('Action Items')}</strong><span id="cmxSub"></span></div>
@@ -154,7 +156,7 @@ function helpHtml() {
     return `
         <h3>${_t('How to use Action Items')}</h3>
         <ol>
-            <li>${_t('The round button at the top right <b>flashes</b> when an action item or a reply arrives for you. Click it to open this window.')}</li>
+            <li>${_t('The tab on the <b>right edge</b> of the screen <b>flashes</b> when an action item or a reply arrives for you. Click it to open this sidebar; click it again, press Esc or click the page to close.')}</li>
             <li>${_t('On each action item: <b>Acknowledge</b> = “I will do it”, <b>Done</b> = finished, <b>Reply</b> = answer or ask.')}</li>
             <li>${_t('<b>Urgent</b> action items appear in the middle of the screen until you acknowledge them.')}</li>
             <li>${_t('To send (everyone except Viewers): press <b>@ Add</b> in the <b>To</b> row (or type <b>@</b> in the message) and choose:')}
@@ -343,8 +345,11 @@ function cardHtml(c) {
 /* ── Open / close, arrivals ──────────────────────────────────── */
 function openPanel(open = true) {
     S.open = open;
-    $('cmxPanel').hidden = !open;
+    $('cmxPanel').classList.toggle('open', open);
+    $('cmxPanel').setAttribute('aria-hidden', String(!open));
+    $('cmx').classList.toggle('is-open', open);
     $('cmxLauncher').classList.toggle('is-open', open);
+    $('cmxLauncher').title = open ? _t('Close') : _t('Action Items');
     $('cmxLauncher').setAttribute('aria-expanded', String(open));
     if (open) {
         S.unseenReplies = 0;
@@ -555,6 +560,10 @@ async function send() {
 /* ── Wiring ───────────────────────────────────────────────────── */
 function wireDom() {
     $('cmxLauncher').addEventListener('click', () => openPanel(!S.open));
+    // A click on the page (outside the sidebar, its tab and the urgent pop-up) closes the sidebar.
+    document.addEventListener('mousedown', e => {
+        if (S.open && !e.target.closest('#cmxPanel, #cmxLauncher, #cmxUrgent, .toast, .toast-container')) openPanel(false);
+    });
     $('cmxClose').addEventListener('click', () => openPanel(false));
     $('cmxHelpBtn').addEventListener('click', () => { $('cmxHelp').hidden = !$('cmxHelp').hidden; });
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.open && !SG.open && $('cmxUrgent').hidden) openPanel(false); });
