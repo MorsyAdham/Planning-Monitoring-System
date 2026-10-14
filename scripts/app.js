@@ -716,8 +716,13 @@ function wireUserMenu() {
         if (saveBtn) saveBtn.disabled = true;
         try {
             const curHash = await sha256(cur);
-            const { data: match, error: chkErr } = await db.from('planning_app_users')
-                .select('id').eq('id', user.id).eq('password_hash', curHash).maybeSingle();
+            // Migration 62: the hash is checked inside the database (the column is
+            // not readable by the public key). Older databases: query the column.
+            let { data: match, error: chkErr } = await db.rpc('ppms_check_password', { p_user_id: String(user.id), p_password_hash: curHash });
+            if (chkErr && (chkErr.code === 'PGRST202' || /could not find the function/i.test(chkErr.message || ''))) {
+                ({ data: match, error: chkErr } = await db.from('planning_app_users')
+                    .select('id').eq('id', user.id).eq('password_hash', curHash).maybeSingle());
+            }
             if (chkErr) throw chkErr;
             if (!match) { setErr('Current password is incorrect.'); return; }
             const { error: updErr } = await db.from('planning_app_users')
