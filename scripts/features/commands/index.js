@@ -55,7 +55,8 @@ const myRole = () => me().realRole || me().role;             // realRole: mainte
 const canSend = () => SENDER_ROLES.includes(myRole());
 const isPilot = () => S.audience === 'admins';
 const canSee = () => S.audience === 'everyone' || (isPilot() && myRole() === 'master_admin');
-const reachable = () => S.users.filter(u => !isPilot() || u.role === 'master_admin');
+/** Can this user open Commands right now? (during the pilot only Master Admins can) */
+const canOpen = u => !isPilot() || u.role === 'master_admin';
 const toast = (m, t = 'info') => window.showToast?.(m, t);
 const userById = id => S.users.find(u => String(u.id) === String(id));
 const colorFor = id => COLORS[[...String(id)].reduce((a, c) => a + c.charCodeAt(0), 0) % COLORS.length];
@@ -104,7 +105,7 @@ function shellHtml() {
                 <button type="button" class="cmx-icon-btn" id="cmxHelpBtn" title="${_t('How to use Commands')}">?</button>
                 <button type="button" class="cmx-icon-btn" id="cmxClose" title="${_t('Close')}">${svg('<path d="M6 6l12 12M18 6L6 18"/>', 2)}</button>
             </header>
-            <div class="cmx-pilot" id="cmxPilot" hidden>${_t('<b>Pilot</b> — only Master Admins see Commands for now. Tag yourself to try it.')}</div>
+            <div class="cmx-pilot" id="cmxPilot" hidden>${_t('<b>Pilot:</b> only Master Admins can open Commands for now. You can still tag anyone — they see it once you switch it on for everyone in the admin panel.')}</div>
             <div class="cmx-filters" id="cmxFilters"></div>
             <div class="cmx-help" id="cmxHelp" hidden>${helpHtml()}</div>
             <div class="cmx-log" id="cmxLog" aria-live="polite"></div>
@@ -113,13 +114,17 @@ function shellHtml() {
                 <p class="cmx-to" id="cmxTo"></p>
                 <div class="cmx-box">
                     <div class="cmx-editor" id="cmxEditor" contenteditable="true" role="textbox" aria-multiline="true"
-                         data-ph="${_t('Type @ to tag people, then the command…')}"></div>
+                         data-ph="${_t('Write the command… (type @ to tag people)')}"></div>
                     <button type="button" class="cmx-send" id="cmxSend" title="${_t('Send (Ctrl+Enter)')}">${svg('<path d="M12 19V5M5 12l7-7 7 7"/>', 2.2)}</button>
                 </div>
                 <div class="cmx-opts">
-                    <label class="cmx-urgent-toggle"><input type="checkbox" id="cmxUrgentOpt"> ${_t('Urgent')}</label>
+                    <button type="button" class="cmx-tagbtn" id="cmxTagBtn">@ ${_t('Tag people')}</button>
+                    <label class="cmx-urgent-toggle" title="${_t('Pops up on their screen until they acknowledge')}"><input type="checkbox" id="cmxUrgentOpt"> ${_t('Urgent')}</label>
+                    <button type="button" class="cmx-link" id="cmxMoreBtn">${_t('More')} ▾</button>
+                </div>
+                <div class="cmx-more" id="cmxMore" hidden>
                     <label>${_t('Due')} <input type="date" id="cmxDue"></label>
-                    <input type="text" id="cmxAbout" maxlength="200" placeholder="${_t('About (optional)')}">
+                    <input type="text" id="cmxAbout" maxlength="200" placeholder="${_t('About — e.g. BTL-01 K9 M3 welding')}">
                 </div>
             </div>
         </section>
@@ -134,9 +139,9 @@ function helpHtml() {
             <li>${_t('The <b>Commands</b> button flashes when a command or a reply arrives for you. Click it to open this window.')}</li>
             <li>${_t('Under each command: <b>Acknowledge</b> = “I will do it”, <b>Done</b> = finished, <b>Reply</b> = answer or ask.')}</li>
             <li>${_t('<b>Urgent</b> commands appear in the middle of the screen until you acknowledge them.')}</li>
-            <li>${_t('To send (everyone except Viewers): type <b>@</b> in the box at the bottom and choose who gets it:')}
+            <li>${_t('To send (everyone except Viewers): press <b>@ Tag people</b> (or type <b>@</b>) and choose who gets it:')}
                 <br><code>@all</code> ${_t('everyone')} · <code>@planners</code> <code>@operators</code> <code>@viewers</code> <code>@admins</code> ${_t('a whole role')} · <code>@name.surname</code> ${_t('one person')}</li>
-            <li>${_t('Write the instruction, tick <b>Urgent</b> or add a due date if needed, then press the arrow (or Ctrl+Enter).')}</li>
+            <li>${_t('Write the instruction, tick <b>Urgent</b> if needed (<b>More</b> adds a due date), then press the arrow (or Ctrl+Enter).')}</li>
             <li>${_t('Your own commands are on the right. Click their status line to see who has not opened, acknowledged or finished them.')}</li>
         </ol>
         <p class="cmx-muted">${_t('Do not put passwords or confidential information in commands.')}</p>`;
@@ -205,7 +210,6 @@ function partsHtml(c) {
 const FILTERS = [
     ['all', 'All', () => true],
     ['todo', 'To do', c => myRow(c) && myRow(c).status !== 'done'],
-    ['tome', 'To me', c => !!myRow(c)],
     ['sent', 'Sent', c => isMine(c)],
 ];
 
@@ -247,8 +251,8 @@ function render() {
         html += bubbleHtml(c);
     }
     log.innerHTML = list.length ? html : `<div class="cmx-empty">${svg(ICON_CMD, 1.4)}<p>${{
-        all: canSend() ? _t('No commands yet. Type @ below to send the first one.') : _t('No commands yet. They will appear here.'),
-        todo: _t('Nothing left to do. Well done!'), tome: _t('No commands for you yet.'), sent: _t('You have not sent any commands yet.'),
+        all: canSend() ? _t('No commands yet.<br><br><b>To send one:</b><br>1. Press <b>@ Tag people</b> and pick who must act<br>2. Write what needs doing<br>3. Press the blue arrow') : _t('No commands yet. They will appear here.'),
+        todo: _t('Nothing left to do. Well done!'), sent: _t('You have not sent any commands yet.'),
     }[S.filter]}</p></div>`;
     if (nearBottom || render.scrollNext) { log.scrollTop = log.scrollHeight; render.scrollNext = false; }
 }
@@ -273,7 +277,7 @@ function bubbleHtml(c) {
         : '';
     const statusLine = mineCmd
         ? `<button type="button" class="cmx-status" data-who="${c.id}" title="${_t('Show who has seen / done it')}">
-              ${tally.done === n ? `<b class="ok">✓ ${_t('All done')}</b>` : `<b>${tally.done}/${n}</b> ${_t('done')}`}${tally.ack ? ` · ${tally.ack} ${_t('acknowledged')}` : ''}${tally.seen ? ` · ${tally.seen} ${_t('seen')}` : ''}${tally.new ? ` · <span class="cmx-warn">${tally.new} ${_t('not opened')}</span>` : ''}</button>`
+              ${tally.done === n ? `<b class="ok">✓ ${_t('All done')}</b>` : `<b>${_t('{a} of {n} done', { a: tally.done, n })}</b>`}${tally.new ? ` · <span class="cmx-warn">${_t('{n} not opened yet', { n: tally.new })}</span>` : ''} ▸</button>`
         : '';
     return `<div class="cmx-msg ${mineCmd ? 'is-mine' : ''} ${row?.status === 'new' ? 'is-new' : ''} ${c.priority === 'urgent' ? 'is-urgent' : ''}" data-id="${c.id}">
         ${mineCmd ? '' : avatar(c.sender_id, c.sender_name)}
@@ -384,7 +388,7 @@ function subscribe() {
 
 /* ── Composer: @ tagging ─────────────────────────────────────── */
 let SG = { open: false, items: [], idx: 0 };
-const groupMembers = g => reachable().filter(u => String(u.id) !== myId() && (!g.roles || g.roles.includes(u.role)));
+const groupMembers = g => S.users.filter(u => String(u.id) !== myId() && (!g.roles || g.roles.includes(u.role)));
 
 function caretText() {
     const sel = getSelection();
@@ -398,9 +402,9 @@ function updateSuggest() {
     const m = t && t.text.match(/(^|[\s ])@([\w.\-]*)$/);
     if (!m) return closeSuggest();
     const q = m[2].toLowerCase();
-    const groups = GROUPS.filter(g => g.key.startsWith(q) || _t(g.label).toLowerCase().includes(q)).filter(g => groupMembers(g).length);
-    // You can tag yourself by name (a reminder, or to try it during the pilot); groups never include you.
-    const ppl = reachable().filter(u => u.handle.includes(q) || String(u.full_name || '').toLowerCase().includes(q))
+    const groups = GROUPS.filter(g => g.key.startsWith(q) || _t(g.label).toLowerCase().includes(q)).filter(g => g.key === 'all' || groupMembers(g).length);
+    // You can tag yourself by name (a reminder, or to try it out); groups never include you.
+    const ppl = S.users.filter(u => u.handle.includes(q) || String(u.full_name || '').toLowerCase().includes(q))
         .sort((a, b) => (String(a.id) === myId()) - (String(b.id) === myId())).slice(0, 30);
     SG = { open: true, idx: 0, node: t.node, start: t.offset - q.length - 1, end: t.offset,
         items: [...groups.map(g => ({ t: 'group', g })), ...ppl.map(u => ({ t: 'user', u }))] };
@@ -448,10 +452,13 @@ function recipients() {
     return [...set.values()];
 }
 function updateTo(msg) {
+    if (msg) { $('cmxTo').innerHTML = msg; return; }
     const r = recipients();
-    $('cmxTo').innerHTML = msg || (r.length
-        ? _t('To: <b>{n}</b> — {names}', { n: people(r.length), names: r.slice(0, 5).map(u => esc(String(u.id) === myId() ? _t('you') : (u.full_name || u.email))).join(', ') + (r.length > 5 ? ' ' + _t('and {n} more', { n: r.length - 5 }) : '') })
-        : _t('Type <b>@</b> to choose who gets the command'));
+    if (!r.length) { $('cmxTo').innerHTML = `<b>${_t('To:')}</b> ${_t('nobody yet — press <b>@ Tag people</b> or type @')}`; return; }
+    const names = r.slice(0, 4).map(u => esc(String(u.id) === myId() ? _t('you') : (u.full_name || u.email).split(' ')[0])).join(', ') + (r.length > 4 ? ' ' + _t('+{n} more', { n: r.length - 4 }) : '');
+    const waiting = r.filter(u => !canOpen(u)).length;
+    $('cmxTo').innerHTML = `<b>${_t('To:')}</b> ${people(r.length)} — ${names}`
+        + (waiting ? `<span class="cmx-to-warn">${_t('{n} of them will see it when Commands is switched on for everyone (pilot).', { n: waiting })}</span>` : '');
 }
 function editorParts() {
     const parts = [];
@@ -485,7 +492,7 @@ async function send() {
         const { error: e2 } = await db.from('ppms_command_recipients').insert(rows);
         if (e2) { await db.from('ppms_commands').delete().eq('id', cmd.id); throw e2; }
         S.cmds.set(cmd.id, { ...cmd, recipients: rows.map(r => ({ ...r, status: 'new' })), replies: [] });
-        $('cmxEditor').innerHTML = ''; $('cmxUrgentOpt').checked = false; $('cmxDue').value = ''; $('cmxAbout').value = '';
+        $('cmxEditor').innerHTML = ''; $('cmxUrgentOpt').checked = false; $('cmxDue').value = ''; $('cmxAbout').value = ''; $('cmxMore').hidden = true;
         if (S.filter === 'todo' || S.filter === 'tome') S.filter = 'all';
         render.scrollNext = true;
         render();
@@ -552,6 +559,21 @@ function wireDom() {
     ed.addEventListener('paste', e => { e.preventDefault(); document.execCommand('insertText', false, e.clipboardData.getData('text/plain')); });
     $('cmxSuggest').addEventListener('mousedown', e => { const s = e.target.closest('[data-i]'); if (s) { e.preventDefault(); pick(Number(s.dataset.i)); } });
     $('cmxSend').addEventListener('click', send);
+    $('cmxMoreBtn').addEventListener('click', () => { $('cmxMore').hidden = !$('cmxMore').hidden; });
+    // "@ Tag people": put an @ at the caret (with a space before it if needed) and open the list.
+    $('cmxTagBtn').addEventListener('mousedown', e => e.preventDefault());
+    $('cmxTagBtn').addEventListener('click', () => {
+        const ed = $('cmxEditor');
+        ed.focus();
+        const sel = getSelection();
+        if (!sel.rangeCount || !ed.contains(sel.anchorNode)) {
+            const r = document.createRange(); r.selectNodeContents(ed); r.collapse(false);
+            sel.removeAllRanges(); sel.addRange(r);
+        }
+        const before = caretText()?.text || '';
+        document.execCommand('insertText', false, (before && !/[\s ]$/.test(before) ? ' ' : '') + '@');
+        updateSuggest();
+    });
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.ready) refresh().then(showUrgent); });
 }
 
