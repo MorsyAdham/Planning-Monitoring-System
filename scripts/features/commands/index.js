@@ -1,5 +1,6 @@
 /* ================================================================
-   COMMANDS — work instructions sent to people inside PPMS.
+   ACTION ITEMS (code name: commands) — work instructions sent to people
+   inside PPMS.
 
    • A round speech-bubble button sits under the top bar, right side. It
      FLASHES and shows a count whenever a command (or a reply to one of
@@ -110,19 +111,19 @@ function assignHandles(users) {
 function shellHtml() {
     return `
     <div class="cmx" id="cmx">
-        <button type="button" class="cmx-launcher" id="cmxLauncher" aria-expanded="false" aria-controls="cmxPanel" aria-label="${_t('Commands')}" title="${_t('Commands')}">
+        <button type="button" class="cmx-launcher" id="cmxLauncher" aria-expanded="false" aria-controls="cmxPanel" aria-label="${_t('Action Items')}" title="${_t('Action Items')}">
             <span class="cmx-launcher-icon">${svg(ICON_CMD, 1.9)}</span>
             <span class="cmx-badge" id="cmxBadge" hidden>0</span>
         </button>
-        <section class="cmx-panel" id="cmxPanel" hidden role="dialog" aria-label="${_t('Commands')}">
+        <section class="cmx-panel" id="cmxPanel" hidden role="dialog" aria-label="${_t('Action Items')}">
             <header class="cmx-head">
                 <span class="cmx-head-icon">${svg(ICON_CMD, 1.9)}</span>
-                <div class="cmx-head-text"><strong>${_t('Commands')}</strong><span id="cmxSub"></span></div>
-                <button type="button" class="cmx-icon-btn" id="cmxHelpBtn" title="${_t('How to use Commands')}">?</button>
+                <div class="cmx-head-text"><strong>${_t('Action Items')}</strong><span id="cmxSub"></span></div>
+                <button type="button" class="cmx-icon-btn" id="cmxHelpBtn" title="${_t('How to use Action Items')}">?</button>
                 <button type="button" class="cmx-icon-btn" id="cmxClose" title="${_t('Close')}">${svg(ICON.x, 2)}</button>
             </header>
             <nav class="cmx-tabs" id="cmxTabs" role="tablist"></nav>
-            <div class="cmx-pilot" id="cmxPilot" hidden>${_t('<b>Pilot:</b> only Master Admins can open Commands for now. You can still send to anyone — they see it once you switch it on for everyone in the admin panel.')}</div>
+            <div class="cmx-pilot" id="cmxPilot" hidden>${_t('<b>Pilot:</b> only Master Admins can open Action Items for now. You can still send to anyone — they see it once you switch it on for everyone in the admin panel.')}</div>
             <div class="cmx-help" id="cmxHelp" hidden>${helpHtml()}</div>
             <div class="cmx-log" id="cmxLog" aria-live="polite"></div>
             <div class="cmx-composer" id="cmxComposer" hidden>
@@ -136,7 +137,7 @@ function shellHtml() {
                     <button type="button" class="cmx-add" id="cmxAdd">@ ${_t('Add')}</button>
                 </div>
                 <div class="cmx-to-note" id="cmxToNote"></div>
-                <textarea id="cmxText" rows="2" maxlength="2000" placeholder="${_t('Write the command… (type @ to add people)')}"></textarea>
+                <textarea id="cmxText" rows="2" maxlength="2000" placeholder="${_t('Write the action item… (type @ to add people)')}"></textarea>
                 <div class="cmx-toolbar">
                     <label class="cmx-tool cmx-tool-urgent" title="${_t('Pops up on their screen until they acknowledge')}"><input type="checkbox" id="cmxUrgentOpt">${svg(ICON.alert, 2)}<span>${_t('Urgent')}</span></label>
                     <label class="cmx-tool" title="${_t('Due date')}">${svg(ICON.cal, 2)}<input type="date" id="cmxDue" aria-label="${_t('Due date')}"></label>
@@ -151,17 +152,17 @@ function shellHtml() {
 
 function helpHtml() {
     return `
-        <h3>${_t('How to use Commands')}</h3>
+        <h3>${_t('How to use Action Items')}</h3>
         <ol>
-            <li>${_t('The round button at the top right <b>flashes</b> when a command or a reply arrives for you. Click it to open this window.')}</li>
-            <li>${_t('On each command: <b>Acknowledge</b> = “I will do it”, <b>Done</b> = finished, <b>Reply</b> = answer or ask.')}</li>
-            <li>${_t('<b>Urgent</b> commands appear in the middle of the screen until you acknowledge them.')}</li>
+            <li>${_t('The round button at the top right <b>flashes</b> when an action item or a reply arrives for you. Click it to open this window.')}</li>
+            <li>${_t('On each action item: <b>Acknowledge</b> = “I will do it”, <b>Done</b> = finished, <b>Reply</b> = answer or ask.')}</li>
+            <li>${_t('<b>Urgent</b> action items appear in the middle of the screen until you acknowledge them.')}</li>
             <li>${_t('To send (everyone except Viewers): press <b>@ Add</b> in the <b>To</b> row (or type <b>@</b> in the message) and choose:')}
                 <br><code>@all</code> ${_t('everyone')} · <code>@planners</code> <code>@operators</code> <code>@viewers</code> <code>@admins</code> ${_t('a whole role')} · <code>@name.surname</code> ${_t('one person')}</li>
             <li>${_t('Write the instruction. Optionally tick <b>Urgent</b>, pick a due date and say what it is about. Then <b>Send</b> (or Ctrl+Enter).')}</li>
-            <li>${_t('Your commands show a progress bar. Click it to see who has not opened, acknowledged or finished them.')}</li>
+            <li>${_t('Your action items show a progress bar. Click it to see who has not opened, acknowledged or finished them.')}</li>
         </ol>
-        <p class="cmx-muted">${_t('Do not put passwords or confidential information in commands.')}</p>`;
+        <p class="cmx-muted">${_t('Do not put passwords or confidential information in action items.')}</p>`;
 }
 
 /* ── Data ─────────────────────────────────────────────────────── */
@@ -243,7 +244,7 @@ function updateLauncher() {
     $('cmxBadge').hidden = !n;
     $('cmxBadge').textContent = n > 99 ? '99+' : n;
     $('cmxLauncher').classList.toggle('is-flashing', n > 0 && !S.open);
-    $('cmxLauncher').title = n ? _t('Commands — {n} new', { n }) : _t('Commands');
+    $('cmxLauncher').title = n ? _t('Action Items — {n} new', { n }) : _t('Action Items');
 }
 
 function render() {
@@ -274,9 +275,9 @@ function render() {
 
 function emptyHtml() {
     if (S.filter === 'todo') return `<div class="cmx-empty">${svg(ICON.check, 1.6)}<p><b>${_t('All caught up')}</b><br>${_t('Nothing left to do.')}</p></div>`;
-    if (S.filter === 'sent') return `<div class="cmx-empty">${svg(ICON.send, 1.6)}<p><b>${_t('Nothing sent yet')}</b><br>${_t('Your commands will appear here.')}</p></div>`;
-    return `<div class="cmx-empty">${svg(ICON_CMD, 1.4)}<p><b>${_t('No commands yet')}</b></p>${canSend() ? `<ol class="cmx-steps">
-        <li>${_t('Press <b>@ Add</b> and choose who must act')}</li><li>${_t('Write what needs doing')}</li><li>${_t('Press <b>Send</b>')}</li></ol>` : `<p>${_t('Commands sent to you will appear here.')}</p>`}</div>`;
+    if (S.filter === 'sent') return `<div class="cmx-empty">${svg(ICON.send, 1.6)}<p><b>${_t('Nothing sent yet')}</b><br>${_t('Your action items will appear here.')}</p></div>`;
+    return `<div class="cmx-empty">${svg(ICON_CMD, 1.4)}<p><b>${_t('No action items yet')}</b></p>${canSend() ? `<ol class="cmx-steps">
+        <li>${_t('Press <b>@ Add</b> and choose who must act')}</li><li>${_t('Write what needs doing')}</li><li>${_t('Press <b>Send</b>')}</li></ol>` : `<p>${_t('Action items sent to you will appear here.')}</p>`}</div>`;
 }
 
 function cardHtml(c) {
@@ -369,12 +370,12 @@ function showUrgent() {
     S.shownUrgent.add(c.id);
     const { text } = splitParts(c);
     $('cmxUrgentCard').innerHTML = `
-        <div class="cmx-urgent-top">${svg(ICON.alert, 2)}<h3>${_t('Urgent command')}</h3></div>
+        <div class="cmx-urgent-top">${svg(ICON.alert, 2)}<h3>${_t('Urgent action item')}</h3></div>
         <p class="cmx-muted">${_t('From {name}', { name: esc(c.sender_name) })} · ${ago(c.created_at)}${c.due_date ? ' · ' + _t('Due {d}', { d: fmtDue(c.due_date) }) : ''}</p>
         <div class="cmx-card-text">${esc(text)}</div>
         ${c.about ? `<div class="cmx-details"><span class="cmx-detail">${svg(ICON.tag, 2)}${esc(c.about)}</span></div>` : ''}
         <div class="cmx-urgent-actions">
-            <button type="button" class="btn btn-ghost btn-sm" id="cmxUrgentOpen">${_t('Open Commands')}</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="cmxUrgentOpen">${_t('Open Action Items')}</button>
             <button type="button" class="btn btn-primary btn-sm" id="cmxUrgentAck">${_t('Acknowledge')}</button></div>`;
     $('cmxUrgent').hidden = false;
     $('cmxUrgentAck').focus();
@@ -389,7 +390,7 @@ async function onNewForMe(cmdId) {
     render.scrollNext = true;
     flash();
     if (c.priority === 'urgent') showUrgent();
-    else if (!isMine(c)) toast(_t('New command from {name}: {text}', { name: c.sender_name, text: splitParts(c).text.slice(0, 80) }), 'info');
+    else if (!isMine(c)) toast(_t('New action item from {name}: {text}', { name: c.sender_name, text: splitParts(c).text.slice(0, 80) }), 'info');
     render();
 }
 
@@ -515,7 +516,7 @@ function updateNote(msg) {
     const r = recipients();
     const waiting = r.filter(u => !canOpen(u)).length;
     el.innerHTML = r.length
-        ? `${people(r.length)}${waiting ? ` · <span class="cmx-warn">${_t('{n} will see it when Commands is switched on for everyone', { n: waiting })}</span>` : ''}`
+        ? `${people(r.length)}${waiting ? ` · <span class="cmx-warn">${_t('{n} will see it when Action Items is switched on for everyone', { n: waiting })}</span>` : ''}`
         : '';
 }
 
@@ -523,7 +524,7 @@ async function send() {
     const to = recipients();
     const text = $('cmxText').value.trim();
     if (!to.length) { updateNote(`<span class="cmx-err">${_t('Add at least one person or group in the To row.')}</span>`); return openSuggest('add'); }
-    if (!text) { updateNote(`<span class="cmx-err">${_t('Write the command first.')}</span>`); return $('cmxText').focus(); }
+    if (!text) { updateNote(`<span class="cmx-err">${_t('Write the action item first.')}</span>`); return $('cmxText').focus(); }
     const parts = [...S.to, ' ' + text];
     const body = S.to.map(tagLabel).join(' ') + ' ' + text;
     const btn = $('cmxSend');
@@ -570,7 +571,7 @@ function wireDom() {
         const card = b.closest('.cmx-card');
         if (b.dataset.act === 'ack' || b.dataset.act === 'done') return setStatus(id, b.dataset.act);
         if (b.dataset.act === 'withdraw') {
-            if (!window.confirm(_t('Withdraw this command? It disappears for everyone it was sent to.'))) return;
+            if (!window.confirm(_t('Withdraw this action item? It disappears for everyone it was sent to.'))) return;
             const { error } = await db.from('ppms_commands').delete().eq('id', id);
             if (error) return toast(_t('Could not withdraw: {m}', { m: error.message }), 'error');
             S.cmds.delete(id); render(); return;
