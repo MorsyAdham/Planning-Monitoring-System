@@ -93,9 +93,8 @@ function assignHandles(users) {
 function shellHtml() {
     return `
     <div class="cmx" id="cmx">
-        <button type="button" class="cmx-launcher" id="cmxLauncher" aria-expanded="false" aria-controls="cmxPanel">
+        <button type="button" class="cmx-launcher" id="cmxLauncher" aria-expanded="false" aria-controls="cmxPanel" aria-label="${_t('Commands')}" title="${_t('Commands')}">
             <span class="cmx-launcher-icon">${svg(ICON_CMD, 1.9)}</span>
-            <span class="cmx-launcher-label">${_t('Commands')}</span>
             <span class="cmx-badge" id="cmxBadge" hidden>0</span>
         </button>
         <section class="cmx-panel" id="cmxPanel" hidden role="dialog" aria-label="${_t('Commands')}">

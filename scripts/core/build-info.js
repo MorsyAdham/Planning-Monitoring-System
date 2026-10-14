@@ -1,2 +1,2 @@
 /* Written by tools/deploy.sh - the version of PPMS this code is. */
-window.PPMS_BUILD = {"version":"v171-0494ed7","label":"v171","deployedAt":"2026-10-14T10:51:52.238Z","notes":"Commands: smaller, clearer tagging"};
+window.PPMS_BUILD = {"version":"v172-4dd49c7","label":"v172","deployedAt":"2026-10-14T10:56:22.851Z","notes":"Commands: round icon button, full-size window"};
