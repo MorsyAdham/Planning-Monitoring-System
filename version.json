@@ -1,8 +1,8 @@
 {
- "version": "v176-f8edfe9",
- "label": "v176",
- "deployedAt": "2026-10-14T11:26:12.302Z",
- "notes": "Action Items: polished edge handle",
+ "version": "v177-a2d5dd7",
+ "label": "v177",
+ "deployedAt": "2026-10-14T11:43:43.658Z",
+ "notes": "Action Items: keep line breaks in messages",
  "files": [
   "index.html",
   "login.html",

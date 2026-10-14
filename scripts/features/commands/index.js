@@ -223,9 +223,13 @@ const tagLabel = p => p.t === 'group' ? '@' + p.k : '@' + (userById(p.id)?.handl
 function splitParts(c) {
     const parts = Array.isArray(c.parts) && c.parts.length ? c.parts : [c.body];
     const tags = parts.filter(p => typeof p !== 'string');
-    const text = parts.filter(p => typeof p === 'string').join('').replace(/\s+/g, ' ').trim();
+    // Keep the writer's line breaks; only tidy runs of spaces and blank lines.
+    const text = parts.filter(p => typeof p === 'string').join('')
+        .replace(/\r\n?/g, '\n').replace(/[ \t ]+/g, ' ').replace(/ ?\n ?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
     return { tags, text };
 }
+/** Message text as HTML: escaped, line breaks kept (CSS pre-wrap), **bold** shown in bold. */
+const formatText = text => esc(text).replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
 
 const FILTERS = [
     ['all', 'All', () => true],
@@ -333,7 +337,7 @@ function cardHtml(c) {
             </div>
             ${c.priority === 'urgent' ? `<span class="cmx-urgent-badge">${svg(ICON.alert, 2.2)}${_t('Urgent')}</span>` : ''}
         </header>
-        <div class="cmx-card-text">${esc(text)}</div>
+        <div class="cmx-card-text">${formatText(text)}</div>
         ${details ? `<div class="cmx-details">${details}</div>` : ''}
         ${replies}
         <footer class="cmx-card-foot"><div class="cmx-foot-left">${status}</div><div class="cmx-foot-right">${actions.join('')}</div></footer>
@@ -377,7 +381,7 @@ function showUrgent() {
     $('cmxUrgentCard').innerHTML = `
         <div class="cmx-urgent-top">${svg(ICON.alert, 2)}<h3>${_t('Urgent action item')}</h3></div>
         <p class="cmx-muted">${_t('From {name}', { name: esc(c.sender_name) })} · ${ago(c.created_at)}${c.due_date ? ' · ' + _t('Due {d}', { d: fmtDue(c.due_date) }) : ''}</p>
-        <div class="cmx-card-text">${esc(text)}</div>
+        <div class="cmx-card-text">${formatText(text)}</div>
         ${c.about ? `<div class="cmx-details"><span class="cmx-detail">${svg(ICON.tag, 2)}${esc(c.about)}</span></div>` : ''}
         <div class="cmx-urgent-actions">
             <button type="button" class="btn btn-ghost btn-sm" id="cmxUrgentOpen">${_t('Open Action Items')}</button>
@@ -395,7 +399,7 @@ async function onNewForMe(cmdId) {
     render.scrollNext = true;
     flash();
     if (c.priority === 'urgent') showUrgent();
-    else if (!isMine(c)) toast(_t('New action item from {name}: {text}', { name: c.sender_name, text: splitParts(c).text.slice(0, 80) }), 'info');
+    else if (!isMine(c)) toast(_t('New action item from {name}: {text}', { name: c.sender_name, text: splitParts(c).text.replace(/\*\*/g, '').replace(/\s+/g, ' ').slice(0, 80) }), 'info');
     render();
 }
 
