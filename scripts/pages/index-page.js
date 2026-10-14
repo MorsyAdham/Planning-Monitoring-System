@@ -21,6 +21,7 @@ import { renderHelp, wireHelp } from '../features/help/index.js';
 import { renderAssistant, wireAssistant } from '../features/assistant/index.js';
 import { wireFilterUI } from '../features/filters/behavior.js';
 import { wireUpdateNotice } from '../features/update-notice/index.js';
+import { wireCommands } from '../features/commands/index.js';
 import { wireTour } from '../features/tour/index.js';
 import { wireAuditLog } from '../features/admin/audit-log/index.js';
 import { wireUserManagement } from '../features/admin/user-management/index.js';
@@ -195,6 +196,7 @@ async function initPage() {
     wireHelp();
     wireAssistant();
     wireUpdateNotice();
+    wireCommands();
     wireTour();
     wireAuditLog();
     wireUserManagement();

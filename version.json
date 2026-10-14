@@ -1,8 +1,8 @@
 {
- "version": "v167-c2a61ec",
- "label": "v167",
- "deployedAt": "2026-10-14T08:14:52.071Z",
- "notes": "Check passwords inside the database (security)",
+ "version": "v168-ce5d00f",
+ "label": "v168",
+ "deployedAt": "2026-10-14T09:22:46.696Z",
+ "notes": "Add Commands: send tagged instructions to people",
  "files": [
   "index.html",
   "login.html",
@@ -30,6 +30,7 @@
   "scripts/features/assistant/local-brain.js",
   "scripts/features/charts/analytics.js",
   "scripts/features/charts/index.js",
+  "scripts/features/commands/index.js",
   "scripts/features/f100/kd2/shell/index.js",
   "scripts/features/filters/behavior.js",
   "scripts/features/filters/index.js",
@@ -71,6 +72,7 @@
   "styles/features/admin.css",
   "styles/features/assistant.css",
   "styles/features/charts.css",
+  "styles/features/commands.css",
   "styles/features/delivery-analysis.css",
   "styles/features/delivery-outlook.css",
   "styles/features/filters.css",

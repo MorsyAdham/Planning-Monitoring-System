@@ -1,5 +1,6 @@
 import { _t, langPickerHtml, langButtonHtml } from '../../core/i18n.js';
 import { renderUpdateNotice } from '../update-notice/index.js';
+import { renderCommandsButton } from '../commands/index.js';
 
 export function renderPageChrome() {
     return `
@@ -65,6 +66,7 @@ export function renderPageChrome() {
                      no per-icon borders, so it reads as one strip -->
                 <div class="icon-rail">
                     ${renderUpdateNotice()}
+                    ${renderCommandsButton()}
                     <div class="f100-notif-wrap" id="f100NotifWrap" style="display:none">
                         <button class="btn-nav-icon f100-notif-bell" id="f100NotifBell" title="${_t("Notifications")}">
                             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
