@@ -69,22 +69,16 @@ export function initFeature() {
                     ${tile('card-overdue', 'sumOverdue', 'Overdue', '<path d="M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/>', 'past planned end')}
 
                     <div class="summary-card card-delivery ex-delivery" role="button" tabindex="0" title="${_t("Click for the delay breakdown")}">
-                        <div class="ex-delivery-head">
-                            <span class="card-icon">${svg('<path d="M3 7h11v9H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="1.8"/><circle cx="17" cy="18" r="1.8"/>')}</span>
-                            <span class="card-label">${_t("Delivery")}</span>
-                            <span class="ex-delivery-link">${_t("Delay breakdown")} ${svg('<path d="M5 12h14M13 6l6 6-6 6"/>')}</span>
-                        </div>
-                        <div class="delivery-rows">
-                            <div class="delivery-row">
-                                <span class="delivery-lbl">${_t("Planned")}</span>
-                                <span class="delivery-date" id="sumDeliveryPlanned">—</span>
+                        <div class="dl-main">
+                            <div class="card-icon">${svg('<path d="M3 7h11v9H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="1.8"/><circle cx="17" cy="18" r="1.8"/>')}</div>
+                            <div class="card-body">
+                                <span class="dl-value"><span class="card-value delivery-date--expected" id="sumDeliveryExpected">—</span><span class="delivery-delta" id="sumDeliveryDelta" style="display:none"></span></span>
+                                <span class="card-label">${_t("Expected delivery")}</span>
+                                <span class="ex-tile-sub">${_t("Planned")} <b id="sumDeliveryPlanned">—</b></span>
                             </div>
-                            <div class="delivery-row">
-                                <span class="delivery-lbl">${_t("Expected")}</span>
-                                <span class="delivery-date delivery-date--expected" id="sumDeliveryExpected">—</span>
-                                <span class="delivery-delta" id="sumDeliveryDelta" style="display:none"></span>
-                            </div>
+                            <span class="dl-go" aria-hidden="true">${svg('<path d="M5 12h14M13 6l6 6-6 6"/>')}</span>
                         </div>
+                        <div class="delivery-note" id="sumDeliveryNote" hidden></div>
                     </div>
                 </div>
             </div>

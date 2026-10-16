@@ -77,9 +77,16 @@ async function refreshSessionFromServer() {
             .maybeSingle();
         if (error || !data) return;
         if (!data.is_active) { doLogout(); return; }
+        // Maintenance (read-only) mode from the control panel: everyone but
+        // master_admin works as a viewer. Every permission check reads the
+        // session role, so swapping it here gates the whole app at once.
+        const notice = await fetchSystemNotice();
+        const readOnly = !!(notice?.active && notice.read_only) && data.role !== 'master_admin';
         const patched = {
             ...user,
-            role: data.role,
+            role: readOnly ? 'viewer' : data.role,
+            realRole: data.role,
+            readOnlyMode: readOnly,
             modules: Array.isArray(data.modules) && data.modules.length ? data.modules : ['kd1', 'kd2', 'f100kd2'],
             canExport: !!data.can_export,
         };
@@ -117,6 +124,78 @@ function _applyLivePermissions() {
 
     // Inline edit inputs in the table etc. are gated per-render.
     if (currentData?.length) refreshAllViews();
+}
+
+/* ── System notice / maintenance mode ──
+   One row in ppms_system_notice, set from the local control panel
+   (tools/control-panel). Shows a banner to every user; read_only turns
+   everyone but master_admin into a viewer (see refreshSessionFromServer).
+   If the table doesn't exist yet (migration 61), nothing happens. */
+let _systemNotice = null;
+async function fetchSystemNotice() {
+    if (!db) return null;
+    try {
+        const { data, error } = await db.from('ppms_system_notice')
+            .select('active, level, message, read_only, updated_at')
+            .eq('id', 1)
+            .maybeSingle();
+        _systemNotice = error ? null : data;
+    } catch {
+        _systemNotice = null;
+    }
+    renderSystemNotice();
+    return _systemNotice;
+}
+
+function renderSystemNotice() {
+    const n = _systemNotice;
+    let bar = document.getElementById('systemNoticeBar');
+    if (!n?.active || (!n.message && !n.read_only)) {
+        bar?.remove();
+        document.documentElement.style.removeProperty('--notice-h');
+        return;
+    }
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'systemNoticeBar';
+        bar.className = 'system-notice';
+        bar.setAttribute('role', 'status');
+        document.body.prepend(bar);
+        // The sticky header sits just below the banner — track its height (it wraps on narrow screens)
+        new ResizeObserver(() => {
+            if (bar.isConnected) document.documentElement.style.setProperty('--notice-h', bar.offsetHeight + 'px');
+        }).observe(bar);
+    }
+    bar.dataset.level = ['info', 'warning', 'critical'].includes(n.level) ? n.level : 'info';
+    const parts = [];
+    if (n.message) parts.push(n.message);
+    if (n.read_only) {
+        parts.push(isMasterAdmin() || getCurrentUser()?.realRole === 'master_admin'
+            ? _t('Maintenance mode is on — other users are read-only.')
+            : _t('Maintenance mode — the system is read-only for now.'));
+    }
+    bar.textContent = parts.join(' · ');
+}
+
+let _systemNoticeChannel = null;
+function startSystemNoticeSync() {
+    if (!db) return;
+    if (_systemNoticeChannel) { try { db.removeChannel(_systemNoticeChannel); } catch {} }
+    _systemNoticeChannel = db
+        .channel('ppms-system-notice')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ppms_system_notice' }, async () => {
+            const wasReadOnly = !!getCurrentUser()?.readOnlyMode;
+            await refreshSessionFromServer();   // re-reads the notice and re-applies read-only
+            const now = getCurrentUser();
+            if (!now) return;
+            _applyLivePermissions();
+            if (now.readOnlyMode !== wasReadOnly) {
+                showToast(now.readOnlyMode
+                    ? 'Maintenance mode is on — the system is read-only for now.'
+                    : 'Maintenance mode is off — you can edit again.', 'info');
+            }
+        })
+        .subscribe();
 }
 
 let _planVersionChannel = null;
@@ -645,8 +724,13 @@ function wireUserMenu() {
         if (saveBtn) saveBtn.disabled = true;
         try {
             const curHash = await sha256(cur);
-            const { data: match, error: chkErr } = await db.from('planning_app_users')
-                .select('id').eq('id', user.id).eq('password_hash', curHash).maybeSingle();
+            // Migration 62: the hash is checked inside the database (the column is
+            // not readable by the public key). Older databases: query the column.
+            let { data: match, error: chkErr } = await db.rpc('ppms_check_password', { p_user_id: String(user.id), p_password_hash: curHash });
+            if (chkErr && (chkErr.code === 'PGRST202' || /could not find the function/i.test(chkErr.message || ''))) {
+                ({ data: match, error: chkErr } = await db.from('planning_app_users')
+                    .select('id').eq('id', user.id).eq('password_hash', curHash).maybeSingle());
+            }
             if (chkErr) throw chkErr;
             if (!match) { setErr('Current password is incorrect.'); return; }
             const { error: updErr } = await db.from('planning_app_users')
@@ -2235,6 +2319,7 @@ async function initializeApp() {
     startAuditNotifSync();
     startAuditNotifPoll();
     startSelfPermissionSync();
+    startSystemNoticeSync();
     startPlanVersionSync();
     startEditActivitySync();
     wireEvents();
@@ -5648,6 +5733,76 @@ function getPlanForecast(rows = currentData) {
     return result;
 }
 
+/** The unit that sets the expected delivery date and why: the first
+ *  unfinished station on its path that is running late (overdue, in
+ *  progress past its date, or starting late), else its latest-finished
+ *  late station. Null when delivery is on time. */
+function _fcDeliveryDriver(fc) {
+    if (!fc || !fc.expectedDelivery || !(fc.deliverySlip > 0)) return null;
+    const unit = fc.units
+        .filter(u => u.projFinish === fc.expectedDelivery)
+        .sort((a, b) => b.finishSlip - a.finishSlip)[0];
+    if (!unit) return null;
+    const byPlan = (a, b) => a.row.start_date.localeCompare(b.row.start_date) || a.row.end_date.localeCompare(b.row.end_date);
+    const open = unit.steps.filter(s => !s.done && s.slip > 0).sort(byPlan)[0];
+    const doneLate = unit.steps.filter(s => s.done && s.slip > 0).sort((a, b) => b.credit - a.credit || byPlan(b, a))[0];
+    const step = open || doneLate || null;
+    let state = null;
+    if (step) {
+        const pr = step.row.progress || {};
+        if (step.done) state = 'finished';
+        else if (pr.actual_start_date) state = 'inProgress';
+        else if (step.row.end_date < todayStr()) state = 'overdue';
+        else state = 'startsLate';
+    }
+    return { unit, step, state };
+}
+/** Units forecast to finish after their own planned finish. */
+function _fcLateUnits(fc) {
+    const late = (fc?.units || []).filter(u => u.finishSlip > 0);
+    return { count: late.length, worst: late.reduce((m, u) => Math.max(m, u.finishSlip), 0), total: fc?.units?.length || 0 };
+}
+function _fcUnitName(unit, withBattalion) {
+    return [withBattalion ? unit.battalion : '', unit.vehicle, unit.unitNo].filter(Boolean).join(' ');
+}
+
+/** Delivery card note: what sets a late date, and how many vehicles are late. */
+function _updateDeliveryNote(fc, data) {
+    const el = document.getElementById('sumDeliveryNote');
+    if (!el) return;
+    if (!fc || !fc.expectedDelivery) { el.hidden = true; el.innerHTML = ''; return; }
+    // Footer strip: left = what sets a late date (or late vehicles when the
+    // date holds), right = the late-vehicle count. Full sentences on hover.
+    const drv = _fcDeliveryDriver(fc);
+    const late = _fcLateUnits(fc);
+    const lateTip = late.count
+        ? (late.count === 1 ? _t('1 vehicle late · +{w} wd', { w: late.worst }) : _t('{n} vehicles late · worst +{w} wd', { n: late.count, w: late.worst }))
+            + ` (${_t('{n} of {total} vehicles', { n: late.count, total: late.total })})`
+        : '';
+    let left = '', right = '';
+    if (drv) {
+        const multiBat = new Set(fc.units.map(u => u.battalion)).size > 1;
+        const unit = _fcUnitName(drv.unit, multiBat);
+        const station = drv.step ? (drv.step.row.process_station || drv.step.row.station_code || '') : '';
+        const date = drv.step ? formatDateShort(drv.step.row.end_date) : '';
+        const why = !drv.step ? ''
+            : drv.state === 'overdue' ? _t('overdue since {date}', { date })
+            : drv.state === 'inProgress' ? _t('in progress, due {date}', { date })
+            : drv.state === 'startsLate' ? _t('starts {n} wd late', { n: drv.step.slip })
+            : _t('finished {n} wd late', { n: drv.step.slip });
+        const tip = [_t('Sets the delivery date'), unit, station, why].filter(Boolean).join(' · ');
+        left = `<span class="dn-item" title="${esc(tip)}"><span class="dn-k dn-bad">${esc(_t('Set by'))}</span><b>${esc(unit)}</b>${station ? ` · ${esc(station)}` : ''}</span>`;
+        if (late.count) right = `<span class="dn-count dn-bad" title="${esc(lateTip)}">${esc(_t('{n} late', { n: late.count }))}</span>`;
+    } else if (late.count) {
+        left = `<span class="dn-item" title="${esc(lateTip + ' · ' + _t('all before the last planned finish'))}"><b class="dn-warn">${esc(late.count === 1 ? _t('1 vehicle late') : _t('{n} vehicles late', { n: late.count }))}</b> · ${esc(_t('within the delivery date'))}</span>`;
+        right = `<span class="dn-count dn-warn">${esc(_t('worst +{w} wd', { w: late.worst }))}</span>`;
+    } else {
+        left = `<span class="dn-item dn-ok">✓ ${esc(_t('All vehicles on track'))}</span>`;
+    }
+    el.innerHTML = left + right;
+    el.hidden = false;
+}
+
 function _updateDeliveryCard(data) {
     const plannedEl  = document.getElementById('sumDeliveryPlanned');
     const expectedEl = document.getElementById('sumDeliveryExpected');
@@ -5658,6 +5813,7 @@ function _updateDeliveryCard(data) {
         plannedEl.textContent  = '—';
         expectedEl.textContent = '—';
         deltaEl.style.display  = 'none';
+        _updateDeliveryNote(null);
         return;
     }
 
@@ -5695,6 +5851,8 @@ function _updateDeliveryCard(data) {
 
     plannedEl.textContent  = _fmtDeliveryDate(plannedDelivery);
     expectedEl.textContent = _fmtDeliveryDate(expectedDelivery);
+    _updateDeliveryNote(fc, data);
+    document.querySelector('.card-delivery')?.classList.toggle('is-late', totalDelay > 0);
 
     if (totalDelay > 0) {
         deltaEl.textContent = _t('+{n} wd', { n: totalDelay });
@@ -7896,6 +8054,115 @@ function toggleChartFullscreen(btn) {
     } else {
         _closeChartExpand(card, btn);
     }
+}
+
+/* ─── Chart ↔ table switch ───────────────────────────────────────
+   Every chart card has a button that swaps the chart for a table of the
+   same figures (and back). The table is built from the Chart.js chart
+   itself — rows = the chart's labels, one column per visible series —
+   and values are written the way the chart's own axis writes them (dates,
+   %, wd), so the two views always agree. A Chart.js plugin rebuilds an
+   open table whenever its chart redraws (filters, segment buttons). */
+const _CHART_ICON_TABLE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16"/></svg>`;
+const _CHART_ICON_CHART = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 16v-4M12 16V8M17 16v-7"/></svg>`;
+let _chartTablePluginOn = false;
+
+/** One value as the chart's own axis would write it. */
+function _chartTick(scale, v) {
+    if (v == null || (typeof v === 'number' && !isFinite(v))) return '—';
+    const cb = scale?.options?.ticks?.callback;
+    if (typeof v === 'number' && typeof cb === 'function') {
+        try {
+            const r = cb.call(scale, v, 0, [{ value: v }]);
+            if (r != null && r !== '') return Array.isArray(r) ? r.join(' ') : String(r);
+        } catch { /* fall through */ }
+    }
+    return typeof v === 'number' ? v.toLocaleString('en-GB', { maximumFractionDigits: 2 }) : String(v);
+}
+
+/** HTML table of a Chart.js chart's visible data. */
+function _chartTableHtml(chart) {
+    const type = chart.config.type;
+    const radial = ['pie', 'doughnut', 'polarArea', 'radar'].includes(type);
+    const horizontal = chart.options.indexAxis === 'y';
+    const idxKey = horizontal ? 'y' : 'x', valKey = horizontal ? 'x' : 'y';
+    const sets = (chart.data.datasets || [])
+        .map((ds, i) => ({ ds, i }))
+        .filter(({ i }) => radial || chart.isDatasetVisible(i));
+    const isPoint = p => p && typeof p === 'object' && !Array.isArray(p);
+    // Rows: the chart's labels, else the category values found in {x, y} points
+    let labels = (chart.data.labels || []).slice();
+    if (!labels.length) {
+        sets.forEach(({ ds }) => (ds.data || []).forEach(p => {
+            if (isPoint(p) && p[idxKey] != null && !labels.includes(p[idxKey])) labels.push(p[idxKey]);
+        }));
+    }
+    if (!labels.length || !sets.length) return `<p class="chart-table-empty">${esc(_t('No data to show.'))}</p>`;
+    const idxScale = radial ? null : chart.scales[horizontal ? 'y' : 'x'];
+    const rowLabel = (l, j) => {
+        if (Array.isArray(l)) return l.join(' ');
+        if (typeof l === 'number' && idxScale && idxScale.type !== 'category') return _chartTick(idxScale, l);
+        return String(l ?? j + 1);
+    };
+    const valScale = ds => (radial ? null : chart.scales[horizontal ? (ds.xAxisID || 'x') : (ds.yAxisID || 'y')]);
+    const cell = (ds, j, label) => {
+        const data = ds.data || [];
+        let p = data[j];
+        if (data.some(isPoint)) p = data.find(q => isPoint(q) && q[idxKey] === label);
+        const sc = valScale(ds);
+        if (p == null) return { text: '—', num: false };
+        if (Array.isArray(p)) return { text: `${_chartTick(sc, p[0])} → ${_chartTick(sc, p[1])}`, num: false };
+        if (isPoint(p)) return { text: _chartTick(sc, p[valKey]), num: typeof p[valKey] === 'number' };
+        return { text: _chartTick(sc, p), num: typeof p === 'number' };
+    };
+    const idxTitle = (!radial && chart.options.scales?.[idxKey]?.title?.text) || '';
+    const head = `<tr><th scope="col">${esc(idxTitle)}</th>${sets.map(({ ds, i }) => `<th scope="col" class="num">${esc(ds.label || _t('Series {n}', { n: i + 1 }))}</th>`).join('')}</tr>`;
+    const body = labels.map((l, j) => `<tr><th scope="row">${esc(rowLabel(l, j))}</th>${sets.map(({ ds }) => {
+        const c = cell(ds, j, l);
+        return `<td class="num">${esc(c.text)}</td>`;
+    }).join('')}</tr>`).join('');
+    return `<table class="chart-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+
+function _renderChartTable(card) {
+    const wrap = card.querySelector('.chart-table-wrap');
+    const canvas = card.querySelector('canvas');
+    if (!wrap) return;
+    const chart = canvas && typeof Chart !== 'undefined' ? Chart.getChart(canvas) : null;
+    wrap.innerHTML = chart ? _chartTableHtml(chart) : `<p class="chart-table-empty">${esc(_t('No data to show.'))}</p>`;
+}
+
+function toggleChartTable(btn) {
+    const card = btn.closest('.chart-card');
+    if (!card) return;
+    if (!_chartTablePluginOn && typeof Chart !== 'undefined') {
+        Chart.register({
+            id: 'ppmsChartTable',
+            afterUpdate(chart) {
+                const c = chart.canvas?.closest('.chart-card.show-table');
+                if (c) _renderChartTable(c);
+            },
+        });
+        _chartTablePluginOn = true;
+    }
+    const canvasWrap = card.querySelector('.chart-canvas-wrap');
+    let wrap = card.querySelector('.chart-table-wrap');
+    if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.className = 'chart-table-wrap';
+        canvasWrap?.after(wrap);
+    }
+    // Same footprint as the chart, so the grid doesn't jump
+    if (!card.classList.contains('show-table') && canvasWrap) wrap.style.height = canvasWrap.offsetHeight + 'px';
+    const on = card.classList.toggle('show-table');
+    wrap.hidden = !on;
+    btn.setAttribute('aria-pressed', String(on));
+    const label = on ? _t('Show as chart') : _t('Show as table');
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+    btn.innerHTML = on ? _CHART_ICON_CHART : _CHART_ICON_TABLE;
+    if (on) _renderChartTable(card);
+    else _resizeAllCharts();
 }
 
 function updateChartHeadings(grouping) {
@@ -14484,8 +14751,8 @@ function _vpxProjectRow(vehicleRow, orderedCols, displayCols = orderedCols) {
     return { cells, finalDelay: lastStep ? Math.max(0, lastStep.slip) : 0 };
 }
 
-function _vpxStationReportData() {
-    let vpxData = applyActiveFilters(currentData);
+function _vpxStationReportData(source = currentData) {
+    let vpxData = applyActiveFilters(source);
     // Category-scoped to this tab only — Hull, Turret, Assembly, etc. are
     // independent component streams on the same vehicle, not sequential
     // phases, so a vehicle's Hull delay must never be computed from (or
@@ -15046,7 +15313,7 @@ function _execCellSpec(c, planRow) {
     return { text: c.planned ? '' : '—', bg: '#ffffff', color: '#94a3b8' };
 }
 
-/** Rows, cells and headline numbers for one segment. */
+/** Rows, cells and headline numbers for one segment (one battalion). */
 function _execSegmentModel(seg) {
     const cols = seg.activeCols || [];
     const battalions = new Set(seg.rows.map(r => r.battalion_code).filter(Boolean));
@@ -15076,7 +15343,7 @@ function _execSegmentModel(seg) {
         else groups.push({ label: c.group, span: 1 });
     });
     return {
-        vtype: seg.vtype, cat: seg.cat, heading: seg.heading, cols, groups, units,
+        bat: seg.bat || '', vtype: seg.vtype, cat: seg.cat, heading: seg.heading, cols, groups, units,
         stats: { units: units.length, stations: cols.length, overdue, onTime, late, worst, delayedUnits },
     };
 }
@@ -15127,12 +15394,14 @@ function _execClip(text, widthMm, fontPt, lines = 1) {
     return s.length > max ? s.slice(0, max - 1).trimEnd() + '…' : s;
 }
 
-/** Headline numbers for the cover page (current filters). */
-function _execCoverSummary() {
-    const data = applyActiveFilters(currentData);
+/** Headline numbers for the cover page (current filters) — for `rows`,
+ *  which is every battalion's rows or one battalion's. */
+function _execCoverSummary(rows = currentData) {
+    const data = applyActiveFilters(rows);
     const count = st => data.filter(r => calculateStatus(r) === st).length;
     const completed = count('Completed'), late = count('Late Completion'), overdue = count('Overdue'), inProgress = count('In Progress');
     const total = data.length;
+    const units = new Set(data.map(r => `${r.battalion_code || ''}|${r.vehicle || ''}|${r.vehicle_no || ''}`)).size;
     let plannedDelivery = null;
     data.forEach(r => { const e = r.end_date || r.planned_end_date; if (e && (!plannedDelivery || e > plannedDelivery)) plannedDelivery = e; });
     // Same process-order forecast as the delivery card
@@ -15141,11 +15410,11 @@ function _execCoverSummary() {
     const expected = fc.expectedDelivery || (plannedDelivery ? _addWorkingDays(plannedDelivery, worst) : null);
     const version = _activeVersionInfo('kd2');
     return {
-        total, completed, late, overdue, inProgress,
+        total, units, completed, late, overdue, inProgress,
         pct: total ? Math.round((completed + late) / total * 100) : 0,
         plannedDelivery: plannedDelivery ? _fmtDeliveryDate(plannedDelivery) : '—',
         expectedDelivery: expected ? _fmtDeliveryDate(expected) : '—',
-        worst, module: getModuleBadge(), version: version?.name || '',
+        worst, lateUnits: _fcLateUnits(fc), module: getModuleBadge(), version: version?.name || '',
         generated: new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
     };
 }
@@ -15180,7 +15449,7 @@ function _execWordSegmentHtml(model, L) {
     let h = `<table style="width:100%;border-collapse:collapse;margin:0 0 4pt;mso-table-lspace:0;mso-table-rspace:0"><tr>
         <td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a">
             <p style="margin:0;font-family:Calibri,Arial;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#1e3a8a">VPX STATION REPORT</p>
-            <p style="margin:0;font-family:Calibri,Arial;font-size:15pt;font-weight:bold;color:#0f172a">${esc(model.vtype)} · ${esc(model.cat)}</p></td>
+            <p style="margin:0;font-family:Calibri,Arial;font-size:15pt;font-weight:bold;color:#0f172a">${model.bat ? `${esc(model.bat)} · ` : ''}${esc(model.vtype)} · ${esc(model.cat)}</p></td>
         <td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a;text-align:right;vertical-align:bottom">
             <p style="margin:0;font-family:Calibri,Arial;font-size:7.5pt;color:#64748b">${esc(L.meta)}</p></td></tr></table>`;
     const chip = (label, value, color = '#0f172a') =>
@@ -15214,33 +15483,84 @@ function _execWordSegmentHtml(model, L) {
     return h;
 }
 
+/* The Executive Report always covers EVERY battalion, whatever the main
+   battalion filter has loaded: when the page is locked to one battalion
+   (or a unit filter narrows it), the rows of all battalions are fetched
+   with the same other filters. Kept for a minute so the menu snapshot and
+   the export that follows it don't fetch twice. */
+let _execAllBatCache = null;
+function _execAllBatFilters() {
+    return { ..._kd2QueryFilters(), battalion: [], unit: [] };
+}
+async function _execLoadAllBattalions() {
+    const allLoaded = filterState.battalion.has('all') && filterState.unit.has('all');
+    if (allLoaded || !isKD2Module() || !getModuleRuntime()?.loadData) return currentData;
+    const filters = _execAllBatFilters();
+    const key = JSON.stringify(filters) + '|' + (_activeVersionInfo('kd2')?.name || '');
+    if (_execAllBatCache && _execAllBatCache.key === key && Date.now() - _execAllBatCache.at < 60000) return _execAllBatCache.rows;
+    const rows = await getModuleRuntime().loadData(db, filters);
+    await _stitchKd2Xray(rows);
+    rows.sort(_kd2RowCompare);
+    _execAllBatCache = { key, rows, at: Date.now() };
+    return rows;
+}
+
+/** Everything the three Executive Report exporters draw, built once:
+ *  overall + per-battalion cover numbers, the station segments ordered
+ *  vehicle → component → battalion, and one insights model per battalion. */
+async function _execBuildReport(parts) {
+    const loaded = await _execLoadAllBattalions();
+    // Only the battalions picked in the menu (default: the started ones)
+    const battalions = _execSelectedBattalions(_detectVpxBattalions(applyActiveFilters(loaded)));
+    const rows = loaded.filter(r => battalions.includes(_vpxBattalionOf(r)));
+    const byBat = new Map(battalions.map(b => [b, rows.filter(r => _vpxBattalionOf(r) === b)]));
+    const issueRows = await _buildIssueStatusReportRowsAllTime();
+    const cover = _execCoverSummary(rows);
+    const batCovers = battalions.map(b => ({ bat: b, ..._execCoverSummary(byBat.get(b)) }));
+    const segments = parts.stations ? _collectVpxExecutiveSegments(rows, battalions) : [];
+    const insights = parts.insights
+        ? battalions.map(b => ({ bat: b, ins: _execInsightsModel(issueRows, byBat.get(b)) }))
+        : [];
+    // Cover wording: 'all battalions' only when every battalion is in
+    const allSelected = battalions.length === _detectVpxBattalions(applyActiveFilters(loaded)).length;
+    const scope = allSelected
+        ? { heading: 'all battalions', total: 'All battalions' }
+        : { heading: 'selected battalions', total: 'Selected total' };
+    return { rows, battalions, issueRows, cover, batCovers, segments, insights, scope };
+}
+
 /** Walks K9 → K10 → K11, each split into its own component tabs (Hull/
  *  Turret/Assembly for K9; Structure/Assembly for K10/K11, per
- *  `_detectVpxCategories`), collecting one Station Report segment per
- *  vehicle+component via the existing `_vpxStationReportData()` — the same
- *  function the single-tab Station Report export uses, so segment data and
- *  delay/overdue calculation are identical to what's on screen for that tab.
- *  Temporarily overrides `_vpxVehicleTypeFilter`/`_vpxCategoryFilter` (the
- *  module-level globals every VPX render reads) and restores them
- *  synchronously before returning — safe because nothing in the loop is
- *  `await`ed, so the live VPX screen can't re-render mid-loop with the
- *  wrong tab selected. Segments with no data are skipped, same as the
- *  single-tab export's own empty-state handling. */
-function _collectVpxExecutiveSegments() {
+ *  `_detectVpxCategories`), and within each component every battalion in
+ *  order — BTL-01 K9 Hull, BTL-02 K9 Hull, … then K9 Turret — collecting
+ *  one Station Report segment per battalion+vehicle+component via the
+ *  existing `_vpxStationReportData()`, the same function the single-tab
+ *  Station Report export uses, so segment data and delay/overdue
+ *  calculation are identical to what's on screen for that tab.
+ *  Temporarily overrides `_vpxVehicleTypeFilter`/`_vpxCategoryFilter`/
+ *  `_vpxBattalionFilter` (the module-level globals every VPX render reads)
+ *  and restores them synchronously before returning — safe because nothing
+ *  in the loop is `await`ed, so the live VPX screen can't re-render
+ *  mid-loop with the wrong tab selected. Segments with no data are
+ *  skipped, same as the single-tab export's own empty-state handling. */
+function _collectVpxExecutiveSegments(rows = currentData, battalions = _detectVpxBattalions(applyActiveFilters(rows))) {
     const savedType = _vpxVehicleTypeFilter, savedCat = _vpxCategoryFilter, savedBat = _vpxBattalionFilter;
     const segments = [];
-    _vpxBattalionFilter = null; // the Executive Report covers every battalion
     try {
         const rt = getModuleRuntime?.();
         for (const vtype of ['K9', 'K10', 'K11']) {
             _vpxVehicleTypeFilter = vtype;
-            const typedData = applyActiveFilters(currentData).filter(t => _getVehicleType(t.vehicle) === vtype);
+            _vpxBattalionFilter = null;
+            const typedData = applyActiveFilters(rows).filter(t => _getVehicleType(t.vehicle) === vtype);
             const compMap = (vtype === 'K9' && rt?.getStationCategoryMap) ? rt.getStationCategoryMap('K9') : null;
             const categories = _detectVpxCategories(vtype, typedData, compMap);
             for (const cat of categories) {
                 _vpxCategoryFilter = cat;
-                const built = _vpxStationReportData();
-                if (built) segments.push({ vtype, cat, heading: `${vtype} — ${cat}`, ...built });
+                for (const bat of battalions) {
+                    _vpxBattalionFilter = bat;
+                    const built = _vpxStationReportData(rows);
+                    if (built) segments.push({ bat, vtype, cat, heading: `${bat} — ${vtype} — ${cat}`, ...built });
+                }
             }
         }
     } finally {
@@ -15287,8 +15607,8 @@ function _execNothingSelected(parts) {
 /** One line for the cover saying what this copy of the report holds. */
 function _execCoverBlurb(parts) {
     const bits = [];
-    if (parts.stations) bits.push('VPX station status for every vehicle and component');
-    if (parts.insights) bits.push('production insights');
+    if (parts.stations) bits.push('VPX station status for every battalion, vehicle and component');
+    if (parts.insights) bits.push('production insights per battalion');
     if (parts.issues) bits.push('the Production Issues status report');
     const list = bits.length > 1 ? bits.slice(0, -1).join(', ') + ' and ' + bits[bits.length - 1] : (bits[0] || 'a summary of the plan');
     return `Production Planning & Monitoring System — ${list}.`;
@@ -15306,11 +15626,14 @@ function _execShiftDays(iso, n) {
     return localDateStr(d);
 }
 
-function _execInsightsModel(issueRows) {
-    const data = applyActiveFilters(currentData);
+/** Production Insights for `rows` (one battalion's rows in the Executive
+ *  Report). Production issues carry no battalion, so the issue figures are
+ *  always the whole module's. */
+function _execInsightsModel(issueRows, rows = currentData) {
+    const data = applyActiveFilters(rows);
     const today = todayStr();
     const fc = getPlanForecast(data);
-    const cover = _execCoverSummary();
+    const cover = _execCoverSummary(rows);
     const fmt = n => Number(n).toLocaleString('en-GB');
     const short = iso => (iso ? formatDateShort(iso) : '—');
     const unitName = u => [u.vehicle, u.battalion, u.unitNo].filter(Boolean).join(' ');
@@ -15425,7 +15748,9 @@ function _execInsightsModel(issueRows) {
     const verdict = fc.expectedDelivery
         ? (slip > 0
             ? `Delivery is forecast for ${formatDate(fc.expectedDelivery)} — ${slip} working day${slip === 1 ? '' : 's'} after the planned ${formatDate(fc.plannedDelivery)}. ${lateUnits.length} of ${units.length} unit${units.length === 1 ? ' is' : 's are'} forecast to finish late${top ? `; the biggest cause is ${top.station} on ${top.vtype}` : ''}.`
-            : `Delivery is on track for ${formatDate(fc.plannedDelivery)}; no unit is forecast to finish late.`)
+            : lateUnits.length
+                ? `Delivery is on track for ${formatDate(fc.plannedDelivery)}. ${lateUnits.length} of ${units.length} unit${units.length === 1 ? ' is' : 's are'} forecast to finish late, but still before the last planned delivery date.`
+                : `Delivery is on track for ${formatDate(fc.plannedDelivery)}; no unit is forecast to finish late.`)
         : 'Not enough plan data in the current filters to forecast delivery.';
 
     // ── Key observations (written from the figures above) ──
@@ -15433,7 +15758,9 @@ function _execInsightsModel(issueRows) {
     if (slip > 0) {
         obs.push(`Delivery is forecast ${slip} working days late. The delay comes from work still ahead on the late units, not from stations already finished.`);
     } else if (fc.expectedDelivery) {
-        obs.push(`Delivery is on track: every unit is forecast to finish on or before its planned date.`);
+        obs.push(lateUnits.length
+            ? `Delivery is on track: the ${lateUnits.length} late unit${lateUnits.length === 1 ? '' : 's'} still finish${lateUnits.length === 1 ? 'es' : ''} before the last planned delivery date.`
+            : `Delivery is on track: every unit is forecast to finish on or before its planned date.`);
     }
     const vWorst = byVehicle.filter(v => v.late > 0).sort((a, b) => b.late - a.late || b.worst - a.worst)[0];
     if (vWorst && lateUnits.length) {
@@ -15495,7 +15822,9 @@ const EXEC_TONE_HEX = { bad: '#b91c1c', warn: '#b45309', ok: '#15803d', info: '#
  *  1 "Where we stand"  (verdict, key figures, observations, progress, pace)
  *  2 "Where to act"    (units behind, stations adding delay, issues).
  *  Returns the first page's number. */
-function _execDrawInsightsPdf(doc, ins, band, meta) {
+function _execDrawInsightsPdf(doc, ins, band, meta, bat = '') {
+    const part = n => `Production Insights${bat ? ` · ${bat}` : ''} · ${n} of 2`;
+    const head = t => (bat ? `${t} — ${bat}` : t);
     const M = EXEC_MARGIN, W = 297, H = 210;
     const CW = W - 2 * M;
     const NAVY = [30, 58, 138], INK = [15, 23, 42], MUTED = [100, 116, 139], SOFT = [71, 85, 105], RULE = [226, 232, 240];
@@ -15539,7 +15868,7 @@ function _execDrawInsightsPdf(doc, ins, band, meta) {
     // ════════ Page 1 — Where we stand ════════
     doc.addPage('a4', 'landscape');
     const firstPage = doc.internal.getCurrentPageInfo().pageNumber;
-    band(W, 'Production Insights · 1 of 2', 'Where we stand', meta);
+    band(W, part(1), head('Where we stand'), meta);
 
     // Verdict
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9.6);
@@ -15643,7 +15972,7 @@ function _execDrawInsightsPdf(doc, ins, band, meta) {
 
     // ════════ Page 2 — Where to act ════════
     doc.addPage('a4', 'landscape');
-    band(W, 'Production Insights · 2 of 2', 'Where to act', meta);
+    band(W, part(2), head('Where to act'), meta);
     y = 27;
     const lw2 = Math.round(CW * 0.6), rw2 = CW - lw2 - gap, rx2 = M + lw2 + gap;
 
@@ -15663,7 +15992,7 @@ function _execDrawInsightsPdf(doc, ins, band, meta) {
         { 1: { cellWidth: 18 }, 2: { cellWidth: 28, halign: 'right' }, 3: { cellWidth: 24, halign: 'right' }, 4: { cellWidth: 22, halign: 'right' } });
 
     // Right — production issues
-    let y3 = section(rx2, y, rw2, 'Production issues', 'All time, this module');
+    let y3 = section(rx2, y, rw2, 'Production issues', bat ? 'All time, this module · all battalions' : 'All time, this module');
     const iss = ins.issues;
     const bw3 = (rw2 - 2 * 3) / 3;
     [['Open', iss.open, [239, 246, 255], INK], ['In progress', iss.inProgress, [239, 246, 255], INK], ['Resolved', iss.resolved, [240, 253, 244], [21, 128, 61]]].forEach(([label, val, bg, fg], i) => {
@@ -15686,14 +16015,16 @@ function _execDrawInsightsPdf(doc, ins, band, meta) {
 }
 
 /** Word: Production Insights as two A4 landscape sections, same layout as the PDF. */
-function _execInsightsWordHtml(ins, meta, sectionBreak = '') {
+function _execInsightsWordHtml(ins, meta, sectionBreak = '', bat = '') {
+    const batTag = bat ? ` · ${esc(bat)}` : '';
+    const head = t => (bat ? `${t} — ${esc(bat)}` : t);
     const H = (s, sub) => `<p style="margin:10pt 0 ${sub ? 0 : 3}pt;font-size:8.5pt;font-weight:bold;letter-spacing:0.5pt;color:#1e3a8a;border-left:2.5pt solid #1e3a8a;padding-left:4pt">${s.toUpperCase()}</p>${sub ? `<p style="margin:0 0 3pt;padding-left:6.5pt;font-size:7pt;color:#64748b">${sub}</p>` : ''}`;
     const td = 'padding:3pt 4pt;border-bottom:0.5pt solid #e2e8f0;font-size:8pt';
     const th = 'padding:3pt 4pt;border-bottom:0.75pt solid #cbd5e1;background:#f8fafc;font-size:7pt;color:#64748b;font-weight:bold';
     const tone = slip => `color:${slip >= 20 ? '#b91c1c' : '#b45309'};font-weight:bold`;
     const tbl = (head, rows) => `<table style="width:100%;border-collapse:collapse"><tr>${head.map(h => `<td style="${th}">${h}</td>`).join('')}</tr>${rows}</table>`;
     const header = (part, title) => `<table style="width:100%;border-collapse:collapse;margin:0 0 6pt"><tr><td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a">
-            <p style="margin:0;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#1e3a8a">PRODUCTION INSIGHTS · ${part}</p>
+            <p style="margin:0;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#1e3a8a">PRODUCTION INSIGHTS${batTag} · ${part}</p>
             <p style="margin:0;font-size:15pt;font-weight:bold;color:#0f172a">${title}</p></td>
             <td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a;text-align:right;vertical-align:bottom"><p style="margin:0;font-size:7.5pt;color:#64748b">${esc(meta)}</p></td></tr></table>`;
     const foot = `<p style="margin:8pt 0 0;font-size:6.5pt;color:#94a3b8">Figures follow the process-order forecast used across PPMS · working days (wd) exclude Fridays · as of ${esc(formatDate(todayStr()))}</p>`;
@@ -15712,7 +16043,7 @@ function _execInsightsWordHtml(ins, meta, sectionBreak = '') {
         : `<tr><td colspan="5" style="${td};color:#15803d">Nothing is adding delay right now.</td></tr>`;
     const metric = (l, v, color) => `<tr><td style="${td}">${l}</td><td style="${td};text-align:right;font-weight:bold${color ? ';color:' + color : ''}">${v}</td></tr>`;
 
-    const page1 = `${header('1 OF 2', 'Where we stand')}
+    const page1 = `${header('1 OF 2', head('Where we stand'))}
         <table style="width:100%;border-collapse:collapse;margin:0 0 6pt"><tr><td style="padding:6pt 10pt;border:0.75pt solid ${ins.late ? '#fca5a5' : '#86efac'};border-left:4pt solid ${ins.late ? '#b91c1c' : '#15803d'};background:${ins.late ? '#fff5f5' : '#f0fdf4'};font-size:9.5pt;color:#0f172a">${esc(ins.verdict)}</td></tr></table>
         <table style="width:100%;border-collapse:separate;border-spacing:4pt 0;margin:0 0 4pt"><tr>${kpis}</tr></table>
         <table style="width:100%;border-collapse:collapse"><tr>
@@ -15722,14 +16053,14 @@ function _execInsightsWordHtml(ins, meta, sectionBreak = '') {
                 ${H('Weekly pace', 'Planned to finish vs completed · last 8 weeks')}${tbl(['Week', 'Planned', 'Completed'], paceRows)}
                 <p style="margin:4pt 0 0;font-size:8pt;color:#0f172a">${esc(ins.paceLine)}</p>
             </td></tr></table>${foot}`;
-    const page2 = `${header('2 OF 2', 'Where to act')}
+    const page2 = `${header('2 OF 2', head('Where to act'))}
         <table style="width:100%;border-collapse:collapse"><tr>
             <td style="width:60%;vertical-align:top;padding-right:14pt;border:none">
                 ${H('Units furthest behind', 'Forecast finish against the plan · the station adding most of the delay')}${tbl(['Unit', 'Planned finish', 'Forecast finish', 'Delay', 'Main cause'], unitsRows)}
                 ${H('Where to act first', 'Stations pushing unit finishes back right now, largest delay first')}${tbl(['Station', 'Vehicle', 'Units pushed back', 'Not finished', 'Delay added'], causeRows)}
             </td>
             <td style="width:40%;vertical-align:top;border:none">
-                ${H('Production issues', 'All time, this module')}
+                ${H('Production issues', bat ? 'All time, this module · all battalions' : 'All time, this module')}
                 <table style="width:100%;border-collapse:separate;border-spacing:3pt"><tr>
                     ${[['Open', iss.open, '#eff6ff', '#0f172a'], ['In progress', iss.inProgress, '#eff6ff', '#0f172a'], ['Resolved', iss.resolved, '#f0fdf4', '#15803d']].map(([l, v, bg, fg]) => `<td style="background:${bg};padding:5pt 7pt"><p style="margin:0;font-size:15pt;font-weight:bold;color:${fg}">${v}</p><p style="margin:0;font-size:7pt;color:#475569">${l}</p></td>`).join('')}
                 </tr></table>
@@ -15746,15 +16077,15 @@ function _execInsightsWordHtml(ins, meta, sectionBreak = '') {
 }
 
 /** Excel: an "Insights" sheet with the same sections, one under the other. */
-function _addExecInsightsSheet(wb, ins) {
-    const ws = wb.addWorksheet('Insights', { views: [{ showGridLines: false }] });
+function _addExecInsightsSheet(wb, ins, sheetName = 'Insights', bat = '') {
+    const ws = wb.addWorksheet(sheetName, { views: [{ showGridLines: false }] });
     ws.columns = [{ width: 34 }, { width: 16 }, { width: 16 }, { width: 14 }, { width: 26 }, { width: 14 }];
     const navy = 'FF1E3A8A', grey = 'FF64748B';
     const title = (text, size = 13) => { const r = ws.addRow([text]); r.font = { bold: true, size, color: { argb: navy } }; return r; };
     const head = cells => { const r = ws.addRow(cells); r.font = { bold: true, color: { argb: grey } }; r.eachCell(c => { c.border = { bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } } }; }); return r; };
     const blank = () => ws.addRow([]);
 
-    title('Production Insights', 16);
+    title(bat ? `Production Insights — ${bat}` : 'Production Insights', 16);
     ws.addRow([`As of ${formatDate(todayStr())}`]).font = { color: { argb: grey } };
     blank();
     const v = ws.addRow([ins.verdict]);
@@ -15801,7 +16132,7 @@ function _addExecInsightsSheet(wb, ins) {
     ws.addRow([ins.paceLine]).font = { italic: true };
     blank();
 
-    title('Production issues (all time)');
+    title(bat ? 'Production issues (all time, this module · all battalions)' : 'Production issues (all time)');
     head(['Measure', 'Value']);
     const iss = ins.issues;
     [['Open', iss.open], ['In progress', iss.inProgress], ['Resolved / closed', iss.resolved], ['Critical / high still open', iss.critical],
@@ -15811,32 +16142,68 @@ function _addExecInsightsSheet(wb, ins) {
     return ws;
 }
 
-/** Excel: the cover as a "Summary" sheet — at a glance + contents. */
-function _addExecSummarySheet(wb, parts, segments, issueRows) {
-    const cover = _execCoverSummary();
+/** Footer line of the Executive Report: system · its author's signature
+ *  (always Adham Morsy, who built PPMS — not the user exporting) · page. */
+const PPMS_AUTHOR = 'Adham Morsy';
+function _execFooterText(pageText) {
+    return ['Production Planning & Monitoring System', PPMS_AUTHOR, pageText].filter(Boolean).join('  ·  ');
+}
+
+/** A unique Excel sheet name (≤ 31 characters, none of : \ / ? * [ ]). */
+function _execSheetName(name, used) {
+    const base = String(name).replace(/[:\\/?*[\]]/g, '-').slice(0, 31);
+    let out = base, n = 2;
+    while (used.has(out)) { const tag = ` (${n++})`; out = base.slice(0, 31 - tag.length) + tag; }
+    used.add(out);
+    return out;
+}
+
+/** One cover row per battalion (plus the overall row first). */
+function _execBattalionTableRows(R) {
+    const lateTxt = l => (l && l.count ? `${l.count} (worst +${l.worst} wd)` : 'none');
+    const row = (label, c) => [label, c.units, `${c.pct}%`, c.inProgress, c.overdue, c.plannedDelivery, c.expectedDelivery, c.worst > 0 ? `+${c.worst} wd` : 'on time', lateTxt(c.lateUnits)];
+    return [row(R.scope.total, R.cover), ...R.batCovers.map(c => row(c.bat, c))];
+}
+const EXEC_BAT_HEAD = ['Battalion', 'Units', 'Complete', 'In progress', 'Overdue', 'Planned delivery', 'Expected delivery', 'Delay', 'Late vehicles'];
+
+/** Excel: the cover as a "Summary" sheet — overall, by battalion, contents.
+ *  `sheetOf` maps each segment / insights entry to the sheet it lands on. */
+function _addExecSummarySheet(wb, parts, R, sheetOf) {
+    const cover = R.cover;
     const ws = wb.addWorksheet('Summary', { views: [{ showGridLines: false }] });
-    ws.columns = [{ width: 34 }, { width: 22 }, { width: 46 }];
+    ws.columns = [{ width: 34 }, { width: 10 }, { width: 11 }, { width: 12 }, { width: 10 }, { width: 17 }, { width: 18 }, { width: 11 }, { width: 20 }];
     const navy = 'FF1E3A8A', grey = 'FF64748B';
     const t = ws.addRow(['Executive Report']); t.font = { bold: true, size: 18, color: { argb: 'FF0F172A' } };
     const sub = ws.addRow([_execCoverBlurb(parts)]); sub.font = { color: { argb: grey } };
-    ws.mergeCells(`A${sub.number}:C${sub.number}`);
+    ws.mergeCells(`A${sub.number}:I${sub.number}`);
     ws.addRow([]);
-    [['Module', cover.module], ['Plan version', cover.version || '—'], ['Generated', cover.generated]].forEach(([k, v]) => {
+    [['Module', cover.module], ['Plan version', cover.version || '—'], ['Battalions', R.battalions.join(', ') || '—'], ['Generated', cover.generated]].forEach(([k, v]) => {
         const r = ws.addRow([k, v]); r.getCell(1).font = { color: { argb: grey } }; r.getCell(2).font = { bold: true };
     });
     ws.addRow([]);
-    ws.addRow(['At a glance']).font = { bold: true, size: 13, color: { argb: navy } };
-    [['Complete', `${cover.pct}%`], ['Planned tasks', cover.total], ['In progress', cover.inProgress], ['Overdue', cover.overdue],
+    ws.addRow([`At a glance — ${R.scope.heading}`]).font = { bold: true, size: 13, color: { argb: navy } };
+    [['Complete', `${cover.pct}%`], ['Units', cover.units], ['Planned tasks', cover.total], ['In progress', cover.inProgress], ['Overdue', cover.overdue],
      ['Planned delivery', cover.plannedDelivery], ['Expected delivery', cover.expectedDelivery]].forEach(([k, v]) => {
         const r = ws.addRow([k, v]); r.getCell(2).font = { bold: true };
         r.getCell(2).alignment = { horizontal: 'left' };
     });
     ws.addRow([]);
+    ws.addRow(['By battalion']).font = { bold: true, size: 13, color: { argb: navy } };
+    const hd = ws.addRow(EXEC_BAT_HEAD);
+    hd.font = { bold: true, color: { argb: grey } };
+    hd.eachCell(c => { c.border = { bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } } }; });
+    _execBattalionTableRows(R).forEach((vals, i) => {
+        const r = ws.addRow(vals);
+        if (i === 0) r.font = { bold: true };
+        const worst = i === 0 ? cover.worst : R.batCovers[i - 1].worst;
+        r.getCell(8).font = { bold: true, color: { argb: worst > 0 ? 'FFB91C1C' : 'FF15803D' } };
+    });
+    ws.addRow([]);
     ws.addRow(['Contents']).font = { bold: true, size: 13, color: { argb: navy } };
-    const line = (name, detail) => { const r = ws.addRow([name, '', detail]); r.getCell(1).font = { bold: true }; r.getCell(3).font = { color: { argb: grey } }; };
-    segments.forEach(seg => line(`VPX Station Report — ${seg.vtype} · ${seg.cat}`, `sheet "${`${seg.vtype} - ${seg.cat}`.slice(0, 31)}"`));
-    if (parts.insights) line('Production Insights', 'sheet "Insights"');
-    if (parts.issues) line('Production Issues Status Report', `${issueRows.length} issues · sheet "Issues Status Report"`);
+    const line = (name, detail) => { const r = ws.addRow([name, detail]); r.getCell(1).font = { bold: true }; r.getCell(2).font = { color: { argb: grey } }; };
+    R.segments.forEach(seg => line(`VPX Station Report — ${seg.bat} · ${seg.vtype} · ${seg.cat}`, `sheet "${sheetOf.get(seg)}"`));
+    R.insights.forEach(x => line(`Production Insights — ${x.bat}`, `sheet "${sheetOf.get(x)}"`));
+    if (parts.issues) line('Production Issues Status Report', `${R.issueRows.length} issues · sheet "Issues Status Report"`);
     return ws;
 }
 
@@ -15848,26 +16215,28 @@ async function exportExecutiveReportExcel(preview) {
 
     const parts = _execParts();
     if (_execNothingSelected(parts)) return;
-    const segments = parts.stations ? _collectVpxExecutiveSegments() : [];
-    const issueRows = await _buildIssueStatusReportRowsAllTime();
-    if (!parts.cover && !segments.length && !parts.insights && !parts.issues) { showToast('No data available for the Executive Report.', 'error'); return; }
+    let R;
+    try { R = await _execBuildReport(parts); } catch (err) { console.error(err); showToast('Could not load every battalion for the Executive Report.', 'error'); return; }
+    const { segments, issueRows } = R;
+    if (!parts.cover && !segments.length && !R.insights.length && !parts.issues) { showToast('No data available for the Executive Report.', 'error'); return; }
     const title = 'Executive Report';
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'PPMS';
     wb.created = new Date();
-    if (parts.cover) _addExecSummarySheet(wb, parts, segments, issueRows);
-    const usedNames = new Set();
-    segments.forEach(seg => {
-        let name = `${seg.vtype} - ${seg.cat}`.slice(0, 31);
-        let n = 2;
-        while (usedNames.has(name)) { name = `${seg.vtype} - ${seg.cat} (${n++})`.slice(0, 31); }
-        usedNames.add(name);
-        _addVpxStationReportSheet(wb, seg, name, seg.cat);
-    });
-    if (parts.insights) _addExecInsightsSheet(wb, _execInsightsModel(issueRows));
+    // Sheet names first, so the Summary's contents can name them
+    const usedNames = new Set(['Summary', 'Issues Status Report']);
+    const sheetOf = new Map();
+    segments.forEach(seg => sheetOf.set(seg, _execSheetName(`${seg.bat} ${seg.vtype} ${seg.cat}`, usedNames)));
+    R.insights.forEach(x => sheetOf.set(x, _execSheetName(`Insights ${x.bat}`, usedNames)));
+    if (parts.cover) _addExecSummarySheet(wb, parts, R, sheetOf);
+    segments.forEach(seg => _addVpxStationReportSheet(wb, seg, sheetOf.get(seg), seg.cat));
+    R.insights.forEach(x => _addExecInsightsSheet(wb, x.ins, sheetOf.get(x), x.bat));
     if (parts.issues) _addIssueStatusReportSheet(wb, issueRows, 'Issues Status Report', 'Production Issues Status Report — All Time');
     if (segments.length) _addStationReportKeySheet(wb, title);
+    // Printed footer on every sheet (Excel's "&" codes: &P page, &N pages; "&&" is a literal &)
+    const footer = `&L&8Executive Report · ${R.cover.module.replace(/&/g, '&&')}&R&8${_execFooterText('Page &P of &N').replace(/ & /g, ' && ')}`;
+    wb.eachSheet(ws => { ws.headerFooter = { ...(ws.headerFooter || {}), oddFooter: footer }; });
 
     const now = localDateStr(new Date());
     const doDownload = async () => {
@@ -15895,16 +16264,17 @@ async function exportExecutiveReportPDF(preview) {
 
     const parts = _execParts();
     if (_execNothingSelected(parts)) return;
-    const segments = parts.stations ? _collectVpxExecutiveSegments() : [];
-    const issueRows = await _buildIssueStatusReportRowsAllTime();
-    if (!parts.cover && !segments.length && !parts.insights && !parts.issues) { showToast('No data available for the Executive Report.', 'error'); return; }
+    let R;
+    try { R = await _execBuildReport(parts); } catch (err) { console.error(err); showToast('Could not load every battalion for the Executive Report.', 'error'); return; }
+    const { segments, issueRows, cover } = R;
+    if (!parts.cover && !segments.length && !R.insights.length && !parts.issues) { showToast('No data available for the Executive Report.', 'error'); return; }
     const title = 'Executive Report';
-    const cover = _execCoverSummary();
     const meta = [cover.module, cover.version, `Generated ${cover.generated}`].filter(Boolean).join('  ·  ');
     const models = segments.map(_execSegmentModel);
     const layouts = models.map(_execSegmentLayout);
-    const insights = parts.insights ? _execInsightsModel(issueRows) : null;
     const INSIGHT_PAGES = 2;
+    // With a cover, page 2 is the contents; the report proper starts on page 3
+    const firstBodyPage = parts.cover ? 3 : 2;
 
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
@@ -15972,51 +16342,99 @@ async function exportExecutiveReportPDF(preview) {
             doc.setFont('helvetica', 'normal');
         });
 
-        // KPI tiles
+        // KPI tiles — every battalion together
         const tiles = [
             ['Complete', `${cover.pct}%`, [15, 23, 42]],
-            ['Planned tasks', cover.total, [15, 23, 42]],
+            ['Units', cover.units, [15, 23, 42]],
             ['In progress', cover.inProgress, [37, 99, 235]],
             ['Overdue', cover.overdue, [185, 28, 28]],
             ['Planned delivery', cover.plannedDelivery, [15, 23, 42]],
             ['Expected delivery', cover.expectedDelivery, cover.worst > 0 ? [185, 28, 28] : [21, 128, 61]],
         ];
-        const tx = 122, tw = 50, th = 24;
+        const tx = 122, tw = 50, th = 21;
         doc.setTextColor(15, 23, 42); doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
-        doc.text('At a glance', tx, 26);
+        doc.text(`At a glance — ${R.scope.heading}`, tx, 24);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(100, 116, 139);
+        doc.text(`${R.battalions.length} battalion${R.battalions.length === 1 ? '' : 's'} · ${cover.total.toLocaleString('en-GB')} planned tasks`, W - 14, 24, { align: 'right' });
         tiles.forEach(([label, value, rgb], i) => {
-            const x = tx + (i % 3) * (tw + 6), y = 32 + Math.floor(i / 3) * (th + 6);
+            const x = tx + (i % 3) * (tw + 6), y = 29 + Math.floor(i / 3) * (th + 5);
             doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.3);
             doc.roundedRect(x, y, tw, th, 2, 2, 'S');
             doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 116, 139);
-            doc.text(label.toUpperCase(), x + 4, y + 7, { charSpace: 0.2 });
-            doc.setFont('helvetica', 'bold'); doc.setFontSize(String(value).length > 8 ? 12 : 17); doc.setTextColor(...rgb);
-            doc.text(String(value), x + 4, y + 18);
+            doc.text(label.toUpperCase(), x + 4, y + 6.5, { charSpace: 0.2 });
+            doc.setFont('helvetica', 'bold'); doc.setFontSize(String(value).length > 8 ? 12 : 16); doc.setTextColor(...rgb);
+            doc.text(String(value), x + 4, y + 16);
         });
 
-        // Contents
-        let y = 104;
+        // By battalion — the overall row first, then each battalion in order
+        const by = 29 + 2 * (th + 5) + 8;
         doc.setTextColor(15, 23, 42); doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
-        doc.text('Contents', tx, y); y += 7;
-        const entries = models.map((m, i) => [`VPX Station Report — ${m.vtype} · ${m.cat}`, `${m.stats.units} units · ${m.stats.stations} stations`, i + 2]);
-        if (insights) entries.push(['Production Insights', 'Where we stand · where to act (2 pages)', models.length + 2]);
-        if (parts.issues) entries.push(['Production Issues Status Report', `${issueRows.length} issues · all time`, models.length + 2 + (insights ? INSIGHT_PAGES : 0)]);
-        doc.setFontSize(8.5);
-        entries.forEach(([name, sub, page]) => {
-            doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 23, 42); doc.text(name, tx, y);
-            doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 116, 139); doc.text(sub, tx + 95, y);
-            doc.setTextColor(30, 58, 138); doc.setFont('helvetica', 'bold'); doc.text(String(page), W - 14, y, { align: 'right' });
-            doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.2); doc.line(tx, y + 2, W - 14, y + 2);
-            y += 7;
+        doc.text('By battalion', tx, by);
+        const batRows = _execBattalionTableRows(R);
+        const worstOf = i => (i === 0 ? cover.worst : R.batCovers[i - 1].worst);
+        // Fit every battalion on the cover: smaller rows when there are many
+        const fs = batRows.length > 12 ? 6.4 : batRows.length > 8 ? 7.2 : 8;
+        doc.autoTable({
+            startY: by + 3,
+            margin: { left: tx, right: 14, bottom: 12 },
+            head: [EXEC_BAT_HEAD], body: batRows,
+            theme: 'plain', pageBreak: 'avoid', rowPageBreak: 'avoid',
+            styles: { font: 'helvetica', fontSize: fs, cellPadding: { top: 1.3, bottom: 1.3, left: 1.4, right: 1.4 }, textColor: [15, 23, 42], lineColor: [226, 232, 240], lineWidth: { bottom: 0.2 } },
+            headStyles: { fontStyle: 'bold', fontSize: fs - 0.8, textColor: [100, 116, 139], fillColor: [248, 250, 252], lineColor: [203, 213, 225], lineWidth: { bottom: 0.35 } },
+            columnStyles: { 0: { fontStyle: 'bold', cellWidth: 26 }, 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 7: { halign: 'right' } },
+            didParseCell: d => {
+                if (d.section !== 'body') return;
+                if (d.row.index === 0) { d.cell.styles.fillColor = [239, 246, 255]; d.cell.styles.fontStyle = 'bold'; }
+                if (d.column.index === 4 && Number(d.cell.raw) > 0) d.cell.styles.textColor = [185, 28, 28];
+                if (d.column.index === 6 || d.column.index === 7) d.cell.styles.textColor = worstOf(d.row.index) > 0 ? [185, 28, 28] : [21, 128, 61];
+            },
         });
         hasOutline.add('Cover', 1);
+
+        // ── Contents (page 2): one row per vehicle · component, one page
+        //    column per battalion, then insights per battalion and issues ──
+        doc.addPage('a4', 'landscape');
+        band(W, 'Executive Report', 'Contents', meta);
+        const bats = R.battalions;
+        const pageOf = new Map(models.map((m, i) => [m, firstBodyPage + i]));
+        const rowsByKey = new Map();
+        models.forEach(m => {
+            const key = `${m.vtype} · ${m.cat}`;
+            if (!rowsByKey.has(key)) rowsByKey.set(key, new Map());
+            rowsByKey.get(key).set(m.bat, m);
+        });
+        const insStart = firstBodyPage + models.length;
+        const body = [...rowsByKey.entries()].map(([key, perBat]) => [
+            { content: `VPX Station Report — ${key}`, styles: { fontStyle: 'bold' } },
+            ...bats.map(b => { const m = perBat.get(b); return m ? { content: String(pageOf.get(m)), styles: { textColor: [30, 58, 138], fontStyle: 'bold' } } : '—'; }),
+        ]);
+        if (R.insights.length) body.push([
+            { content: 'Production Insights (2 pages each)', styles: { fontStyle: 'bold' } },
+            ...bats.map(b => { const i = R.insights.findIndex(x => x.bat === b); return i >= 0 ? { content: String(insStart + i * INSIGHT_PAGES), styles: { textColor: [30, 58, 138], fontStyle: 'bold' } } : '—'; }),
+        ]);
+        if (parts.issues) body.push([
+            { content: `Production Issues Status Report — ${issueRows.length} issues · all battalions`, styles: { fontStyle: 'bold' } },
+            { content: String(insStart + R.insights.length * INSIGHT_PAGES), colSpan: Math.max(1, bats.length), styles: { halign: 'center', textColor: [30, 58, 138], fontStyle: 'bold' } },
+        ]);
+        doc.autoTable({
+            startY: 27,
+            margin: { left: M, right: M, bottom: EXEC_FOOTER_H },
+            head: [['Section', ...bats]], body,
+            theme: 'plain', rowPageBreak: 'avoid',
+            styles: { font: 'helvetica', fontSize: 8.5, cellPadding: { top: 2, bottom: 2, left: 2, right: 2 }, textColor: [15, 23, 42], lineColor: [226, 232, 240], lineWidth: { bottom: 0.2 }, halign: 'center' },
+            headStyles: { fontStyle: 'bold', fontSize: 7.5, textColor: [100, 116, 139], fillColor: [248, 250, 252], lineColor: [203, 213, 225], lineWidth: { bottom: 0.35 } },
+            columnStyles: { 0: { halign: 'left', cellWidth: 110 } },
+        });
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(148, 163, 184);
+        doc.text('Numbers are page numbers. Each VPX report is one battalion and fits on one page (A4, or A3 for very large segments).', M, Math.min(doc.lastAutoTable.finalY + 6, 210 - EXEC_FOOTER_H - 2));
+        hasOutline.add('Contents', 2);
     }
 
     // ── One page per VPX segment, sized so the table always fits ──
     const drawSegment = (m, L) => {
         doc.addPage(L.page.key, 'landscape');
         const pageNo = doc.internal.getCurrentPageInfo().pageNumber;
-        band(L.page.w, 'VPX Station Report', `${m.vtype} · ${m.cat}`, meta);
+        band(L.page.w, 'VPX Station Report', `${m.bat ? m.bat + ' · ' : ''}${m.vtype} · ${m.cat}`, meta);
 
         const s = m.stats;
         let x = M;
@@ -16084,7 +16502,7 @@ async function exportExecutiveReportPDF(preview) {
             const t = doc.lastAutoTable || {};
             const ok = last === pageNo && (t.startPageNumber ?? pageNo) === pageNo;
             if (ok) {
-                hasOutline.add(`${m.vtype} · ${m.cat}`, pageNo);
+                hasOutline.add(`${m.bat ? m.bat + ' · ' : ''}${m.vtype} · ${m.cat}`, pageNo);
                 break;
             }
             const next = _execSegmentLayout(m, { maxFont: L.font - 0.25 });
@@ -16094,11 +16512,11 @@ async function exportExecutiveReportPDF(preview) {
         }
     });
 
-    // ── Production Insights (two pages, between progress and issues) ──
-    if (insights) {
-        const insightsPage = _execDrawInsightsPdf(doc, insights, band, meta);
-        hasOutline.add('Production Insights', insightsPage);
-    }
+    // ── Production Insights — two pages per battalion, in battalion order ──
+    R.insights.forEach(({ bat, ins }) => {
+        const insightsPage = _execDrawInsightsPdf(doc, ins, band, meta, bat);
+        hasOutline.add(`Production Insights · ${bat}`, insightsPage);
+    });
 
     // ── Production Issues Status Report (list — may run over several pages) ──
     if (parts.issues) {
@@ -16143,8 +16561,8 @@ async function exportExecutiveReportPDF(preview) {
         const w = (mb.topRightX - mb.bottomLeftX) * MM_PER_PT, h = (mb.topRightY - mb.bottomLeftY) * MM_PER_PT;
         doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.2); doc.line(M, h - 7, w - M, h - 7);
         doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(148, 163, 184);
-        doc.text(`PPMS · Executive Report · ${cover.module}`, M, h - 3.5);
-        doc.text(`Page ${p} of ${total}`, w - M, h - 3.5, { align: 'right' });
+        doc.text(`Executive Report · ${cover.module}`, M, h - 3.5);
+        doc.text(_execFooterText(`Page ${p} of ${total}`), w - M, h - 3.5, { align: 'right' });
     }
 
     const now = localDateStr(new Date());
@@ -16163,28 +16581,47 @@ async function exportExecutiveReportWord(preview) {
 
     const parts = _execParts();
     if (_execNothingSelected(parts)) return;
-    const segments = parts.stations ? _collectVpxExecutiveSegments() : [];
-    const issueRows = await _buildIssueStatusReportRowsAllTime();
-    if (!parts.cover && !segments.length && !parts.insights && !parts.issues) { showToast('No data available for the Executive Report.', 'error'); return; }
+    let R;
+    try { R = await _execBuildReport(parts); } catch (err) { console.error(err); showToast('Could not load every battalion for the Executive Report.', 'error'); return; }
+    if (!parts.cover && !R.segments.length && !R.insights.length && !parts.issues) { showToast('No data available for the Executive Report.', 'error'); return; }
 
-    const cover = _execCoverSummary();
+    const cover = R.cover;
     const meta = [cover.module, cover.version, `Generated ${cover.generated}`].filter(Boolean).join('  ·  ');
-    const models = segments.map(_execSegmentModel);
+    const models = R.segments.map(_execSegmentModel);
     const layouts = models.map(m => ({ ..._execSegmentLayout(m, { word: true }), meta }));
-    const insights = parts.insights ? _execInsightsModel(issueRows) : null;
-    const { body, style } = _execWordDocument(cover, models, layouts, issueRows, meta, insights, parts);
+    const { body, style, wordFooter } = _execWordDocument(R, models, layouts, meta, parts);
 
     const now = localDateStr(new Date());
-    exportHtmlAsWord(`executive_report_${now}.doc`, 'Executive Report', body, preview, { style });
+    exportHtmlAsWord(`executive_report_${now}.doc`, 'Executive Report', body, preview, { style, wordFooter });
+}
+
+/** Word footer for the Executive Report — same line as the PDF, with live
+ *  PAGE / NUMPAGES fields. Parked far off the page in a 1pt table so it
+ *  never shows in the body; Word lifts it into every page's footer. */
+function _execWordFooterHtml(module) {
+    const field = (code, placeholder) => `<span style="mso-element:field-begin"></span> ${code} <span style="mso-element:field-separator"></span>${placeholder}<span style="mso-element:field-end"></span>`;
+    const pageText = `Page ${field('PAGE', '1')} of ${field('NUMPAGES', '1')}`;
+    const cell = 'border:none;border-top:0.5pt solid #e2e8f0;padding:2pt 0 0;font-family:Calibri,Arial,sans-serif;font-size:7pt;color:#94a3b8';
+    return `<table style="margin-left:50in;border-collapse:collapse"><tr style="height:1pt;mso-height-rule:exactly"><td>
+        <div style="mso-element:footer" id="execFtr">
+            <table style="width:100%;border-collapse:collapse"><tr>
+                <td style="${cell};text-align:left">Executive Report · ${esc(module)}</td>
+                <td style="${cell};text-align:right">${esc(_execFooterText(''))}  ·  ${pageText}</td>
+            </tr></table>
+        </div></td></tr></table>`;
 }
 
 /** Word document body + page-setup styles. Each page is its own Word
  *  section, so every VPX page can have its own paper size (A4 or A3). */
-function _execWordDocument(cover, models, layouts, issueRows, meta, insights = null, parts = { cover: true, stations: true, insights: !!insights, issues: true }) {
+function _execWordDocument(R, models, layouts, meta, parts) {
+    const { cover, issueRows } = R;
     const mPt = (EXEC_MARGIN * PT_PER_MM).toFixed(1) + 'pt';
-    const pageCss = (name, page) => `@page ${name} { size: ${(page.w * PT_PER_MM).toFixed(1)}pt ${(page.h * PT_PER_MM).toFixed(1)}pt; mso-page-orientation: landscape; margin: ${mPt}; }
+    // Every page but the cover carries the footer (execFtr, see _execWordFooterHtml);
+    // it sits inside the bottom margin, so the one-page table sizing is unchanged
+    const pageCss = (name, page, footer = true) => `@page ${name} { size: ${(page.w * PT_PER_MM).toFixed(1)}pt ${(page.h * PT_PER_MM).toFixed(1)}pt; mso-page-orientation: landscape; margin: ${mPt};${footer ? ' mso-footer: execFtr; mso-footer-margin: 6pt;' : ''} }
         div.${name} { page: ${name}; }`;
     const style = `
+        ${pageCss('ExecCover', EXEC_PAGES.a4, false)}
         ${pageCss('ExecA4', EXEC_PAGES.a4)}
         ${pageCss('ExecA3', EXEC_PAGES.a3)}
         body { font-family: Calibri, Arial, sans-serif; }
@@ -16199,8 +16636,8 @@ function _execWordDocument(cover, models, layouts, issueRows, meta, insights = n
         <p style="margin:0;font-size:7pt;color:#64748b;letter-spacing:0.5pt">${label.toUpperCase()}</p>
         <p style="margin:2pt 0 0;font-size:17pt;font-weight:bold;color:${color}">${esc(String(value))}</p></td>`;
     const sections = [];
-    if (parts.cover) sections.push(`<div class="ExecA4">
-        <table style="width:100%;border-collapse:collapse"><tr style="height:470pt">
+    if (parts.cover) sections.push(`<div class="ExecCover">
+        <table style="width:100%;border-collapse:collapse"><tr style="height:440pt">
         <td style="width:34%;padding:24pt 18pt;vertical-align:top;border:none;border-left:6pt solid #1e3a8a;border-right:0.75pt solid #e2e8f0">
             <p style="margin:0;font-size:9pt;font-weight:bold;letter-spacing:2pt;color:#1e3a8a">PPMS</p>
             <p style="margin:10pt 0 0;font-size:30pt;font-weight:bold;line-height:32pt;color:#0f172a">Executive<br>Report</p>
@@ -16209,30 +16646,55 @@ function _execWordDocument(cover, models, layouts, issueRows, meta, insights = n
                 `<p style="margin:10pt 0 0;font-size:7.5pt;letter-spacing:0.5pt;color:#64748b">${k.toUpperCase()}</p><p style="margin:0;font-size:10pt;font-weight:bold;color:#0f172a">${esc(v)}</p>`).join('')}
         </td>
         <td style="padding:18pt 0 0 20pt;vertical-align:top;border:none">
-            <p style="margin:0 0 6pt;font-size:12pt;font-weight:bold;color:#0f172a">At a glance</p>
+            <p style="margin:0 0 6pt;font-size:12pt;font-weight:bold;color:#0f172a">At a glance — ${R.scope.heading} <span style="font-size:8pt;font-weight:normal;color:#64748b">&nbsp;${R.battalions.length} battalion${R.battalions.length === 1 ? '' : 's'} · ${cover.total.toLocaleString('en-GB')} planned tasks</span></p>
             <table style="width:100%;border-collapse:separate;border-spacing:5pt">
-                <tr>${tile('Complete', cover.pct + '%')}${tile('Planned tasks', cover.total)}${tile('In progress', cover.inProgress, '#2563eb')}</tr>
+                <tr>${tile('Complete', cover.pct + '%')}${tile('Units', cover.units)}${tile('In progress', cover.inProgress, '#2563eb')}</tr>
                 <tr>${tile('Overdue', cover.overdue, '#b91c1c')}${tile('Planned delivery', cover.plannedDelivery)}${tile('Expected delivery', cover.expectedDelivery, cover.worst > 0 ? '#b91c1c' : '#15803d')}</tr>
             </table>
-            <p style="margin:14pt 0 4pt;font-size:12pt;font-weight:bold;color:#0f172a">Contents</p>
+            <p style="margin:12pt 0 4pt;font-size:12pt;font-weight:bold;color:#0f172a">By battalion</p>
             <table style="width:100%;border-collapse:collapse">
-                ${models.map(m => `<tr><td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:9pt;font-weight:bold;color:#0f172a">VPX Station Report — ${esc(m.vtype)} · ${esc(m.cat)}</td>
-                    <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">${m.stats.units} units · ${m.stats.stations} stations</td></tr>`).join('')}
-                ${insights ? `<tr><td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:9pt;font-weight:bold;color:#0f172a">Production Insights</td>
-                    <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">Where we stand · where to act (2 pages)</td></tr>` : ''}
-                ${parts.issues ? `<tr><td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:9pt;font-weight:bold;color:#0f172a">Production Issues Status Report</td>
-                    <td style="padding:3pt 0;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:#64748b;text-align:right">${issueRows.length} issues · all time</td></tr>` : ''}
+                <tr>${EXEC_BAT_HEAD.map((h, i) => `<td style="padding:2pt 3pt;border-bottom:0.75pt solid #cbd5e1;background:#f8fafc;font-size:7pt;font-weight:bold;color:#64748b;text-align:${i === 0 || i > 4 ? 'left' : 'right'}">${h}</td>`).join('')}</tr>
+                ${_execBattalionTableRows(R).map((vals, ri) => {
+                    const worst = ri === 0 ? cover.worst : R.batCovers[ri - 1].worst;
+                    return `<tr style="${ri === 0 ? 'background:#eff6ff;font-weight:bold' : ''}">${vals.map((v, i) => {
+                        const color = (i === 6 || i === 7) ? (worst > 0 ? '#b91c1c' : '#15803d') : (i === 4 && Number(v) > 0 ? '#b91c1c' : '#0f172a');
+                        return `<td style="padding:2pt 3pt;border-bottom:0.5pt solid #e2e8f0;font-size:8pt;color:${color};text-align:${i === 0 || i > 4 ? 'left' : 'right'}${i === 0 ? ';font-weight:bold' : ''}">${esc(String(v))}</td>`;
+                    }).join('')}</tr>`;
+                }).join('')}
             </table>
-            <p style="margin:10pt 0 0;font-size:7.5pt;color:#94a3b8">Each VPX report fits on one page: all stations and units, sized automatically (A4, or A3 for very large segments).</p>
         </td></tr></table></div>`);
 
-    // One section per VPX segment
+    // Contents — one row per vehicle · component, one column per battalion
+    if (parts.cover) {
+        const bats = R.battalions;
+        const rowsByKey = new Map();
+        models.forEach(m => {
+            const key = `${m.vtype} · ${m.cat}`;
+            if (!rowsByKey.has(key)) rowsByKey.set(key, new Set());
+            rowsByKey.get(key).add(m.bat);
+        });
+        const td = 'padding:3pt 4pt;border-bottom:0.5pt solid #e2e8f0;font-size:9pt';
+        const tick = on => `<td style="${td};text-align:center;color:${on ? '#1e3a8a' : '#94a3b8'};font-weight:bold">${on ? '✓' : '—'}</td>`;
+        const rows = [...rowsByKey.entries()].map(([key, set]) => `<tr><td style="${td};font-weight:bold">VPX Station Report — ${esc(key)}</td>${bats.map(b => tick(set.has(b))).join('')}</tr>`);
+        if (R.insights.length) rows.push(`<tr><td style="${td};font-weight:bold">Production Insights (2 pages each)</td>${bats.map(b => tick(R.insights.some(x => x.bat === b))).join('')}</tr>`);
+        if (parts.issues) rows.push(`<tr><td style="${td};font-weight:bold">Production Issues Status Report — ${issueRows.length} issues</td><td colspan="${Math.max(1, bats.length)}" style="${td};text-align:center;color:#64748b">all battalions</td></tr>`);
+        sections.push(`<div class="ExecA4">
+            <table style="width:100%;border-collapse:collapse;margin:0 0 6pt"><tr><td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a">
+                <p style="margin:0;font-size:7pt;font-weight:bold;letter-spacing:1pt;color:#1e3a8a">EXECUTIVE REPORT</p>
+                <p style="margin:0;font-size:15pt;font-weight:bold;color:#0f172a">Contents</p></td>
+                <td style="padding:2pt 0 4pt;border:none;border-bottom:2pt solid #1e3a8a;text-align:right;vertical-align:bottom"><p style="margin:0;font-size:7.5pt;color:#64748b">${esc(meta)}</p></td></tr></table>
+            <table style="width:100%;border-collapse:collapse"><tr><td style="${td};background:#f8fafc;font-size:7.5pt;font-weight:bold;color:#64748b">Section</td>${bats.map(b => `<td style="${td};background:#f8fafc;font-size:7.5pt;font-weight:bold;color:#64748b;text-align:center">${esc(b)}</td>`).join('')}</tr>${rows.join('')}</table>
+            <p style="margin:8pt 0 0;font-size:7.5pt;color:#94a3b8">The report runs in this order: each vehicle · component for every battalion in turn, then the production insights of each battalion, then the issues. Each VPX report is one battalion on one page (A4, or A3 for very large segments).</p>
+        </div>`);
+    }
+
+    // One section per VPX segment (battalions in order within each component)
     models.forEach((m, i) => {
         sections.push(`<div class="${divFor(layouts[i].page)}">${_execWordSegmentHtml(m, layouts[i])}</div>`);
     });
 
-    // Production Insights (between progress and issues) — two sections
-    if (insights) sections.push(_execInsightsWordHtml(insights, meta, sectionBreak));
+    // Production Insights — two sections per battalion, in battalion order
+    R.insights.forEach(({ bat, ins }) => sections.push(_execInsightsWordHtml(ins, meta, sectionBreak, bat)));
 
     // Issues
     const statusLabel = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Closed' };
@@ -16259,7 +16721,7 @@ function _execWordDocument(cover, models, layouts, issueRows, meta, insights = n
         </table></div>`);
 
     const body = sections.join(sectionBreak);
-    return { body, style };
+    return { body, style, wordFooter: _execWordFooterHtml(cover.module) };
 }
 
 /* ─── VPX "Generate Report" popup — replaces the 4 standalone export
@@ -16300,15 +16762,58 @@ function wireVpxReportModal() {
 /* ─── Executive Report modal — combined VPX Station Report (every
    vehicle/component segment) + all-time Issues Status Report. Always
    previews before download, per how this report is meant to be used. ── */
-/** Scope line + live snapshot in the Executive Report menu. */
-function _fillExecReportMenu() {
+/* Battalions in the report — picked in the menu. Default: every battalion
+   that has started, i.e. has at least one task in any status other than
+   Planned (in progress, overdue, completed, late). `_execBatPick` is null
+   until the menu has the rows of every battalion. */
+let _execBatPick = null;
+let _execBatTouched = false;   // the user changed the default this time
+let _execMenuRows = null;      // every battalion's rows, once loaded
+let _execSyncFormats = () => {};
+
+/** Battalions with at least one task past "Planned", as a Set. */
+function _execStartedBattalions(rows) {
+    const started = new Set();
+    applyActiveFilters(rows).forEach(r => { if (calculateStatus(r) !== 'Planned') started.add(_vpxBattalionOf(r)); });
+    return started;
+}
+/** `all` (ordered) narrowed to the battalions picked in the menu. */
+function _execSelectedBattalions(all) {
+    return _execBatPick ? all.filter(b => _execBatPick.has(b)) : all;
+}
+
+/** Battalion chips: code + how far along it is; the default pick when untouched. */
+function _renderExecBatChips(rows) {
+    const el = document.getElementById('execBatChips');
+    if (!el) return;
+    const data = applyActiveFilters(rows);
+    const bats = _detectVpxBattalions(data);
+    const started = _execStartedBattalions(rows);
+    if (!_execBatTouched) _execBatPick = new Set(started.size ? started : bats);
+    if (!bats.length) { el.innerHTML = `<span class="xr-bat-loading">${_t('No battalions in the current filters')}</span>`; return; }
+    el.innerHTML = bats.map(b => {
+        const c = _execCoverSummary(data.filter(r => _vpxBattalionOf(r) === b));
+        const on = _execBatPick.has(b);
+        const state = started.has(b) ? _t('{n}% done', { n: c.pct }) : _t('not started');
+        return `<label class="xr-bat${on ? ' is-on' : ''}"><input type="checkbox" value="${esc(b)}"${on ? ' checked' : ''} /><span class="xr-bat-code">${esc(b)}</span><span class="xr-bat-state">${esc(state)}</span></label>`;
+    }).join('');
+}
+
+/** Scope line + live snapshot in the Executive Report menu, for the picked
+ *  battalions. Without `rows` (still loading) it shows the page's data. */
+function _fillExecReportMenu(rows = null) {
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-    const cover = _execCoverSummary();
+    const base = rows || currentData;
+    const all = _detectVpxBattalions(applyActiveFilters(base));
+    const picked = rows ? _execSelectedBattalions(all) : all;
+    const inScope = base.filter(r => picked.includes(_vpxBattalionOf(r)));
+    const cover = _execCoverSummary(inScope);
     set('execScopeModule', cover.module);
     set('execScopeVersion', cover.version || '—');
     const tf = document.querySelector('#fxTimeSeg [aria-pressed="true"], #fxTimeSeg .is-active')?.textContent?.trim();
-    const activeFilters = document.querySelectorAll('#fxChips .fx-chip').length;
-    set('execScopeFilters', `${tf || 'All time'}${activeFilters ? ` · ${activeFilters} filter${activeFilters === 1 ? '' : 's'}` : ' · All units'}`);
+    set('execScopeFilters', rows
+        ? `${tf || 'All time'} · ${picked.length} of ${all.length} battalion${all.length === 1 ? '' : 's'}`
+        : `${tf || 'All time'} · loading battalions…`);
     set('execSnapDelivery', cover.expectedDelivery);
     const delta = document.getElementById('execSnapDeliveryDelta');
     if (delta) {
@@ -16323,20 +16828,57 @@ function _fillExecReportMenu() {
     set('execSnapIssues', ov != null ? String(openN) : '—');
     const issSub = document.getElementById('execSnapIssuesSub');
     if (issSub) { issSub.textContent = crit != null ? `${crit} critical / high` : 'open issues'; issSub.className = parseInt(crit, 10) ? 'xr-bad' : 'xr-ok'; }
+    _execSyncFormats();
 }
 
 function wireExecReportModal() {
     const overlay = document.getElementById('execReportModalOverlay');
     if (!overlay) return;
     const close = () => { overlay.style.display = 'none'; };
+    const chipsEl = document.getElementById('execBatChips');
 
     document.getElementById('btnExecReport')?.addEventListener('click', () => {
+        // Fresh default every time the menu opens
+        _execBatPick = null; _execBatTouched = false; _execMenuRows = null;
+        if (chipsEl) chipsEl.innerHTML = `<span class="xr-bat-loading">${_t('Loading battalions…')}</span>`;
         _fillExecReportMenu();
         overlay.style.display = 'flex';
+        // The report covers every battalion, whatever the page has loaded
+        _execLoadAllBattalions()
+            .then(rows => {
+                if (overlay.style.display !== 'flex') return;
+                _execMenuRows = rows;
+                _renderExecBatChips(rows);
+                _fillExecReportMenu(rows);
+            })
+            .catch(err => {
+                console.warn('Executive Report: could not load every battalion', err);
+                if (chipsEl) chipsEl.innerHTML = `<span class="xr-bat-loading">${_t('Could not load the battalions — close and try again.')}</span>`;
+            });
     });
     document.getElementById('execReportModalClose')?.addEventListener('click', close);
     document.getElementById('execReportModalCancel')?.addEventListener('click', close);
-    // Each part is a switch: renumber what's in, and block the formats when nothing is
+
+    // Battalion chips and the Started / All shortcuts
+    chipsEl?.addEventListener('change', e => {
+        const cb = e.target.closest('input[type="checkbox"]');
+        if (!cb || !_execBatPick) return;
+        _execBatTouched = true;
+        if (cb.checked) _execBatPick.add(cb.value); else _execBatPick.delete(cb.value);
+        cb.closest('.xr-bat')?.classList.toggle('is-on', cb.checked);
+        if (_execMenuRows) _fillExecReportMenu(_execMenuRows);
+    });
+    overlay.querySelectorAll('[data-xr-bats]').forEach(btn => btn.addEventListener('click', () => {
+        if (!_execMenuRows) return;
+        const all = _detectVpxBattalions(applyActiveFilters(_execMenuRows));
+        if (btn.dataset.xrBats === 'all') { _execBatTouched = true; _execBatPick = new Set(all); }
+        else { _execBatTouched = false; }   // back to the default (started)
+        _renderExecBatChips(_execMenuRows);
+        _fillExecReportMenu(_execMenuRows);
+    }));
+
+    // Each part is a switch: renumber what's in, and block the formats when
+    // nothing is in, no battalion is picked, or the battalions are still loading
     const syncParts = () => {
         let n = 0;
         overlay.querySelectorAll('.xr-opt').forEach(row => {
@@ -16346,10 +16888,15 @@ function wireExecReportModal() {
             if (num) num.textContent = on ? String(++n) : '–';
         });
         const none = n === 0;
-        overlay.querySelectorAll('.xr-fmt-btn').forEach(btn => { btn.disabled = none; });
+        const noBats = !!_execBatPick && _execBatPick.size === 0;
+        const loading = !_execMenuRows;
+        overlay.querySelectorAll('.xr-fmt-btn').forEach(btn => { btn.disabled = none || noBats || loading; });
         const hint = document.getElementById('execPartsHint');
         if (hint) hint.hidden = !none;
+        const batHint = document.getElementById('execBatHint');
+        if (batHint) batHint.hidden = !noBats;
     };
+    _execSyncFormats = syncParts;
     overlay.querySelectorAll('.xr-opt input[type="checkbox"]').forEach(cb => cb.addEventListener('change', syncParts));
     syncParts();
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
@@ -18743,10 +19290,12 @@ const WORD_LANDSCAPE_STYLE = `
 function exportHtmlAsWord(filename, titleText, bodyHtml, preview, opts = {}) {
     const extraStyle = (opts.landscape ? WORD_LANDSCAPE_STYLE : '') + (opts.style || '');
     const doDownload = () => {
+        // opts.wordFooter: Word-only footer blocks (mso-element:footer) that the
+        // @page rules point to — left out of the on-screen preview
         const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
 <head><meta charset="utf-8"><title>${esc(titleText)}</title>
 <style>${WORD_DOC_STYLE}${extraStyle}</style>
-</head><body>${opts.landscape ? `<div class="WordSection1">${bodyHtml}</div>` : bodyHtml}</body></html>`;
+</head><body>${opts.landscape ? `<div class="WordSection1">${bodyHtml}</div>` : bodyHtml}${opts.wordFooter || ''}</body></html>`;
         const blob = new Blob(['﻿', html], { type: 'application/msword' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);

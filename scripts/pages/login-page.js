@@ -44,6 +44,11 @@ function renderThemePicker() {
     }
 }
 
+/** True when an RPC failed only because its database function doesn't exist yet. */
+function isMissingFunction(error) {
+    return error?.code === 'PGRST202' || error?.code === '42883' || /could not find the function/i.test(error?.message || '');
+}
+
 async function sha256(value) {
     const buffer = new TextEncoder().encode(value);
     const hash = await crypto.subtle.digest('SHA-256', buffer);
@@ -129,12 +134,18 @@ async function initPage() {
 
         try {
             const hash = await sha256(password);
-            let { data: user, error } = await db
-                .from('planning_app_users')
-                .select('id, email, full_name, role, is_active, modules, can_export')
-                .eq('email', email)
-                .eq('password_hash', hash)
-                .maybeSingle();
+            // Migration 62: the hash is compared inside the database, so the
+            // password_hash column no longer has to be readable by the public key.
+            let { data: user, error } = await db.rpc('ppms_login', { p_email: email, p_password_hash: hash });
+            if (error && isMissingFunction(error)) {
+                // Database without migration 62 yet — the original query.
+                ({ data: user, error } = await db
+                    .from('planning_app_users')
+                    .select('id, email, full_name, role, is_active, modules, can_export')
+                    .eq('email', email)
+                    .eq('password_hash', hash)
+                    .maybeSingle());
+            }
 
             // Migration 44 (modules / can_export) not applied yet — retry without
             // those columns rather than blocking login entirely.

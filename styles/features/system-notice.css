@@ -1,0 +1,14 @@
+/* ─── System notice banner (set from tools/control-panel) ─────────
+   data-level: info | warning | critical */
+.system-notice {
+    position: sticky;
+    top: 0;
+    z-index: 2000;
+    padding: 8px 16px;
+    font: 600 .82rem/1.4 var(--ff-sans, system-ui, sans-serif);
+    text-align: center;
+    color: #fff;
+    background: var(--clr-planned, #3b82f6);
+}
+.system-notice[data-level="warning"] { background: #b45309; }
+.system-notice[data-level="critical"] { background: #b91c1c; }
