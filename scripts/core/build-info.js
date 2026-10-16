@@ -1,2 +1,2 @@
 /* Written by tools/deploy.sh - the version of PPMS this code is. */
-window.PPMS_BUILD = {"version":"v177-a2d5dd7","label":"v177","deployedAt":"2026-10-14T11:43:43.658Z","notes":"Action Items: keep line breaks in messages"};
+window.PPMS_BUILD = {"version":"v178-4a1ba1c","label":"v178","deployedAt":"2026-10-16T13:22:12.288Z","notes":"Keep top bar visible below the notice banner on scroll"};

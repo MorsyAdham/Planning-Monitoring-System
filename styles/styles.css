@@ -297,7 +297,7 @@ body {
     background: var(--clr-surface);
     border-bottom: 1px solid var(--clr-border);
     position: sticky;
-    top: 0;
+    top: var(--notice-h, 0px);
     z-index: 100;
     box-shadow: 0 2px 20px rgba(0, 0, 0, .5);
 }

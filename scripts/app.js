@@ -150,13 +150,21 @@ async function fetchSystemNotice() {
 function renderSystemNotice() {
     const n = _systemNotice;
     let bar = document.getElementById('systemNoticeBar');
-    if (!n?.active || (!n.message && !n.read_only)) { bar?.remove(); return; }
+    if (!n?.active || (!n.message && !n.read_only)) {
+        bar?.remove();
+        document.documentElement.style.removeProperty('--notice-h');
+        return;
+    }
     if (!bar) {
         bar = document.createElement('div');
         bar.id = 'systemNoticeBar';
         bar.className = 'system-notice';
         bar.setAttribute('role', 'status');
         document.body.prepend(bar);
+        // The sticky header sits just below the banner — track its height (it wraps on narrow screens)
+        new ResizeObserver(() => {
+            if (bar.isConnected) document.documentElement.style.setProperty('--notice-h', bar.offsetHeight + 'px');
+        }).observe(bar);
     }
     bar.dataset.level = ['info', 'warning', 'critical'].includes(n.level) ? n.level : 'info';
     const parts = [];
