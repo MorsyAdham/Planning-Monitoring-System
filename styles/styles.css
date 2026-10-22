@@ -11718,3 +11718,8 @@ th.vpx-grp-processing:first-of-type {
     color: var(--clr-accent-green, #22c55e);
     border: 1px solid rgba(34, 197, 94, .3);
 }
+/* Manage Processes: K9 Assembly segment next to the line name */
+.kd2-seg-chip { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; font-size: .7rem; font-weight: 700; color: #fff; }
+.kd2-seg-hull { background: #3b82f6; }
+.kd2-seg-turret { background: #a855f7; }
+.kd2-seg-marriage { background: #10b981; }

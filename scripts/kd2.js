@@ -1148,17 +1148,18 @@ window.PPMSModuleRuntime = (() => {
             rows = rows.filter(row => stationVisibility(row.vehicle || row.vehicle_type, row.station_code) === 'visible');
         }
 
-        // Apply K9 component filter using component_group from station definitions
+        // Apply K9 component filter: the station's line (component_group) and,
+        // on the Assembly line, its segment (Hull / Turret / Marriage)
         if (filters.k9Component && filters.k9Component.length) {
             const compMap = new Map(
                 state.stations
                     .filter(s => s.vehicle_type === (filters.vehicle?.length === 1 ? filters.vehicle[0] : 'K9'))
-                    .map(s => [s.station_code, s.component_group || ''])
+                    .map(s => [s.station_code, s])
             );
-            const wanted = filters.k9Component; // ['Hull'] and/or ['Turret']
+            const wanted = filters.k9Component; // any of 'Hull', 'Turret', 'Marriage'
             rows = rows.filter(row => {
-                const grp = compMap.get(row.station_code) || '';
-                return wanted.some(w => grp === w || grp.startsWith(w + ' '));
+                const s = compMap.get(row.station_code);
+                return stationInComponent(s?.component_group, s?.assembly_segment, wanted);
             });
         }
         
@@ -1776,6 +1777,21 @@ window.PPMSModuleRuntime = (() => {
         return state.stations.some(s => Object.prototype.hasOwnProperty.call(s, 'requires_inspection'));
     }
 
+    // K9 Assembly line segments: the Hull side (A1–A4), the Turret side (A8–A11)
+    // and the Marriage of the two (A5–A7). Separate from component_group, which
+    // decides the line itself (route order, Gantt bands, forecast).
+    const ASSEMBLY_SEGMENTS = ['Hull', 'Turret', 'Marriage'];
+    function segmentAvailable() {
+        return state.stations.some(s => Object.prototype.hasOwnProperty.call(s, 'assembly_segment'));
+    }
+    /** Does a station belong to a K9 component filter value? Hull / Turret match
+     *  their own line and the Assembly segment of the same name; Marriage only
+     *  its segment. */
+    function stationInComponent(group, segment, wanted) {
+        const grp = group || '';
+        return wanted.some(w => grp === w || grp.startsWith(w + ' ') || (!!segment && segment === w));
+    }
+
     function renderProcessViewRow(station, isActive = false) {
         const lead = leadTimeRecord(station.vehicle_type, 'station', station.category_code, station.station_code);
         return `
@@ -1789,7 +1805,7 @@ window.PPMSModuleRuntime = (() => {
                     ${station.requires_inspection ? '<span class="kd2-xray-chip kd2-insp-chip" title="Requires inspection">INSPECTION</span>' : ''}
                 </td>
                 <td>${escapeHtml(station.work_center || '—')}</td>
-                <td>${escapeHtml(stationTrack(station).line)}</td>
+                <td>${escapeHtml(stationTrack(station).line)}${station.assembly_segment ? ` <span class="kd2-seg-chip kd2-seg-${escapeHtml(station.assembly_segment.toLowerCase())}">${escapeHtml(station.assembly_segment)}</span>` : ''}</td>
                 <td>${escapeHtml(leadTimeText(station.vehicle_type, station.category_code, station.station_code))}</td>
                 <td>${escapeHtml(lead?.lead_time_source || '—')}</td>
                 <td>${escapeHtml(station.notes || '—')}</td>
@@ -1848,6 +1864,10 @@ window.PPMSModuleRuntime = (() => {
                 ${field('Station Name', `<input type="text" id="peName" class="kd2-process-input" value="${isNew ? '' : escapeHtml(station.station_name)}" placeholder="Station name" />`, { htmlFor: 'peName', wide: true })}
                 ${field('Work Center', `<input type="text" id="peWorkCenter" class="kd2-process-input" value="${isNew ? '' : escapeHtml(station.work_center || '')}" placeholder="Optional" />`, { htmlFor: 'peWorkCenter' })}
                 ${isK9 ? field('Component Track', `<select id="peComponent" class="kd2-process-input">${templateComponentOptions(isNew ? '' : station.component_group)}</select>`, { htmlFor: 'peComponent' }) : ''}
+                ${isK9 ? field('Assembly Segment', `<select id="peSegment" class="kd2-process-input"${segmentAvailable() ? ' title="Assembly line only: which side of the line this station works on. Highlighted on the VPX and included in the K9 Component filter."' : ' disabled title="Needs database update 65. Ask the administrator to run it."'}>
+                        <option value="">${segmentAvailable() ? '— None —' : 'Needs database update 65'}</option>
+                        ${ASSEMBLY_SEGMENTS.map(sg => `<option value="${sg}" ${!isNew && station.assembly_segment === sg ? 'selected' : ''}>${sg}</option>`).join('')}
+                    </select>`, { htmlFor: 'peSegment' }) : ''}
                 ${field('Lead Time (days)', `<input type="number" id="peLeadTime" class="kd2-process-input" min="0.25" step="0.25" value="${lead?.lead_time_days ?? ''}" placeholder="Blank = pending" />`, { htmlFor: 'peLeadTime' })}
                 ${field('Lead Source', `<input type="text" id="peLeadSource" class="kd2-process-input" value="${escapeHtml(lead?.lead_time_source || '')}" placeholder="e.g. Time study, Engineering estimate" title="Where the duration estimate came from — for reference only, not used in scheduling" />`, { htmlFor: 'peLeadSource' })}
                 ${field('Notes', `<input type="text" id="peNotes" class="kd2-process-input" value="${isNew ? '' : escapeHtml(station.notes || '')}" placeholder="Optional" />`, { htmlFor: 'peNotes', wide: true })}
@@ -2330,6 +2350,7 @@ window.PPMSModuleRuntime = (() => {
         const stationName = document.getElementById('peName')?.value?.trim() || '';
         const workCenter = document.getElementById('peWorkCenter')?.value?.trim() || '';
         const componentGroup = vehicle === 'K9' ? (document.getElementById('peComponent')?.value || '') : '';
+        const assemblySegment = vehicle === 'K9' ? (document.getElementById('peSegment')?.value || '') : '';
         const stationNotes = document.getElementById('peNotes')?.value?.trim() || '';
         const leadSource = document.getElementById('peLeadSource')?.value?.trim() || '';
         const leadTime = parseLeadTimeValue(document.getElementById('peLeadTime')?.value || '');
@@ -2385,6 +2406,8 @@ window.PPMSModuleRuntime = (() => {
             requires_xray: requiresXray,
             // Only sent once migration 64 has added the column
             ...(inspectionAvailable() ? { requires_inspection: requiresInspection } : {}),
+            // Only sent once migration 65 has added the column
+            ...(segmentAvailable() ? { assembly_segment: assemblySegment || null } : {}),
         };
         const routePayload = {
             vehicle_type: vehicle,
@@ -9121,6 +9144,7 @@ window.PPMSModuleRuntime = (() => {
                                 category_name:     cat?.category_name ?? s.category_code ?? null,
                                 category_sequence: cat?.category_sequence ?? 9999,
                                 component_group:   s.component_group || null,
+                                assembly_segment:  s.assembly_segment || null,
                             });
                         }
                         if (s.work_center) {
@@ -9203,13 +9227,13 @@ window.PPMSModuleRuntime = (() => {
             getStationOrderByCode(vehicle) {
                 const lane = window.PPMSModuleRuntime.getStationLaneOrder(vehicle);
                 const rowKeyByCode = buildStationRowKeyMap(vehicle);
-                const m = new Map(); // station_code -> { sortKey, line }
+                const m = new Map(); // station_code -> { sortKey, line, segment }
                 (state.stations || [])
                     .filter(s => !vehicle || s.vehicle_type === vehicle)
                     .forEach(s => {
                         const rk = rowKeyByCode.get(s.station_code) || s.station_name || s.station_code;
                         const info = lane.get(rk);
-                        if (info) m.set(s.station_code, { sortKey: info.sortKey, line: info.line });
+                        if (info) m.set(s.station_code, { sortKey: info.sortKey, line: info.line, segment: s.assembly_segment || null });
                     });
                 return m;
             },

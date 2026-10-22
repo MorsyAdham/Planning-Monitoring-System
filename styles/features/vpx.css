@@ -215,3 +215,22 @@
 .vpx-date-pop-row .btn { padding: 4px 8px; font-size: .72rem; }
 .vpx-date-pop-error { color: var(--clr-overdue); font-size: .74rem; min-height: 1em; margin: 2px 0 6px; }
 .vpx-date-pop-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ── K9 Assembly segments (Manage Processes → Assembly Segment) ──
+   Hull / Turret / Marriage columns get their own band in the group header,
+   a faint tint and a divider where each segment starts. The tint is an
+   overlay, so the status colours and the hover highlight stay as they are. */
+.vpx-seg-hull { --vpx-seg: #3b82f6; }
+.vpx-seg-turret { --vpx-seg: #a855f7; }
+.vpx-seg-marriage { --vpx-seg: #10b981; }
+.vpx-table td.vpx-seg { position: relative; }
+.vpx-table .vpx-seg::before {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: color-mix(in srgb, var(--vpx-seg) 7%, transparent);
+}
+.vpx-table th.vpx-th-group.vpx-seg::before { background: color-mix(in srgb, var(--vpx-seg) 16%, transparent); }
+.vpx-table .vpx-seg-start { border-left: 2px solid color-mix(in srgb, var(--vpx-seg) 70%, transparent) !important; }
+.vpx-seg-tag {
+    display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 4px;
+    background: var(--vpx-seg); color: #fff; font-size: .68rem; font-weight: 700; letter-spacing: .04em; vertical-align: 1px;
+}

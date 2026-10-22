@@ -1805,7 +1805,7 @@ const filterState = {
 
 const filterOptions = {
     vehicle: [],
-    k9Component: [{ value: 'Hull', label: 'Hull' }, { value: 'Turret', label: 'Turret' }],
+    k9Component: [{ value: 'Hull', label: 'Hull' }, { value: 'Turret', label: 'Turret' }, { value: 'Marriage', label: 'Marriage' }],
     battalion: [],
     unit: [],       // { value: vehicle_no, label, vehicle }
     // Default (non-KD2) module's fixed category list — KD2 overrides this at
@@ -1843,7 +1843,7 @@ const filterOptions = {
     ],
     issueReporter: [],
     reportVehicle: [],
-    reportK9Component: [{ value: 'Hull', label: 'Hull' }, { value: 'Turret', label: 'Turret' }],
+    reportK9Component: [{ value: 'Hull', label: 'Hull' }, { value: 'Turret', label: 'Turret' }, { value: 'Marriage', label: 'Marriage' }],
     reportBattalion: [],
     reportUnit: [],
     reportCategory: [],
@@ -7432,7 +7432,22 @@ function getKd2VpxColumnMeta(task) {
         name,
         group,
         order,
+        segment: liveInfo?.segment || null,
     };
+}
+
+/* K9 Assembly line segments (Manage Processes → Assembly Segment), in the
+   order the VPX shows them: both sides are built, then married. */
+const VPX_SEGMENTS = {
+    Hull: { rank: 0, color: 'rgba(59,130,246,.7)', xl: { bg: 'FF2563EB', fg: 'FFffffff' } },
+    Turret: { rank: 1, color: 'rgba(168,85,247,.7)', xl: { bg: 'FF9333EA', fg: 'FFffffff' } },
+    Marriage: { rank: 2, color: 'rgba(16,185,129,.7)', xl: { bg: 'FF059669', fg: 'FFffffff' } },
+};
+const _vpxSegSlug = seg => String(seg || '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+/** Excel band colour for a VPX header band label ("Assembly · Hull"), or null. */
+function _vpxBandXlColor(label) {
+    const seg = String(label || '').split(' · ')[1];
+    return VPX_SEGMENTS[seg]?.xl || null;
 }
 
 function getVpxTaskStationKey(task) {
@@ -7456,19 +7471,32 @@ function buildVpxColumns(data) {
     });
 
     // meta.order already comes from live config via getKd2VpxColumnMeta.
-    return [...cols.values()]
+    const sorted = [...cols.values()]
         .sort((a, b) => {
             if (a.order !== b.order) return a.order - b.order;
             const groupCmp = String(a.group || '').localeCompare(String(b.group || ''));
             if (groupCmp !== 0) return groupCmp;
             return String(a.name || '').localeCompare(String(b.name || ''));
-        })
-        .map(col => ({
-            code: col.code,
-            name: col.name,
-            group: col.group,
-            resolve: vehicle => col.vehicles.has(vehicle) ? col.key : null,
-        }));
+        });
+    // Assembly segments: the route runs the Hull and Turret sides in parallel, so
+    // their stations interleave. Pull each group's segmented columns together,
+    // Hull → Turret → Marriage, where that group's first segmented column sits.
+    [...new Set(sorted.filter(c => VPX_SEGMENTS[c.segment]).map(c => c.group))].forEach(group => {
+        const segCols = sorted.filter(c => c.group === group && VPX_SEGMENTS[c.segment]);
+        const at = sorted.indexOf(segCols[0]);
+        segCols.forEach(c => sorted.splice(sorted.indexOf(c), 1));
+        segCols.sort((a, b) => VPX_SEGMENTS[a.segment].rank - VPX_SEGMENTS[b.segment].rank || a.order - b.order);
+        sorted.splice(at, 0, ...segCols);
+    });
+    return sorted.map(col => ({
+        code: col.code,
+        name: col.name,
+        group: col.group,
+        segment: VPX_SEGMENTS[col.segment] ? col.segment : null,
+        // Header band: the category, split by segment where one is set
+        band: VPX_SEGMENTS[col.segment] ? `${col.group} · ${col.segment}` : col.group,
+        resolve: vehicle => col.vehicles.has(vehicle) ? col.key : null,
+    }));
 }
 
 function buildVpxRows(data) {
@@ -7820,13 +7848,16 @@ function renderVPX(data) {
         return;
     }
 
-    // Column group spans + color map (mirrors F100 VPX palette)
+    // Column group spans + color map (mirrors F100 VPX palette). A category
+    // split into Assembly segments gets one band per segment, in its colour.
     const groups = [];
     const grpColorMap = {};
     let grpColorIdx = 0;
+    const bandOf = col => col.band || col.group;
+    const colColor = col => (VPX_SEGMENTS[col.segment]?.color || grpColorMap[col.group] || F100_VPX_PART_COLORS[0]);
     activeCols.forEach(col => {
-        if (!groups.length || groups[groups.length - 1].label !== col.group) {
-            groups.push({ label: col.group, span: 1 });
+        if (!groups.length || groups[groups.length - 1].label !== bandOf(col)) {
+            groups.push({ label: bandOf(col), span: 1, col });
             if (!(col.group in grpColorMap)) {
                 grpColorMap[col.group] = F100_VPX_PART_COLORS[grpColorIdx % F100_VPX_PART_COLORS.length];
                 grpColorIdx++;
@@ -7835,6 +7866,10 @@ function renderVPX(data) {
             groups[groups.length - 1].span++;
         }
     });
+    // Segment classes on a column's header and cells: a tint, plus a divider where a segment starts
+    const segCls = (col, ci) => (col.segment
+        ? ' vpx-seg vpx-seg-' + _vpxSegSlug(col.segment) + (ci === 0 || activeCols[ci - 1].segment !== col.segment ? ' vpx-seg-start' : '')
+        : '');
 
     function grpSlug(g) { return g.toLowerCase().replace(/[^a-z0-9]+/g, '-'); }
 
@@ -7843,15 +7878,18 @@ function renderVPX(data) {
     // Group header row — colored top border matching F100 style
     html += `<tr class="vpx-group-row"><th class="vpx-th-vehicle" rowspan="2">${meta.headerLabel.replace(/ · /g, ' &middot; ')}</th>`;
     groups.forEach(g => {
-        const color = grpColorMap[g.label] || F100_VPX_PART_COLORS[0];
-        html += '<th class="vpx-th-group vpx-grp-' + grpSlug(g.label) + '" colspan="' + g.span + '" style="box-shadow:inset 0 2px 0 ' + color + '">' + g.label + '</th>';
+        const color = colColor(g.col);
+        const seg = g.col.segment;
+        html += '<th class="vpx-th-group vpx-grp-' + grpSlug(g.col.group) + segCls(g.col, activeCols.indexOf(g.col)) + '" colspan="' + g.span + '" style="box-shadow:inset 0 2px 0 ' + color + '"'
+            + (seg ? ' title="' + esc(g.col.group + ' line · ' + seg + ' segment') + '"' : '') + '>'
+            + (seg ? esc(g.col.group) + ' <span class="vpx-seg-tag">' + esc(seg) + '</span>' : esc(g.label)) + '</th>';
     });
     if (stationMode) html += '<th class="vpx-th-delay" rowspan="2">Delay</th>';
     html += '</tr><tr class="vpx-col-row">';
     activeCols.forEach((col, ci) => {
-        const color = grpColorMap[col.group] || F100_VPX_PART_COLORS[0];
-        const tip = esc(col.group + ' · ' + col.code + (col.code !== col.name ? ' ' + col.name : ''));
-        html += '<th class="vpx-th-col vpx-grp-' + grpSlug(col.group) + '" data-col="' + ci + '" title="' + tip + '" style="box-shadow:inset 0 -2px 0 ' + color.replace('.7', '.55') + '"><span class="vpx-col-step">' + esc(col.code) + '</span><span class="vpx-col-name">' + esc(col.name !== col.code ? col.name : '') + '</span></th>';
+        const color = colColor(col);
+        const tip = esc(bandOf(col) + ' · ' + col.code + (col.code !== col.name ? ' ' + col.name : ''));
+        html += '<th class="vpx-th-col vpx-grp-' + grpSlug(col.group) + segCls(col, ci) + '" data-col="' + ci + '" title="' + tip + '" style="box-shadow:inset 0 -2px 0 ' + color.replace('.7', '.55') + '"><span class="vpx-col-step">' + esc(col.code) + '</span><span class="vpx-col-name">' + esc(col.name !== col.code ? col.name : '') + '</span></th>';
     });
     html += '</tr></thead><tbody>';
 
@@ -7931,7 +7969,7 @@ function renderVPX(data) {
         var proj = stationMode ? _vpxProjectRow(row, activeCols, activeCols) : null;
 
         activeCols.forEach((col, ci) => {
-            var grpCls = 'vpx-grp-' + grpSlug(col.group);
+            var grpCls = 'vpx-grp-' + grpSlug(col.group) + segCls(col, ci);
             var stationKey = col.resolve(row.vehicle);
 
             if (stationKey === null) {
@@ -12509,8 +12547,10 @@ function applyReportModalFilters(rows) {
             if (!matchesMultiSet(rc, getModuleCategory(r.process_station, r))) return false;
             if (!matchesMultiSet(rw, r.week)) return false;
             if (needK9 && r.vehicle === 'K9') {
-                const grp = compMap.get(r.process_station)?.component_group || '';
-                if (![...rk9].some(w => grp === w || grp.startsWith(w + ' '))) return false;
+                // The station's line, or on the Assembly line its segment (Hull / Turret / Marriage)
+                const st = compMap.get(r.process_station);
+                const grp = st?.component_group || '', seg = st?.assembly_segment || '';
+                if (![...rk9].some(w => grp === w || grp.startsWith(w + ' ') || (seg && seg === w))) return false;
             }
             return true;
         });
@@ -14668,7 +14708,9 @@ async function exportVpxPDF(preview) {
                         'Final Inspection': [6, 95, 70],
                         'Final Test': [51, 65, 85],
                     };
-                    const [r, g, b] = grpColors[col.group] || [30, 58, 138];
+                    // Assembly segments (Hull / Turret / Marriage) in their own colour
+                    const segRgb = { Hull: [37, 99, 235], Turret: [147, 51, 234], Marriage: [5, 150, 105] }[col.segment];
+                    const [r, g, b] = segRgb || grpColors[col.group] || [30, 58, 138];
                     data.cell.styles.fillColor = [r, g, b];
                     data.cell.styles.textColor = [255, 255, 255];
                 }
@@ -14799,17 +14841,17 @@ async function exportVpxExcel(preview) {
 
     // ── Row 4: Group header ────────────────────────────────────────
     const grpRowData = [''];
-    activeCols.forEach(col => grpRowData.push(col.group));
+    activeCols.forEach(col => grpRowData.push(col.band || col.group));
     ws.addRow(grpRowData);
     const grpRow = ws.getRow(4);
     grpRow.height = 18;
 
     // Style group header cells + merge consecutive same-group cells
-    let grpStart = 2, grpCurrent = activeCols[0]?.group;
+    let grpStart = 2, grpCurrent = activeCols[0]?.band || activeCols[0]?.group;
     const applyGrpMerge = (start, end, label) => {
         if (start < end) ws.mergeCells(4, start, 4, end);
         const gc = ws.getCell(4, start);
-        const gClr = GRP_COLOR[label] || { bg: 'FF334155', fg: 'FFffffff' };
+        const gClr = _vpxBandXlColor(label) || GRP_COLOR[label] || { bg: 'FF334155', fg: 'FFffffff' };
         gc.value = label;
         gc.font = { name: 'Calibri', size: 9, bold: true, color: { argb: gClr.fg } };
         gc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: gClr.bg } };
@@ -14817,10 +14859,10 @@ async function exportVpxExcel(preview) {
     };
     activeCols.forEach((col, i) => {
         const colN = i + 2;
-        if (col.group !== grpCurrent) {
+        if ((col.band || col.group) !== grpCurrent) {
             applyGrpMerge(grpStart, colN - 1, grpCurrent);
             grpStart = colN;
-            grpCurrent = col.group;
+            grpCurrent = col.band || col.group;
         }
         if (i === activeCols.length - 1) applyGrpMerge(grpStart, colN, grpCurrent);
     });
@@ -15365,15 +15407,15 @@ function _addVpxStationReportSheet(wb, built, sheetName, categoryForReason = _vp
 
     // Row 4 — station group header (blank over the Delay/Delay Reason columns)
     const grpRowData = [''];
-    activeCols.forEach(col => grpRowData.push(col.group));
+    activeCols.forEach(col => grpRowData.push(col.band || col.group));
     grpRowData.push('', '');
     ws.addRow(grpRowData);
     ws.getRow(4).height = 18;
-    let grpStart = 2, grpCurrent = activeCols[0]?.group;
+    let grpStart = 2, grpCurrent = activeCols[0]?.band || activeCols[0]?.group;
     const applyGrpMerge = (start, end, label) => {
         if (start < end) ws.mergeCells(4, start, 4, end);
         const gc = ws.getCell(4, start);
-        const gClr = VPX_REPORT_GRP_COLOR[label] || { bg: 'FF334155', fg: 'FFffffff' };
+        const gClr = _vpxBandXlColor(label) || VPX_REPORT_GRP_COLOR[label] || { bg: 'FF334155', fg: 'FFffffff' };
         gc.value = label;
         gc.font = { name: 'Calibri', size: 9, bold: true, color: { argb: gClr.fg } };
         gc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: gClr.bg } };
@@ -15381,10 +15423,10 @@ function _addVpxStationReportSheet(wb, built, sheetName, categoryForReason = _vp
     };
     activeCols.forEach((col, i) => {
         const colN = i + 2;
-        if (col.group !== grpCurrent) {
+        if ((col.band || col.group) !== grpCurrent) {
             applyGrpMerge(grpStart, colN - 1, grpCurrent);
             grpStart = colN;
-            grpCurrent = col.group;
+            grpCurrent = col.band || col.group;
         }
         if (i === activeCols.length - 1) applyGrpMerge(grpStart, colN, grpCurrent);
     });
