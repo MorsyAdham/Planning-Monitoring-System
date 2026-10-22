@@ -72,7 +72,7 @@ const FIELD = {
     password_changed: 'Password', title: 'Title', description: 'Description', category: 'Category', priority: 'Priority',
     proposed_solution: 'Proposed solution', action_taken: 'Action taken', pic: 'Person in charge', module: 'Module',
     name: 'Name', is_baseline: 'Baseline', count: 'Blocks', blocks: 'Blocks', units: 'Units', reference: 'Reference unit',
-    xray_status: 'X-ray status', delay_reason: 'Delay reason', unit_code: 'Unit code', unit_name: 'Unit name',
+    xray_status: 'X-ray status', xray_cycles: 'X-ray cycles', inspection_cycles: 'Inspection cycles', final_qa_date: 'Final QA date', delay_reason: 'Delay reason', unit_code: 'Unit code', unit_name: 'Unit name',
     away_minutes: 'Away (minutes)', signed_in_at: 'Signed in at', file: 'File', format: 'Format', from: 'Opened from',
 };
 const HIDDEN = new Set(['id', 'created_at', 'updated_at', 'plan_version_id', 'password_hash', '_ctx', 'category_sequence',

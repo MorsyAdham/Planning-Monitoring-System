@@ -1771,6 +1771,11 @@ window.PPMSModuleRuntime = (() => {
         if ([...select.options].some(o => o.value === current)) select.value = current;
     }
 
+    /** Migration 64 applied — stations are loaded with select('*'), so the column shows up on them. */
+    function inspectionAvailable() {
+        return state.stations.some(s => Object.prototype.hasOwnProperty.call(s, 'requires_inspection'));
+    }
+
     function renderProcessViewRow(station, isActive = false) {
         const lead = leadTimeRecord(station.vehicle_type, 'station', station.category_code, station.station_code);
         return `
@@ -1781,6 +1786,7 @@ window.PPMSModuleRuntime = (() => {
                     <strong>${escapeHtml(station.station_name)}</strong>
                     <span class="kd2-process-code">${escapeHtml(station.station_code)}</span>
                     ${station.requires_xray ? '<span class="kd2-xray-chip" title="Requires X-ray inspection">X-RAY</span>' : ''}
+                    ${station.requires_inspection ? '<span class="kd2-xray-chip kd2-insp-chip" title="Requires inspection">INSPECTION</span>' : ''}
                 </td>
                 <td>${escapeHtml(station.work_center || '—')}</td>
                 <td>${escapeHtml(stationTrack(station).line)}</td>
@@ -1849,6 +1855,12 @@ window.PPMSModuleRuntime = (() => {
                     <label class="form-check" style="padding:0">
                         <input type="checkbox" id="peRequiresXray" ${(!isNew && station.requires_xray) ? 'checked' : ''} />
                         <span>Requires X-ray inspection<small>Adds an X-ray marker to this station's unit rows for logging X-ray / repair cycles</small></span>
+                    </label>
+                </div>
+                <div class="kd2-pf-field kd2-pf-field-wide kd2-pf-toggle">
+                    <label class="form-check" style="padding:0"${inspectionAvailable() ? '' : ' title="Needs database update 64 — ask the administrator to run it."'}>
+                        <input type="checkbox" id="peRequiresInspection" ${(!isNew && station.requires_inspection) ? 'checked' : ''} ${inspectionAvailable() ? '' : 'disabled'} />
+                        <span>Requires inspection<small>${inspectionAvailable() ? 'Adds an Inspection marker for logging inspection / repair cycles. Can be combined with X-ray — the task completes when both pass' : 'Needs database update 64 — ask the administrator to run it'}</small></span>
                     </label>
                 </div>
             </div>
@@ -2322,6 +2334,7 @@ window.PPMSModuleRuntime = (() => {
         const leadSource = document.getElementById('peLeadSource')?.value?.trim() || '';
         const leadTime = parseLeadTimeValue(document.getElementById('peLeadTime')?.value || '');
         const requiresXray = !!document.getElementById('peRequiresXray')?.checked;
+        const requiresInspection = !!document.getElementById('peRequiresInspection')?.checked;
 
         if (!categoryCode) {
             setProcessError('Select a category before saving.');
@@ -2370,6 +2383,8 @@ window.PPMSModuleRuntime = (() => {
             is_active: true,
             notes: stationNotes || null,
             requires_xray: requiresXray,
+            // Only sent once migration 64 has added the column
+            ...(inspectionAvailable() ? { requires_inspection: requiresInspection } : {}),
         };
         const routePayload = {
             vehicle_type: vehicle,

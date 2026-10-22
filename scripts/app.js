@@ -3825,7 +3825,7 @@ function _kd2QueryFilters() {
  *  stitch them in. */
 async function _stitchKd2Xray(rows) {
     const xrayProgressIds = rows
-        .filter(row => row.progress?.id && isXrayEligible(row))
+        .filter(row => row.progress?.id && qcKindsFor(row).length)
         .map(row => row.progress.id);
     if (!xrayProgressIds.length) return;
     try {
@@ -3833,7 +3833,7 @@ async function _stitchKd2Xray(rows) {
         const xrayRows = [];
         for (let i = 0; i < xrayProgressIds.length; i += 150) {
             const { data: chunk, error: xrayErr } = await db.from('kd2_progress')
-                .select('id, xray_cycles, final_qa_date')
+                .select(_qcInspectionAvailable ? 'id, xray_cycles, inspection_cycles, final_qa_date' : 'id, xray_cycles, final_qa_date')
                 .in('id', xrayProgressIds.slice(i, i + 150));
             if (xrayErr) throw xrayErr;
             xrayRows.push(...(chunk || []));
@@ -3843,6 +3843,7 @@ async function _stitchKd2Xray(rows) {
             const x = row.progress?.id ? xrayMap.get(row.progress.id) : null;
             if (x) {
                 row.progress.xray_cycles = x.xray_cycles || [];
+                if (_qcInspectionAvailable) row.progress.inspection_cycles = x.inspection_cycles || [];
                 row.progress.final_qa_date = x.final_qa_date || null;
             }
         });
@@ -4131,9 +4132,32 @@ function calculateStatus(row) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
-   6b. X-RAY / REPAIR CYCLE (KD2 stations flagged "Requires X-ray")
+   6b. QUALITY CHECK CYCLES — X-ray and Inspection (KD2 stations flagged
+   "Requires X-ray" and/or "Requires inspection" in Manage Processes).
+   Both use the same loop: check → pass, or fail → repair → check again,
+   until it passes. A station can require one or both.
    ────────────────────────────────────────────────────────────────── */
 
+const QC_KINDS = {
+    xray: {
+        label: 'X-ray', field: 'xray_cycles', startKey: 'xray_start', endKey: 'xray_end',
+        icon: '<svg class="qc-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 5V3.2C2 2.5 2.5 2 3.2 2H5M11 2h1.8c.7 0 1.2.5 1.2 1.2V5M14 11v1.8c0 .7-.5 1.2-1.2 1.2H11M5 14H3.2C2.5 14 2 13.5 2 12.8V11"/><path d="M4.5 8h7"/></svg>',
+        stages: { not_started: 'X-ray', awaiting: 'X-ray', in_check: 'In X-ray', failed_awaiting_repair: 'Repair Needed', in_repair: 'In Repair', passed: 'QA Passed' },
+    },
+    inspection: {
+        label: 'Inspection', field: 'inspection_cycles', startKey: 'inspection_start', endKey: 'inspection_end',
+        icon: '<svg class="qc-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.3"/><path d="M10.3 10.3 14 14"/></svg>',
+        stages: { not_started: 'Inspection', awaiting: 'Inspection', in_check: 'In Inspection', failed_awaiting_repair: 'Repair Needed', in_repair: 'In Repair', passed: 'Insp. Passed' },
+    },
+};
+/** Short stage words for the compact VPX chips (the icon says which check). */
+const QC_SHORT_STAGE = { not_started: 'To do', awaiting: 'Waiting', in_check: 'Checking', failed_awaiting_repair: 'Failed', in_repair: 'Repair', passed: 'Passed' };
+const QC_STAGE_CLS = {
+    not_started: 'xray-marker-notstarted', awaiting: 'xray-marker-awaiting', in_check: 'xray-marker-inxray',
+    failed_awaiting_repair: 'xray-marker-failed', in_repair: 'xray-marker-inrepair', passed: 'xray-marker-passed',
+};
+
+/* X-ray stage names used by the X-ray Status report (kept as they were). */
 const XRAY_STAGE_META = {
     not_started:           { label: 'X-ray',         cls: 'xray-marker-notstarted' },
     awaiting_xray:          { label: 'X-ray',         cls: 'xray-marker-awaiting' },
@@ -4143,12 +4167,33 @@ const XRAY_STAGE_META = {
     passed:                 { label: 'QA Passed',     cls: 'xray-marker-passed' },
 };
 
-/** vehicle_type||station_name -> true, for stations flagged "Requires X-ray" in Manage Processes.
+/** vehicle_type||station_name, for stations flagged in Manage Processes.
  *  Populated by loadXrayEligibleStations(), called from loadFilters()'s KD2 branch. */
 let _xrayEligibleStationKeys = new Set();
+let _inspectionEligibleStationKeys = new Set();
+/** Migration 64 applied (requires_inspection / inspection_cycles columns exist). */
+let _qcInspectionAvailable = false;
 
 async function loadXrayEligibleStations() {
-    if (!isKD2Module()) { _xrayEligibleStationKeys = new Set(); return; }
+    _xrayEligibleStationKeys = new Set();
+    _inspectionEligibleStationKeys = new Set();
+    if (!isKD2Module()) return;
+    try {
+        const { data, error } = await db.from('kd2_process_stations')
+            .select('vehicle_type, station_name, requires_xray, requires_inspection')
+            .eq('is_active', true).or('requires_xray.eq.true,requires_inspection.eq.true');
+        if (error) throw error;
+        _qcInspectionAvailable = true;
+        (data || []).forEach(s => {
+            const key = s.vehicle_type + '||' + s.station_name;
+            if (s.requires_xray) _xrayEligibleStationKeys.add(key);
+            if (s.requires_inspection) _inspectionEligibleStationKeys.add(key);
+        });
+        return;
+    } catch (e) {
+        // Migration 64 not applied yet — X-ray only.
+        _qcInspectionAvailable = false;
+    }
     try {
         const { data, error } = await db.from('kd2_process_stations')
             .select('vehicle_type, station_name').eq('requires_xray', true).eq('is_active', true);
@@ -4157,63 +4202,113 @@ async function loadXrayEligibleStations() {
     } catch (e) {
         // Migration 42 not applied yet, or the column doesn't exist — no stations are X-ray-eligible until it is.
         console.warn('X-ray-eligible station list unavailable:', e.message);
-        _xrayEligibleStationKeys = new Set();
     }
 }
 
-/** Whether a row is eligible for the X-ray/repair marker at all — stations flagged "Requires X-ray". */
-function isXrayEligible(row) {
-    return isKD2Module() && _xrayEligibleStationKeys.has((row.vehicle || '') + '||' + (row.process_station || ''));
+/** Whether a row's station requires this check ('xray' | 'inspection'). */
+function isQcEligible(row, kind) {
+    if (!isKD2Module()) return false;
+    const set = kind === 'inspection' ? _inspectionEligibleStationKeys : _xrayEligibleStationKeys;
+    return set.has((row.vehicle || '') + '||' + (row.process_station || ''));
+}
+function isXrayEligible(row) { return isQcEligible(row, 'xray'); }
+/** The checks a row's station requires, in display order. */
+function qcKindsFor(row) { return ['xray', 'inspection'].filter(k => isQcEligible(row, k)); }
+function qcCycles(progress, kind) {
+    const c = progress?.[QC_KINDS[kind].field];
+    return Array.isArray(c) ? c : [];
 }
 
-/** Derive the current X-ray/repair stage from a progress object. Pure — no DB access.
- *  Once a cycle exists, `xray_cycles` is the source of truth for the stage, not
- *  `completed` — a failed X-ray deliberately clears `completed` (§5 completion
+/** Derive the current stage of one check from a progress object. Pure — no DB access.
+ *  Once a cycle exists, the cycles are the source of truth for the stage, not
+ *  `completed` — a failed check deliberately clears `completed` (completion
  *  coupling), so gating on it here would hide the marker for a row that's
  *  actively mid-repair. `completed` only matters before any cycle has started,
- *  to decide whether the row is even eligible to show "Awaiting X-ray" yet. */
-function getXrayStage(progress) {
-    const cycles = Array.isArray(progress?.xray_cycles) ? progress.xray_cycles : [];
+ *  to decide whether the row shows "waiting for the check" yet.
+ *  Stages: not_started · awaiting · in_check · failed_awaiting_repair · in_repair · passed */
+function getQcStage(progress, kind) {
+    const K = QC_KINDS[kind];
+    const cycles = qcCycles(progress, kind);
     if (!cycles.length) {
         // Eligible but nothing recorded yet. 'not_started' still renders a
-        // clickable marker (the welding station may not be complete yet) so
-        // X-ray/repair data can be logged straight from the table.
-        return progress?.completed ? { stage: 'awaiting_xray', cycle: null } : { stage: 'not_started', cycle: null };
+        // clickable marker (the station may not be complete yet) so check /
+        // repair data can be logged straight from the table.
+        return progress?.completed ? { stage: 'awaiting', cycle: null } : { stage: 'not_started', cycle: null };
     }
-    if (progress.final_qa_date) return { stage: 'passed', cycle: null };
     const last = cycles[cycles.length - 1];
-    if (!last.xray_end) return { stage: 'in_xray', cycle: last };
+    if (last.result === 'pass') return { stage: 'passed', cycle: last };
+    if (!last[K.endKey]) return { stage: 'in_check', cycle: last };
     if (last.result === 'fail' && !last.repair_start) return { stage: 'failed_awaiting_repair', cycle: last };
     if (last.result === 'fail' && !last.repair_end) return { stage: 'in_repair', cycle: last };
-    return { stage: 'awaiting_xray', cycle: null }; // repair just finished — ready for the next X-ray cycle
+    return { stage: 'awaiting', cycle: null }; // repair just finished — ready for the next check
 }
 
-/** Given the (possibly just-edited) cycles array, derive final_qa_date and the
- *  completed/completion_date that should follow from it. Single source of truth
- *  for both live actions (saveXrayAction) and history edits (saveXrayCycleEdit). */
-function applyXrayCompletionCoupling(progress, cycles) {
-    const last = cycles[cycles.length - 1];
-    // Mirrors getXrayStage's reasoning: passing is terminal (no cycle follows a
-    // pass), so only the last cycle in the array ever determines the outcome.
-    if (last && last.result === 'pass') return { final_qa_date: last.xray_end, completed: true, completion_date: last.xray_end };
-    if (last && last.result === 'fail') return { final_qa_date: null, completed: false, completion_date: null };
+/** X-ray stage with the report's stage names (awaiting_xray / in_xray). */
+function getXrayStage(progress) {
+    const { stage, cycle } = getQcStage(progress, 'xray');
+    const name = { awaiting: 'awaiting_xray', in_check: 'in_xray' }[stage] || stage;
+    return { stage: name, cycle: stage === 'passed' ? null : cycle };
+}
+
+/** Given the (possibly just-edited) cycles of one check, derive final_qa_date
+ *  and the completed/completion_date that follow from every check the station
+ *  requires: any failed check → not complete; all passed → complete on the
+ *  last pass date; otherwise leave completion as it is. Single source of truth
+ *  for live actions and history edits. */
+function applyQcCompletionCoupling(row, progress, changedKind, changedCycles) {
+    const lasts = qcKindsFor(row).map(k => {
+        const c = k === changedKind ? changedCycles : qcCycles(progress, k);
+        return { k, last: c[c.length - 1] };
+    });
+    if (lasts.some(x => x.last?.result === 'fail')) return { final_qa_date: null, completed: false, completion_date: null };
+    if (lasts.length && lasts.every(x => x.last?.result === 'pass')) {
+        const d = lasts.map(x => x.last[QC_KINDS[x.k].endKey]).filter(Boolean).sort().pop() || null;
+        return { final_qa_date: d, completed: true, completion_date: d };
+    }
     // No cycles yet, or mid-cycle (no result recorded) — leave completed/completion_date as they are.
     return { final_qa_date: null, completed: progress.completed, completion_date: progress.completion_date };
 }
 
-/** Small clickable marker for the current stage, or '' if not eligible / not completed yet. */
-function renderXrayMarker(planId, row, opts = {}) {
-    if (!isXrayEligible(row)) return '';
-    const { stage } = getXrayStage(row.progress);
-    // In dense views (VPX matrix) only surface a marker once a cycle is under
-    // way — the always-on "not_started" prompt belongs in the main table.
+/** One clickable chip for one check, or '' if the station doesn't require it.
+ *  opts.activeOnly — skip the "not started" prompt (dense views).
+ *  opts.compact    — icon + short stage word (VPX cells). */
+function renderQcMarker(planId, row, kind, opts = {}) {
+    if (!isQcEligible(row, kind)) return '';
+    const { stage } = getQcStage(row.progress, kind);
     if (stage === 'not_started' && opts.activeOnly) return '';
-    const meta = XRAY_STAGE_META[stage];
-    if (!meta) return '';
-    const title = stage === 'not_started'
-        ? 'Requires X-ray — click to record X-ray / repair data'
-        : 'X-ray / repair status — click for details';
-    return `<button type="button" class="xray-marker ${meta.cls}" data-plan-id="${planId}" title="${title}">${meta.label}</button>`;
+    const K = QC_KINDS[kind];
+    const cycles = qcCycles(row.progress, kind);
+    const fails = cycles.filter(c => c.result === 'fail').length;
+    const note = [...cycles].reverse().find(c => c.comment)?.comment || '';
+    const stageLabel = _t(K.stages[stage]);
+    const tip = [
+        `${_t(K.label)}: ${stageLabel}`,
+        cycles.length ? _t('Cycle {n}', { n: cycles.length }) : null,
+        fails ? _t('{n} failed', { n: fails }) : null,
+        note ? `“${note.length > 120 ? note.slice(0, 117) + '…' : note}”` : null,
+        stage === 'not_started' ? _t('Click to record {kind} / repair data', { kind: _t(K.label) }) : _t('Click for details'),
+    ].filter(Boolean).join(' · ');
+    const text = opts.compact ? _t(QC_SHORT_STAGE[stage]) : stageLabel;
+    return `<button type="button" class="xray-marker qc-marker qc-${kind} ${QC_STAGE_CLS[stage]}${opts.compact ? ' qc-compact' : ''}" data-plan-id="${esc(String(planId))}" data-qc-kind="${kind}" title="${esc(tip)}">`
+        + K.icon + `<span class="qc-label">${esc(text)}</span>`
+        + (cycles.length > 1 ? `<span class="qc-cyc">C${cycles.length}</span>` : '')
+        + (note ? '<span class="qc-note-dot" aria-hidden="true"></span>' : '')
+        + '</button>';
+}
+
+/** All check chips for a row (X-ray, then Inspection), grouped. */
+function renderQcMarkers(planId, row, opts = {}) {
+    const html = qcKindsFor(row).map(k => renderQcMarker(planId, row, k, opts)).join('');
+    return html ? `<span class="qc-markers${opts.compact ? ' qc-markers-compact' : ''}">${html}</span>` : '';
+}
+
+/** Plain-text check lines for tooltips (VPX cell title). */
+function qcTooltipLines(row) {
+    return qcKindsFor(row).map(k => {
+        const { stage } = getQcStage(row.progress, k);
+        const n = qcCycles(row.progress, k).length;
+        return (k === 'xray' ? 'X-ray      : ' : 'Inspection : ') + _t(QC_KINDS[k].stages[stage]) + (n ? ' (cycle ' + n + ')' : '');
+    });
 }
 
 function ganttHighlightState(row) {
@@ -4353,7 +4448,7 @@ function updateTableRowInPlace(planId) {
 
     const status = calculateStatus(row);
     const badgeCls = `badge badge-${status.toLowerCase().replace(' ', '-').replace('late-completion', 'late')}`;
-    if (cells[9]) cells[9].innerHTML = `<span class="${badgeCls}">${status}</span> ${renderXrayMarker(row.id, row)}`;
+    if (cells[9]) cells[9].innerHTML = `<span class="${badgeCls}">${status}</span> ${renderQcMarkers(row.id, row)}`;
 
     const delay = delayDays(row);
     let delayHtml;
@@ -5214,7 +5309,7 @@ function renderTable(data) {
         <td class="mono">${formatDate(row.end_date)}</td>
         <td>${startInputHtml}</td>
         <td>${endInputHtml}</td>
-        <td><span class="${badgeCls}">${status}</span> ${renderXrayMarker(row.id, row)}</td>
+        <td><span class="${badgeCls}">${status}</span> ${renderQcMarkers(row.id, row)}</td>
         <td>${delayHtml}</td>
         <td class="f100-comment-cell">${commentBtn}</td>
       </tr>`;
@@ -7460,6 +7555,7 @@ function renderVPX(data) {
                 actStart ? 'Actual start: ' + formatDate(actStart) : null,
                 actual ? 'Completed   : ' + formatDate(actual) : null,
                 'Status     : ' + status,
+                ...qcTooltipLines(task),
                 task.remark ? 'Remark      : ' + task.remark : null,
             ].filter(Boolean).join('\n');
 
@@ -7476,7 +7572,7 @@ function renderVPX(data) {
                 + '<div class="vpx-dates">'
                 + '<span class="vpx-date-plan">' + planRange + '</span>'
                 + '<span class="vpx-date-act' + (actRange ? '' : ' vpx-date-none') + '">' + (actRange || '—') + '</span>'
-                + '</div>' + renderXrayMarker(task.id, task, { activeOnly: true })
+                + '</div>' + renderQcMarkers(task.id, task, { activeOnly: true, compact: true })
                 + (editable ? _vpxCellEditBtnHtml(task.id) : '') + '</td>';
         });
 
@@ -17169,199 +17265,361 @@ function wireVpxCellEditor() {
     document.addEventListener('fullscreenchange', _closeVpxDatePop);
 }
 
-/* ─── X-ray / repair cycle — click the marker on a Welding-station row (main
+/* ─── Quality checks (X-ray / Inspection) — click a check chip on a row (main
    table or VPX cell) to see the cycle history and advance to the next step. ── */
-const XRAY_ACTIONS_BY_STAGE = {
-    not_started:           [{ action: 'start_xray',    label: 'Start X-ray' }],
-    awaiting_xray:          [{ action: 'start_xray',    label: 'Start X-ray' }],
-    in_xray:                [{ action: 'xray_pass',     label: 'No Issues — Pass' }, { action: 'xray_fail', label: 'Issues Found — Fail' }],
-    failed_awaiting_repair: [{ action: 'start_repair',  label: 'Start Repair' }],
-    in_repair:              [{ action: 'finish_repair', label: 'Repair Finished' }],
-};
+function qcActionsFor(kind, stage) {
+    const L = QC_KINDS[kind].label;
+    return {
+        not_started:            [{ action: 'start_check',   label: _t('Start {kind}', { kind: _t(L) }), cls: 'btn-primary' }],
+        awaiting:               [{ action: 'start_check',   label: _t('Start {kind}', { kind: _t(L) }), cls: 'btn-primary' }],
+        in_check:               [{ action: 'check_pass',    label: _t('No Issues — Pass'), cls: 'qc-btn-pass' }, { action: 'check_fail', label: _t('Issues Found — Fail'), cls: 'qc-btn-fail' }],
+        failed_awaiting_repair: [{ action: 'start_repair',  label: _t('Start Repair'), cls: 'btn-primary' }],
+        in_repair:              [{ action: 'finish_repair', label: _t('Repair Finished'), cls: 'btn-primary' }],
+    }[stage] || [];
+}
 
-/** Which cycle row (index) is currently in inline-edit mode in the open modal, if any. */
-let _xrayEditingIndex = null;
+/** Open modal state: which row and check tab, and which history row is being edited. */
+const _qc = { planId: null, kind: 'xray', editIndex: null, editMode: null };
 
-function renderXrayCycleRow(cycle, index, canEdit) {
-    return `<tr>
-        <td>${cycle.cycle}</td>
-        <td>${cycle.xray_start ? formatDate(cycle.xray_start) : '—'}</td>
-        <td>${cycle.xray_end ? formatDate(cycle.xray_end) : '—'}</td>
-        <td>${cycle.result ? `<span class="xray-result-${cycle.result}">${cycle.result === 'pass' ? 'Pass' : 'Fail'}</span>` : '—'}</td>
-        <td>${cycle.repair_start ? formatDate(cycle.repair_start) : '—'}</td>
-        <td>${cycle.repair_end ? formatDate(cycle.repair_end) : '—'}</td>
-        <td>${canEdit ? `
-            <button type="button" class="xray-cycle-edit-btn" data-cycle-index="${index}" title="Edit this cycle">&#9998;</button>
-            <button type="button" class="xray-cycle-edit-btn xray-cycle-delete-btn" data-cycle-index="${index}" title="Delete this cycle">&#128465;</button>
-        ` : ''}</td>
+function _qcDays(a, b) {
+    if (!a) return null;
+    const d = Math.round((new Date(b || todayStr()) - new Date(a)) / 86400000);
+    return d >= 0 ? d : null;
+}
+
+function _qcCommentHtml(cycle) {
+    if (!cycle.comment) return '';
+    const by = [cycle.comment_by, cycle.comment_at ? formatDate(cycle.comment_at) : null].filter(Boolean).join(' · ');
+    return `<div class="qc-comment-text">${esc(cycle.comment)}</div>${by ? `<div class="qc-comment-by">${esc(by)}</div>` : ''}`;
+}
+
+function renderQcCycleRow(kind, cycle, index, canEdit, isLast) {
+    const K = QC_KINDS[kind];
+    const d = v => v ? formatDate(v) : '<span class="qc-dash">—</span>';
+    const result = cycle.result
+        ? `<span class="qc-result qc-result-${cycle.result}">${cycle.result === 'pass' ? '&#x2713; ' + _t('Pass') : '&#x2715; ' + _t('Fail')}</span>`
+        : (cycle[K.startKey] ? `<span class="qc-result qc-result-open">${_t('In progress')}</span>` : '<span class="qc-dash">—</span>');
+    const loopEnd = cycle.result === 'pass' ? cycle[K.endKey] : (cycle.repair_end || null);
+    const days = _qcDays(cycle[K.startKey], loopEnd);
+    const editingComment = _qc.editIndex === index && _qc.editMode === 'comment';
+    const commentCell = editingComment
+        ? `<textarea id="qcEditCommentOnly" class="qc-input qc-textarea" rows="3" maxlength="1000" placeholder="${esc(_t('What was found, what was repaired, who checked…'))}">${esc(cycle.comment || '')}</textarea>
+           <div class="qc-inline-actions">
+               <button type="button" class="btn btn-primary btn-sm qc-comment-save" data-cycle-index="${index}">${_t('Save')}</button>
+               <button type="button" class="btn btn-ghost btn-sm qc-cycle-cancel">${_t('Cancel')}</button>
+           </div>`
+        : `${_qcCommentHtml(cycle)}${canEdit && _qc.editIndex === null
+            ? `<button type="button" class="qc-comment-btn" data-cycle-index="${index}">${cycle.comment ? '&#9998; ' + _t('Edit note') : '+ ' + _t('Add note')}</button>` : ''}`;
+    return `<tr class="${isLast ? 'qc-row-current' : ''}${cycle.result === 'fail' ? ' qc-row-fail' : cycle.result === 'pass' ? ' qc-row-pass' : ''}">
+        <td><span class="qc-cycle-no">${cycle.cycle}</span></td>
+        <td>${d(cycle[K.startKey])}</td>
+        <td>${d(cycle[K.endKey])}</td>
+        <td>${result}</td>
+        <td>${d(cycle.repair_start)}</td>
+        <td>${d(cycle.repair_end)}</td>
+        <td class="mono">${days == null ? '<span class="qc-dash">—</span>' : days + 'd'}</td>
+        <td class="qc-comment-cell">${commentCell}</td>
+        <td class="qc-row-actions">${canEdit && _qc.editIndex === null ? `
+            <button type="button" class="xray-cycle-edit-btn qc-cycle-edit" data-cycle-index="${index}" title="${esc(_t('Edit this cycle'))}">&#9998;</button>
+            <button type="button" class="xray-cycle-edit-btn xray-cycle-delete-btn qc-cycle-delete" data-cycle-index="${index}" title="${esc(_t('Delete this cycle'))}">&#128465;</button>` : ''}</td>
     </tr>`;
 }
 
-function renderXrayCycleEditRow(cycle, index) {
-    const dateInput = (id, val) => `<input type="date" class="xray-cycle-input" id="${id}" value="${val || ''}" />`;
+function renderQcCycleEditRow(kind, cycle, index) {
+    const K = QC_KINDS[kind];
+    const dateInput = (id, val) => `<input type="date" class="qc-input" id="${id}" value="${val || ''}" />`;
     return `<tr class="xray-cycle-editing">
-        <td>${cycle.cycle}</td>
-        <td>${dateInput('xrayEditStart', cycle.xray_start)}</td>
-        <td>${dateInput('xrayEditEnd', cycle.xray_end)}</td>
+        <td><span class="qc-cycle-no">${cycle.cycle}</span></td>
+        <td>${dateInput('qcEditStart', cycle[K.startKey])}</td>
+        <td>${dateInput('qcEditEnd', cycle[K.endKey])}</td>
         <td>
-            <select id="xrayEditResult" class="xray-cycle-input">
+            <select id="qcEditResult" class="qc-input">
                 <option value="" ${!cycle.result ? 'selected' : ''}>—</option>
-                <option value="pass" ${cycle.result === 'pass' ? 'selected' : ''}>Pass</option>
-                <option value="fail" ${cycle.result === 'fail' ? 'selected' : ''}>Fail</option>
+                <option value="pass" ${cycle.result === 'pass' ? 'selected' : ''}>${_t('Pass')}</option>
+                <option value="fail" ${cycle.result === 'fail' ? 'selected' : ''}>${_t('Fail')}</option>
             </select>
         </td>
-        <td>${dateInput('xrayEditRepairStart', cycle.repair_start)}</td>
-        <td>${dateInput('xrayEditRepairEnd', cycle.repair_end)}</td>
-        <td class="xray-cycle-edit-actions">
-            <button type="button" class="btn btn-primary btn-sm xray-cycle-save-btn" data-cycle-index="${index}">Save</button>
-            <button type="button" class="btn btn-ghost btn-sm xray-cycle-cancel-btn">Cancel</button>
+        <td>${dateInput('qcEditRepairStart', cycle.repair_start)}</td>
+        <td>${dateInput('qcEditRepairEnd', cycle.repair_end)}</td>
+        <td></td>
+        <td class="qc-comment-cell"><textarea id="qcEditComment" class="qc-input qc-textarea" rows="2" maxlength="1000">${esc(cycle.comment || '')}</textarea></td>
+        <td class="qc-row-actions">
+            <button type="button" class="btn btn-primary btn-sm qc-cycle-save" data-cycle-index="${index}">${_t('Save')}</button>
+            <button type="button" class="btn btn-ghost btn-sm qc-cycle-cancel">${_t('Cancel')}</button>
         </td>
     </tr>`;
 }
 
-function openXrayModal(planId) {
+/** Four-step track: Check → Result → Repair → Passed, with the current step lit. */
+function renderQcStepper(kind, stage, cycleNo, fails) {
+    const L = _t(QC_KINDS[kind].label);
+    const steps = [
+        { key: 'check',  label: L,               hint: _t('Sent for check') },
+        { key: 'result', label: _t('Result'),    hint: _t('Pass or fail') },
+        { key: 'repair', label: _t('Repair'),    hint: _t('Only after a fail') },
+        { key: 'passed', label: _t('Passed'),    hint: _t('Check complete') },
+    ];
+    const current = { not_started: 0, awaiting: 0, in_check: 1, failed_awaiting_repair: 2, in_repair: 2, passed: 3 }[stage] ?? 0;
+    const failed = stage === 'failed_awaiting_repair' || stage === 'in_repair';
+    return `<ol class="qc-stepper${failed ? ' qc-stepper-failed' : ''}">${steps.map((s, i) => {
+        // Repair only happens after a fail — a clean first pass shows it skipped
+        const state = stage === 'passed' ? (s.key === 'repair' && !fails ? 'skipped' : 'done')
+            : i < current ? 'done'
+            : i === current ? 'current' : 'todo';
+        return `<li class="qc-step qc-step-${state} qc-step-${s.key}">
+            <span class="qc-step-dot">${state === 'done' ? '&#x2713;' : i + 1}</span>
+            <span class="qc-step-text"><b>${esc(s.label)}</b><small>${esc(s.hint)}</small></span>
+        </li>`;
+    }).join('')}</ol>${cycleNo ? `<div class="qc-loop-note">${failed || cycleNo > 1 ? '&#x21bb; ' : ''}${_t('Cycle {n}', { n: cycleNo })}${failed ? ' — ' + _t('after the repair it goes back to {kind}', { kind: L }) : ''}</div>` : ''}`;
+}
+
+function renderQcPanel(row, kind) {
+    const K = QC_KINDS[kind];
+    const canEdit = canWrite();
+    const cycles = qcCycles(row.progress, kind);
+    const { stage, cycle: cur } = getQcStage(row.progress, kind);
+    const fails = cycles.filter(c => c.result === 'fail').length;
+    const first = cycles[0]?.[K.startKey] || null;
+    const passed = stage === 'passed';
+    const passDate = passed ? cur?.[K.endKey] : null;
+    const repairDays = cycles.reduce((s, c) => s + (c.repair_start ? (_qcDays(c.repair_start, c.repair_end) || 0) : 0), 0);
+
+    const stat = (label, value, cls = '') => `<div class="qc-stat ${cls}"><span>${esc(label)}</span><b>${value}</b></div>`;
+    const stats = `<div class="qc-stats">
+        ${stat(_t('Current stage'), `<span class="xray-marker qc-marker qc-${kind} ${QC_STAGE_CLS[stage]} qc-stage-big">${K.icon}<span class="qc-label">${esc(_t(K.stages[stage]))}</span></span>`)}
+        ${stat(_t('Cycles'), cycles.length)}
+        ${stat(_t('Failed'), fails, fails ? 'qc-stat-bad' : '')}
+        ${stat(passed ? _t('Passed on') : _t('Days in loop'), passed ? formatDate(passDate) : (first ? (_qcDays(first) ?? 0) + 'd' : '—'), passed ? 'qc-stat-good' : '')}
+        ${stat(_t('Days in repair'), repairDays ? repairDays + 'd' : '—')}
+    </div>`;
+
+    let action;
+    if (_qc.editIndex !== null) {
+        action = `<div class="qc-next qc-next-muted"><p>${_t('Editing cycle {n} below — save or cancel that edit first.', { n: cycles[_qc.editIndex]?.cycle ?? '' })}</p></div>`;
+    } else if (passed) {
+        action = `<div class="qc-next qc-next-done"><span class="qc-next-icon">&#x2713;</span><div><b>${_t('{kind} passed on {date}', { kind: _t(K.label), date: formatDate(passDate) })}</b>
+            <p>${fails ? _t('Passed after {n} repair loop(s).', { n: fails }) : _t('Passed first time — no repair needed.')}</p></div></div>`;
+    } else if (!canEdit) {
+        action = `<div class="qc-next qc-next-muted"><p>${_t('Only planners and operators can update {kind} / repair status.', { kind: _t(K.label) })}</p></div>`;
+    } else {
+        const actions = qcActionsFor(kind, stage);
+        const what = {
+            not_started: _t('Station not completed yet — you can still log the {kind} now.', { kind: _t(K.label) }),
+            awaiting: cycles.length ? _t('Repair finished — send it back for {kind}.', { kind: _t(K.label) }) : _t('Ready for {kind}.', { kind: _t(K.label) }),
+            in_check: _t('{kind} in progress since {date} — record the result.', { kind: _t(K.label), date: formatDate(cur?.[K.startKey]) }),
+            failed_awaiting_repair: _t('{kind} found issues on {date} — start the repair.', { kind: _t(K.label), date: formatDate(cur?.[K.endKey]) }),
+            in_repair: _t('In repair since {date} — finish the repair to send it back.', { date: formatDate(cur?.repair_start) }),
+        }[stage] || '';
+        action = `<div class="qc-next">
+            <div class="qc-next-head"><span class="qc-next-kicker">${_t('Next step')}</span><p>${esc(what)}</p></div>
+            <div class="qc-next-form">
+                <label class="qc-field"><span>${_t('Date')}</span><input type="date" id="qcActionDate" class="qc-input" value="${todayStr()}" max="${todayStr()}" /></label>
+                <label class="qc-field qc-field-grow"><span>${_t('Comment')} <small>(${_t('optional')})</small></span>
+                    <textarea id="qcActionComment" class="qc-input qc-textarea" rows="2" maxlength="1000" placeholder="${esc(_t('What was found, what was repaired, who checked…'))}"></textarea></label>
+                <div class="qc-next-buttons">${actions.map(a => `<button type="button" class="btn ${a.cls} qc-action-btn" data-action="${a.action}">${esc(a.label)}</button>`).join('')}</div>
+            </div>
+        </div>`;
+    }
+
+    const head = `<tr><th>${_t('Cycle')}</th><th>${esc(_t('{kind} start', { kind: _t(K.label) }))}</th><th>${esc(_t('{kind} end', { kind: _t(K.label) }))}</th><th>${_t('Result')}</th><th>${_t('Repair Start')}</th><th>${_t('Repair End')}</th><th title="${esc(_t('From the check start to the pass, or to the end of the repair'))}">${_t('Days')}</th><th>${_t('Comment')}</th><th></th></tr>`;
+    const body = cycles.length
+        ? cycles.map((c, i) => (_qc.editIndex === i && _qc.editMode === 'full')
+            ? renderQcCycleEditRow(kind, c, i)
+            : renderQcCycleRow(kind, c, i, canEdit, i === cycles.length - 1)).join('')
+        : `<tr><td colspan="9" class="xray-history-empty">${_t('No {kind} cycles recorded yet.', { kind: _t(K.label) })}</td></tr>`;
+
+    return `<div class="qc-panel qc-panel-${kind}">
+        <div class="qc-overview">${stats}${renderQcStepper(kind, stage, cycles.length, fails)}</div>
+        ${action}
+        <div class="qc-history">
+            <div class="qc-history-head"><h5>${_t('Cycle history')}</h5><span>${_t('{n} cycle(s)', { n: cycles.length })}</span></div>
+            <div class="qc-history-scroll"><table class="xray-history-table qc-history-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>
+        </div>
+    </div>`;
+}
+
+function openQcModal(planId, kind) {
     const overlay = document.getElementById('xrayModalOverlay');
     if (!overlay) return;
     const row = currentData.find(t => String(t.id) === String(planId));
-    if (!row || !isXrayEligible(row)) return;
-    if (overlay.dataset.planId !== String(planId)) _xrayEditingIndex = null;
+    const kinds = row ? qcKindsFor(row) : [];
+    if (!kinds.length) return;
+    if (String(_qc.planId) !== String(planId)) { _qc.editIndex = null; _qc.editMode = null; }
+    if (kind && kinds.includes(kind)) {
+        if (_qc.kind !== kind) { _qc.editIndex = null; _qc.editMode = null; }
+        _qc.kind = kind;
+    } else if (!kinds.includes(_qc.kind)) _qc.kind = kinds[0];
+    _qc.planId = planId;
 
     const titleEl = document.getElementById('xrayModalTitle');
-    if (titleEl) titleEl.textContent = `X-ray / Repair — ${row.vehicle} ${row.vehicle_no} · ${row.process_station}`;
-
-    const cycles = Array.isArray(row.progress?.xray_cycles) ? row.progress.xray_cycles : [];
-    const canEdit = canWrite();
-    const body = document.getElementById('xrayHistoryBody');
-    if (body) {
-        body.innerHTML = cycles.length
-            ? cycles.map((c, i) => _xrayEditingIndex === i ? renderXrayCycleEditRow(c, i) : renderXrayCycleRow(c, i, canEdit)).join('')
-            : `<tr><td colspan="7" class="xray-history-empty">No X-ray cycles recorded yet.</td></tr>`;
+    if (titleEl) titleEl.textContent = kinds.length > 1 ? _t('Quality checks') : _t(QC_KINDS[kinds[0]].label) + ' / ' + _t('Repair');
+    const sub = document.getElementById('qcModalSub');
+    if (sub) {
+        const uc = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code) || '';
+        const status = calculateStatus(row);
+        sub.innerHTML = [
+            `<span class="qc-sub-chip">${esc(row.vehicle)}</span>`,
+            row.battalion_code ? `<span class="qc-sub-chip">${esc(row.battalion_code)}</span>` : '',
+            `<span class="qc-sub-unit">${esc(row.vehicle_no)}${uc ? ` <small>${esc(uc)}</small>` : ''}</span>`,
+            `<span class="qc-sub-sep">·</span><span class="qc-sub-station">${esc(row.process_station)}</span>`,
+            `<span class="badge badge-${status.toLowerCase().replace(' ', '-').replace('late-completion', 'late')}">${esc(_t(status))}</span>`,
+        ].join('');
     }
 
-    const { stage } = getXrayStage(row.progress);
-    const actionRow = document.getElementById('xrayActionRow');
-    if (actionRow) {
-        if (_xrayEditingIndex !== null) {
-            actionRow.innerHTML = `<p class="xray-viewer-hint">Editing cycle ${cycles[_xrayEditingIndex]?.cycle} above — save or cancel that edit first.</p>`;
-        } else if (stage === 'passed') {
-            actionRow.innerHTML = `<p class="xray-passed-note">&#x2713; Passed X-ray on ${formatDate(row.progress.final_qa_date)} — no repair needed.</p>`;
-        } else if (!canEdit) {
-            actionRow.innerHTML = `<p class="xray-viewer-hint">Only planners and operators can update X-ray/repair status.</p>`;
-        } else {
-            const actions = XRAY_ACTIONS_BY_STAGE[stage] || [];
-            actionRow.innerHTML = `
-                <div class="form-group">
-                    <label class="form-label">Date</label>
-                    <input type="date" id="xrayActionDate" class="filter-control" value="${todayStr()}" />
-                </div>
-                <div class="xray-action-buttons">
-                    ${actions.map(a => `<button type="button" class="btn btn-primary xray-action-btn" data-action="${a.action}">${a.label}</button>`).join('')}
-                </div>`;
-        }
+    const tabs = document.getElementById('qcTabs');
+    if (tabs) {
+        tabs.hidden = kinds.length < 2;
+        tabs.innerHTML = kinds.map(k => {
+            const { stage } = getQcStage(row.progress, k);
+            return `<button type="button" role="tab" class="qc-tab qc-tab-${k}${k === _qc.kind ? ' active' : ''}" aria-selected="${k === _qc.kind}" data-qc-kind="${k}">
+                ${QC_KINDS[k].icon}<span>${esc(_t(QC_KINDS[k].label))}</span>
+                <span class="xray-marker qc-marker qc-${k} ${QC_STAGE_CLS[stage]} qc-tab-stage"><span class="qc-label">${esc(_t(QC_KINDS[k].stages[stage]))}</span></span>
+            </button>`;
+        }).join('');
     }
+
+    const body = document.getElementById('qcModalBody');
+    if (body) body.innerHTML = renderQcPanel(row, _qc.kind);
+    const note = document.getElementById('qcFooterNote');
+    if (note) note.textContent = kinds.length > 1
+        ? _t('This station needs both checks — the task is complete once X-ray and inspection have both passed.')
+        : _t('A fail reopens the task; it is completed again when the check passes.');
 
     overlay.dataset.planId = planId;
     overlay.style.display = 'flex';
 }
+/* Kept for older callers. */
+function openXrayModal(planId) { openQcModal(planId, 'xray'); }
 
-async function saveXrayAction(planId, action, dateValue) {
-    if (!canWrite()) { showToast('Viewer accounts cannot edit data.', 'error'); return; }
-    const row = currentData.find(t => String(t.id) === String(planId));
-    if (!row || !isXrayEligible(row)) return;
-
-    // X-ray can be logged before the welding station is marked complete — in
-    // that case there's no kd2_progress row yet to hang xray_cycles on, so
-    // create one (or adopt an existing one) before continuing.
-    if (!row.progress?.id) {
-        try {
-            const { data: existing } = await db.from('kd2_progress')
-                .select('*').eq('plan_id', planId).order('updated_at', { ascending: false }).limit(1);
-            let prog = existing?.[0];
-            if (!prog) {
-                const { data: created, error } = await db.from('kd2_progress')
-                    .insert({ plan_id: planId, completed: false, updated_at: new Date().toISOString() })
-                    .select('*').single();
-                if (error) throw error;
-                prog = created;
-                auditLog('INSERT', 'kd2_progress', prog.id, null, prog);
-                markLocalSave();
-            }
-            row.progress = {
-                ...row.progress,
-                id: prog.id,
-                completed: !!prog.completed,
-                completion_date: prog.completion_date || null,
-                xray_cycles: Array.isArray(prog.xray_cycles) ? prog.xray_cycles : [],
-                final_qa_date: prog.final_qa_date || null,
-            };
-        } catch (e) {
-            showToast('Could not create a progress record for this task: ' + (e.message || e), 'error');
-            return;
+/** Make sure the row has a kd2_progress record to hang the cycles on — checks
+ *  can be logged before the station itself is marked complete. */
+async function _qcEnsureProgress(planId, row) {
+    if (row.progress?.id) return true;
+    try {
+        const { data: existing } = await db.from('kd2_progress')
+            .select('*').eq('plan_id', planId).order('updated_at', { ascending: false }).limit(1);
+        let prog = existing?.[0];
+        if (!prog) {
+            const { data: created, error } = await db.from('kd2_progress')
+                .insert({ plan_id: planId, completed: false, updated_at: new Date().toISOString() })
+                .select('*').single();
+            if (error) throw error;
+            prog = created;
+            auditLog('INSERT', 'kd2_progress', prog.id, null, prog);
+            markLocalSave();
         }
+        row.progress = {
+            ...row.progress,
+            id: prog.id,
+            completed: !!prog.completed,
+            completion_date: prog.completion_date || null,
+            xray_cycles: Array.isArray(prog.xray_cycles) ? prog.xray_cycles : [],
+            inspection_cycles: Array.isArray(prog.inspection_cycles) ? prog.inspection_cycles : [],
+            final_qa_date: prog.final_qa_date || null,
+        };
+        return true;
+    } catch (e) {
+        showToast(_t('Could not create a progress record for this task:') + ' ' + (e.message || e), 'error');
+        return false;
     }
-
-    const valueToSave = dateValue || todayStr();
-    const cycles = (Array.isArray(row.progress.xray_cycles) ? row.progress.xray_cycles : []).map(c => ({ ...c }));
-
-    if (action === 'start_xray') {
-        cycles.push({ cycle: cycles.length + 1, xray_start: valueToSave, xray_end: null, result: null, repair_start: null, repair_end: null });
-    } else {
-        const last = cycles[cycles.length - 1];
-        if (!last) { showToast('Start an X-ray cycle first.', 'error'); return; }
-        if (action === 'xray_pass') { last.xray_end = valueToSave; last.result = 'pass'; }
-        else if (action === 'xray_fail') { last.xray_end = valueToSave; last.result = 'fail'; }
-        else if (action === 'start_repair') { last.repair_start = valueToSave; }
-        else if (action === 'finish_repair') { last.repair_end = valueToSave; }
-        else return;
-    }
-
-    await _persistXrayCycles(planId, row, cycles, 'X-ray/repair status updated.');
 }
 
-/** Full edit of a past cycle's recorded fields (dates + pass/fail result). */
-async function saveXrayCycleEdit(planId, cycleIndex, updatedFields) {
-    if (!canWrite()) { showToast('Viewer accounts cannot edit data.', 'error'); return; }
+function _qcSetComment(cycle, text) {
+    const u = getCurrentUser();
+    cycle.comment = text || null;
+    cycle.comment_by = text ? (u?.name || u?.full_name || u?.email || null) : null;
+    cycle.comment_at = text ? todayStr() : null;
+}
+
+async function saveQcAction(planId, kind, action, dateValue, comment) {
+    if (!canWrite()) { showToast(_t('Viewer accounts cannot edit data.'), 'error'); return; }
     const row = currentData.find(t => String(t.id) === String(planId));
-    if (!row || !isXrayEligible(row)) return;
-    if (!row.progress?.id) return;
+    if (!row || !isQcEligible(row, kind)) return;
+    if (!await _qcEnsureProgress(planId, row)) return;
 
-    const cycles = (Array.isArray(row.progress.xray_cycles) ? row.progress.xray_cycles : []).map(c => ({ ...c }));
+    const K = QC_KINDS[kind];
+    const day = dateValue || todayStr();
+    const text = (comment || '').trim();
+    const cycles = qcCycles(row.progress, kind).map(c => ({ ...c }));
+    const last = cycles[cycles.length - 1];
+    const tooEarly = (from, what) => {
+        if (from && day < from) { showToast(_t('The date can’t be before the {what} ({date}).', { what, date: formatDate(from) }), 'error'); return true; }
+        return false;
+    };
+
+    if (action === 'start_check') {
+        if (last && tooEarly(last.repair_end, _t('repair end'))) return;
+        const c = { cycle: cycles.length + 1, [K.startKey]: day, [K.endKey]: null, result: null, repair_start: null, repair_end: null };
+        if (text) _qcSetComment(c, text);
+        cycles.push(c);
+    } else {
+        if (!last) { showToast(_t('Start a {kind} cycle first.', { kind: _t(K.label) }), 'error'); return; }
+        if (action === 'check_pass' || action === 'check_fail') {
+            if (tooEarly(last[K.startKey], _t('{kind} start', { kind: _t(K.label) }))) return;
+            last[K.endKey] = day; last.result = action === 'check_pass' ? 'pass' : 'fail';
+        } else if (action === 'start_repair') {
+            if (tooEarly(last[K.endKey], _t('{kind} end', { kind: _t(K.label) }))) return;
+            last.repair_start = day;
+        } else if (action === 'finish_repair') {
+            if (tooEarly(last.repair_start, _t('repair start'))) return;
+            last.repair_end = day;
+        } else return;
+        if (text) _qcSetComment(last, last.comment ? last.comment + '\n' + text : text);
+    }
+
+    await _persistQcCycles(planId, row, kind, cycles, _t('{kind} / repair status updated.', { kind: _t(K.label) }));
+}
+
+/** Full edit of a past cycle's recorded fields (dates, result, comment). */
+async function saveQcCycleEdit(planId, kind, cycleIndex, updatedFields) {
+    if (!canWrite()) { showToast(_t('Viewer accounts cannot edit data.'), 'error'); return; }
+    const row = currentData.find(t => String(t.id) === String(planId));
+    if (!row || !isQcEligible(row, kind) || !row.progress?.id) return;
+
+    const cycles = qcCycles(row.progress, kind).map(c => ({ ...c }));
     if (!cycles[cycleIndex]) return;
-    cycles[cycleIndex] = { ...cycles[cycleIndex], ...updatedFields };
+    const { comment, ...fields } = updatedFields;
+    const c = { ...cycles[cycleIndex], ...fields };
+    if (comment !== undefined) {
+        const text = (comment || '').trim();
+        if (text !== (c.comment || '')) _qcSetComment(c, text);
+    }
+    cycles[cycleIndex] = c;
 
-    _xrayEditingIndex = null;
-    await _persistXrayCycles(planId, row, cycles, 'X-ray cycle updated.');
+    _qc.editIndex = null; _qc.editMode = null;
+    await _persistQcCycles(planId, row, kind, cycles, _t('{kind} cycle updated.', { kind: _t(QC_KINDS[kind].label) }));
 }
 
 /** Remove a cycle entered by mistake — renumbers the remaining cycles so they
  *  stay sequential (1, 2, 3…), then recomputes completion coupling from what's left. */
-async function deleteXrayCycle(planId, cycleIndex) {
-    if (!canWrite()) { showToast('Viewer accounts cannot edit data.', 'error'); return; }
+async function deleteQcCycle(planId, kind, cycleIndex) {
+    if (!canWrite()) { showToast(_t('Viewer accounts cannot edit data.'), 'error'); return; }
     const row = currentData.find(t => String(t.id) === String(planId));
-    if (!row || !isXrayEligible(row)) return;
-    if (!row.progress?.id) return;
+    if (!row || !isQcEligible(row, kind) || !row.progress?.id) return;
 
-    const cycles = (Array.isArray(row.progress.xray_cycles) ? row.progress.xray_cycles : []).map(c => ({ ...c }));
+    const cycles = qcCycles(row.progress, kind).map(c => ({ ...c }));
     if (!cycles[cycleIndex]) return;
-    if (!window.confirm(`Delete cycle ${cycles[cycleIndex].cycle}? This can't be undone.`)) return;
+    if (!window.confirm(_t('Delete {kind} cycle {n}? This can’t be undone.', { kind: _t(QC_KINDS[kind].label), n: cycles[cycleIndex].cycle }))) return;
 
     cycles.splice(cycleIndex, 1);
     cycles.forEach((c, i) => { c.cycle = i + 1; });
 
-    _xrayEditingIndex = null;
-    await _persistXrayCycles(planId, row, cycles, 'X-ray cycle deleted.');
+    _qc.editIndex = null; _qc.editMode = null;
+    await _persistQcCycles(planId, row, kind, cycles, _t('{kind} cycle deleted.', { kind: _t(QC_KINDS[kind].label) }));
 }
 
-/** Shared write path for both live actions and history edits — recomputes the
- *  completion coupling (§5), writes kd2_progress in one round trip, re-renders. */
-async function _persistXrayCycles(planId, row, cycles, successMessage) {
-    const coupling = applyXrayCompletionCoupling(row.progress, cycles);
+/** Shared write path for live actions and history edits — recomputes the
+ *  completion coupling across every check the station needs, writes
+ *  kd2_progress in one round trip, re-renders. */
+async function _persistQcCycles(planId, row, kind, cycles, successMessage) {
+    const K = QC_KINDS[kind];
+    const coupling = applyQcCompletionCoupling(row, row.progress, kind, cycles);
     try {
         const before = {
-            xray_cycles: row.progress.xray_cycles || [], final_qa_date: row.progress.final_qa_date || null,
+            [K.field]: qcCycles(row.progress, kind), final_qa_date: row.progress.final_qa_date || null,
             completed: row.progress.completed, completion_date: row.progress.completion_date,
         };
-        const after = { xray_cycles: cycles, ...coupling };
+        const after = { [K.field]: cycles, ...coupling };
         const { error } = await db.from('kd2_progress').update(after).eq('id', row.progress.id);
         if (error) throw error;
         auditLog('UPDATE', 'kd2_progress', row.progress.id, before, after);
@@ -17370,9 +17628,9 @@ async function _persistXrayCycles(planId, row, cycles, successMessage) {
         showToast(successMessage, 'success');
         if (!updateTableRowInPlace(planId)) refreshAllViews();
         else syncSiblingViews();
-        openXrayModal(planId); // refresh the open modal to show the new stage
+        openQcModal(planId, kind); // refresh the open modal to show the new stage
     } catch (err) {
-        showToast('Error saving X-ray/repair status: ' + err.message, 'error');
+        showToast(_t('Error saving {kind} / repair status:', { kind: _t(K.label) }) + ' ' + err.message, 'error');
         console.error(err);
     }
 }
@@ -17380,54 +17638,52 @@ async function _persistXrayCycles(planId, row, cycles, successMessage) {
 function wireXrayModal() {
     const overlay = document.getElementById('xrayModalOverlay');
     if (!overlay) return;
-    const close = () => { overlay.style.display = 'none'; _xrayEditingIndex = null; };
+    const close = () => { overlay.style.display = 'none'; _qc.editIndex = null; _qc.editMode = null; };
+    const reopen = () => openQcModal(_qc.planId, _qc.kind);
     document.getElementById('xrayModalClose')?.addEventListener('click', close);
     document.getElementById('xrayModalCancel')?.addEventListener('click', close);
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && overlay.style.display === 'flex') close(); });
 
-    document.getElementById('xrayActionRow')?.addEventListener('click', e => {
-        const btn = e.target.closest('.xray-action-btn');
-        if (!btn) return;
-        const dateValue = document.getElementById('xrayActionDate')?.value || '';
-        saveXrayAction(overlay.dataset.planId, btn.dataset.action, dateValue);
-    });
-
-    document.getElementById('xrayHistoryBody')?.addEventListener('click', e => {
-        const deleteBtn = e.target.closest('.xray-cycle-delete-btn');
-        if (deleteBtn) {
-            deleteXrayCycle(overlay.dataset.planId, parseInt(deleteBtn.dataset.cycleIndex, 10));
-            return;
-        }
-        const editBtn = e.target.closest('.xray-cycle-edit-btn');
-        if (editBtn) {
-            _xrayEditingIndex = parseInt(editBtn.dataset.cycleIndex, 10);
-            openXrayModal(overlay.dataset.planId);
-            return;
-        }
-        const cancelBtn = e.target.closest('.xray-cycle-cancel-btn');
-        if (cancelBtn) {
-            _xrayEditingIndex = null;
-            openXrayModal(overlay.dataset.planId);
-            return;
-        }
-        const saveBtn = e.target.closest('.xray-cycle-save-btn');
-        if (saveBtn) {
-            const index = parseInt(saveBtn.dataset.cycleIndex, 10);
-            saveXrayCycleEdit(overlay.dataset.planId, index, {
-                xray_start: document.getElementById('xrayEditStart')?.value || null,
-                xray_end: document.getElementById('xrayEditEnd')?.value || null,
-                result: document.getElementById('xrayEditResult')?.value || null,
-                repair_start: document.getElementById('xrayEditRepairStart')?.value || null,
-                repair_end: document.getElementById('xrayEditRepairEnd')?.value || null,
+    overlay.addEventListener('click', e => {
+        const idx = el => parseInt(el.dataset.cycleIndex, 10);
+        const val = id => document.getElementById(id)?.value || null;
+        let b;
+        if ((b = e.target.closest('.qc-tab'))) {
+            if (b.dataset.qcKind !== _qc.kind) openQcModal(_qc.planId, b.dataset.qcKind);
+        } else if ((b = e.target.closest('.qc-action-btn'))) {
+            overlay.querySelectorAll('.qc-action-btn').forEach(x => { x.disabled = true; });
+            saveQcAction(_qc.planId, _qc.kind, b.dataset.action, val('qcActionDate') || '', val('qcActionComment') || '')
+                .finally(() => overlay.querySelectorAll('.qc-action-btn').forEach(x => { x.disabled = false; }));
+        } else if ((b = e.target.closest('.qc-cycle-delete'))) {
+            deleteQcCycle(_qc.planId, _qc.kind, idx(b));
+        } else if ((b = e.target.closest('.qc-cycle-edit'))) {
+            _qc.editIndex = idx(b); _qc.editMode = 'full'; reopen();
+        } else if ((b = e.target.closest('.qc-comment-btn'))) {
+            _qc.editIndex = idx(b); _qc.editMode = 'comment'; reopen();
+            document.getElementById('qcEditCommentOnly')?.focus();
+        } else if (e.target.closest('.qc-cycle-cancel')) {
+            _qc.editIndex = null; _qc.editMode = null; reopen();
+        } else if ((b = e.target.closest('.qc-comment-save'))) {
+            saveQcCycleEdit(_qc.planId, _qc.kind, idx(b), { comment: val('qcEditCommentOnly') || '' });
+        } else if ((b = e.target.closest('.qc-cycle-save'))) {
+            const K = QC_KINDS[_qc.kind];
+            saveQcCycleEdit(_qc.planId, _qc.kind, idx(b), {
+                [K.startKey]: val('qcEditStart'),
+                [K.endKey]: val('qcEditEnd'),
+                result: val('qcEditResult'),
+                repair_start: val('qcEditRepairStart'),
+                repair_end: val('qcEditRepairEnd'),
+                comment: val('qcEditComment') || '',
             });
         }
     });
 
     ['mainTable', 'vpxMatrix'].forEach(containerId => {
         document.getElementById(containerId)?.addEventListener('click', e => {
-            const marker = e.target.closest('.xray-marker');
+            const marker = e.target.closest('.qc-marker[data-plan-id]');
             if (!marker) return;
-            openXrayModal(marker.dataset.planId);
+            openQcModal(marker.dataset.planId, marker.dataset.qcKind);
         });
     });
 }
