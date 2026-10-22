@@ -71,6 +71,14 @@ body.dol-open .asst, body.dol-open .tour-offer { display: none !important; }
 .dol-big small { font-size: 1.3rem; color: var(--clr-text-muted); font-weight: 600; margin-left: 6px; }
 .dol-verdict p { margin: 0; color: var(--clr-text-muted); }
 .dol-verdict p b { color: var(--clr-text); }
+/* One pill per battalion under the headline (All battalions); click to focus it */
+.dol-btl-sum { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.dol-btl-pill { display: inline-flex; align-items: center; gap: 8px; padding: 4px 10px; border-radius: 8px; border: 1px solid transparent; font: 600 .78rem/1.3 var(--ff-mono); cursor: pointer; }
+.dol-btl-pill b { font: 700 .8rem var(--ff-display); letter-spacing: .04em; }
+.dol-btl-pill.dol-ok { background: var(--dol-ok-bg); color: var(--dol-ok); }
+.dol-btl-pill.dol-warn { background: var(--dol-warn-bg); color: var(--dol-warn); }
+.dol-btl-pill.dol-bad { background: var(--dol-bad-bg); color: var(--dol-bad); }
+.dol-btl-pill:hover { border-color: currentColor; }
 .dol-tl-dates { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px; }
 .dol-tl-dates strong { font: 700 1.7rem/1.15 var(--ff-display); }
 .dol-tl-dates div:last-child { text-align: right; }
@@ -125,6 +133,120 @@ body.dol-open .asst, body.dol-open .tour-offer { display: none !important; }
 .dol-bar-fc { fill: var(--clr-accent); background: var(--clr-accent); }
 .dol-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: .76rem; color: var(--clr-text-muted); margin-top: 6px; }
 .dol-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+/* ── Delay map: ranked bars per vehicle / type / battalion / station / line / area ── */
+.dol-map-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.dol-map-head .dol-h { margin: 0; }
+.dol-map-head > .dol-lbl { display: inline; }
+.dol-map-legend { margin: -4px 0 10px; }
+.dol-map-main { max-height: 600px; overflow: auto; border: 1px solid var(--clr-border-soft); border-radius: 10px; }
+.dol-map-more { margin: 8px 0 0; }
+.dol-legend i.dol-lg-bar { width: 18px; height: 8px; border-radius: 99px; }
+.dol-lg-bar.dol-bad { background: var(--dol-bad); } .dol-lg-bar.dol-warn { background: var(--dol-warn); }
+.dol-lg-bar.dol-ok { background: var(--dol-ok); } .dol-lg-bar.dol-lost { background: var(--dol-plan); }
+.dol-lg-bar.dol-fc { background: var(--clr-accent); }
+.dol-legend i.dol-lg-room { width: 0; height: 14px; border-radius: 0; border-left: 2px dashed var(--clr-text); vertical-align: -3px; }
+.dol-legend i.dol-lg-today { width: 0; height: 14px; border-radius: 0; border-left: 2px solid var(--clr-accent); vertical-align: -3px; }
+.dol-legend i.dol-lg-plan { width: 18px; height: 10px; border-radius: 3px; border: 1.5px solid var(--clr-text-muted); box-sizing: border-box; }
+.dol-bad-txt { color: var(--dol-bad); font-family: var(--ff-mono); font-weight: 600; }
+
+.dol-bars { min-width: 820px; }
+.dol-bars-row { display: grid; grid-template-columns: 170px minmax(260px, 1fr) minmax(220px, 34%); align-items: center; gap: 16px; padding: 7px 14px; border-bottom: 1px solid var(--clr-border-soft); }
+.dol-bars-row.is-click { cursor: pointer; }
+.dol-bars-row.is-click:hover { background: var(--clr-surface-2); }
+.dol-bars-row.is-sel { background: var(--clr-accent-dim); box-shadow: inset 3px 0 0 var(--clr-accent); }
+.dol-bars-axis { position: sticky; top: 0; z-index: 2; background: var(--clr-surface); padding-top: 9px; padding-bottom: 7px; border-bottom: 1px solid var(--clr-border); }
+.dol-bars-axis .dol-bars-track { height: 14px; }
+.dol-bars-axis .dol-bars-track span { position: absolute; top: 0; transform: translateX(-50%); font: 10.5px var(--ff-mono); color: var(--clr-text-dim); }
+.dol-bars-axis .dol-bars-why { font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; color: var(--clr-text-dim); font-weight: 600; }
+.dol-bars-grp { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px 6px; border-bottom: 1px solid var(--clr-border-soft); background: color-mix(in srgb, var(--clr-surface-2) 60%, transparent); font-size: .8rem; color: var(--clr-text-muted); }
+.dol-bars-grp b { font: 700 1rem/1 var(--ff-display); letter-spacing: .04em; color: var(--clr-text); }
+.dol-bars-grp .dol-delay { min-width: 0; }
+.dol-bars-lbl { min-width: 0; }
+.dol-bars-lbl b { display: block; font-size: .9rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dol-bars-lbl small { display: block; font-size: .7rem; color: var(--clr-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dol-bars-track { position: relative; height: 22px; }
+.dol-bars-track u { position: absolute; top: -8px; bottom: -8px; width: 1px; background: var(--clr-border-soft); }
+.dol-bars-fill { position: absolute; left: 0; top: 4px; height: 14px; border-radius: 0 7px 7px 0; }
+.dol-bars-fill.dol-bad { background: var(--dol-bad); } .dol-bars-fill.dol-warn { background: var(--dol-warn); }
+.dol-bars-fill.dol-ok { background: var(--dol-ok); } .dol-bars-fill.dol-lost { background: var(--dol-plan); }
+/* Cut bar (far off the scale): a break gap near its end */
+.dol-bars-fill.is-cut { border-radius: 0 3px 3px 0; -webkit-mask: linear-gradient(90deg, #000 calc(100% - 22px), transparent calc(100% - 22px) calc(100% - 16px), #000 calc(100% - 16px)); mask: linear-gradient(90deg, #000 calc(100% - 22px), transparent calc(100% - 22px) calc(100% - 16px), #000 calc(100% - 16px)); }
+.dol-bars-axis .dol-bars-track span.is-last { transform: translateX(-100%); }
+.dol-bars-val { position: absolute; top: 2px; margin-left: 8px; font: 700 .8rem/18px var(--ff-mono); white-space: nowrap; }
+.dol-bars-val.dol-bad { color: var(--dol-bad); } .dol-bars-val.dol-warn { color: var(--dol-warn); }
+.dol-bars-val.dol-ok { color: var(--dol-ok); margin-left: 0; font-weight: 600; } .dol-bars-val.dol-lost { color: var(--clr-text-muted); }
+/* Dates chart: planned (hollow) → forecast (filled) finish, battalion delivery line */
+.dol-dates-track u.is-today { width: 2px; background: var(--clr-accent); opacity: .6; }
+.dol-dates-track u.is-deliv { width: 0; background: none; border-left: 2px dashed var(--clr-text); opacity: .7; }
+.dol-dates-link { position: absolute; top: 50%; height: 3px; margin-top: -1.5px; border-radius: 2px; }
+.dol-dates-link.dol-bad { background: var(--dol-bad); } .dol-dates-link.dol-warn { background: var(--dol-warn); }
+.dol-dates-plan, .dol-dates-fc { position: absolute; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; box-sizing: border-box; }
+.dol-dates-plan { background: var(--clr-surface); border: 2px solid var(--clr-text-muted); }
+.dol-dates-fc { border: 2px solid var(--clr-surface); }
+.dol-dates-fc.dol-ok { background: var(--dol-ok); } .dol-dates-fc.dol-warn { background: var(--dol-warn); } .dol-dates-fc.dol-bad { background: var(--dol-bad); }
+.dol-dates-track .dol-bars-val { top: 0; margin-left: 12px; }
+.dol-bars-axis .dol-bars-track em { position: absolute; top: -2px; transform: translateX(-50%); font: normal 600 .66rem var(--ff-body); padding: 0 6px; border-radius: 4px; background: var(--clr-accent); color: #fff; }
+.dol-legend i.dol-lg-hollow { border-radius: 50%; border: 2px solid var(--clr-text-muted); box-sizing: border-box; }
+.dol-legend i.dol-lg-dot { border-radius: 50%; }
+.dol-lg-dot.dol-ok { background: var(--dol-ok); } .dol-lg-dot.dol-warn { background: var(--dol-warn); } .dol-lg-dot.dol-bad { background: var(--dol-bad); }
+/* Spare time before the delivery date: past it, the vehicle moves delivery */
+.dol-bars-room { position: absolute; top: -1px; bottom: -1px; width: 0; border-left: 2px dashed var(--clr-text); opacity: .75; }
+.dol-bars-room.is-off { left: auto !important; right: -2px; border: 0; opacity: .6; }
+.dol-bars-room.is-off::after { content: '›'; position: absolute; right: 0; top: -1px; font: 700 16px/1 var(--ff-body); color: var(--clr-text-muted); }
+.dol-bars-why { min-width: 0; display: flex; flex-direction: column; gap: 1px; font-size: .8rem; color: var(--clr-text-muted); }
+.dol-bars-why b { color: var(--clr-text); font-weight: 600; }
+.dol-bars-why > b, .dol-bars-why > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dol-bars-why > span + span, .dol-bars-why > b + span { font-size: .74rem; }
+.dol-vchips { display: flex; flex-wrap: wrap; gap: 4px; white-space: normal !important; }
+.dol-vchip { border: 1px solid var(--clr-border); background: var(--clr-surface-2); color: var(--clr-text-muted); border-radius: 6px; padding: 1px 7px; font: 500 .72rem var(--ff-body); cursor: pointer; }
+.dol-vchip b { font-family: var(--ff-mono); color: var(--clr-text-muted); }
+.dol-vchip.is-open b { color: var(--dol-bad); }
+.dol-vchip:hover { border-color: var(--clr-accent); color: var(--clr-accent); }
+
+/* ── Vehicle timeline under the map ── */
+.dol-drill { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--clr-border); }
+.dol-drill-head { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.dol-drill-head h4 { margin: 3px 0 0; font: 700 1.2rem/1.2 var(--ff-display); letter-spacing: .03em; }
+.dol-drill-head h4 small { font: 500 .76rem var(--ff-body); color: var(--clr-text-dim); letter-spacing: 0; margin-left: 6px; }
+.dol-drill-dates { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: .82rem; color: var(--clr-text-muted); }
+.dol-drill-dates b { color: var(--clr-text); }
+.dol-drill-why { margin-bottom: 10px; padding: 10px 14px; border-radius: 10px; border-left: 4px solid var(--dol-ok); background: var(--dol-ok-bg); font-size: .84rem; line-height: 1.5; }
+.dol-drill-why.is-late { border-left-color: var(--dol-bad); background: var(--dol-bad-bg); }
+.dol-drill .dol-legend { margin: 0 0 8px; }
+
+.dol-stl { border: 1px solid var(--clr-border-soft); border-radius: 10px; overflow-x: auto; }
+.dol-stl > * { min-width: 820px; }
+.dol-stl-row { display: grid; grid-template-columns: 240px minmax(320px, 1fr) 90px; align-items: center; gap: 14px; padding: 0 14px; height: 26px; }
+.dol-stl-row:hover { background: var(--clr-surface-2); }
+.dol-stl-row.is-cause .dol-stl-lbl span { font-weight: 600; color: var(--clr-text); }
+.dol-stl-axis { height: 40px; position: sticky; top: 0; z-index: 2; background: var(--clr-surface); border-bottom: 1px solid var(--clr-border); }
+.dol-stl-axis:hover { background: var(--clr-surface); }
+.dol-stl-axis .dol-stl-track { height: 100%; }
+.dol-stl-axis .dol-stl-track span { position: absolute; bottom: 4px; transform: translateX(-50%); font: 10.5px var(--ff-mono); color: var(--clr-text-dim); }
+.dol-stl-axis .dol-stl-track em { position: absolute; top: 4px; transform: translateX(-50%); font: normal 600 .68rem var(--ff-body); white-space: nowrap; padding: 1px 6px; border-radius: 4px; }
+.dol-stl-axis em.is-today { background: var(--clr-accent); color: #fff; }
+.dol-stl-axis em.is-plan { background: var(--clr-surface-2); color: var(--clr-text-muted); border: 1px dashed var(--clr-text-muted); }
+.dol-stl-axis .dol-stl-add { font-size: .64rem; letter-spacing: .06em; text-transform: uppercase; color: var(--clr-text-dim); font-weight: 600; }
+.dol-stl-grp { display: flex; align-items: baseline; gap: 12px; padding: 10px 14px 4px; border-top: 1px solid var(--clr-border-soft); font-size: .74rem; color: var(--clr-text-dim); }
+.dol-stl-grp b { font: 700 .86rem var(--ff-display); letter-spacing: .05em; color: var(--clr-text-muted); text-transform: uppercase; }
+.dol-stl-lbl { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: .78rem; color: var(--clr-text-muted); }
+.dol-stl-lbl span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dol-stl-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--dol-plan); }
+.dol-stl-dot.dol-stl-done { background: var(--dol-ok); } .dol-stl-dot.dol-stl-wip { background: var(--clr-accent); }
+.dol-stl-dot.dol-stl-overdue, .dol-stl-dot.dol-stl-late { background: var(--dol-bad); box-shadow: 0 0 0 3px var(--dol-bad-bg); }
+.dol-stl-track { position: relative; height: 100%; }
+.dol-stl-track u { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--clr-border-soft); }
+.dol-stl-track u.is-today { width: 2px; background: var(--clr-accent); opacity: .7; }
+.dol-stl-track u.is-plan { width: 0; background: none; border-left: 1.5px dashed var(--clr-text-muted); opacity: .8; }
+.dol-stl-plan { position: absolute; top: 5px; bottom: 5px; border: 1.5px solid var(--clr-text-muted); border-radius: 4px; opacity: .55; box-sizing: border-box; }
+/* How far a station moved from its plan: planned box → actual / forecast bar */
+.dol-stl-shift { position: absolute; top: 50%; height: 0; border-top: 1.5px dotted var(--dol-warn); opacity: .7; }
+.dol-stl-shift.is-open { border-top-color: var(--dol-bad); }
+.dol-stl-bar { position: absolute; top: 9px; bottom: 9px; border-radius: 3px; }
+.dol-stl-bar.dol-stl-done { background: var(--dol-ok); } .dol-stl-bar.dol-stl-donelate { background: var(--dol-warn); }
+.dol-stl-bar.dol-stl-fc { background: var(--clr-accent); } .dol-stl-bar.dol-stl-late { background: var(--dol-bad); }
+.dol-stl-add { text-align: right; font: 700 .8rem var(--ff-mono); color: var(--dol-bad); }
 
 /* ── Tables ────────────────────────────────────── */
 .dol-table { width: 100%; border-collapse: collapse; }
@@ -228,7 +350,10 @@ tr.is-crit td:first-child { box-shadow: inset 3px 0 0 var(--dol-bad); }
     @page { size: A4 landscape; margin: 10mm; }
     body.dol-open > *:not(.dol-overlay) { display: none !important; }
     .dol-overlay { position: static; display: block; background: #fff; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .dol-bar .dol-btn, .dol-bar .dol-icon, .dol-units-head .dol-seg, .dol-link { display: none !important; }
+    .dol-bar .dol-btn, .dol-bar .dol-icon, .dol-units-head .dol-seg, .dol-link, .dol-map-head .dol-seg, .dol-map-head > .dol-lbl, .dol-drill-head .dol-icon { display: none !important; }
+    .dol-map-main, .dol-stl { max-height: none; overflow: visible; border: 0; }
+    .dol-bars, .dol-stl > * { min-width: 0; }
+    .dol-bars-axis, .dol-stl-axis { position: static; }
     .dol-main { overflow: visible; padding: 8px 0; }
     .dol-card { box-shadow: none; break-inside: avoid; }
     .dol-scroll { max-height: none; overflow: visible; border: 0; }

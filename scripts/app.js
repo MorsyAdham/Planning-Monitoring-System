@@ -5808,9 +5808,25 @@ function planForecast(rows, today = todayStr()) {
         });
     });
 
-    const plannedDelivery = units.reduce((m, u) => (u.plannedFinish > m ? u.plannedFinish : m), '') || null;
-    const expectedDelivery = units.reduce((m, u) => (u.projFinish > m ? u.projFinish : m), '') || null;
-    return { units, byRowId, plannedDelivery, expectedDelivery, deliverySlip: _fcSlip(plannedDelivery, expectedDelivery) };
+    // Each battalion has its own delivery date: the day its last vehicle finishes.
+    // With several battalions in the rows, delivery follows the most-delayed one;
+    // the last vehicle overall could belong to an on-time battalion and hide a late one.
+    const byBtl = new Map();
+    units.forEach(u => {
+        const b = byBtl.get(u.battalion) || { battalion: u.battalion, plannedDelivery: '', expectedDelivery: '' };
+        if (u.plannedFinish > b.plannedDelivery) b.plannedDelivery = u.plannedFinish;
+        if (u.projFinish > b.expectedDelivery) b.expectedDelivery = u.projFinish;
+        byBtl.set(u.battalion, b);
+    });
+    const battalions = [...byBtl.values()].map(b => ({ ...b, deliverySlip: _fcSlip(b.plannedDelivery, b.expectedDelivery) }));
+    const lead = battalions.slice().sort((a, b) => b.deliverySlip - a.deliverySlip || b.expectedDelivery.localeCompare(a.expectedDelivery))[0];
+    return {
+        units, byRowId, battalions,
+        deliveryBattalion: lead ? lead.battalion : null,
+        plannedDelivery: lead?.plannedDelivery || null,
+        expectedDelivery: lead?.expectedDelivery || null,
+        deliverySlip: lead ? lead.deliverySlip : 0,
+    };
 }
 
 /* Forecast cache — recomputed only when the rows or their dates change. */
@@ -5835,7 +5851,7 @@ function getPlanForecast(rows = currentData) {
 function _fcDeliveryDriver(fc) {
     if (!fc || !fc.expectedDelivery || !(fc.deliverySlip > 0)) return null;
     const unit = fc.units
-        .filter(u => u.projFinish === fc.expectedDelivery)
+        .filter(u => u.projFinish === fc.expectedDelivery && (fc.deliveryBattalion == null || u.battalion === fc.deliveryBattalion))
         .sort((a, b) => b.finishSlip - a.finishSlip)[0];
     if (!unit) return null;
     const byPlan = (a, b) => a.row.start_date.localeCompare(b.row.start_date) || a.row.end_date.localeCompare(b.row.end_date);
@@ -6166,6 +6182,8 @@ function _showDeliveryAnalysisModal(data, plannedDelivery, expectedDelivery, tot
    ══════════════════════════════════════════════════════════════════ */
 const _DOL_SORT_KEY = 'ppms_dol_sort';
 const _DOL_SCOPE_KEY = 'ppms_dol_scope';
+const _DOL_MAP_KEY = 'ppms_dol_map';
+const _DOL_SHAPE_KEY = 'ppms_dol_shape';
 
 /** Snapshot of everything the Outlook shows, from live plan rows. */
 function _buildOutlookModel(rows) {
@@ -6214,6 +6232,14 @@ function _buildOutlookModel(rows) {
             ff: u.projFinish, slip: u.finishSlip, done: u.steps.filter(s => s.done).length, total: u.steps.length,
             complete: u.steps.every(s => s.done), started: !!actualStart,
             now: open[0] ? open[0].row.process_station : null, lines, waiting,
+            // Station by station, in forecast order — drawn by the delay map's vehicle timeline
+            steps: u.steps.map(s => {
+                const pr = s.row.progress || {};
+                const state = s.done ? 'done' : pr.actual_start_date ? 'wip'
+                    : s.row.end_date < today ? 'overdue' : s.row.start_date < today ? 'late' : 'planned';
+                return { st: s.row.process_station || '—', line: s.line, ps: s.row.start_date, pe: s.row.end_date,
+                    fs: s.projStart, fe: s.projEnd, done: s.done, slip: s.slip, credit: s.credit, state };
+            }),
         };
     });
     const causes = [];
@@ -6259,6 +6285,7 @@ function _showDeliveryOutlook() {
 
     const close = () => {
         document.removeEventListener('keydown', onKey, true);
+        window.PPMSHoverCard?.hide({ rich: true });
         if (document.fullscreenElement === overlay) document.exitFullscreen?.().catch(() => {});
         overlay.remove();
         document.body.classList.remove('dol-open');
@@ -6269,13 +6296,50 @@ function _showDeliveryOutlook() {
     let model = null;
     let scope = 'all';
     let sortMode = 'worst';
-    try { sortMode = localStorage.getItem(_DOL_SORT_KEY) || 'worst'; scope = localStorage.getItem(_DOL_SCOPE_KEY) || 'all'; } catch { /* private mode */ }
+    // Delay map: what the delay is drawn by, late vehicles only or all, and the
+    // vehicle whose timeline is open (undefined = pick the one that sets the date, '' = none)
+    let mapView = 'unit';
+    let mapLate = true;
+    let mapShape = 'bars'; // vehicles drawn as delay bars or as planned → forecast dates
+    let mapUnit;
+    let mapShown = '';
+    // Hover cards of the delay map: markup per [data-dol-tip] index, rebuilt on every render
+    let tipStore = [];
+    let tipOn = null;
+    const hideTip = () => { if (tipOn !== null) { tipOn = null; window.PPMSHoverCard?.hide({ rich: true }); } };
+    overlay.addEventListener('pointermove', e => {
+        if (e.pointerType === 'touch') return;
+        const t = e.target.closest('[data-dol-tip]');
+        if (!t || !tipStore[t.dataset.dolTip]) { hideTip(); return; }
+        if (t.dataset.dolTip !== tipOn) {
+            tipOn = t.dataset.dolTip;
+            window.PPMSHoverCard?.show(tipStore[tipOn], e.clientX, e.clientY, { wide: true });
+        } else window.PPMSHoverCard?.move(e.clientX, e.clientY);
+    }, { passive: true });
+    overlay.addEventListener('pointerleave', hideTip);
+    overlay.addEventListener('scroll', hideTip, true);
+    try {
+        sortMode = localStorage.getItem(_DOL_SORT_KEY) || 'worst';
+        scope = localStorage.getItem(_DOL_SCOPE_KEY) || 'all';
+        mapView = localStorage.getItem(_DOL_MAP_KEY) || 'unit';
+        mapShape = localStorage.getItem(_DOL_SHAPE_KEY) || 'bars';
+    } catch { /* private mode */ }
 
     overlay.addEventListener('click', e => {
-        const btn = e.target.closest('[data-dol], [data-dol-b], [data-dol-s], [data-dol-station]');
+        const btn = e.target.closest('[data-dol], [data-dol-b], [data-dol-s], [data-dol-station], [data-dol-map], [data-dol-mlate], [data-dol-shape], [data-dol-unit]');
         if (!btn) return;
-        if (btn.dataset.dolB) { scope = btn.dataset.dolB; try { localStorage.setItem(_DOL_SCOPE_KEY, scope); } catch { /* ignore */ } render(); return; }
+        if (btn.dataset.dolB) { scope = btn.dataset.dolB; mapUnit = undefined; try { localStorage.setItem(_DOL_SCOPE_KEY, scope); } catch { /* ignore */ } render(); return; }
         if (btn.dataset.dolS) { sortMode = btn.dataset.dolS; try { localStorage.setItem(_DOL_SORT_KEY, sortMode); } catch { /* ignore */ } render(); return; }
+        if (btn.dataset.dolMap) { mapView = btn.dataset.dolMap; try { localStorage.setItem(_DOL_MAP_KEY, mapView); } catch { /* ignore */ } render(); return; }
+        if (btn.dataset.dolMlate) { mapLate = btn.dataset.dolMlate === 'late'; render(); return; }
+        if (btn.dataset.dolShape) { mapShape = btn.dataset.dolShape; try { localStorage.setItem(_DOL_SHAPE_KEY, mapShape); } catch { /* ignore */ } render(); return; }
+        if (btn.dataset.dolUnit !== undefined) {
+            // Clicking the open vehicle again (or the close button) hides its timeline
+            mapUnit = btn.dataset.dolUnit && btn.dataset.dolUnit !== mapShown ? btn.dataset.dolUnit : '';
+            render();
+            if (mapUnit) overlay.querySelector('[data-dol="drill"]')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            return;
+        }
         if (btn.dataset.dolStation) {
             close();
             const search = document.getElementById('filterSearch');
@@ -6291,14 +6355,10 @@ function _showDeliveryOutlook() {
                 if (document.fullscreenElement) document.exitFullscreen?.();
                 else overlay.requestFullscreen?.().catch(() => {});
                 break;
-            case 'dda': {
-                // Same scope as the Outlook shows (its battalion switch, all plan data)
-                const data = currentData.filter(r => scope === 'all' || (r.battalion_code || '—') === scope);
-                const fc = planForecast(data);
-                close();
-                _showDeliveryAnalysisModal(data, fc.plannedDelivery, fc.expectedDelivery, Math.max(0, fc.deliverySlip), fc);
+            case 'dda':
+                // The breakdown now lives in the Outlook itself (the delay map), so the view stays open
+                overlay.querySelector('[data-dol="map"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 break;
-            }
         }
     });
 
@@ -6351,9 +6411,22 @@ function _showDeliveryOutlook() {
             `${m.title} · ${scope === 'all' ? _t('All battalions') : scope} · ${_t('data as of {d}', { d: fmt(today) })}`;
         if (!units.length) { main.innerHTML = `<div class="dol-loading">${_t('No planned units to forecast.')}</div>`; return; }
 
-        const planned = maxIso(units.map(u => u.pf));
-        const forecast = maxIso(units.map(u => u.ff));
-        const slip = Math.max(0, wd(planned, forecast));
+        // Each battalion has its own delivery date (its last vehicle). With several shown,
+        // the headline follows the most-delayed battalion: comparing the last vehicle
+        // across all of them hid a late battalion behind a later one that is on time.
+        const scopeB = battalions.filter(b => scope === 'all' || b === scope);
+        const btlOf = (b, ffOf = u => u.ff) => {
+            const bu = units.filter(u => u.b === b);
+            const p = maxIso(bu.map(u => u.pf)), f = maxIso(bu.map(ffOf));
+            return { b, p, f, s: Math.max(0, wd(p, f)) };
+        };
+        const btls = scopeB.map(b => btlOf(b)).filter(x => x.p);
+        const lead = btls.slice().sort((x, y) => y.s - x.s || y.f.localeCompare(x.f))[0];
+        const multi = btls.length > 1;
+        const planned = lead.p;
+        const forecast = lead.f;
+        const slip = lead.s;
+        const lateBtls = btls.filter(x => x.s > 0);
         const late = units.filter(u => u.slip > 0);
         const worst = units.slice().sort((a, b) => b.slip - a.slip)[0];
         const s = sev(slip);
@@ -6363,7 +6436,7 @@ function _showDeliveryOutlook() {
         // ── 1 · verdict, timeline, trend
         const tlSpan = Math.max(1, days(today, forecast > planned ? forecast : planned));
         const pos = iso => Math.min(100, Math.max(0, days(today, iso) / tlSpan * 100));
-        const setters = units.filter(u => u.ff === forecast);
+        const setters = units.filter(u => u.b === lead.b && u.ff === forecast);
         const setterCause = setters.length
             ? causes.filter(c => setters.some(u => unitKey(u) === unitKey(c))).sort((a, b) => b.d - a.d)[0] : null;
         const setText = setters.length
@@ -6371,7 +6444,8 @@ function _showDeliveryOutlook() {
               + (setterCause ? `; ${_t('most of its delay comes from {s}', { s: `<b>${esc(setterCause.st)}</b> (${esc(_t(setterCause.line))}, +${setterCause.d} ${_t('wd')}${setterCause.open ? `, ${_t('not finished yet')}` : ''})` })}.` : '.')
             : '';
 
-        const series = m.history.map(h => ({ date: h.date, slip: Math.max(0, wd(planned, maxIso(units.map(u => h.ff[unitKey(u)])))) }))
+        // Each past day: the delay of the most-delayed battalion that day
+        const series = m.history.map(h => ({ date: h.date, slip: Math.max(0, ...scopeB.map(b => btlOf(b, u => h.ff[unitKey(u)]).s)) }))
             .concat([{ date: today, slip }]);
         const weekAgo = [...series].reverse().find(p => days(p.date, today) >= 7) || series[0];
         const diff = slip - weekAgo.slip;
@@ -6405,14 +6479,22 @@ function _showDeliveryOutlook() {
                 <div>
                     <span class="dol-status dol-${s}">${slip > 0 ? (s === 'bad' ? _t('Late') : _t('At risk')) : _t('On track')}</span>
                     <div class="dol-big">${slip > 0 ? `+${slip}<small>${_t('working days')}</small>` : _t('On time')}</div>
-                    <p>${slip > 0
-                        ? _t('Forecast delivery {f} against a plan of {p}. {l} of {n} units are forecast to finish late.', { f: `<b>${fmt(forecast)}</b>`, p: `<b>${fmt(planned)}</b>`, l: late.length, n: units.length })
-                        : _t('Every unit is forecast to finish by the planned delivery of {p}.', { p: `<b>${fmt(planned)}</b>` })}${slip === 0 && late.length ? ' ' + _t('{l} of {n} units are late, but not the ones that set the delivery date.', { l: late.length, n: units.length }) : ''}</p>
+                    <p>${multi
+                        ? (slip > 0
+                            ? `${lateBtls.length === btls.length
+                                ? _t('All {n} battalions are forecast to deliver late.', { n: btls.length })
+                                : _t('{l} of {n} battalions are forecast to deliver late.', { l: lateBtls.length, n: btls.length })} ${_t('{b} is the furthest behind: forecast {f} against a plan of {p}.', { b: `<b>${esc(lead.b)}</b>`, f: `<b>${fmt(forecast)}</b>`, p: `<b>${fmt(planned)}</b>` })}`
+                            : _t('Every battalion is forecast to deliver by its planned date.'))
+                          + (late.length ? ' ' + _t('{l} of {n} units are forecast to finish late.', { l: late.length, n: units.length }) : '')
+                        : slip > 0
+                            ? _t('Forecast delivery {f} against a plan of {p}. {l} of {n} units are forecast to finish late.', { f: `<b>${fmt(forecast)}</b>`, p: `<b>${fmt(planned)}</b>`, l: late.length, n: units.length })
+                            : _t('Every unit is forecast to finish by the planned delivery of {p}.', { p: `<b>${fmt(planned)}</b>` }) + (late.length ? ' ' + _t('{l} of {n} units are late, but not the ones that set the delivery date.', { l: late.length, n: units.length }) : '')}</p>
+                    ${multi ? `<div class="dol-btl-sum">${btls.map(x => `<button type="button" class="dol-btl-pill dol-${sev(x.s)}" data-dol-b="${esc(x.b)}" title="${esc(_t('Planned {p} · forecast {f}', { p: fmt(x.p), f: fmt(x.f) }))}"><b>${esc(x.b)}</b>${delayTxt(x.s)}</button>`).join('')}</div>` : ''}
                 </div>
                 <div>
                     <div class="dol-tl-dates">
-                        <div><span class="dol-lbl">${_t('Planned delivery')}</span><strong>${fmt(planned)}</strong></div>
-                        <div class="${slip > 0 ? 'is-late' : ''}"><span class="dol-lbl">${_t('Forecast delivery')}</span><strong>${fmt(forecast)}</strong></div>
+                        <div><span class="dol-lbl">${_t('Planned delivery')}${multi ? ` · ${esc(lead.b)}` : ''}</span><strong>${fmt(planned)}</strong></div>
+                        <div class="${slip > 0 ? 'is-late' : ''}"><span class="dol-lbl">${_t('Forecast delivery')}${multi ? ` · ${esc(lead.b)}` : ''}</span><strong>${fmt(forecast)}</strong></div>
                     </div>
                     <div class="dol-tl-track" aria-hidden="true">
                         <i class="dol-tl-plan" style="width:${pos(planned)}%"></i>
@@ -6422,7 +6504,7 @@ function _showDeliveryOutlook() {
                     ${setText ? `<div class="dol-setby">${setText}</div>` : ''}
                 </div>
                 <div class="dol-trend">
-                    <span class="dol-lbl">${_t('Delay trend · last 8 weeks')}</span>
+                    <span class="dol-lbl">${multi ? _t('Delay trend · most-delayed battalion · last 8 weeks') : _t('Delay trend · last 8 weeks')}</span>
                     <div class="dol-trend-val"><strong>+${slip} ${_t('wd')}</strong><span>${trendWord}</span></div>
                     ${trendSvg}
                     <div class="dol-note-sm">${slip === first ? _t('Same as 8 weeks ago (+{n} wd).', { n: first }) : _t('8 weeks ago it was +{n} wd.', { n: first })} ${_t('Rebuilt from the dates recorded in PPMS, against today\'s plan.')}</div>
@@ -6444,6 +6526,365 @@ function _showDeliveryOutlook() {
             }
         });
         const alertHtml = alerts.length ? `<section class="dol-alerts">${alerts.map(a => `<div class="dol-alert dol-${a.k}">${ICON_WARN}<div>${a.t}</div></div>`).join('')}</section>` : '';
+
+        // ── 2b · delay map: ranked bars of the delay per vehicle, vehicle type,
+        // battalion, station, line or process area, each with its main cause;
+        // a clicked vehicle opens its station-by-station timeline
+        const shift = (iso, n) => { const d = D(iso); d.setDate(d.getDate() + n); return localDateStr(d); };
+        const btlPlan = {}, btlFc = {}, btlCount = {};
+        m.units.forEach(u => {
+            if (u.pf > (btlPlan[u.b] || '')) btlPlan[u.b] = u.pf;
+            if (u.ff > (btlFc[u.b] || '')) btlFc[u.b] = u.ff;
+            btlCount[u.b] = (btlCount[u.b] || 0) + 1;
+        });
+        const btlSlip = b => Math.max(0, wd(btlPlan[b], btlFc[b]));
+        // A late vehicle only moves delivery when it finishes after its battalion's planned delivery
+        const effect = u => (u.slip <= 0 ? 'ok' : u.ff > btlPlan[u.b] ? 'bad' : 'warn');
+        const setsDate = u => u.ff === btlFc[u.b] && btlSlip(u.b) > 0;
+        const setterKeys = new Set(units.filter(setsDate).map(unitKey));
+        const byDeliv = (x, y) => x.pf.localeCompare(y.pf) || planCmp(x, y);
+        const delivNo = new Map();
+        battalions.forEach(b => m.units.filter(u => u.b === b).sort(byDeliv).forEach((u, i) => delivNo.set(unitKey(u), i + 1)));
+        const delivTxt = u => _t('delivery #{n} of {t}', { n: delivNo.get(unitKey(u)), t: btlCount[u.b] });
+        const scopeBtls = battalions.filter(b => scope === 'all' || b === scope);
+        const vName = u => (scope === 'all' ? `${u.b} ${u.v} ${u.u}` : `${u.v} ${u.u}`);
+
+        const autoUnit = units.filter(setsDate).sort((a, b) => b.slip - a.slip)[0] || units.filter(u => u.slip > 0).sort((a, b) => b.slip - a.slip)[0];
+        const selKey = mapUnit === undefined ? (autoUnit ? unitKey(autoUnit) : '') : mapUnit;
+        const selUnit = selKey ? units.find(u => unitKey(u) === selKey) || null : null;
+        mapShown = selUnit ? selKey : '';
+
+        // Hover cards in the app's own style (core/hover-card.js), looked up by index
+        tipStore = [];
+        const tipAt = html => ` data-dol-tip="${tipStore.push(html) - 1}"`;
+        const tipRow = (k, v, cls = '') => (v ? `<div class="tip-row${cls ? ' ' + cls : ''}"><span>${esc(k)}</span><b>${v}</b></div>` : '');
+        const tipCard = (title, pill, sub, rows, foot) => `<div class="tip-head"><span class="tip-title">${esc(title)}</span>${pill ? `<span class="tip-pill tip-${pill[0]}">${esc(pill[1])}</span>` : ''}</div>`
+            + (sub ? `<div class="tip-sub">${esc(sub)}</div>` : '')
+            + `<div class="tip-grid">${rows.join('')}</div>`
+            + (foot ? `<div class="tip-foot">${esc(foot)}</div>` : '');
+        const PILL = { bad: ['late', _t('Moves delivery')], warn: ['progress', _t('Late, absorbed')], ok: ['complete', _t('On time')], lost: ['planned', _t('Finished')] };
+
+        // The station adding the most delay to a vehicle's finish, and its state in words
+        // When no single station carries the delay (several share it), name the first
+        // late station still open, else the latest one that finished late
+        const mainCause = u => {
+            const st = u.steps || [];
+            return st.filter(s => s.credit > 0).sort((a, b) => b.credit - a.credit)[0]
+                || st.filter(s => !s.done && s.slip > 0).sort((a, b) => a.ps.localeCompare(b.ps))[0]
+                || st.filter(s => s.done && s.slip > 0).sort((a, b) => b.fe.localeCompare(a.fe))[0] || null;
+        };
+        const causeAmt = s => (s.credit > 0 ? _t('adds +{n} wd', { n: s.credit }) : _t('running +{n} wd late', { n: s.slip }));
+        const stateTxt = s => (s.state === 'done' ? _t('finished {n} wd late', { n: s.slip })
+            : s.state === 'overdue' ? _t('not started, due {d}', { d: fmtShort(s.pe) })
+            : s.state === 'late' ? _t('not started, planned start {d}', { d: fmtShort(s.ps) })
+            : s.state === 'wip' ? _t('in progress, due {d}', { d: fmtShort(s.pe) })
+            : _t('starts late'));
+        const causeHtml = s => (s ? `<b>${esc(s.st)}</b><span>${esc(causeAmt(s))} · ${esc(stateTxt(s))}</span>` : `<span>${_t('Late stations along its route')}</span>`);
+
+        /* Ranked bars: bar = working days late, value at its end, main cause on the right.
+           room = the spare time the plan leaves before the delivery date (vehicles view). */
+        const barChart = (groups, whyHead) => {
+            // One far-out value would squash every other bar: scale to the next one
+            // and cut the outlier with a break mark (its full value stays on the label)
+            const vals = groups.flatMap(g => g.rows.map(r => r.val)).sort((a, b) => b - a);
+            const scaleMax = Math.max(1, vals[1] > 0 && vals[0] > vals[1] * 2.5 ? Math.ceil(vals[1] * 1.6) : vals[0] || 0);
+            const step = [1, 2, 5, 10, 20, 25, 50, 100, 200].find(n => scaleMax / n <= 5) || 500;
+            // Next tick above the longest bar, plus one more when its label would not fit
+            let top = Math.max(step, Math.ceil(scaleMax / step) * step);
+            if (scaleMax / top > 0.92) top += step;
+            const pct = v => Math.min(100, v / top * 100).toFixed(2);
+            const CUT = 88; // % width of a cut bar, leaving room for its label
+            const ticks = [];
+            for (let v = 0; v <= top; v += step) ticks.push(v);
+            const grid = ticks.map(v => `<u style="left:${pct(v)}%"></u>`).join('');
+            const row = r => {
+                const cut = r.val > top * CUT / 100;
+                const w = cut ? CUT : pct(r.val);
+                return `
+                <div class="dol-bars-row is-click${r.sel ? ' is-sel' : ''}"${r.attr}${tipAt(r.tip)}>
+                    <div class="dol-bars-lbl"><b>${esc(r.label)}</b>${r.sub ? `<small>${esc(r.sub)}</small>` : ''}</div>
+                    <div class="dol-bars-track">${grid}
+                        ${r.val > 0 ? `<i class="dol-bars-fill dol-${r.cls}${cut ? ' is-cut' : ''}" style="width:${w}%"></i>` : ''}
+                        ${r.room != null ? `<em class="dol-bars-room${r.room > top ? ' is-off' : ''}" style="left:${pct(r.room)}%"></em>` : ''}
+                        <span class="dol-bars-val dol-${r.cls}" style="left:${w}%">${r.val > 0 ? `+${r.val} ${_t('wd')}` : _t('On time')}</span>
+                    </div>
+                    <div class="dol-bars-why">${r.why || ''}</div>
+                </div>`;
+            };
+            return `<div class="dol-bars">
+                <div class="dol-bars-row dol-bars-axis"><div></div>
+                    <div class="dol-bars-track">${ticks.map((v, i) => `<span${i === ticks.length - 1 ? ' class="is-last"' : ''} style="left:${pct(v)}%">${v ? '+' + v : '0'}</span>`).join('')}</div>
+                    <div class="dol-bars-why">${whyHead}</div></div>
+                ${groups.map(g => (g.title ? `<div class="dol-bars-grp">${g.title}</div>` : '') + g.rows.map(row).join('')).join('')}
+            </div>`;
+        };
+        // Month ticks between two dates (at most ~12 labels)
+        const monthTicks = (lo, hi) => {
+            const tk = [];
+            const d = D(lo.slice(0, 7) + '-01');
+            for (d.setMonth(d.getMonth() + 1); localDateStr(d) <= hi; d.setMonth(d.getMonth() + 1)) tk.push(localDateStr(d));
+            const every = Math.ceil(tk.length / 12);
+            return tk.filter((_, i) => i % every === 0);
+        };
+        const monthLbl = t => D(t).toLocaleDateString(locale, { month: 'short' }) + (t.slice(5, 7) === '01' ? ` ${t.slice(2, 4)}` : '');
+
+        /* Dates chart (as in the delay explainer): hollow dot = planned finish,
+           filled dot = forecast finish, joined when late; the dashed line is the
+           battalion's delivery date, so a dot past it moves delivery. */
+        const dateChart = groups => {
+            const dates = groups.flatMap(g => g.rows.flatMap(r => [r.pf, r.ff]).concat(g.delivery));
+            const lo = shift(minIso(dates), -6), hi = shift(maxIso(dates), 8);
+            const rng = Math.max(1, days(lo, hi));
+            const P = iso => Math.min(100, Math.max(0, days(lo, iso) / rng * 100)).toFixed(2);
+            const ticks = monthTicks(lo, hi);
+            const inRange = today >= lo && today <= hi;
+            const grid = ticks.map(t => `<u style="left:${P(t)}%"></u>`).join('') + (inRange ? `<u class="is-today" style="left:${P(today)}%"></u>` : '');
+            const row = (r, g) => `
+                <div class="dol-bars-row is-click${r.sel ? ' is-sel' : ''}"${r.attr}${tipAt(r.tip)}>
+                    <div class="dol-bars-lbl"><b>${esc(r.label)}</b>${r.sub ? `<small>${esc(r.sub)}</small>` : ''}</div>
+                    <div class="dol-bars-track dol-dates-track">${grid}<u class="is-deliv" style="left:${P(g.delivery)}%"></u>
+                        ${r.ff > r.pf ? `<i class="dol-dates-link dol-${r.cls}" style="left:${P(r.pf)}%;width:${(P(r.ff) - P(r.pf)).toFixed(2)}%"></i>` : ''}
+                        <b class="dol-dates-plan" style="left:${P(r.pf)}%"></b>
+                        <b class="dol-dates-fc dol-${r.cls}" style="left:${P(r.ff)}%"></b>
+                        ${r.val > 0 ? `<span class="dol-bars-val dol-${r.cls}" style="left:${P(r.ff)}%">+${r.val} ${_t('wd')}</span>` : ''}
+                    </div>
+                    <div class="dol-bars-why">${r.why || ''}</div>
+                </div>`;
+            return `<div class="dol-bars">
+                <div class="dol-bars-row dol-bars-axis"><div></div>
+                    <div class="dol-bars-track">${ticks.map(t => `<span style="left:${P(t)}%">${monthLbl(t)}</span>`).join('')}${inRange ? `<em class="is-today" style="left:${P(today)}%">${_t('Today')}</em>` : ''}</div>
+                    <div class="dol-bars-why">${_t('Main cause')}</div></div>
+                ${groups.map(g => `<div class="dol-bars-grp">${g.title}</div>` + g.rows.map(r => row(r, g)).join('')).join('')}
+            </div>`;
+        };
+        const btlTitle = b =>`<b>${esc(b)}</b><span>${_t('Delivery')} ${fmt(btlPlan[b])} → ${fmt(btlFc[b])}</span><span class="dol-delay dol-${sev(btlSlip(b))}">${delayTxt(btlSlip(b))}</span>`;
+        const LG = {
+            bad: `<span><i class="dol-lg-bar dol-bad"></i>${_t('Moves the delivery date')}</span>`,
+            warn: `<span><i class="dol-lg-bar dol-warn"></i>${_t('Late, but the plan has spare time for it')}</span>`,
+            ok: `<span><i class="dol-lg-bar dol-ok"></i>${_t('On time')}</span>`,
+            room: `<span><i class="dol-lg-room"></i>${_t('Spare time before the delivery date: a bar past this line moves delivery')}</span>`,
+            open: `<span><i class="dol-lg-bar dol-bad"></i>${_t('Not finished yet: time can still be recovered')}</span>`,
+            lost: `<span><i class="dol-lg-bar dol-lost"></i>${_t('Finished late: time already lost')}</span>`,
+        };
+
+        // Delay a station / line / process area adds to each vehicle's finish
+        const unitByKey = new Map(units.map(u => [unitKey(u), u]));
+        const causeGroups = keyOf => {
+            const g = new Map();
+            causes.forEach(c => {
+                const k = keyOf(c);
+                const e = g.get(k.id) || { ...k, vts: new Set(), per: new Map() };
+                const p = e.per.get(unitKey(c)) || { d: 0, open: false };
+                p.d += c.d; p.open = p.open || c.open;
+                e.per.set(unitKey(c), p); e.vts.add(c.v);
+                g.set(k.id, e);
+            });
+            return [...g.values()].map(e => {
+                const veh = [...e.per.entries()].map(([k, p]) => {
+                    const u = unitByKey.get(k);
+                    // stations side by side can't add more than the vehicle's own delay
+                    return { k, u, d: Math.min(p.d, u ? u.slip : p.d), open: p.open };
+                }).filter(x => x.u && x.d > 0).sort((a, b) => b.d - a.d);
+                return { ...e, veh, max: veh[0]?.d || 0, nOpen: veh.filter(x => x.open).length };
+            }).filter(e => e.veh.length).sort((a, b) => b.max - a.max || b.veh.length - a.veh.length);
+        };
+
+        let mapBody = '', mapHint = '', mapLegend = '';
+        if (mapView === 'vtype') {
+            const groups = scopeBtls.map(b => {
+                const bu = units.filter(u => u.b === b);
+                return { title: btlTitle(b), rows: [...new Set(bu.map(u => u.v))].sort((x, y) => vOrder(x) - vOrder(y)).map(v => {
+                    const vu = bu.filter(u => u.v === v), vl = vu.filter(u => u.slip > 0);
+                    const w = vl.slice().sort((a, c) => c.slip - a.slip)[0];
+                    const cls = vu.some(u => effect(u) === 'bad') ? 'bad' : vl.length ? 'warn' : 'ok';
+                    return { label: v, sub: _t('{l} of {n} late', { l: vl.length, n: vu.length }), val: w ? w.slip : 0, cls, attr: ' data-dol-map="unit"',
+                        why: w ? `<span>${_t('Worst')}: <b>${esc(`${w.v} ${w.u}`)}</b></span>${causeHtml(mainCause(w))}` : `<span>${_t('All on time')}</span>`,
+                        tip: tipCard(`${b} · ${v}`, PILL[cls], _t('{l} of {n} vehicles late', { l: vl.length, n: vu.length }), [
+                            tipRow(_t('Last planned finish'), fmt(maxIso(vu.map(u => u.pf)))),
+                            tipRow(_t('Last forecast finish'), fmt(maxIso(vu.map(u => u.ff)))),
+                            tipRow(_t('Worst vehicle'), w ? `${esc(`${w.v} ${w.u}`)} <i>+${w.slip} ${_t('wd')}</i>` : '', 'tip-bad'),
+                            tipRow(_t('Moving delivery'), String(vu.filter(u => effect(u) === 'bad').length)),
+                        ], _t('Click to see these vehicles')) };
+                }) };
+            });
+            mapBody = barChart(groups, _t('Worst vehicle and its main cause'));
+            mapHint = _t('One bar per vehicle type in each battalion, as long as its worst vehicle is late. Click a bar to see the vehicles.');
+            mapLegend = LG.bad + LG.warn + LG.ok;
+        } else if (mapView === 'btl') {
+            mapBody = barChart([{ rows: scopeBtls.map(b => {
+                const bu = units.filter(u => u.b === b), bl = bu.filter(u => u.slip > 0);
+                const set = bu.filter(setsDate).sort((a, c) => c.slip - a.slip)[0];
+                const w = bl.slice().sort((a, c) => c.slip - a.slip)[0];
+                const cls = btlSlip(b) > 0 ? 'bad' : 'ok';
+                return { label: b, sub: _t('{l} of {n} late', { l: bl.length, n: bu.length }), val: btlSlip(b), cls, attr: ` data-dol-b="${esc(b)}"`,
+                    why: set ? `<span>${_t('Set by')} <b>${esc(`${set.v} ${set.u}`)}</b></span>${causeHtml(mainCause(set))}`
+                        : `<span>${bl.length ? _t('{n} late vehicles, all within the delivery date (worst +{w} wd)', { n: bl.length, w: w.slip }) : _t('All vehicles on time')}</span>`,
+                    tip: tipCard(b, PILL[cls], _t('{l} of {n} vehicles late', { l: bl.length, n: bu.length }), [
+                        tipRow(_t('Planned delivery'), fmt(btlPlan[b])),
+                        tipRow(_t('Forecast delivery'), `${fmt(btlFc[b])} <i>${delayTxt(btlSlip(b))}</i>`, btlSlip(b) > 0 ? 'tip-bad' : 'tip-good'),
+                        tipRow(_t('Set by'), set ? esc(`${set.v} ${set.u}`) : ''),
+                    ], _t('Click to show only this battalion')) };
+            }) }], _t('What sets its delivery date'));
+            mapHint = _t('One bar per battalion: how many working days its delivery date (the day its last vehicle finishes) is forecast to move. Click a battalion to focus the whole Outlook on it.');
+            mapLegend = LG.bad + LG.ok;
+        } else if (mapView === 'station' || mapView === 'line' || mapView === 'area') {
+            const keyOf = {
+                station: c => ({ id: `${c.v}||${c.st}`, label: c.st, sub: `${c.v} · ${/^Assembly/i.test(c.line) ? _t('Assembly') : _t(c.line)}` }),
+                line: c => ({ id: c.line, label: _t(c.line) }),
+                area: c => ({ id: c.cat, label: _t(c.cat) }),
+            }[mapView];
+            const all = causeGroups(keyOf);
+            const shown = mapView === 'station' ? all.slice(0, 15) : all;
+            const rows = shown.map(r => ({
+                label: r.label, sub: r.sub || [...r.vts].sort((x, y) => vOrder(x) - vOrder(y)).join(' · '),
+                val: r.max, cls: r.nOpen ? 'bad' : 'lost', attr: ` data-dol-unit="${esc(r.veh[0].k)}"`,
+                why: `<span class="dol-vchips">${r.veh.slice(0, 4).map(x => `<button type="button" class="dol-vchip${x.open ? ' is-open' : ''}" data-dol-unit="${esc(x.k)}">${esc(vName(x.u))} <b>+${x.d}</b></button>`).join('')}${r.veh.length > 4 ? `<span class="dol-dim">+${r.veh.length - 4}</span>` : ''}</span>`,
+                tip: tipCard(r.label, r.nOpen ? ['late', _t('Still open')] : PILL.lost, r.sub || '', [
+                    tipRow(_t('Most added'), `+${r.max} ${_t('wd')} <i>${esc(vName(r.veh[0].u))}</i>`, r.nOpen ? 'tip-bad' : ''),
+                    tipRow(_t('Vehicles delayed'), String(r.veh.length)),
+                    tipRow(_t('Not finished yet'), r.nOpen ? String(r.nOpen) : ''),
+                ], _t('Click a vehicle to see its station timeline')),
+            }));
+            const what = { station: _t('station'), line: _t('production line'), area: _t('process area') }[mapView];
+            mapBody = rows.length
+                ? barChart([{ rows }], _t('Vehicles it delays (click one)'))
+                  + (all.length > shown.length ? `<p class="dol-hint dol-map-more">${_t('Showing the {n} stations with the most delay; {m} more add less.', { n: shown.length, m: all.length - shown.length })}</p>` : '')
+                : `<div class="dol-empty">${_t('Nothing is delaying a vehicle right now.')}</div>`;
+            mapHint = _t('One bar per {w}: the most working days it is adding to one vehicle\'s finish right now. Delay the plan already absorbed is left out.', { w: what });
+            mapLegend = LG.open + LG.lost;
+        } else {
+            const RANK = { bad: 0, warn: 1, ok: 2 };
+            const dates = mapShape === 'dates';
+            // Bars: worst first. Dates: the order the plan finishes them, as on the schedule.
+            const order = dates ? byDeliv : (x, y) => RANK[effect(x)] - RANK[effect(y)] || y.slip - x.slip || byDeliv(x, y);
+            const groups = scopeBtls.map(b => ({ title: btlTitle(b), delivery: btlPlan[b],
+                rows: units.filter(u => u.b === b && (!mapLate || u.slip > 0))
+                    .sort(order).map(u => {
+                        const k = unitKey(u), cls = effect(u), mc = mainCause(u);
+                        const room = Math.max(0, wd(u.pf, btlPlan[u.b]));
+                        return { label: `${u.v} ${u.u}`, sub: delivTxt(u), val: Math.max(0, u.slip), cls, room: u.slip > 0 ? room : null,
+                            pf: u.pf, ff: u.ff,
+                            sel: k === mapShown, attr: ` data-dol-unit="${esc(k)}"`,
+                            why: u.slip > 0 ? causeHtml(mc) : `<span>${_t('On time')}</span>`,
+                            tip: tipCard(`${u.b} · ${u.v} ${u.u}`, PILL[cls], `${delivTxt(u)}${u.code ? ` · ${u.code}` : ''}`, [
+                                tipRow(_t('Planned finish'), fmt(u.pf)),
+                                tipRow(_t('Forecast finish'), `${fmt(u.ff)} <i>${delayTxt(u.slip)}</i>`, u.slip > 0 ? 'tip-bad' : 'tip-good'),
+                                tipRow(_t('Spare time'), u.slip > 0 ? _t('{n} wd before the delivery date', { n: room }) : ''),
+                                tipRow(_t('Main cause'), mc ? `${esc(mc.st)} <i>${esc(causeAmt(mc))}</i>` : ''),
+                                tipRow(_t('Stations done'), `${u.done} / ${u.total}`),
+                            ], _t('Click to see its station timeline')) };
+                    }) })).filter(g => g.rows.length);
+            const nBad = units.filter(u => effect(u) === 'bad').length;
+            mapBody = !groups.length ? `<div class="dol-empty">${_t('No vehicle is forecast to finish late.')}</div>`
+                : dates ? dateChart(groups) : barChart(groups, _t('Main cause'));
+            mapHint = `${dates
+                ? _t('One line per vehicle, in the order the plan finishes them (so not the M number): planned finish (hollow dot) and forecast finish (filled dot). A vehicle moves the delivery date only when its forecast passes the dashed delivery line.')
+                : _t('One bar per vehicle: how many working days late it will finish. A vehicle only moves the delivery date when its delay is bigger than the spare time the plan leaves before that date.')} <b>${_t('{l} of {n} vehicles late; {b} move a delivery date.', { l: late.length, n: units.length, b: nBad })}</b>`;
+            mapLegend = dates
+                ? `<span><i class="dol-lg-hollow"></i>${_t('Planned finish')}</span><span><i class="dol-lg-dot dol-ok"></i>${_t('Forecast on time')}</span><span><i class="dol-lg-dot dol-warn"></i>${_t('Forecast late, before the delivery date')}</span><span><i class="dol-lg-dot dol-bad"></i>${_t('Forecast after the delivery date: moves delivery')}</span><span><i class="dol-lg-room"></i>${_t('Battalion delivery date')}</span><span><i class="dol-lg-today"></i>${_t('Today')}</span>`
+                : LG.bad + LG.warn + LG.ok + LG.room;
+        }
+
+        /* Vehicle timeline: one row per station. Outline = planned dates,
+           bar = actual (finished) or forecast dates; right column = the
+           working days the station adds to the vehicle's finish. */
+        const STATE_PILL = {
+            done: s => (s.slip > 0 ? ['late-complete', _t('Finished late')] : ['complete', _t('Finished')]),
+            wip: () => ['progress', _t('In progress')], overdue: () => ['late', _t('Overdue')],
+            late: () => ['late', _t('Late to start')], planned: () => ['planned', _t('Not due yet')],
+        };
+        const drill = u => {
+            // One block per line (Hull, Turret… then Assembly), stations by planned start
+            const lineOrder = [...new Set((u.steps || []).map(s => s.line))];
+            const st = (u.steps || []).slice().sort((a, b) => lineOrder.indexOf(a.line) - lineOrder.indexOf(b.line) || a.ps.localeCompare(b.ps));
+            const k = unitKey(u);
+            const lo = shift(minIso(st.flatMap(s => [s.ps, s.fs || s.fe])), -3);
+            const hi = shift(maxIso(st.flatMap(s => [s.pe, s.fe]).concat(u.pf)), 4);
+            const rng = Math.max(1, days(lo, hi));
+            const P = iso => Math.min(100, Math.max(0, days(lo, iso) / rng * 100));
+            const ticks = monthTicks(lo, hi);
+            const inRange = today >= lo && today <= hi;
+            const marks = ticks.map(t => `<u style="left:${P(t).toFixed(2)}%"></u>`).join('')
+                + (inRange ? `<u class="is-today" style="left:${P(today).toFixed(2)}%"></u>` : '')
+                + `<u class="is-plan" style="left:${P(shift(u.pf, 1)).toFixed(2)}%"></u>`;
+            let rows = '', prev = null;
+            st.forEach(s => {
+                if (s.line !== prev) {
+                    prev = s.line;
+                    const ls = st.filter(x => x.line === s.line);
+                    const add = ls.reduce((a, x) => a + x.credit, 0);
+                    rows += `<div class="dol-stl-grp"><b>${esc(_t(s.line))}</b><span>${_t('{a} of {b} stations done', { a: ls.filter(x => x.done).length, b: ls.length })}</span>${add > 0 ? `<span class="dol-bad-txt">+${add} ${_t('wd')}</span>` : ''}</div>`;
+                }
+                const p0 = P(s.ps), p1 = P(shift(s.pe, 1));
+                const f0 = P(s.fs || s.fe), f1 = P(shift(s.fe, 1));
+                const cls = s.done ? (s.slip > 0 ? 'donelate' : 'done') : s.slip > 0 ? 'late' : 'fc';
+                const pill = STATE_PILL[s.state](s);
+                rows += `<div class="dol-stl-row${s.credit > 0 ? ' is-cause' : ''}"${tipAt(tipCard(s.st, pill, `${_t(s.line)} · ${u.v} ${u.u}`, [
+                    tipRow(_t('Planned'), `${fmtShort(s.ps)} → ${fmtShort(s.pe)}`),
+                    s.done ? tipRow(_t('Finished'), fmt(s.fe)) : tipRow(_t('Forecast'), `${fmtShort(s.fs)} → ${fmtShort(s.fe)}`),
+                    tipRow(_t('vs plan'), `${s.slip > 0 ? '+' : ''}${s.slip} ${_t('wd')}`, s.slip > 0 ? 'tip-bad' : 'tip-good'),
+                    tipRow(_t('Adds to finish'), s.credit > 0 ? `+${s.credit} ${_t('wd')}` : '', 'tip-bad'),
+                ]))}>
+                    <div class="dol-stl-lbl"><i class="dol-stl-dot dol-stl-${s.state}"></i><span>${esc(s.st)}</span></div>
+                    <div class="dol-stl-track">${marks}
+                        <span class="dol-stl-plan" style="left:${p0.toFixed(2)}%;width:${Math.max(0.35, p1 - p0).toFixed(2)}%"></span>
+                        ${f0 > p1 + 0.5 ? `<span class="dol-stl-shift${s.done ? '' : ' is-open'}" style="left:${p1.toFixed(2)}%;width:${(f0 - p1).toFixed(2)}%"></span>` : ''}
+                        <span class="dol-stl-bar dol-stl-${cls}" style="left:${f0.toFixed(2)}%;width:${Math.max(0.35, f1 - f0).toFixed(2)}%"></span>
+                    </div>
+                    <div class="dol-stl-add">${s.credit > 0 ? `+${s.credit} ${_t('wd')}` : ''}</div>
+                </div>`;
+            });
+            const axis = `<div class="dol-stl-row dol-stl-axis"><div></div>
+                <div class="dol-stl-track">
+                    ${ticks.map(t => `<span style="left:${P(t).toFixed(2)}%">${monthLbl(t)}</span>`).join('')}
+                    ${inRange ? `<em class="is-today" style="left:${P(today).toFixed(2)}%">${_t('Today')}</em>` : ''}
+                    <em class="is-plan" style="left:${P(shift(u.pf, 1)).toFixed(2)}%">${_t('Planned finish')}</em>
+                </div>
+                <div class="dol-stl-add">${_t('Adds to finish')}</div></div>`;
+
+            const adds = st.filter(s => s.credit > 0).sort((a, b) => b.credit - a.credit);
+            const held = st.find(s => s.credit > 0 && (s.state === 'overdue' || s.state === 'late'));
+            let why = u.slip <= 0 ? _t('This vehicle is forecast to finish on time.')
+                : adds.length
+                    ? `${_t('What makes it late:')} ${adds.slice(0, 3).map(s => `<b>${esc(s.st)}</b> (+${s.credit} ${_t('wd')}, ${esc(stateTxt(s))})`).join(', ')}.`
+                    : _t('Its delay comes from stations running late along its route.');
+            if (held) why += ' ' + _t('{s} should already have started and has not, so the forecast starts it today. Until it starts, this vehicle\'s finish moves one working day later for every working day that passes.', { s: `<b>${esc(held.st)}</b>` });
+            if (setterKeys.has(k)) why += ' ' + _t('This vehicle sets the {b} delivery date.', { b: `<b>${esc(u.b)}</b>` });
+            else if (effect(u) === 'warn') why += ' ' + _t('It still finishes before the {b} delivery date, so the battalion date does not move.', { b: esc(u.b) });
+            return `
+                <div class="dol-drill" data-dol="drill">
+                    <div class="dol-drill-head">
+                        <div><span class="dol-lbl">${_t('Vehicle timeline · station by station')}</span>
+                            <h4>${esc(unitLabel(u))} <small>${delivTxt(u)}${u.code ? ` · ${esc(u.code)}` : ''}</small></h4></div>
+                        <div class="dol-drill-dates">${_t('Planned finish')} <b>${fmt(u.pf)}</b> → ${_t('Forecast')} <b>${fmt(u.ff)}</b> <span class="dol-delay dol-${sev(u.slip)}">${delayTxt(u.slip)}</span></div>
+                        <button type="button" class="dol-icon" data-dol-unit="" title="${_t('Close')}" aria-label="${_t('Close')}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+                    </div>
+                    <div class="dol-drill-why${u.slip > 0 ? ' is-late' : ''}">${why}</div>
+                    <div class="dol-legend"><span><i class="dol-lg-plan"></i>${_t('Planned dates')}</span><span><i class="dol-lg-bar dol-ok"></i>${_t('Finished on time')}</span><span><i class="dol-lg-bar dol-warn"></i>${_t('Finished late')}</span><span><i class="dol-lg-bar dol-fc"></i>${_t('Forecast')}</span><span><i class="dol-lg-bar dol-bad"></i>${_t('Forecast, later than plan')}</span><span><i class="dol-lg-today"></i>${_t('Today')}</span></div>
+                    <div class="dol-stl">${axis}${rows}</div>
+                </div>`;
+        };
+
+        const MAP_VIEWS = [['unit', _t('Vehicles')], ['vtype', _t('Vehicle type')], ['btl', _t('Battalions')], ['station', _t('Stations')], ['line', _t('Lines')], ['area', _t('Process areas')]];
+        const mapCard = `
+            <section class="dol-card dol-pad dol-map" data-dol="map">
+                <div class="dol-map-head">
+                    <h3 class="dol-h">${_t('Where the delay comes from')}</h3>
+                    <span class="dol-grow"></span>
+                    ${mapView === 'unit' ? `<div class="dol-seg" role="group" aria-label="${_t('Chart')}">
+                        <button type="button" data-dol-shape="bars" aria-pressed="${mapShape !== 'dates'}">${_t('Bars')}</button>
+                        <button type="button" data-dol-shape="dates" aria-pressed="${mapShape === 'dates'}">${_t('Dates')}</button></div>` : ''}
+                    ${mapView === 'unit' ? `<div class="dol-seg" role="group" aria-label="${_t('Vehicles shown')}">
+                        <button type="button" data-dol-mlate="late" aria-pressed="${mapLate}">${_t('Late only')}</button>
+                        <button type="button" data-dol-mlate="all" aria-pressed="${!mapLate}">${_t('All vehicles')}</button></div>` : ''}
+                    <span class="dol-lbl">${_t('View by')}</span>
+                    <div class="dol-seg" role="group" aria-label="${_t('View by')}">${MAP_VIEWS.map(([k, l]) => `<button type="button" data-dol-map="${k}" aria-pressed="${mapView === k}">${l}</button>`).join('')}</div>
+                </div>
+                <p class="dol-hint">${mapHint}</p>
+                <div class="dol-legend dol-map-legend">${mapLegend}</div>
+                <div class="dol-map-main">${mapBody}</div>
+                ${selUnit ? drill(selUnit) : `<p class="dol-hint dol-map-more">${_t('Click a vehicle to see its station-by-station timeline.')}</p>`}
+            </section>`;
 
         // ── 3 · key figures
         const adhPct = adh.due ? Math.round(adh.dueDone / adh.due * 100) : 100;
@@ -6660,6 +7101,7 @@ function _showDeliveryOutlook() {
                         <li>${_t('Each vehicle follows the order of its plan. Finished stations use their real completion dates; the rest start when the stations they wait for are done (not before today or their planned start) and take their planned number of working days.')}</li>
                         <li>${_t('A station waits only for the stations the plan finishes before it starts, so work the plan runs side by side does not wait. Assembly, Processing & Testing starts when the Hull and Turret (K9) or the Structure (K10 / K11) are finished.')}</li>
                         <li>${_t('Delay = working days between planned and forecast finish (Fridays not counted). Forecast delivery = the last vehicle\'s forecast finish. Same figures as the Delivery card and the reports.')}</li>
+                        <li>${_t('Each battalion has its own delivery date. With all battalions shown, the headline and the trend follow the most-delayed battalion, so one that is late is never hidden by another that finishes later on time.')}</li>
                         <li>${_t('Plan adherence = station tasks planned to finish by today that are marked finished. Late to start = tasks past their planned start with no actual start.')}</li>
                         <li>${_t('Delay trend = the forecast as it would have looked on each past day, using only the dates recorded by then and today\'s plan. Dates entered late make past days look better than they were.')}</li>
                         <li>${_t('Build time = working days from a vehicle\'s first station start to its last station finish. The real start is the first actual start or completion recorded on any of its stations.')}</li>
@@ -6668,11 +7110,15 @@ function _showDeliveryOutlook() {
             </section>`;
 
         const keepScroll = overlay.querySelector('.dol-scroll')?.scrollTop || 0;
-        main.innerHTML = verdict + alertHtml + kpis
+        const keepMapScroll = overlay.querySelector('.dol-map-main')?.scrollTop || 0;
+        hideTip();
+        main.innerHTML = verdict + alertHtml + mapCard + kpis
             + `<section class="dol-row2">${output}${buildCard}</section>`
             + `<section class="dol-row2">${actCard}${lostCard}</section>`
             + `<section><h3 class="dol-h dol-h-out">${_t('By battalion and vehicle')}</h3><div class="dol-btls">${btlCards}</div></section>`
             + unitTable + note;
+        const mapMain = overlay.querySelector('.dol-map-main');
+        if (mapMain) mapMain.scrollTop = keepMapScroll;
         const sc = overlay.querySelector('.dol-scroll');
         if (sc) sc.scrollTop = keepScroll;
     }
@@ -15502,6 +15948,8 @@ function _execCoverSummary(rows = currentData) {
     data.forEach(r => { const e = r.end_date || r.planned_end_date; if (e && (!plannedDelivery || e > plannedDelivery)) plannedDelivery = e; });
     // Same process-order forecast as the delivery card
     const fc = getPlanForecast(data);
+    // The forecast's planned date belongs to the same battalion as its expected date
+    if (fc.plannedDelivery) plannedDelivery = fc.plannedDelivery;
     const worst = fc.expectedDelivery ? Math.max(0, fc.deliverySlip) : data.reduce((m, r) => Math.max(m, delayDays(r)), 0);
     const expected = fc.expectedDelivery || (plannedDelivery ? _addWorkingDays(plannedDelivery, worst) : null);
     const version = _activeVersionInfo('kd2');
@@ -15841,9 +16289,12 @@ function _execInsightsModel(issueRows, rows = currentData) {
     // ── Verdict ──
     const slip = Math.max(0, fc.deliverySlip || 0);
     const top = causes[0];
+    // Several battalions: delivery is the most-delayed one's, so say which
+    const multiBtl = (fc.battalions || []).length > 1;
+    const lateBtls = (fc.battalions || []).filter(b => b.deliverySlip > 0).length;
     const verdict = fc.expectedDelivery
         ? (slip > 0
-            ? `Delivery is forecast for ${formatDate(fc.expectedDelivery)} — ${slip} working day${slip === 1 ? '' : 's'} after the planned ${formatDate(fc.plannedDelivery)}. ${lateUnits.length} of ${units.length} unit${units.length === 1 ? ' is' : 's are'} forecast to finish late${top ? `; the biggest cause is ${top.station} on ${top.vtype}` : ''}.`
+            ? `${multiBtl ? `${lateBtls} of ${fc.battalions.length} battalions are forecast to deliver late. ${fc.deliveryBattalion} is furthest behind: its delivery` : 'Delivery'} is forecast for ${formatDate(fc.expectedDelivery)} — ${slip} working day${slip === 1 ? '' : 's'} after the planned ${formatDate(fc.plannedDelivery)}. ${lateUnits.length} of ${units.length} unit${units.length === 1 ? ' is' : 's are'} forecast to finish late${top ? `; the biggest cause is ${top.station} on ${top.vtype}` : ''}.`
             : lateUnits.length
                 ? `Delivery is on track for ${formatDate(fc.plannedDelivery)}. ${lateUnits.length} of ${units.length} unit${units.length === 1 ? ' is' : 's are'} forecast to finish late, but still before the last planned delivery date.`
                 : `Delivery is on track for ${formatDate(fc.plannedDelivery)}; no unit is forecast to finish late.`)
