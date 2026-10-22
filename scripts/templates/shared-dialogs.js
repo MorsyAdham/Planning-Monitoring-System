@@ -1904,24 +1904,21 @@ export function renderSharedDialogs() {
             </div>
         </div>
 
-        <!-- ═══════════════════════════════════ X-RAY / REPAIR MODAL -->
+        <!-- ═══════════════════════════════════ QUALITY CHECKS (X-RAY / INSPECTION) MODAL -->
         <div class="modal-overlay" id="xrayModalOverlay" style="display:none;" role="dialog" aria-modal="true"
             aria-labelledby="xrayModalTitle">
-            <div class="modal">
-                <div class="modal-header">
-                    <h4 class="modal-title" id="xrayModalTitle">X-ray / Repair</h4>
+            <div class="modal qc-modal">
+                <div class="modal-header qc-modal-header">
+                    <div class="qc-modal-heading">
+                        <h4 class="modal-title" id="xrayModalTitle">Quality checks</h4>
+                        <div class="qc-modal-sub" id="qcModalSub"></div>
+                    </div>
                     <button class="modal-close" id="xrayModalClose" aria-label="Close">&#x2715;</button>
                 </div>
-                <div class="modal-body">
-                    <table class="xray-history-table">
-                        <thead>
-                            <tr><th>Cycle</th><th>X-ray Start</th><th>X-ray End</th><th>Result</th><th>Repair Start</th><th>Repair End</th><th></th></tr>
-                        </thead>
-                        <tbody id="xrayHistoryBody"></tbody>
-                    </table>
-                    <div class="xray-action-row" id="xrayActionRow"></div>
-                </div>
-                <div class="modal-footer">
+                <div class="qc-tabs" id="qcTabs" role="tablist" hidden></div>
+                <div class="modal-body qc-modal-body" id="qcModalBody"></div>
+                <div class="modal-footer qc-modal-footer">
+                    <span class="qc-footer-note" id="qcFooterNote"></span>
                     <button class="btn btn-ghost" id="xrayModalCancel">Close</button>
                 </div>
             </div>
